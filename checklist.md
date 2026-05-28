@@ -142,6 +142,7 @@ Target version: 0.1.0
 
 - [x] [patch] Investigate full all-allocator Criterion quick-run timeout while focused gated rows complete.
 - [x] [patch] Replace unsupported `--quick` benchmark invocation with an explicit bounded Criterion smoke configuration.
+- [x] [patch] Make `unlink_full_page` return whether the page was actually removed and only re-activate pages after a confirmed full-list unlink.
 
 - [ ] [patch] Audit benchmark baseline metadata after bounded Criterion harness configuration.
 

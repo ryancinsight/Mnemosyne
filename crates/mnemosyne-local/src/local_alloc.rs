@@ -944,6 +944,41 @@ mod tests {
     }
 
     #[test]
+    fn unlink_full_page_reports_found_status_without_mutating_missing_page() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
+        let mut alloc = ThreadAllocator::<DefaultBackend>::new();
+        let class = size_to_class(16).expect("16 bytes is a small allocation");
+        let mut listed = Page::new(1);
+        let mut missing = Page::new(2);
+        let listed_ptr = NonNull::from(&mut listed);
+        let missing_ptr = NonNull::from(&mut missing);
+        alloc.full_pages[class] = Some(listed_ptr);
+
+        let removed_missing = unsafe { alloc.unlink_full_page(missing_ptr.as_ptr(), class) };
+
+        assert!(
+            !removed_missing,
+            "unlink_full_page reported removal for a page outside the full list"
+        );
+        assert_eq!(
+            alloc.full_pages[class].map(NonNull::as_ptr),
+            Some(listed_ptr.as_ptr())
+        );
+        assert_eq!(missing.next_page, None);
+
+        let removed_listed = unsafe { alloc.unlink_full_page(listed_ptr.as_ptr(), class) };
+
+        assert!(
+            removed_listed,
+            "unlink_full_page did not report removal for the listed page"
+        );
+        assert_eq!(alloc.full_pages[class], None);
+        assert_eq!(listed.next_page, None);
+    }
+
+    #[test]
     fn test_snmalloc_message_passing() {
         let _guard = TEST_LOCK
             .lock()

@@ -76,6 +76,7 @@
 - [patch] Audit production debug assertions for value-semantic invariant messages and zero-cost release behavior.
 - [patch] Audit local allocator remote-free reclaim paths for duplicated block-pop logic.
 - [patch] Investigate full all-allocator Criterion quick-run timeout while focused gated rows complete.
+- [patch] Guard local-free full-page reactivation on confirmed full-list unlink.
 
 ## Next
 
