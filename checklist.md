@@ -153,3 +153,6 @@ Target version: 0.1.0
 - [x] [patch] Add compile-time `const _: () = assert!(...)` invariants in `mnemosyne-core::constants` pinning `SEGMENT_SIZE`/`PAGE_SIZE` power-of-two, `SEGMENT_ALIGN == SEGMENT_SIZE`, `PAGE_ALIGN == PAGE_SIZE`, `PAGES_PER_SEGMENT * PAGE_SIZE == SEGMENT_SIZE`, `PAGES_PER_SEGMENT >= 2`, `MAX_SMALL_ALLOC_SIZE <= PAGE_SIZE`, `MAX_ALLOC_SIZE >= SEGMENT_SIZE`, and `NUM_SIZE_CLASSES > 0`.
 - [x] [patch] Add compile-time cross-checks in `mnemosyne-core::size_class` that `class_to_size(NUM_SIZE_CLASSES - 1) == MAX_SMALL_ALLOC_SIZE` and `class_to_size(NUM_SIZE_CLASSES) == 0`.
 - [x] [patch] Extract `unlink_page_from_list` helper that folds the three linked-list traversal blocks in `unlink_full_page` and `unlink_page` into a single inlined routine taking the list head slot and the target page pointer.
+
+- [x] [patch] Sprint A: Add Linux `MADV_HUGEPAGE` hint in `UnixBackend::allocate` for segment-sized mappings; gate to `target_os = "linux"`; advisory failure ignored.
+- [x] [patch] Sprint A: Add `segment_sized_allocation_survives_hugepage_hint` and `sub_segment_allocation_skips_hugepage_hint` Linux-gated regression tests.
