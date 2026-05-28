@@ -217,3 +217,7 @@ Target version: 0.1.0
 - [x] [patch] Refresh threaded small and saturated small allocation rows after the current-segment local-free fast path.
 - [x] [minor] Add `LocalAllocatorSelector::with_allocator_guard` with a macro override that combines re-entrancy guard management and allocator access.
 - [x] [patch] Refresh threaded small and saturated small allocation rows after allocation guard TLS consolidation.
+- [x] [patch] Replace hot-path `size_to_class` arithmetic with a compile-time lookup table.
+- [x] [minor] Replace thread-local allocator `RefCell` access with guarded `UnsafeCell` access under the allocation flag.
+- [x] [patch] Add `target/criterion/benchmark_variance.csv` generation with relative mean confidence-interval width and threaded-row variance thresholds.
+- [x] [patch] Refresh allocator cycle, realloc, usable-size, and threaded rows after the size-class and TLS allocator-access optimizations.

@@ -111,3 +111,6 @@
 - Added a small-realloc size-class proof fast path so standard-policy realloc returns the same pointer without a `usable_size` metadata query when the old `Layout` already proves the existing small size class covers the new request.
 - Added a current-segment marker to segment metadata so same-thread frees on the active segment return blocks to the page free list without taking the allocator `RefCell` mutation path.
 - Added a combined allocator guard selector so small allocations clear the TLS re-entrancy guard inside the allocator access path instead of performing a separate TLS lookup.
+- Replaced the piecewise `size_to_class` hot-path arithmetic with a compile-time lookup table while preserving the zero-size mapping contract and existing boundary coverage.
+- Replaced thread-local allocator `RefCell` access with guarded `UnsafeCell` access under the existing per-thread allocation flag, removing dynamic borrow checks from allocator hot paths while keeping re-entrant access routed through existing fallback paths.
+- Added `benchmark_variance.csv` generation to `benchmark_summary`, recording Criterion mean confidence intervals, relative CI width, and unstable-row classification for variance-aware optimization decisions.

@@ -7,6 +7,7 @@ const CRITERION_ROOT: &str = "target/criterion";
 const SUMMARY_PATH: &str = "target/criterion/benchmark_summary.csv";
 const COMPARISON_PATH: &str = "target/criterion/benchmark_baseline_comparison.csv";
 const CURRENT_EXCERPT_PATH: &str = "target/criterion/allocator_current_excerpt.csv";
+const VARIANCE_PATH: &str = "target/criterion/benchmark_variance.csv";
 const METADATA_PATH: &str = "target/criterion/benchmark_metadata.json";
 const BASELINE_PATH: &str = "benchmarks/allocator_baseline_excerpt.csv";
 const REFRESH_BASELINE_FLAG: &str = "--refresh-baseline";
@@ -55,6 +56,7 @@ fn main() -> io::Result<()> {
     rows.sort_by(|a, b| a.benchmark.cmp(&b.benchmark));
 
     write_summary(SUMMARY_PATH, &rows)?;
+    write_variance_report(VARIANCE_PATH, &rows)?;
     let comparisons = compare_to_baseline(&previous_baseline, &rows);
     write_comparison(COMPARISON_PATH, &comparisons)?;
 
@@ -72,13 +74,14 @@ fn main() -> io::Result<()> {
     write_metadata_json(METADATA_PATH)?;
 
     println!(
-        "wrote {}, rows={}; wrote {}, rows={}; wrote {}, rows={}; baseline_refresh={}",
+        "wrote {}, rows={}; wrote {}, rows={}; wrote {}, rows={}; wrote {}; baseline_refresh={}",
         SUMMARY_PATH,
         rows.len(),
         COMPARISON_PATH,
         comparisons.len(),
         CURRENT_EXCERPT_PATH,
         current_excerpt_rows.len(),
+        VARIANCE_PATH,
         refresh_baseline
     );
 
@@ -289,6 +292,8 @@ struct SummaryRow<'a> {
     benchmark: std::borrow::Cow<'a, str>,
     mean_ns: f64,
     median_ns: f64,
+    mean_ci_lower_ns: Option<f64>,
+    mean_ci_upper_ns: Option<f64>,
 }
 
 struct ComparisonRow<'a> {
@@ -318,6 +323,8 @@ fn read_summary<'a>(contents: &'a str) -> io::Result<Vec<SummaryRow<'a>>> {
             benchmark: fields.0,
             mean_ns: fields.1,
             median_ns: fields.2,
+            mean_ci_lower_ns: None,
+            mean_ci_upper_ns: None,
         });
     }
 
@@ -394,6 +401,56 @@ fn write_summary(path: &str, rows: &[SummaryRow]) -> io::Result<()> {
         )?;
     }
     Ok(())
+}
+
+fn write_variance_report(path: &str, rows: &[SummaryRow]) -> io::Result<()> {
+    let mut output = File::create(path)?;
+    writeln!(
+        output,
+        "benchmark,mean_point_estimate_ns,mean_ci_lower_ns,mean_ci_upper_ns,mean_ci_relative_width,unstable"
+    )?;
+    for row in rows {
+        let (lower, upper, relative_width, unstable) =
+            match (row.mean_ci_lower_ns, row.mean_ci_upper_ns) {
+                (Some(lower), Some(upper)) if row.mean_ns > 0.0 => {
+                    let relative_width = (upper - lower) / row.mean_ns;
+                    (
+                        format!("{lower:.6}"),
+                        format!("{upper:.6}"),
+                        format!("{relative_width:.6}"),
+                        relative_width > variance_threshold(&row.benchmark),
+                    )
+                }
+                _ => (
+                    "N/A".to_string(),
+                    "N/A".to_string(),
+                    "N/A".to_string(),
+                    false,
+                ),
+            };
+        writeln!(
+            output,
+            "{},{:.6},{},{},{},{}",
+            escape_csv(&row.benchmark),
+            row.mean_ns,
+            lower,
+            upper,
+            relative_width,
+            unstable
+        )?;
+    }
+    Ok(())
+}
+
+fn variance_threshold(benchmark: &str) -> f64 {
+    if benchmark.starts_with("threaded small allocation cycles/")
+        || benchmark.starts_with("threaded saturated small allocation cycles/")
+        || benchmark.starts_with("cross-thread free handoff/")
+    {
+        0.25
+    } else {
+        0.15
+    }
 }
 
 fn compare_to_baseline<'a, 'b>(
@@ -474,6 +531,8 @@ fn parse_estimates(path: &Path) -> io::Result<Option<SummaryRow<'static>>> {
         Some(point) => point,
         None => return Ok(None),
     };
+    let mean_ci_lower_ns = estimate_ci_bound(&value, "mean", "lower_bound");
+    let mean_ci_upper_ns = estimate_ci_bound(&value, "mean", "upper_bound");
     let median_ns = match estimate_point(&value, "median") {
         Some(point) => point,
         None => return Ok(None),
@@ -483,11 +542,21 @@ fn parse_estimates(path: &Path) -> io::Result<Option<SummaryRow<'static>>> {
         benchmark: std::borrow::Cow::Owned(benchmark_name(path)),
         mean_ns,
         median_ns,
+        mean_ci_lower_ns,
+        mean_ci_upper_ns,
     }))
 }
 
 fn estimate_point(value: &Value, name: &str) -> Option<f64> {
     value.get(name)?.get("point_estimate")?.as_f64()
+}
+
+fn estimate_ci_bound(value: &Value, estimate: &str, bound: &str) -> Option<f64> {
+    value
+        .get(estimate)?
+        .get("confidence_interval")?
+        .get(bound)?
+        .as_f64()
 }
 
 fn benchmark_name(path: &Path) -> String {
@@ -533,11 +602,15 @@ mod tests {
             benchmark: std::borrow::Cow::Borrowed("allocator cycle latency/mnemosyne/small_32"),
             mean_ns: 10.0,
             median_ns: 20.0,
+            mean_ci_lower_ns: None,
+            mean_ci_upper_ns: None,
         }];
         let current = [SummaryRow {
             benchmark: std::borrow::Cow::Borrowed("allocator cycle latency/mnemosyne/small_32"),
             mean_ns: 15.0,
             median_ns: 10.0,
+            mean_ci_lower_ns: None,
+            mean_ci_upper_ns: None,
         }];
 
         let comparison = compare_to_baseline(&baseline, &current);
@@ -556,6 +629,18 @@ mod tests {
         assert_eq!(
             get_regression_threshold("threaded saturated small allocation cycles/mnemosyne"),
             1.25
+        );
+    }
+
+    #[test]
+    fn variance_threshold_is_wider_for_threaded_rows() {
+        assert_eq!(
+            variance_threshold("threaded saturated small allocation cycles/mnemosyne"),
+            0.25
+        );
+        assert_eq!(
+            variance_threshold("allocator cycle latency/mnemosyne/small_32"),
+            0.15
         );
     }
 }

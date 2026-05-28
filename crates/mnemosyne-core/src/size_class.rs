@@ -10,6 +10,33 @@ use crate::constants::{MAX_SMALL_ALLOC_SIZE, NUM_SIZE_CLASSES};
 /// and `is_valid_layout_alloc_request` both require `size != 0`), but the
 /// historical mapping is preserved so callers that pass an already-adjusted
 /// minimum size still resolve to the smallest class without an extra branch.
+const SIZE_TO_CLASS_LUT: [u8; MAX_SMALL_ALLOC_SIZE + 1] = {
+    let mut lut = [0u8; MAX_SMALL_ALLOC_SIZE + 1];
+    let mut i = 1;
+    while i <= MAX_SMALL_ALLOC_SIZE {
+        let class = if i <= 128 {
+            (i - 1) / 16
+        } else if i <= 512 {
+            ((i - 129) / 32) + 8
+        } else if i <= 2048 {
+            ((i - 513) / 128) + 20
+        } else {
+            ((i - 2049) / 512) + 32
+        };
+        lut[i] = class as u8;
+        i += 1;
+    }
+    lut
+};
+
+/// Maps an allocation size to its corresponding size class index.
+///
+/// Returns `None` if the size exceeds `MAX_SMALL_ALLOC_SIZE`. A size of `0`
+/// maps to class `0` because the production allocation entry points reject
+/// zero-size requests before reaching this function (`is_valid_alloc_request`
+/// and `is_valid_layout_alloc_request` both require `size != 0`), but the
+/// historical mapping is preserved so callers that pass an already-adjusted
+/// minimum size still resolve to the smallest class without an extra branch.
 #[inline(always)]
 pub const fn size_to_class(size: usize) -> Option<usize> {
     if size == 0 {
@@ -18,16 +45,7 @@ pub const fn size_to_class(size: usize) -> Option<usize> {
     if size > MAX_SMALL_ALLOC_SIZE {
         return None;
     }
-
-    if size <= 128 {
-        Some((size - 1) / 16)
-    } else if size <= 512 {
-        Some(((size - 129) / 32) + 8)
-    } else if size <= 2048 {
-        Some(((size - 513) / 128) + 20)
-    } else {
-        Some(((size - 2049) / 512) + 32)
-    }
+    Some(SIZE_TO_CLASS_LUT[size] as usize)
 }
 
 /// Maps a size class index to its maximum block size.
