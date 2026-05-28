@@ -1,0 +1,465 @@
+//! The Mnemosyne high-performance memory allocator global interface.
+
+#![no_std]
+
+use core::alloc::{GlobalAlloc, Layout};
+use mnemosyne_core::NUM_SIZE_CLASSES;
+use mnemosyne_local::{thread_alloc, thread_free, LocalAllocatorSelector};
+
+pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
+pub use mnemosyne_core::{AllocPolicy, SecurePolicy, StandardPolicy};
+pub use mnemosyne_local::SizeClassOccupancy;
+
+/// Snapshot of Mnemosyne memory mapping and segment cache state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryStats {
+    pub current_mapped_bytes: usize,
+    pub peak_mapped_bytes: usize,
+    pub map_calls: usize,
+    pub unmap_calls: usize,
+    pub retained_free_segments: usize,
+    pub max_retained_free_segments: usize,
+    pub retained_free_bytes: usize,
+    pub purged_segments: usize,
+    pub purge_calls: usize,
+    pub purged_bytes: usize,
+    pub current_thread_live_allocations: usize,
+    pub current_thread_owned_segments: usize,
+    pub cross_thread_reclaimed_blocks: usize,
+    pub page_refills: usize,
+    pub recycled_pages: usize,
+    pub fresh_pages: usize,
+    pub fresh_segments: usize,
+    pub orphan_segments_adopted: usize,
+    pub recycle_sweeps: usize,
+    pub size_class_occupancy: [SizeClassOccupancy; NUM_SIZE_CLASSES],
+}
+
+impl Default for MemoryStats {
+    fn default() -> Self {
+        Self {
+            current_mapped_bytes: 0,
+            peak_mapped_bytes: 0,
+            map_calls: 0,
+            unmap_calls: 0,
+            retained_free_segments: 0,
+            max_retained_free_segments: 0,
+            retained_free_bytes: 0,
+            purged_segments: 0,
+            purge_calls: 0,
+            purged_bytes: 0,
+            current_thread_live_allocations: 0,
+            current_thread_owned_segments: 0,
+            cross_thread_reclaimed_blocks: 0,
+            page_refills: 0,
+            recycled_pages: 0,
+            fresh_pages: 0,
+            fresh_segments: 0,
+            orphan_segments_adopted: 0,
+            recycle_sweeps: 0,
+            size_class_occupancy: [SizeClassOccupancy::default(); NUM_SIZE_CLASSES],
+        }
+    }
+}
+
+/// Returns current Mnemosyne allocator memory counters for a specific backend.
+pub fn memory_stats_generic<B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>>(
+) -> MemoryStats {
+    let backend = mnemosyne_backend::backend_memory_stats();
+    let arena = mnemosyne_arena::arena_memory_stats::<B>();
+    let local = mnemosyne_local::thread_allocator_stats::<B>();
+    MemoryStats {
+        current_mapped_bytes: backend.current_mapped_bytes,
+        peak_mapped_bytes: backend.peak_mapped_bytes,
+        map_calls: backend.map_calls,
+        unmap_calls: backend.unmap_calls,
+        retained_free_segments: arena.retained_free_segments,
+        max_retained_free_segments: arena.max_retained_free_segments,
+        retained_free_bytes: arena.retained_free_bytes,
+        purged_segments: arena.purged_segments,
+        purge_calls: arena.purge_calls,
+        purged_bytes: arena.purged_bytes,
+        current_thread_live_allocations: local.current_thread_live_allocations,
+        current_thread_owned_segments: local.current_thread_owned_segments,
+        cross_thread_reclaimed_blocks: local.cross_thread_reclaimed_blocks,
+        page_refills: local.page_refills,
+        recycled_pages: local.recycled_pages,
+        fresh_pages: local.fresh_pages,
+        fresh_segments: local.fresh_segments,
+        orphan_segments_adopted: local.orphan_segments_adopted,
+        recycle_sweeps: local.recycle_sweeps,
+        size_class_occupancy: local.size_class_occupancy,
+    }
+}
+
+/// Returns current Mnemosyne allocator memory counters.
+pub fn memory_stats() -> MemoryStats {
+    memory_stats_generic::<mnemosyne_backend::MemoryBackendWrapper>()
+}
+
+/// Purges the global segment pool for a specific backend, releasing all retained/cached segments back to the OS.
+pub fn purge_generic<B: mnemosyne_arena::HasSegmentPool>() {
+    // Safety: Purging the segment pool releases only free segments that are
+    // no longer actively referenced by any thread allocator cache.
+    unsafe {
+        mnemosyne_arena::purge_segment_pool::<B>();
+    }
+}
+
+/// Purges the global segment pool, releasing all retained/cached segments back to the OS.
+pub fn purge() {
+    purge_generic::<mnemosyne_backend::MemoryBackendWrapper>();
+}
+
+/// The Mnemosyne global allocator structure.
+///
+/// Implements `core::alloc::GlobalAlloc` and routes allocations to the
+/// thread-local cache or global arena.
+pub struct Mnemosyne;
+
+unsafe impl GlobalAlloc for Mnemosyne {
+    // Safety: thread_alloc handles alignment constraints, size validation, and
+    // OS mapping, returning null on failure or a valid memory block pointer on success.
+    #[inline(always)]
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if layout.size() == 0 {
+            return core::ptr::null_mut();
+        }
+        // Safety: thread_alloc is safe because the size and alignment are derived
+        // from a valid Layout, and the returned pointer is verified or null.
+        unsafe {
+            thread_alloc::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
+                layout.size(),
+                layout.align(),
+            )
+        }
+    }
+
+    // Safety: The ptr must be valid and previously returned by alloc.
+    // thread_free determines the owner segment/page and returns blocks safely.
+    #[inline(always)]
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        // Safety: thread_free is safe because ptr is guaranteed by the GlobalAlloc
+        // contract to be a valid pointer allocated by this allocator.
+        unsafe { thread_free::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(ptr) }
+    }
+}
+
+/// Generic global allocator that is parameterized by an allocation policy `P` and a memory backend `B`.
+///
+/// This permits zero-cost compile-time configuration of allocator behaviors
+/// (e.g. `SecurePolicy` for memory zeroing and poisoning) and backends (e.g. `CudaUnifiedBackend`).
+pub struct MnemosyneAllocator<
+    P: AllocPolicy,
+    B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B> = mnemosyne_backend::MemoryBackendWrapper,
+>(core::marker::PhantomData<(P, B)>);
+
+impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>>
+    MnemosyneAllocator<P, B>
+{
+    /// Creates a new `MnemosyneAllocator` with the specified policy and backend.
+    pub const fn new() -> Self {
+        Self(core::marker::PhantomData)
+    }
+}
+
+impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>> Default
+    for MnemosyneAllocator<P, B>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>>
+    GlobalAlloc for MnemosyneAllocator<P, B>
+{
+    // Safety: thread_alloc handles alignment constraints, size validation, and
+    // OS mapping, returning null on failure or a valid memory block pointer on success.
+    #[inline(always)]
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if layout.size() == 0 {
+            return core::ptr::null_mut();
+        }
+        // Safety: thread_alloc is safe because size and alignment are derived
+        // from a valid Layout, and the returned pointer is verified or null.
+        unsafe { thread_alloc::<P, B>(layout.size(), layout.align()) }
+    }
+
+    // Safety: The ptr must be valid and previously returned by alloc.
+    // thread_free determines the owner segment/page and returns blocks safely.
+    #[inline(always)]
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        // Safety: thread_free is safe because ptr is guaranteed by the GlobalAlloc
+        // contract to be a valid pointer allocated by this allocator.
+        unsafe { thread_free::<P, B>(ptr) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+    use std::thread;
+
+    #[global_allocator]
+    static ALLOCATOR: Mnemosyne = Mnemosyne;
+
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_basic_allocation() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let x = std::boxed::Box::new(42);
+        assert_eq!(*x, 42);
+        drop(x);
+    }
+
+    #[test]
+    fn test_multithreaded_allocation() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let mut handles = std::vec::Vec::new();
+        for _ in 0..10 {
+            handles.push(thread::spawn(|| {
+                for _ in 0..100 {
+                    let mut v = std::vec::Vec::new();
+                    for i in 0..100 {
+                        v.push(i);
+                    }
+                    assert_eq!(v[50], 50);
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_overflow_protection() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        // 1. Direct call to thread_alloc with size that triggers overflow
+        let ptr1 = unsafe {
+            mnemosyne_local::thread_alloc::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
+                usize::MAX - 8,
+                8,
+            )
+        };
+        assert!(
+            ptr1.is_null(),
+            "Allocation should fail and return null on overflow"
+        );
+
+        // 2. Request a layout of isize::MAX (largest valid layout size) which will fail OS allocation
+        let layout = Layout::from_size_align(isize::MAX as usize - 7, 8).unwrap();
+        let ptr2 = unsafe { ALLOCATOR.alloc(layout) };
+        assert!(
+            ptr2.is_null(),
+            "OS allocation should fail and return null for isize::MAX"
+        );
+    }
+
+    #[test]
+    fn test_zero_size_allocation_returns_null() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let layout = Layout::from_size_align(0, 8).unwrap();
+
+        let ptr = unsafe { ALLOCATOR.alloc(layout) };
+        assert!(ptr.is_null());
+
+        let allocator = MnemosyneAllocator::<StandardPolicy>::new();
+        let generic_ptr = unsafe { allocator.alloc(layout) };
+        assert!(generic_ptr.is_null());
+    }
+
+    #[test]
+    fn test_segment_reclamation() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        // Allocate and deallocate large blocks multiple times
+        // If segments are not reclaimed/reused, this would exhaust virtual address space or leak memory.
+        for _ in 0..20 {
+            let mut allocations = std::vec::Vec::new();
+            for _ in 0..10 {
+                // Allocate 1MB blocks (large allocations)
+                let layout = Layout::from_size_align(1024 * 1024, 8).unwrap();
+                let ptr = unsafe { ALLOCATOR.alloc(layout) };
+                assert!(!ptr.is_null());
+                allocations.push((ptr, layout));
+            }
+            for (ptr, layout) in allocations {
+                unsafe { ALLOCATOR.dealloc(ptr, layout) };
+            }
+        }
+    }
+
+    #[test]
+    fn test_memory_stats_retention_bound() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        const SIZES: [usize; 40] = [
+            8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 160, 192, 224, 256,
+            288, 320, 352, 384, 416, 448, 480, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536,
+            1664, 1792, 1920, 2048,
+        ];
+        let empty_layout = Layout::from_size_align(8, 8).unwrap();
+        let mut allocations = [(core::ptr::null_mut(), empty_layout); SIZES.len()];
+        let baseline_live_allocations = memory_stats().current_thread_live_allocations;
+
+        for (index, size) in SIZES.into_iter().enumerate() {
+            let layout = Layout::from_size_align(size, 8).unwrap();
+            let ptr = unsafe { ALLOCATOR.alloc(layout) };
+            assert!(!ptr.is_null());
+            allocations[index] = (ptr, layout);
+        }
+
+        assert!(
+            memory_stats().current_thread_live_allocations
+                >= baseline_live_allocations + SIZES.len()
+        );
+
+        for (ptr, layout) in allocations {
+            unsafe { ALLOCATOR.dealloc(ptr, layout) };
+        }
+
+        let stats = memory_stats();
+        assert!(stats.current_mapped_bytes <= stats.peak_mapped_bytes);
+        assert!(stats.retained_free_segments <= stats.max_retained_free_segments);
+        assert_eq!(
+            stats.current_thread_live_allocations,
+            baseline_live_allocations
+        );
+        assert!(stats
+            .size_class_occupancy
+            .iter()
+            .any(|occupancy| occupancy.active_pages > 0));
+    }
+
+    #[test]
+    fn test_purge() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        // Clear any existing segments in the pool.
+        purge();
+
+        let segment = unsafe {
+            mnemosyne_arena::allocate_segment::<mnemosyne_backend::MemoryBackendWrapper>()
+                .expect("segment allocation must succeed")
+        };
+        unsafe {
+            mnemosyne_arena::deallocate_segment::<mnemosyne_backend::MemoryBackendWrapper>(segment);
+        }
+
+        // The segment is now in the global segment pool.
+        let stats_before = memory_stats();
+        assert!(
+            stats_before.retained_free_segments > 0,
+            "Expected at least one segment to be retained in the pool"
+        );
+
+        purge();
+
+        let stats_after = memory_stats();
+        assert_eq!(
+            stats_after.retained_free_segments, 0,
+            "Expected zero segments to be retained in the pool after purge"
+        );
+        assert!(
+            stats_after.purged_segments > stats_before.purged_segments,
+            "Expected purged_segments count to increase"
+        );
+        assert!(
+            stats_after.purge_calls > stats_before.purge_calls,
+            "Expected purge_calls count to increase"
+        );
+        assert!(
+            stats_after.purged_bytes > stats_before.purged_bytes,
+            "Expected purged_bytes count to increase"
+        );
+    }
+
+    #[test]
+    fn test_large_alignment() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let alignments = [32 * 1024, 64 * 1024, 128 * 1024, 2 * 1024 * 1024];
+        for align in alignments {
+            let layout = Layout::from_size_align(4096, align).unwrap();
+            let ptr = unsafe { ALLOCATOR.alloc(layout) };
+            assert!(!ptr.is_null(), "Allocation failed for alignment {}", align);
+            assert_eq!(
+                ptr as usize % align,
+                0,
+                "Pointer {:?} is not aligned to {}",
+                ptr,
+                align
+            );
+            // Verify writing and reading to make sure alignment bounds check out.
+            unsafe {
+                ptr.write(0xAA);
+                assert_eq!(ptr.read(), 0xAA);
+                ptr.add(4095).write(0x55);
+                assert_eq!(ptr.add(4095).read(), 0x55);
+            }
+            unsafe { ALLOCATOR.dealloc(ptr, layout) };
+        }
+    }
+
+    #[test]
+    fn test_secure_policy() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let allocator = MnemosyneAllocator::<SecurePolicy>::new();
+        let layout = Layout::from_size_align(128, 8).unwrap();
+
+        // 1. Test zero-initialization
+        let ptr = unsafe { allocator.alloc(layout) };
+        assert!(!ptr.is_null());
+
+        // Verify that the memory is indeed zero-initialized
+        let slice = unsafe { core::slice::from_raw_parts(ptr, 128) };
+        for &byte in slice {
+            assert_eq!(byte, 0, "Byte was not zero-initialized");
+        }
+
+        // 2. Test memory poisoning on deallocation.
+        // We write some sentinel values before freeing to ensure it's overwritten by poison bytes.
+        unsafe {
+            core::ptr::write_bytes(ptr, 0x41, 128);
+        }
+
+        unsafe { allocator.dealloc(ptr, layout) };
+
+        // Safety: Under standard execution, accessing freed memory is undefined behavior.
+        // However, in this controlled integration test, we verify that the poisoning logic
+        // has overwritten the memory. The segment cache retains pages so the memory
+        // remains mapped and readable for testing.
+        let skip_bytes =
+            core::mem::size_of::<Option<core::ptr::NonNull<mnemosyne_core::types::Block>>>();
+        for i in skip_bytes..128 {
+            let val = unsafe { ptr.add(i).read() };
+            assert_eq!(
+                val, 0xDE,
+                "Byte at index {} was not poisoned (got 0x{:02X}, expected 0xDE)",
+                i, val
+            );
+        }
+    }
+
+    #[test]
+    fn test_cuda_unified_backend() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let allocator = MnemosyneAllocator::<StandardPolicy, CudaUnifiedBackend>::new();
+        let layout = Layout::from_size_align(128, 8).unwrap();
+        let ptr = unsafe { allocator.alloc(layout) };
+        assert!(!ptr.is_null());
+
+        unsafe {
+            ptr.write(42);
+            assert_eq!(ptr.read(), 42);
+            allocator.dealloc(ptr, layout);
+        }
+
+        // Verify statistics generic query works for CUDA backend
+        let stats = memory_stats_generic::<CudaUnifiedBackend>();
+        assert_eq!(stats.current_thread_live_allocations, 0);
+
+        // Verify is_cuda_available is callable
+        let _ = is_cuda_available();
+    }
+}

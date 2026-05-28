@@ -1,0 +1,70 @@
+# Changelog
+
+## 0.1.0
+
+### Fixed
+
+- Retained the active thread-local segment during local frees to avoid immediate segment recycling on hot allocate/free cycles.
+- Fixed Unix backend constant typing so formatting can parse every target module.
+- Bounded the global free segment cache and released excess empty segment mappings to the OS.
+- Avoided segment-reclaim calls on hot local frees for the current thread-local segment.
+
+### Changed
+
+- Expanded allocator benchmarks to compare Mnemosyne, mimalloc, and snmalloc across cycle latency, burst retention, and threaded small-allocation cycles.
+- Added cross-thread free handoff benchmarks for Mnemosyne, mimalloc, and snmalloc.
+- Added Mnemosyne memory telemetry for backend mappings and retained arena segments.
+- Added current-thread live allocation, current-thread owned segment, and cross-thread reclaimed block telemetry.
+- Added a release-mode `memory_report` CSV command for telemetry inspection.
+- Replaced cross-thread free benchmark thread creation with persistent bounded-channel workers.
+- Added per-size-class occupancy telemetry and report rows.
+- Replaced threaded allocation benchmark thread creation with persistent bounded-channel workers.
+- Added deterministic segment-cache eviction benchmark coverage and an `eviction_after` memory report row.
+- Added arena purge telemetry for purged segment count, purge call count, and purged bytes.
+- Added a `benchmark_summary` release command that extracts compact Criterion mean/median CSV rows.
+- Added a `purge_after` memory report row proving retained segment cache purge behavior.
+- Added a source-controlled selected Mnemosyne benchmark baseline excerpt.
+- Added benchmark baseline metadata for platform, toolchain, and benchmark commands.
+- Added current-to-baseline benchmark comparison CSV generation for selected Mnemosyne rows.
+- Fixed `thread_free` segment metadata scope so small-allocation page-owner logic compiles after classification.
+- Added value-semantic tests for benchmark summary CSV parsing and ratio computation.
+- Fixed the memory retention-bound test assertion syntax.
+- Stabilized the page-recycling test by asserting segment reuse and target size-class metadata.
+- Changed `benchmark_summary` so source-controlled baseline refresh requires `--refresh-baseline`.
+- Routed cross-thread small frees through page-local atomic free lists.
+- Removed duplicate small-free segment metadata derivation.
+- Preserved the hot local allocation path by batch-reclaiming page-local remote frees after local free blocks are exhausted.
+- Centralized page-local cross-thread free reclamation in an inlined `Page::reclaim_thread_free` method.
+- Added direct value-semantic tests for page-local remote-free reclamation.
+- Bound global allocator routing to the zero-sized `StandardPolicy` allocation policy.
+- Removed the panic-bearing `align_up` API and retained `checked_align_up` as the production alignment contract.
+- Replaced hot-path `expect`/`unwrap` calls in `ThreadAllocator::alloc`, `alloc_cold`, `get_new_page`, and `try_recycle_page` with `debug_assert!` plus `core::hint::unreachable_unchecked` for verified structural invariants.
+- Dropped the stale `align_up` re-export from `mnemosyne-arena::lib` to restore a clean workspace build.
+- Changed benchmark threshold gating so quick-mode summary extraction fails only when `--enforce-thresholds` is passed.
+- Moved generated benchmark metadata to `target/criterion/benchmark_metadata.json`.
+- Stabilized page-recycling test assertions under reusable segment state.
+- Removed benchmark-summary test-build dead-code warning for the metadata output path.
+- Centralized allocation initialization and free poisoning through inlined `AllocPolicy` helper functions so standard and secure policy routes remain monomorphized while avoiding duplicated unsafe write blocks.
+- Serialized allocator integration tests that mutate global segment-pool state so purge telemetry assertions remain deterministic under the default parallel test harness.
+- Replaced raw segment owner pointers with a transparent `SegmentOwner` permission token, separating ownership identity from segment metadata while preserving pointer-sized layout and comparison cost.
+- Removed the allocator-level incoming free queue and routed re-entrant local frees through the existing page-local atomic queue, reducing `ThreadAllocator` state and eliminating the remaining owner-token cast.
+- Added value-semantic coverage proving re-entrant local frees enqueue to the page-local atomic queue and reclaim back into the page free list.
+- Completed backend-specific segment-pool typing through `HasSegmentPool`, including backend-typed arena telemetry and benchmark call sites.
+- Added a saturated threaded small-allocation benchmark group that keeps the same worker topology while increasing per-command allocation work to isolate allocator throughput from bounded-channel coordination overhead.
+- Fixed backend-specific `LocalAllocatorSelector` generation so each backend implementation owns distinct thread-local allocator and re-entrancy state.
+- Added page-refill telemetry and deferred owned-segment recycle sweeps until the current segment has no unsliced pages, reducing unnecessary cold-path scans during fresh page refills.
+- Replaced the scheduler-sensitive historical threaded baseline gate with the saturated threaded benchmark row while keeping the historical row in allocator comparison reports.
+- Replaced benchmark-runner panic assertions and unwrap/expect calls with explicit benchmark failure diagnostics.
+- Documented safety contracts for benchmark unsafe operations and allocator policy byte-initialization helpers.
+- Made CUDA unified-memory dynamic initialization race-free with a three-state gate, bounded registry tests, and host fallback when registry capacity is exhausted.
+- Updated README architecture notes for page-local remote-free routing and CUDA fallback semantics.
+- Replaced backend peak-mapping telemetry compare-exchange loop with `fetch_max`, documented relaxed counter semantics, and added value-semantic telemetry tests.
+- Changed `MemoryBackend::deallocate` to return a release-success boolean; `MemoryBackendWrapper` now defers `current_mapped_bytes` decrements to confirmed OS release and routes failures through a `record_unmap_failure` path that only increments the call counter. Propagated through unix, windows, CUDA, and the `mnemosyne-local` test backend.
+- Changed arena purge accounting to count only confirmed backend releases and retain unreleased segments in the pool when release fails.
+- Marked `MemoryBackend::deallocate` as `#[must_use]`, propagated huge-allocation release status through `deallocate_large_or_huge`, and retained full-pool segment mappings when direct backend release fails.
+- Documented the huge-allocation user-pointer/metadata-slot layout derivation, validated power-of-two alignments before backend allocation, added `debug_assert!` checks for pointer alignment, reserved-prefix containment, and payload mapping bounds, and pinned the contract with alignment-grid and invalid-alignment tests.
+- Rejected huge allocation alignments above `SEGMENT_SIZE` to preserve zero-copy free classification by segment rounding or metadata-slot lookup without adding a side registry.
+- Rejected invalid direct `thread_alloc` alignments before size-class or arena routing, and made `allocate_large_or_huge` reject zero alignment.
+- Rejected zero-size allocation requests at global, local, and arena allocation entry points.
+- Documented the small-free classifier invariant in `thread_free` and added `debug_assert!` checks for `page_index < PAGES_PER_SEGMENT`, `page.block_size > 0`, and block-stride aligned offset; pinned the contract with `small_alloc_returns_block_aligned_ptr_outside_metadata_page` across 8 B–1 KiB requests.
+- Added `MAX_ALLOC_SIZE` and rejected direct allocation requests whose payload or backend mapping requirement exceeds the pointer-offset-safe allocation bound.

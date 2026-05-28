@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/mnemosyne-core",
+    "crates/mnemosyne-backend",
+    "crates/mnemosyne-arena",
+    "crates/mnemosyne-local",
+    "crates/mnemosyne",
+    "crates/mnemosyne-benchmarks",
+]
+

@@ -1,0 +1,9 @@
+[package]
+name = "mnemosyne-local"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mnemosyne-core = { path = "../mnemosyne-core" }
+mnemosyne-backend = { path = "../mnemosyne-backend" }
+mnemosyne-arena = { path = "../mnemosyne-arena" }

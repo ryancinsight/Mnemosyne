@@ -1,0 +1,19 @@
+/target/
+
+# Rust build metadata
+**/*.rs.bk
+
+# Editor and OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local environment and diagnostic output
+.env
+.env.*
+*.log
+*.tmp
+*.bak
+*.old
+*.orig
+*.rej
