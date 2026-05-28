@@ -210,6 +210,50 @@ impl Segment {
             }
         }
     }
+
+    /// Returns the byte distance from `user_ptr` to the end of the OS-side
+    /// mapping for a huge allocation owned by this segment header.
+    ///
+    /// The mapping starts at `self.raw_alloc_ptr` and has length
+    /// `self.pages[0].block_size` (set to `total_alloc_size` by
+    /// `allocate_large_or_huge`). Callers that need the usable suffix of a
+    /// huge allocation — `usable_size`, the `SecurePolicy` poisoning
+    /// sizing, any future bounds-aware huge-alloc accessor — must use
+    /// this helper instead of computing `(self as usize) + block_size -
+    /// user_ptr`, because the segment header sits at `aligned_addr =
+    /// align_up(raw_alloc_ptr, SEGMENT_ALIGN)`, which can be up to
+    /// `SEGMENT_ALIGN - 1` bytes past `raw_alloc_ptr`. Using the
+    /// segment header as the base would over-report by exactly that
+    /// offset and walk callers past the OS mapping boundary.
+    ///
+    /// # Safety
+    ///
+    /// `self` must be a segment header initialized by `Segment::initialize`
+    /// for a *huge* allocation (`pages[0].block_size > 0`). `user_ptr`
+    /// must lie within `[raw_alloc_ptr, raw_alloc_ptr + block_size)`.
+    #[inline]
+    pub unsafe fn huge_mapping_suffix_from(&self, user_ptr: *const u8) -> usize {
+        let huge_size = self.pages[0].block_size;
+        debug_assert!(
+            huge_size > 0,
+            "huge_mapping_suffix_from called on a segment whose pages[0].block_size is zero"
+        );
+        let raw_ptr_addr = self.raw_alloc_ptr as usize;
+        debug_assert!(
+            user_ptr as usize >= raw_ptr_addr,
+            "user_ptr {:p} precedes raw_alloc_ptr {:p}",
+            user_ptr,
+            self.raw_alloc_ptr
+        );
+        debug_assert!(
+            user_ptr as usize <= raw_ptr_addr + huge_size,
+            "user_ptr {:p} past mapping end (raw_alloc_ptr {:p}, size {})",
+            user_ptr,
+            self.raw_alloc_ptr,
+            huge_size
+        );
+        (raw_ptr_addr + huge_size) - user_ptr as usize
+    }
 }
 
 #[cfg(test)]
@@ -256,6 +300,25 @@ mod tests {
         assert!(
             page.thread_free.is_empty(),
             "thread_free list was not empty after reclaim"
+        );
+    }
+
+    #[test]
+    fn huge_mapping_suffix_uses_raw_mapping_base() {
+        let mut segment_storage = [0u8; core::mem::size_of::<Segment>()];
+        let segment = segment_storage.as_mut_ptr().cast::<Segment>();
+        let raw = 0x1000usize as *mut u8;
+        unsafe {
+            Segment::initialize(segment, raw);
+            (*segment).pages[0].block_size = 0x4000;
+        }
+
+        let user_ptr = 0x2800usize as *const u8;
+        let suffix = unsafe { (*segment).huge_mapping_suffix_from(user_ptr) };
+
+        assert_eq!(
+            suffix, 0x2800,
+            "huge usable suffix must be raw_alloc_ptr + block_size - user_ptr"
         );
     }
 }

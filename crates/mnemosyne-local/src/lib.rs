@@ -158,16 +158,10 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
     if (ptr as usize) & (SEGMENT_SIZE - 1) == 0 {
         // Safety: large/huge allocations store the segment pointer in
         // the metadata slot immediately preceding the user pointer.
+        // The helper computes the suffix from the OS mapping base
+        // (`raw_alloc_ptr`), not from the aligned segment header.
         let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-        let huge_size = unsafe { (*segment).pages[0].block_size };
-        // The usable suffix runs from the user pointer to the end of
-        // the OS-side mapping, which begins at `raw_alloc_ptr` (NOT at
-        // the aligned segment header — the arena rounds raw_alloc_ptr
-        // up to SEGMENT_ALIGN, so segment_ptr can sit up to
-        // SEGMENT_ALIGN-1 bytes past raw_alloc_ptr, and using
-        // segment_ptr as the base over-reports by that offset).
-        let raw_ptr = unsafe { (*segment).raw_alloc_ptr };
-        return (raw_ptr as usize + huge_size) - ptr as usize;
+        return unsafe { (*segment).huge_mapping_suffix_from(ptr) };
     }
 
     let segment_addr = (ptr as usize) & !(SEGMENT_SIZE - 1);
@@ -193,13 +187,9 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
 
     // Safety: non-segment-aligned large/huge allocations store the segment
     // pointer in the metadata slot immediately preceding the user pointer.
-    // The mapping base is `raw_alloc_ptr`, not the aligned segment header
-    // (see the segment-aligned branch above for the over-report
-    // derivation).
+    // The helper centralizes the OS-mapping-base derivation.
     let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-    let huge_size = unsafe { (*segment).pages[0].block_size };
-    let raw_ptr = unsafe { (*segment).raw_alloc_ptr };
-    (raw_ptr as usize + huge_size) - ptr as usize
+    unsafe { (*segment).huge_mapping_suffix_from(ptr) }
 }
 
 /// Returns a statistics snapshot for the current thread allocator.
@@ -320,9 +310,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
             // bytes past the mapping end and would write across the OS
             // boundary.
             let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-            let huge_size = unsafe { (*segment).pages[0].block_size };
-            let raw_ptr = unsafe { (*segment).raw_alloc_ptr };
-            let size = (raw_ptr as usize + huge_size) - ptr as usize;
+            let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
             unsafe { poison_freed_bytes::<P>(ptr, size) };
         }
         // Safety: ptr was returned by a large/huge allocation, so the segment header pointer
@@ -366,9 +354,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
             // write `aligned_addr - raw_alloc_ptr` bytes past the OS
             // mapping boundary.
             let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-            let huge_size = unsafe { (*segment).pages[0].block_size };
-            let raw_ptr = unsafe { (*segment).raw_alloc_ptr };
-            let size = (raw_ptr as usize + huge_size) - ptr as usize;
+            let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
             unsafe { poison_freed_bytes::<P>(ptr, size) };
         }
         // Safety: non-small allocations keep the owning segment in the

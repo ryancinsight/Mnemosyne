@@ -225,3 +225,7 @@ Target version: 0.1.0
 - [x] [patch] Fix `usable_size` over-report for huge allocations: use `segment.raw_alloc_ptr + huge_size` as the mapping end instead of `segment_ptr + huge_size` (which sits up to `SEGMENT_ALIGN - 1` bytes past the OS mapping boundary).
 - [x] [patch] Fix the equivalent over-report in `thread_free`'s `SecurePolicy` poisoning sizing on both the segment-aligned and the fallback huge-allocation paths.
 - [x] [patch] Add `usable_size_does_not_over_report_past_mapping_end_for_huge_allocations` strict assertion test.
+
+- [x] [patch] Extract `Segment::huge_mapping_suffix_from(user_ptr) -> usize` helper centralizing the `raw_alloc_ptr + huge_size - ptr` derivation.
+- [x] [patch] Replace the four duplicated formula sites (`usable_size` segment-aligned and fallback; `thread_free` `SecurePolicy` poison on both branches) with the helper.
+- [x] [patch] Pin the helper contract with debug assertions for `huge_size > 0` and `user_ptr ∈ [raw_alloc_ptr, raw_alloc_ptr + huge_size]`.
