@@ -37,6 +37,15 @@ baseline only after an intentional threshold-policy decision.
   allocation latency while cleanup returns blocks to each allocator; the
   summary includes `allocator allocation latency/` rows, but the threshold
   baseline remains unchanged.
+- System allocator comparator rows now cover portable allocation,
+  allocation/deallocation cycle, burst, realloc, cross-thread handoff, and
+  saturated threaded groups. Portable usable-size rows remain `N/A` because
+  `std::alloc::System` exposes no stable usable-size API.
+- The small-free classifier reads the target page's `block_size` before the
+  huge-allocation metadata fallback, and local-free owner checks derive the
+  current allocator token from the existing TLS access. This removes duplicate
+  metadata/TLS work from the deallocation hot path without changing the
+  re-entrant page-queue contract.
 
 ## 2026-05-28
 
@@ -56,10 +65,10 @@ baseline only after an intentional threshold-policy decision.
 The benchmark harness uses an explicit bounded Criterion smoke configuration
 (`sample_size = 10`, `warm_up_time = 100 ms`, `measurement_time = 500 ms`)
 for local optimization work.
-The comparator set includes Mnemosyne, mimalloc, snmalloc, and jemalloc where
-the target supports `tikv-jemallocator`. On this Windows GNU run, jemalloc rows
-are emitted as `N/A` because the native static jemalloc library does not link
-on the current target.
+The comparator set includes Mnemosyne, the system allocator, mimalloc,
+snmalloc, and jemalloc where the target supports `tikv-jemallocator`. On this
+Windows GNU run, jemalloc rows are emitted as `N/A` because the native static
+jemalloc library does not link on the current target.
 The comparison report records current-to-baseline mean and median ratios for selected Mnemosyne rows.
 The summary command does not mutate the source-controlled baseline unless `--refresh-baseline` is provided.
 Default summary runs report threshold ratios without failing the command. Threshold enforcement is explicit with `--enforce-thresholds`; the selected gate currently applies per-row thresholds to small/medium/large Mnemosyne cycle latency, small burst retention, small cross-thread handoff, saturated threaded cycles, and segment cache eviction.
@@ -69,4 +78,4 @@ The memory report includes page-reset, guard-install, retained-pool reset, page-
 The current usable-size comparison measured Mnemosyne at `16.077 ns` for 32-byte cycles and `15.593 ns` for 1024-byte cycles on this Windows GNU target.
 The current realloc comparison measured Mnemosyne at `13.831 ns` for within-class `24 -> 32` cycles and `36.456 ns` for cross-class `32 -> 64` cycles on this Windows GNU target.
 The current isolated usable-size query comparison measured Mnemosyne at `0.411 ns` for 32-byte pointers and `0.383 ns` for 1024-byte pointers on this Windows GNU target.
-The current allocation-only comparison measured Mnemosyne at `13.673 ns` for 32-byte allocations and `27.809 ns` for 1024-byte allocations on this Windows GNU target.
+The current allocation-only comparison measured Mnemosyne at `18.224 ns` for 32-byte allocations and `24.992 ns` for 1024-byte allocations on this Windows GNU target, versus System at `36.162 ns` and `105.018 ns`.

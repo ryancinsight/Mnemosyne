@@ -2,6 +2,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
+use std::alloc::System;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::thread;
 use std::time::Duration;
@@ -446,6 +447,10 @@ fn bench_allocator_cycles(c: &mut Criterion) {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { alloc_dealloc(&mnemosyne::Mnemosyne, *layout) })
         });
+        group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
+            // Safety: `layout` comes from the static valid benchmark layout table.
+            b.iter(|| unsafe { alloc_dealloc(&System, *layout) })
+        });
         group.bench_with_input(BenchmarkId::new("MiMalloc", name), &layout, |b, layout| {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { alloc_dealloc(&mimalloc::MiMalloc, *layout) })
@@ -473,6 +478,13 @@ fn bench_allocator_alloc(c: &mut Criterion) {
             b.iter_batched(
                 || (),
                 |_| unsafe { AllocatedBlock::new(&mnemosyne::Mnemosyne, *layout, "alloc_only") },
+                BatchSize::SmallInput,
+            )
+        });
+        group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
+            b.iter_batched(
+                || (),
+                |_| unsafe { AllocatedBlock::new(&System, *layout, "alloc_only") },
                 BatchSize::SmallInput,
             )
         });
@@ -517,6 +529,10 @@ fn bench_allocator_bursts(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { burst_alloc_dealloc(&mnemosyne::Mnemosyne, *layout) })
+        });
+        group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
+            // Safety: `layout` comes from the static valid benchmark layout table.
+            b.iter(|| unsafe { burst_alloc_dealloc(&System, *layout) })
         });
         group.bench_with_input(BenchmarkId::new("MiMalloc", name), &layout, |b, layout| {
             // Safety: `layout` comes from the static valid benchmark layout table.
@@ -670,6 +686,14 @@ fn bench_realloc(c: &mut Criterion) {
             },
         );
         group.bench_with_input(
+            BenchmarkId::new("System", name),
+            &(layout, new_size),
+            |b, (layout, new_size)| {
+                // Safety: inputs come from the static valid benchmark layout table.
+                b.iter(|| unsafe { alloc_realloc_dealloc(&System, *layout, *new_size) })
+            },
+        );
+        group.bench_with_input(
             BenchmarkId::new("MiMalloc", name),
             &(layout, new_size),
             |b, (layout, new_size)| {
@@ -706,6 +730,7 @@ fn bench_realloc(c: &mut Criterion) {
 
 fn bench_cross_thread_free(c: &mut Criterion) {
     static MNEMOSYNE: mnemosyne::Mnemosyne = mnemosyne::Mnemosyne;
+    static SYSTEM: System = System;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
     #[cfg(not(windows))]
@@ -719,6 +744,12 @@ fn bench_cross_thread_free(c: &mut Criterion) {
             b.iter(|| mnemosyne_worker.alloc_then_handoff(*layout))
         });
         drop(mnemosyne_worker);
+
+        let system_worker = HandoffWorker::new(&SYSTEM);
+        group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
+            b.iter(|| system_worker.alloc_then_handoff(*layout))
+        });
+        drop(system_worker);
 
         let mimalloc_worker = HandoffWorker::new(&MIMALLOC);
         group.bench_with_input(BenchmarkId::new("MiMalloc", name), &layout, |b, layout| {
@@ -755,6 +786,7 @@ fn bench_cross_thread_free(c: &mut Criterion) {
 
 fn bench_multithreaded_alloc(c: &mut Criterion) {
     static MNEMOSYNE: mnemosyne::Mnemosyne = mnemosyne::Mnemosyne;
+    static SYSTEM: System = System;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
     #[cfg(not(windows))]
@@ -766,6 +798,10 @@ fn bench_multithreaded_alloc(c: &mut Criterion) {
     let mnemosyne_workers = ThreadCycleWorkers::new(&MNEMOSYNE);
     group.bench_function("Mnemosyne", |b| b.iter(|| mnemosyne_workers.run()));
     drop(mnemosyne_workers);
+
+    let system_workers = ThreadCycleWorkers::new(&SYSTEM);
+    group.bench_function("System", |b| b.iter(|| system_workers.run()));
+    drop(system_workers);
 
     let mimalloc_workers = ThreadCycleWorkers::new(&MIMALLOC);
     group.bench_function("MiMalloc", |b| b.iter(|| mimalloc_workers.run()));
@@ -787,6 +823,7 @@ fn bench_multithreaded_alloc(c: &mut Criterion) {
 
 fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
     static MNEMOSYNE: mnemosyne::Mnemosyne = mnemosyne::Mnemosyne;
+    static SYSTEM: System = System;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
     #[cfg(not(windows))]
@@ -802,6 +839,12 @@ fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
         b.iter(|| mnemosyne_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
     });
     drop(mnemosyne_workers);
+
+    let system_workers = ThreadCycleWorkers::new(&SYSTEM);
+    group.bench_function("System", |b| {
+        b.iter(|| system_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
+    });
+    drop(system_workers);
 
     let mimalloc_workers = ThreadCycleWorkers::new(&MIMALLOC);
     group.bench_function("MiMalloc", |b| {

@@ -203,3 +203,7 @@ Target version: 0.1.0
 - [x] [patch] Add `usable size query latency/` to generated benchmark summary and allocator comparison reports.
 - [x] [minor] Add `Allocator allocation latency` Criterion coverage with drop-guard cleanup for allocation-only attribution across Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc.
 - [x] [patch] Add `allocator allocation latency/` to generated benchmark summary and allocator comparison reports.
+- [x] [minor] Add `std::alloc::System` comparator rows for allocation-only, cycle, burst, realloc, cross-thread handoff, and saturated threaded allocator benchmark groups.
+- [x] [patch] Extend generated allocator comparison reports with System value and Mnemosyne-vs-System ratio columns.
+- [x] [patch] Optimize small-free classification by reading the target page's block size before the huge-allocation metadata fallback.
+- [x] [patch] Remove duplicate TLS lookup from local-free owner checks by deriving the current allocator token inside the existing allocator-cell access.

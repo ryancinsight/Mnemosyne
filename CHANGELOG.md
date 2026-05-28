@@ -104,3 +104,5 @@
 - Added `Realloc latency` Criterion coverage for within-class and cross-class realloc cycles across Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc.
 - Added `Usable size query latency` Criterion coverage that isolates raw usable-size metadata lookup from allocation/deallocation cost.
 - Added `Allocator allocation latency` Criterion coverage with drop-guard cleanup to isolate allocation cost from deallocation cost.
+- Added `std::alloc::System` allocator comparator rows and System ratio columns to generated benchmark reports for portable allocator-operation groups.
+- Optimized `thread_free` by classifying small frees from the target page block size before the huge-allocation fallback and by deriving the owner-token comparison from the existing allocator TLS access.

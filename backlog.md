@@ -93,8 +93,11 @@
 - [minor] Add realloc latency benchmarks for within-class and cross-class realloc cycles across Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc.
 - [minor] Add isolated usable-size query latency benchmarks that separate metadata lookup cost from allocation/deallocation cost.
 - [minor] Add allocation-only latency benchmarks with drop-guard cleanup to separate allocation cost from deallocation cost.
+- [minor] Add system allocator comparator rows to the allocator benchmark matrix and generated comparison reports.
+- [patch] Optimize small-free classification and local-free owner checks to remove duplicate metadata and TLS work from deallocation hot paths.
 
 ## Next
 
+- [patch] Investigate small allocation-only latency versus mimalloc and snmalloc after the deallocation hot-path improvement.
 - [patch] Derive a variance-aware refresh policy for cross-thread handoff benchmark rows before tightening selected thresholds.
 - [patch] Run the jemalloc comparator leg on a target where `tikv-jemallocator` links and refresh comparison rows.

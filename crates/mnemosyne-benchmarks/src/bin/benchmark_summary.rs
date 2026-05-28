@@ -145,6 +145,8 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
         let entry = table.entry((group, sub_bench)).or_default();
         if allocator.contains("mnemosyne") {
             entry.mnemosyne = Some(row.mean_ns);
+        } else if allocator.contains("system") {
+            entry.system = Some(row.mean_ns);
         } else if allocator.contains("mimalloc") {
             entry.mimalloc = Some(row.mean_ns);
         } else if allocator.contains("snmalloc") {
@@ -156,14 +158,21 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
 
     let mut markdown = String::new();
     markdown.push_str("# Allocator Performance Comparison\n\n");
-    markdown.push_str("| Benchmark | Mnemosyne (ns) | MiMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc |\n");
-    markdown.push_str("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n");
+    markdown.push_str("| Benchmark | Mnemosyne (ns) | System (ns) | MiMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs System | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc |\n");
+    markdown.push_str(
+        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n",
+    );
 
     println!("\nAllocator Comparisons (Current Run):");
     println!("==========================================================================================================");
     println!(
-        "{:<45} {:<15} {:<15} {:<15} {:<15}",
-        "Benchmark", "Mnemosyne (ns)", "MiMalloc (ns)", "SnMalloc (ns)", "Jemalloc (ns)"
+        "{:<45} {:<15} {:<15} {:<15} {:<15} {:<15}",
+        "Benchmark",
+        "Mnemosyne (ns)",
+        "System (ns)",
+        "MiMalloc (ns)",
+        "SnMalloc (ns)",
+        "Jemalloc (ns)"
     );
     println!("----------------------------------------------------------------------------------------------------------");
 
@@ -177,6 +186,9 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
         let mne_str = comparison
             .mnemosyne
             .map_or("N/A".to_string(), |v| format!("{:.3}", v));
+        let sys_str = comparison
+            .system
+            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
         let mi_str = comparison
             .mimalloc
             .map_or("N/A".to_string(), |v| format!("{:.3}", v));
@@ -188,10 +200,14 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
             .map_or("N/A".to_string(), |v| format!("{:.3}", v));
 
         println!(
-            "{:<45} {:<15} {:<15} {:<15} {:<15}",
-            name, mne_str, mi_str, sn_str, je_str
+            "{:<45} {:<15} {:<15} {:<15} {:<15} {:<15}",
+            name, mne_str, sys_str, mi_str, sn_str, je_str
         );
 
+        let vs_sys = match (comparison.mnemosyne, comparison.system) {
+            (Some(mn_v), Some(sys_v)) => format!("{:.2}x", mn_v / sys_v),
+            _ => "N/A".to_string(),
+        };
         let vs_mi = match (comparison.mnemosyne, comparison.mimalloc) {
             (Some(mn_v), Some(mi_v)) => format!("{:.2}x", mn_v / mi_v),
             _ => "N/A".to_string(),
@@ -206,8 +222,8 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
         };
 
         markdown.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
-            name, mne_str, mi_str, sn_str, je_str, vs_mi, vs_sn, vs_je
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            name, mne_str, sys_str, mi_str, sn_str, je_str, vs_sys, vs_mi, vs_sn, vs_je
         ));
     }
     println!("==========================================================================================================\n");
@@ -221,6 +237,7 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
 #[derive(Default)]
 struct AllocatorComparison {
     mnemosyne: Option<f64>,
+    system: Option<f64>,
     mimalloc: Option<f64>,
     snmalloc: Option<f64>,
     jemalloc: Option<f64>,

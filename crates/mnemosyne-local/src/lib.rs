@@ -301,6 +301,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
 /// # Safety
 ///
 /// The ptr must be valid and must have been returned by a previous allocation.
+#[inline(always)]
 pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
     ptr: *mut u8,
 ) {
@@ -308,24 +309,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         return;
     }
 
-    // Determine if ptr is a large/huge allocation.
-    //
-    // Safety invariant: `allocate_large_or_huge` rejects alignments above
-    // `SEGMENT_SIZE`, so every non-segment-aligned large/huge pointer still
-    // rounds down to the initialized segment header. Segment-aligned huge
-    // pointers use the metadata slot directly and avoid a header-rounding
-    // dereference.
-    let is_large_or_huge = if (ptr as usize) & (SEGMENT_SIZE - 1) == 0 {
-        true
-    } else {
-        let segment_addr = (ptr as usize) & !(SEGMENT_SIZE - 1);
-        let segment = segment_addr as *mut Segment;
-        // Safety: for small allocations and large/huge allocations with alignment < SEGMENT_SIZE,
-        // segment_addr is the correct segment header and is safe to dereference.
-        unsafe { (*segment).pages[0].block_size > 0 }
-    };
-
-    if is_large_or_huge {
+    if (ptr as usize) & (SEGMENT_SIZE - 1) == 0 {
         if P::ENABLE_POISONING {
             // Safety: ptr is a valid large/huge allocation, so the segment header pointer
             // is stored in the metadata slot immediately preceding the user pointer.
@@ -368,10 +352,21 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
     );
     // Safety: page_index is within bounds (1..PAGES_PER_SEGMENT) since ptr is a small alloc.
     let page = unsafe { &mut (*segment).pages[page_index] };
-    debug_assert!(
-        page.block_size > 0,
-        "small free ptr must target an initialized page"
-    );
+    if page.block_size == 0 {
+        if P::ENABLE_POISONING {
+            // Safety: ptr is a valid large/huge allocation, so the segment header pointer
+            // is stored in the metadata slot immediately preceding the user pointer.
+            let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+            let huge_size = unsafe { (*segment).pages[0].block_size };
+            let size = (segment as usize + huge_size) - ptr as usize;
+            unsafe { poison_freed_bytes::<P>(ptr, size) };
+        }
+        // Safety: non-small allocations keep the owning segment in the
+        // metadata slot immediately preceding the user pointer.
+        let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+        let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
+        return;
+    }
     debug_assert_eq!(
         (ptr as usize - (segment_addr + page_index * PAGE_SIZE)) % page.block_size,
         0,
@@ -388,11 +383,9 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
     // Safety: segment header is initialized and owner field is valid.
     let owner = unsafe { (*segment).owner };
 
-    let current_alloc_ptr = B::get_allocator_ptr();
-
-    if owner.matches(current_alloc_ptr) {
-        // Local free: try to update the page metadata in the thread cache.
-        let success = B::with_allocator(|alloc_ref| {
+    B::with_allocator(|alloc_ref| {
+        if owner.matches(alloc_ref.as_ptr().cast::<core::ffi::c_void>()) {
+            // Local free: try to update the page metadata in the thread cache.
             if let Ok(mut alloc) = alloc_ref.try_borrow_mut() {
                 // Safety: segment and block are verified to be owned by this thread allocator.
                 unsafe {
@@ -415,26 +408,17 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
                         alloc.try_reclaim_segment(segment);
                     }
                 }
-                true
-            } else {
-                false
-            }
-        });
-
-        if !success {
-            // Re-entrant/borrowed local free: use the page-local atomic queue.
-            // The owner will batch-reclaim this block after local page lists are exhausted.
-            unsafe {
-                page.thread_free.push(NonNull::new_unchecked(block));
+                return;
             }
         }
-    } else {
-        // Cross-thread or orphan free: push onto the owning page's thread_free queue.
-        // Safety: block is valid and page thread_free list is atomic.
+
+        // Cross-thread, orphan, or re-entrant/borrowed local free: push onto
+        // the owning page's queue. The owner batch-reclaims this block after
+        // local page lists are exhausted.
         unsafe {
             page.thread_free.push(NonNull::new_unchecked(block));
         }
-    }
+    });
 }
 
 #[cfg(test)]
