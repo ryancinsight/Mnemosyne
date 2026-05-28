@@ -627,9 +627,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
     /// Helper to unlink a page specifically from the full pages list of a class.
     #[inline]
-    pub(crate) unsafe fn unlink_full_page(&mut self, page_ptr: *mut Page, class: usize) {
+    #[must_use]
+    pub(crate) unsafe fn unlink_full_page(&mut self, page_ptr: *mut Page, class: usize) -> bool {
         let mut prev: Option<NonNull<Page>> = None;
         let mut curr = self.full_pages[class];
+        let mut found = false;
         while let Some(curr_ptr) = curr {
             if curr_ptr.as_ptr() == page_ptr {
                 // Safety: page_ptr points to a valid Page node. We adjust the surrounding pointers.
@@ -641,12 +643,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     }
                     (*page_ptr).next_page = None;
                 }
+                found = true;
                 break;
             }
             prev = Some(curr_ptr);
             // Safety: curr_ptr is a valid NonNull pointer pointing to Page inside full list.
             curr = unsafe { curr_ptr.as_ref().next_page };
         }
+        found
     }
 
     /// Helper to unlink a page from the active pages or full pages list of a class.

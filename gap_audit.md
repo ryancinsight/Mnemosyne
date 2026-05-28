@@ -95,4 +95,9 @@
 
 ## Remaining
 
-- [patch] Full `cargo bench -p mnemosyne-benchmarks --bench allocator_bench -- --quick` and the broad `Mnemosyne` Criterion filter exceeded the 300s command cap in this environment, although each selected threshold-gated Mnemosyne row completed when run directly and `benchmark_summary -- --enforce-thresholds` passed. Investigate whether the broad Criterion filter leaves a worker or report-generation path alive.
+- [patch] The documented broad benchmark command passed `--quick`, but the benchmark binary rejected that argument and therefore local runs could fall back to the default Criterion measurement budget. The harness now encodes a bounded smoke configuration directly (`sample_size = 10`, `warm_up_time = 100 ms`, `measurement_time = 500 ms`), making `cargo bench -p mnemosyne-benchmarks --bench allocator_bench` the authoritative local benchmark command.
+
+## Remaining
+
+- [patch] Source-controlled baseline rows predate the bounded Criterion harness configuration. Audit whether to refresh the baseline excerpt after repeated bounded smoke samples on the same machine.
+- [patch] The allocator-wide layout constants (`SEGMENT_SIZE`, `PAGE_SIZE`, `PAGES_PER_SEGMENT`, `MAX_SMALL_ALLOC_SIZE`, `MAX_ALLOC_SIZE`, `NUM_SIZE_CLASSES`) had no compile-time cross-checks pinning their structural relationships, so a silent drift in any single value would have compiled cleanly and produced misaligned arithmetic at runtime. Added nine `const _: () = assert!(...)` items in `mnemosyne-core::constants` plus two `class_to_size` cross-checks in `mnemosyne-core::size_class`. These are evaluated by the compiler before any code is emitted, occupy zero bytes, and produce a hard build failure on any drift.

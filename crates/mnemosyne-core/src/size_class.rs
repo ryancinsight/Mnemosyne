@@ -48,6 +48,19 @@ pub const fn class_to_size(class: usize) -> usize {
     }
 }
 
+// Compile-time cross-check between `NUM_SIZE_CLASSES` and the piecewise
+// `class_to_size` schedule: the final class must produce exactly
+// `MAX_SMALL_ALLOC_SIZE`, and the first out-of-range class must produce
+// the documented zero sentinel.
+const _: () = assert!(
+    class_to_size(NUM_SIZE_CLASSES - 1) == MAX_SMALL_ALLOC_SIZE,
+    "class_to_size(NUM_SIZE_CLASSES - 1) must reach MAX_SMALL_ALLOC_SIZE exactly"
+);
+const _: () = assert!(
+    class_to_size(NUM_SIZE_CLASSES) == 0,
+    "class_to_size(NUM_SIZE_CLASSES) must return the 0 sentinel"
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;

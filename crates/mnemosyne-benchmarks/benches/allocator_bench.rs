@@ -2,6 +2,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::thread;
+use std::time::Duration;
 
 // MinGW linker compatibility stubs for snmalloc
 #[no_mangle]
@@ -503,13 +504,18 @@ fn bench_segment_cache_eviction(c: &mut Criterion) {
     }
 }
 
-criterion_group!(
-    benches,
-    bench_allocator_cycles,
-    bench_allocator_bursts,
-    bench_cross_thread_free,
-    bench_multithreaded_alloc,
-    bench_saturated_multithreaded_alloc,
-    bench_segment_cache_eviction
-);
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .sample_size(10)
+        .warm_up_time(Duration::from_millis(100))
+        .measurement_time(Duration::from_millis(500));
+    targets =
+        bench_allocator_cycles,
+        bench_allocator_bursts,
+        bench_cross_thread_free,
+        bench_multithreaded_alloc,
+        bench_saturated_multithreaded_alloc,
+        bench_segment_cache_eviction
+}
 criterion_main!(benches);

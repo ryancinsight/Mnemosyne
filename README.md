@@ -129,7 +129,7 @@ cargo run -p mnemosyne-benchmarks --bin memory_report --release
 To compare Mnemosyne, MiMalloc, and SnMalloc performance across latency, bursts, threaded cycles, and saturated threaded cycles:
 ```bash
 # Run Criterion microbenchmarks
-cargo bench -p mnemosyne-benchmarks --bench allocator_bench -- --quick
+cargo bench -p mnemosyne-benchmarks --bench allocator_bench
 
 # Extract estimates and generate side-by-side comparison report
 cargo run -p mnemosyne-benchmarks --bin benchmark_summary --release

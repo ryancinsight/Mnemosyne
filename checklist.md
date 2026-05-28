@@ -140,4 +140,10 @@ Target version: 0.1.0
 - [x] [patch] Audit local allocator remote-free reclaim paths for duplicated block-pop logic.
 - [x] [patch] Refresh selected Mnemosyne threshold-gated Criterion rows and regenerate `target/criterion` summaries.
 
-- [ ] [patch] Investigate full all-allocator Criterion quick-run timeout while focused gated rows complete.
+- [x] [patch] Investigate full all-allocator Criterion quick-run timeout while focused gated rows complete.
+- [x] [patch] Replace unsupported `--quick` benchmark invocation with an explicit bounded Criterion smoke configuration.
+
+- [ ] [patch] Audit benchmark baseline metadata after bounded Criterion harness configuration.
+
+- [x] [patch] Add compile-time `const _: () = assert!(...)` invariants in `mnemosyne-core::constants` pinning `SEGMENT_SIZE`/`PAGE_SIZE` power-of-two, `SEGMENT_ALIGN == SEGMENT_SIZE`, `PAGE_ALIGN == PAGE_SIZE`, `PAGES_PER_SEGMENT * PAGE_SIZE == SEGMENT_SIZE`, `PAGES_PER_SEGMENT >= 2`, `MAX_SMALL_ALLOC_SIZE <= PAGE_SIZE`, `MAX_ALLOC_SIZE >= SEGMENT_SIZE`, and `NUM_SIZE_CLASSES > 0`.
+- [x] [patch] Add compile-time cross-checks in `mnemosyne-core::size_class` that `class_to_size(NUM_SIZE_CLASSES - 1) == MAX_SMALL_ALLOC_SIZE` and `class_to_size(NUM_SIZE_CLASSES) == 0`.

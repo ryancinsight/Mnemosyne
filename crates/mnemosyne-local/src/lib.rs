@@ -336,10 +336,11 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
                     }
                     if was_full {
                         if let Some(class) = mnemosyne_core::size_to_class(page.block_size) {
-                            alloc.unlink_full_page(page as *mut Page, class);
-                            page.next_page = alloc.active_pages[class];
-                            alloc.active_pages[class] =
-                                Some(NonNull::new_unchecked(page as *mut Page));
+                            if alloc.unlink_full_page(page as *mut Page, class) {
+                                page.next_page = alloc.active_pages[class];
+                                alloc.active_pages[class] =
+                                    Some(NonNull::new_unchecked(page as *mut Page));
+                            }
                         }
                     }
                     if page.alloc_count == 0 && !alloc.is_current_segment(segment) {
