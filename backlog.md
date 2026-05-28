@@ -105,6 +105,8 @@
 - [patch] Add variance-aware benchmark report generation for Criterion mean confidence intervals and unstable-row classification.
 - [patch] Centralize huge-allocation suffix sizing in `Segment::huge_mapping_suffix_from` and route `usable_size` plus secure free poisoning through it.
 - [patch] Reject precomputed-class allocation dispatch and direct realloc-capacity arithmetic after focused Criterion rows showed threaded and realloc regressions.
+- [patch] Reject layout-aware small-deallocation bypass after saturated threaded rows regressed despite isolated deallocation improvement.
+- [patch] Document realloc slow-path copy bounds so size-class slack bytes are not propagated as initialized data.
 
 ## Next
 

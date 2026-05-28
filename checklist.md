@@ -231,3 +231,8 @@ Target version: 0.1.0
 - [x] [patch] Pin the helper contract with debug assertions for `huge_size > 0` and `user_ptr ∈ [raw_alloc_ptr, raw_alloc_ptr + huge_size]`.
 - [x] [patch] Add a direct core test proving `Segment::huge_mapping_suffix_from` uses `raw_alloc_ptr` as the mapping base.
 - [x] [patch] Reject precomputed-class allocation fast path and direct realloc-capacity formula after Criterion regressions in threaded and realloc rows.
+- [x] [patch] Reject layout-aware small-deallocation bypass after `Threaded saturated small allocation cycles/Mnemosyne` regressed.
+- [x] [patch] Document that realloc slow paths copy only `min(layout.size(), new_size)` bytes, not size-class slack.
+
+- [x] [patch] Document the `realloc` slow-path copy-length contract on both `Mnemosyne` and `MnemosyneAllocator<P, B>`: copy is `min(layout.size(), new_size)` because the bytes beyond `layout.size()` are size-class slack the user never initialized.
+- [x] [patch] Add `test_realloc_does_not_copy_past_layout_size` regression test that writes a sentinel into the 8-byte slack window of an 8 B → 16 B class-0 allocation, performs cross-class realloc, and asserts the slack pattern does not propagate into the new allocation.

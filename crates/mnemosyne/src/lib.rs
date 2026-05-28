@@ -263,6 +263,15 @@ unsafe impl GlobalAlloc for Mnemosyne {
 
         // Outline the slow path: allocate a new layout, copy the
         // preserved bytes, free the old allocation.
+        //
+        // The copy length is `min(layout.size(), new_size)`, NOT
+        // `min(usable_size(ptr), new_size)`. The caller's `GlobalAlloc`
+        // contract guarantees they wrote at most `layout.size()` bytes
+        // into the original allocation; the bytes from `layout.size()`
+        // up to `usable_size(ptr)` are size-class slack that the user
+        // has never initialized. Copying from that slack would be
+        // pointless and unsound — it propagates uninitialized memory
+        // into a fresh allocation that the user may then read.
         let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
         // Safety: same contract as the default GlobalAlloc::realloc.
         let new_ptr = unsafe { self.alloc(new_layout) };
@@ -362,6 +371,12 @@ unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
             return ptr;
         }
 
+        // Slow path: allocate, copy, free. Copy length is `min(layout.size(),
+        // new_size)` for the same reason as in `Mnemosyne::realloc` — bytes
+        // beyond `layout.size()` were never written by the caller and must
+        // not be propagated. For `SecurePolicy`, this is doubly important:
+        // `alloc` already zeroed the new region, so the copy must not
+        // overwrite past `layout.size()` and clobber the zero-init.
         let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
         let new_ptr = unsafe { self.alloc(new_layout) };
         if !new_ptr.is_null() {
@@ -824,6 +839,79 @@ mod tests {
                 "realloc across class did not preserve byte {i}"
             );
         }
+
+        let new_layout = Layout::from_size_align(64, 8).expect("valid layout");
+        unsafe { ALLOCATOR.dealloc(new_ptr, new_layout) };
+    }
+
+    #[test]
+    fn test_realloc_does_not_copy_past_layout_size() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
+        // Pins the slow-path copy-length contract: even when the caller's
+        // allocation has size-class slack (usable_size > layout.size), the
+        // slow path must copy *only* layout.size bytes. If it instead
+        // copied usable_size bytes, an accidental write in the slack
+        // region would propagate to the new allocation.
+        //
+        // Setup: 8 B request lands in class 0 (block_size 16 B), so
+        // layout.size = 8 but usable_size(ptr) = 16. Write 0xAA in the
+        // user region [0, 8) and 0xBB in the slack region [8, 16). After
+        // cross-class realloc to 64 B, the new allocation's [0, 8) must
+        // be 0xAA, and bytes [8, 16) must NOT be 0xBB — they must be
+        // whatever StandardPolicy left them (uninitialized, but
+        // crucially not a propagation of the slack pattern).
+        let small_layout = Layout::from_size_align(8, 8).expect("valid layout");
+        let ptr = unsafe { ALLOCATOR.alloc(small_layout) };
+        assert!(!ptr.is_null());
+        // Sanity-check the slack window exists.
+        let reported = unsafe { mnemosyne_local::usable_size(ptr) };
+        assert!(
+            reported >= 16,
+            "8 B request must land in a class with at least 16 B usable; got {reported}"
+        );
+
+        // User region: bytes 0..8.
+        for i in 0..8usize {
+            unsafe { ptr.add(i).write(0xAA) };
+        }
+        // Slack region: bytes 8..16. Mnemosyne lets you safely write up to
+        // usable_size bytes, so this is well-defined; but the realloc copy
+        // must not pull this into the new allocation.
+        for i in 8..16usize {
+            unsafe { ptr.add(i).write(0xBB) };
+        }
+
+        // Cross-class grow.
+        let new_ptr = unsafe { ALLOCATOR.realloc(ptr, small_layout, 64) };
+        assert!(!new_ptr.is_null());
+
+        // Mnemosyne under StandardPolicy does NOT zero-initialize, so we
+        // cannot assert bytes [8, 16) are zero. What we can assert is
+        // that they are NOT 0xBB — meaning the slack was NOT copied
+        // from the old allocation. The way to demonstrate "not copied"
+        // is to check that the new_ptr's [8, 16) is independent of the
+        // old slack pattern; we conservatively assert the new[0..8] is
+        // exactly the user region, and we tolerate any value in [8, 16)
+        // as long as it does not equal a chain of 0xBB bytes that would
+        // indicate the bug.
+        for i in 0..8usize {
+            assert_eq!(
+                unsafe { new_ptr.add(i).read() },
+                0xAA,
+                "realloc must preserve the {i}-th user byte"
+            );
+        }
+        // If the slow path used `usable_size` instead of `layout.size`,
+        // all 8 slack bytes would carry the 0xBB pattern. We accept any
+        // single byte equal to 0xBB as coincidence, but treating all
+        // eight as 0xBB is the buggy signal.
+        let slack_carries_bb = (8..16usize).all(|i| unsafe { new_ptr.add(i).read() } == 0xBB);
+        assert!(
+            !slack_carries_bb,
+            "realloc copied the slack region past layout.size into the new allocation"
+        );
 
         let new_layout = Layout::from_size_align(64, 8).expect("valid layout");
         unsafe { ALLOCATOR.dealloc(new_ptr, new_layout) };
