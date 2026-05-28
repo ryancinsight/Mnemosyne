@@ -236,3 +236,12 @@ Target version: 0.1.0
 
 - [x] [patch] Document the `realloc` slow-path copy-length contract on both `Mnemosyne` and `MnemosyneAllocator<P, B>`: copy is `min(layout.size(), new_size)` because the bytes beyond `layout.size()` are size-class slack the user never initialized.
 - [x] [patch] Add `test_realloc_does_not_copy_past_layout_size` regression test that writes a sentinel into the 8-byte slack window of an 8 B → 16 B class-0 allocation, performs cross-class realloc, and asserts the slack pattern does not propagate into the new allocation.
+- [x] [patch] Collapse the allocator guard and cache into one `LocalAllocatorSlot<B>` TLS key.
+- [x] [patch] Run focused Criterion rows for allocator cycle latency, threaded small cycles, and saturated threaded small cycles after the TLS-slot change.
+- [x] [patch] Regenerate `allocator_comparison.md` and run `benchmark_summary --release -- --enforce-thresholds`.
+
+## Next
+
+- [ ] [patch] Continue variance-aware investigation of `realloc latency/within_class_24_to_32`.
+- [ ] [patch] Continue variance-aware investigation of `threaded small allocation cycles`, `cross-thread free handoff/small_32`, and combined usable-size latency without reintroducing rejected local-free or layout-aware deallocation paths.
+- [ ] [patch] Run target-gated jemalloc comparator refresh on a platform where `tikv-jemallocator` links.

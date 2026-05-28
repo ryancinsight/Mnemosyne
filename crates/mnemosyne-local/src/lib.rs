@@ -16,6 +16,53 @@ use mnemosyne_core::validation::{is_valid_alloc_request, is_valid_layout_alloc_r
 
 use mnemosyne_core::policy::AllocPolicy;
 
+/// Per-thread allocator cache plus reentrancy guard.
+///
+/// Keeping the guard and cache in a single TLS object makes the allocation
+/// fast path pay one thread-local lookup instead of first looking up the guard
+/// and then the allocator cache. The guard still enforces the same exclusive
+/// borrowing contract as the former split TLS keys.
+#[doc(hidden)]
+pub struct LocalAllocatorSlot<B: HasSegmentPool> {
+    is_allocating: core::cell::Cell<bool>,
+    allocator: core::cell::UnsafeCell<ThreadAllocator<B>>,
+}
+
+impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
+    /// Creates an empty per-thread allocator slot.
+    pub const fn new() -> Self {
+        Self {
+            is_allocating: core::cell::Cell::new(false),
+            allocator: core::cell::UnsafeCell::new(ThreadAllocator::new()),
+        }
+    }
+
+    /// Runs `f` with exclusive access to the per-thread allocator cache.
+    ///
+    /// Returns `None` when the current thread already holds the allocator
+    /// guard, preserving the re-entrant fallback path without exposing the
+    /// internal `UnsafeCell` to macro expansion sites.
+    #[inline(always)]
+    pub fn with_allocator<R>(&self, f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
+        if self.is_allocating.get() {
+            return None;
+        }
+        self.is_allocating.set(true);
+        // Safety: this slot is stored in thread-local storage, so no other
+        // thread can access the cell. `is_allocating` rejects nested access on
+        // the same thread before a second mutable reference can be created.
+        let result = unsafe { f(&mut *self.allocator.get()) };
+        self.is_allocating.set(false);
+        Some(result)
+    }
+
+    /// Returns the raw allocator-cache pointer used as the segment owner token.
+    #[inline(always)]
+    pub fn allocator_ptr(&self) -> *mut core::ffi::c_void {
+        self.allocator.get().cast()
+    }
+}
+
 /// Applies allocation-time initialization required by `P`.
 ///
 /// # Safety
@@ -75,8 +122,7 @@ macro_rules! impl_local_allocator_selector {
     ($backend:ty) => {
         const _: () = {
             std::thread_local! {
-                static IS_ALLOCATING: std::cell::Cell<bool> = std::cell::Cell::new(false);
-                static ALLOCATOR: std::cell::UnsafeCell<$crate::ThreadAllocator<$backend>> = std::cell::UnsafeCell::new($crate::ThreadAllocator::new());
+                static ALLOCATOR_SLOT: $crate::LocalAllocatorSlot<$backend> = $crate::LocalAllocatorSlot::new();
             }
 
             impl $crate::LocalAllocatorSelector<$backend> for $backend {
@@ -84,41 +130,19 @@ macro_rules! impl_local_allocator_selector {
                 fn with_allocator<R>(
                     f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
                 ) -> Option<R> {
-                    IS_ALLOCATING.with(|c| {
-                        if c.get() {
-                            return None;
-                        }
-                        c.set(true);
-                        // Safety: ALLOCATOR is thread-local, so no other thread can
-                        // access this cell. IS_ALLOCATING rejects nested access on the
-                        // same thread before a second mutable reference can be created.
-                        let result = ALLOCATOR.with(|cell| unsafe { f(&mut *cell.get()) });
-                        c.set(false);
-                        Some(result)
-                    })
+                    ALLOCATOR_SLOT.with(|slot| slot.with_allocator(f))
                 }
 
                 #[inline(always)]
                 fn with_allocator_guard<R>(
                     f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
                 ) -> Option<R> {
-                    IS_ALLOCATING.with(|c| {
-                        if c.get() {
-                            return None;
-                        }
-                        c.set(true);
-                        // Safety: ALLOCATOR is thread-local, so no other thread can
-                        // access this cell. IS_ALLOCATING rejects nested access on the
-                        // same thread before a second mutable reference can be created.
-                        let result = ALLOCATOR.with(|cell| unsafe { f(&mut *cell.get()) });
-                        c.set(false);
-                        Some(result)
-                    })
+                    ALLOCATOR_SLOT.with(|slot| slot.with_allocator(f))
                 }
 
                 #[inline(always)]
                 fn get_allocator_ptr() -> *mut core::ffi::c_void {
-                    ALLOCATOR.with(|cell| cell.get().cast())
+                    ALLOCATOR_SLOT.with(|slot| slot.allocator_ptr())
                 }
             }
         };

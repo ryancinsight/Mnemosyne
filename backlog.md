@@ -107,9 +107,10 @@
 - [patch] Reject precomputed-class allocation dispatch and direct realloc-capacity arithmetic after focused Criterion rows showed threaded and realloc regressions.
 - [patch] Reject layout-aware small-deallocation bypass after saturated threaded rows regressed despite isolated deallocation improvement.
 - [patch] Document realloc slow-path copy bounds so size-class slack bytes are not propagated as initialized data.
+- [patch] Collapse the per-thread allocation guard and allocator cache into one TLS slot, reducing small allocation/free cycle TLS lookups while preserving the re-entrant fallback contract.
 
 ## Next
 
 - [patch] Use `benchmark_variance.csv` to retest within-class realloc and historical threaded-row optimizations before accepting allocator changes.
-- [patch] Investigate mimalloc's remaining within-class realloc and threaded-row advantage after guarded `UnsafeCell` allocator access.
+- [patch] Investigate mimalloc's remaining within-class realloc, historical threaded-row, saturated threaded-row, cross-thread handoff, and usable-size combined-cycle advantages after the unified TLS slot narrowed saturated threaded disparity.
 - [patch] Run the jemalloc comparator leg on a target where `tikv-jemallocator` links and refresh comparison rows.
