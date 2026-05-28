@@ -1,15 +1,15 @@
 # Allocator Performance Comparison
 
-| Benchmark | Mnemosyne (ns) | MiMalloc (ns) | SnMalloc (ns) | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| allocator burst retention/large_8192 | 8248.501 | 430304.320 | 19389.191 | 0.02x | 0.43x |
-| allocator burst retention/medium_1024 | 3627.403 | 77976.429 | 7380.772 | 0.05x | 0.49x |
-| allocator burst retention/small_32 | 3426.597 | 927.354 | 4097.597 | 3.70x | 0.84x |
-| allocator cycle latency/large_8192 | 13.579 | 16.287 | 17.309 | 0.83x | 0.78x |
-| allocator cycle latency/medium_1024 | 13.508 | 5.901 | 16.500 | 2.29x | 0.82x |
-| allocator cycle latency/small_32 | 13.150 | 2.744 | 16.226 | 4.79x | 0.81x |
-| cross-thread free handoff/medium_1024 | 27199.845 | 184255.616 | 37552.934 | 0.15x | 0.72x |
-| cross-thread free handoff/small_32 | 22931.878 | 6666.087 | 22549.239 | 3.44x | 1.02x |
-| segment cache eviction | 66081.935 | N/A | N/A | N/A | N/A |
-| threaded saturated small allocation cycles | 212409.178 | 76664.478 | 266514.556 | 2.77x | 0.80x |
-| threaded small allocation cycles | 21256.847 | 6211.866 | 25032.966 | 3.42x | 0.85x |
+| Benchmark | Mnemosyne (ns) | MiMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| allocator burst retention/large_8192 | 8298.115 | 498982.289 | 19293.517 | N/A | 0.02x | 0.43x | N/A |
+| allocator burst retention/medium_1024 | 3638.792 | 91339.474 | 7141.375 | N/A | 0.04x | 0.51x | N/A |
+| allocator burst retention/small_32 | 3457.070 | 1298.791 | 4051.253 | N/A | 2.66x | 0.85x | N/A |
+| allocator cycle latency/large_8192 | 14.066 | 14.935 | 17.290 | N/A | 0.94x | 0.81x | N/A |
+| allocator cycle latency/medium_1024 | 13.881 | 6.310 | 16.419 | N/A | 2.20x | 0.85x | N/A |
+| allocator cycle latency/small_32 | 13.092 | 2.774 | 16.326 | N/A | 4.72x | 0.80x | N/A |
+| cross-thread free handoff/medium_1024 | 26563.741 | 196390.907 | 40184.212 | N/A | 0.14x | 0.66x | N/A |
+| cross-thread free handoff/small_32 | 23476.605 | 8076.841 | 23956.284 | N/A | 2.91x | 0.98x | N/A |
+| segment cache eviction | 66318.325 | N/A | N/A | N/A | N/A | N/A | N/A |
+| threaded saturated small allocation cycles | 210170.422 | 78921.266 | 272494.096 | N/A | 2.66x | 0.77x | N/A |
+| threaded small allocation cycles | 22909.503 | 6207.192 | 26218.621 | N/A | 3.69x | 0.87x | N/A |

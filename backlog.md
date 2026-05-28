@@ -80,7 +80,9 @@
 - [patch] Audit benchmark baseline metadata after bounded Criterion harness configuration.
 - [patch] Refresh source-controlled benchmark baseline excerpt from bounded Criterion harness output.
 - [patch] Optimize thread_free segment owner check by introducing get_allocator_ptr to LocalAllocatorSelector.
+- [patch] Add jemalloc to allocator benchmark comparator coverage and generated comparison reports.
 
 ## Next
 
 - [patch] Derive a variance-aware refresh policy for cross-thread handoff benchmark rows before tightening selected thresholds.
+- [patch] Run the jemalloc comparator leg on a target where `tikv-jemallocator` links and refresh comparison rows.

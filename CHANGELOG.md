@@ -85,4 +85,5 @@
 - Made local-free full-page reactivation conditional on `unlink_full_page` finding and removing the page from the full-list, preventing stale or already-unlinked pages from being inserted into the active-page list.
 - Refreshed the source-controlled selected Mnemosyne benchmark baseline from the bounded Criterion smoke harness and synchronized the baseline metadata.
 - Confirmed `thread_free` owner-token checks use `LocalAllocatorSelector::get_allocator_ptr`, avoiding an allocator-cell borrow for the pointer comparison before the local-free mutation path.
+- Added jemalloc as a target-gated allocator benchmark comparator and extended `allocator_comparison.md` with Jemalloc columns. Windows GNU reports `N/A` for jemalloc rows because `tikv-jemallocator` requires a linkable native static jemalloc library on the active target.
 - Extracted `unlink_page_from_list` `#[inline]` helper that consolidates three duplicated singly-linked page-list walks in `unlink_full_page` and `unlink_page`; the helper takes the list head slot by mutable reference, returns the found-status as a bool, and is inlined at every call site for unchanged release-mode codegen.

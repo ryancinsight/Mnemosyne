@@ -6,13 +6,15 @@ edition = "2021"
 [dependencies]
 mimalloc = "0.1"
 snmalloc-rs = { version = "0.3", features = ["win8compat"] }
-tikv-jemallocator = "0.6"
 criterion = { version = "0.5", features = ["html_reports"] }
 serde_json = "1"
 mnemosyne = { path = "../mnemosyne" }
 mnemosyne-arena = { path = "../mnemosyne-arena" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-core = { path = "../mnemosyne-core" }
+
+[target.'cfg(not(windows))'.dependencies]
+tikv-jemallocator = "0.6"
 
 [[bench]]
 name = "allocator_bench"

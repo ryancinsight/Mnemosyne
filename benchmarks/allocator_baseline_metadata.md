@@ -40,6 +40,10 @@ baseline only after an intentional threshold-policy decision.
 The benchmark harness uses an explicit bounded Criterion smoke configuration
 (`sample_size = 10`, `warm_up_time = 100 ms`, `measurement_time = 500 ms`)
 for local optimization work.
+The comparator set includes Mnemosyne, mimalloc, snmalloc, and jemalloc where
+the target supports `tikv-jemallocator`. On this Windows GNU run, jemalloc rows
+are emitted as `N/A` because the native static jemalloc library does not link
+on the current target.
 The comparison report records current-to-baseline mean and median ratios for selected Mnemosyne rows.
 The summary command does not mutate the source-controlled baseline unless `--refresh-baseline` is provided.
 Default summary runs report threshold ratios without failing the command. Threshold enforcement is explicit with `--enforce-thresholds`; the selected gate currently applies per-row thresholds to small/medium/large Mnemosyne cycle latency, small burst retention, small cross-thread handoff, saturated threaded cycles, and segment cache eviction.
