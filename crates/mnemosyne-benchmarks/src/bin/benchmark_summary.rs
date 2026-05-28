@@ -118,9 +118,7 @@ fn get_regression_threshold(benchmark: &str) -> f64 {
 fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
     use std::collections::BTreeMap;
 
-    // Key: (group, sub_bench) -> (mnemosyne, mimalloc, snmalloc)
-    let mut table: BTreeMap<(String, String), (Option<f64>, Option<f64>, Option<f64>)> =
-        BTreeMap::new();
+    let mut table: BTreeMap<(String, String), AllocatorComparison> = BTreeMap::new();
 
     for row in rows {
         let parts: Vec<&str> = row.benchmark.split('/').collect();
@@ -140,64 +138,88 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
             continue;
         };
 
-        let entry = table
-            .entry((group, sub_bench))
-            .or_insert((None, None, None));
+        let entry = table.entry((group, sub_bench)).or_default();
         if allocator.contains("mnemosyne") {
-            entry.0 = Some(row.mean_ns);
+            entry.mnemosyne = Some(row.mean_ns);
         } else if allocator.contains("mimalloc") {
-            entry.1 = Some(row.mean_ns);
+            entry.mimalloc = Some(row.mean_ns);
         } else if allocator.contains("snmalloc") {
-            entry.2 = Some(row.mean_ns);
+            entry.snmalloc = Some(row.mean_ns);
+        } else if allocator.contains("jemalloc") {
+            entry.jemalloc = Some(row.mean_ns);
         }
     }
 
     let mut markdown = String::new();
     markdown.push_str("# Allocator Performance Comparison\n\n");
-    markdown.push_str("| Benchmark | Mnemosyne (ns) | MiMalloc (ns) | SnMalloc (ns) | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc |\n");
-    markdown.push_str("| :--- | :---: | :---: | :---: | :---: | :---: |\n");
+    markdown.push_str("| Benchmark | Mnemosyne (ns) | MiMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc |\n");
+    markdown.push_str("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n");
 
     println!("\nAllocator Comparisons (Current Run):");
-    println!("==========================================================================================");
+    println!("==========================================================================================================");
     println!(
-        "{:<45} {:<15} {:<15} {:<15}",
-        "Benchmark", "Mnemosyne (ns)", "MiMalloc (ns)", "SnMalloc (ns)"
+        "{:<45} {:<15} {:<15} {:<15} {:<15}",
+        "Benchmark", "Mnemosyne (ns)", "MiMalloc (ns)", "SnMalloc (ns)", "Jemalloc (ns)"
     );
-    println!("------------------------------------------------------------------------------------------");
+    println!("----------------------------------------------------------------------------------------------------------");
 
-    for ((group, sub_bench), (mne, mi, sn)) in &table {
+    for ((group, sub_bench), comparison) in &table {
         let name = if sub_bench.is_empty() {
             group.clone()
         } else {
             format!("{}/{}", group, sub_bench)
         };
 
-        let mne_str = mne.map_or("N/A".to_string(), |v| format!("{:.3}", v));
-        let mi_str = mi.map_or("N/A".to_string(), |v| format!("{:.3}", v));
-        let sn_str = sn.map_or("N/A".to_string(), |v| format!("{:.3}", v));
+        let mne_str = comparison
+            .mnemosyne
+            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
+        let mi_str = comparison
+            .mimalloc
+            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
+        let sn_str = comparison
+            .snmalloc
+            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
+        let je_str = comparison
+            .jemalloc
+            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
 
-        println!("{:<45} {:<15} {:<15} {:<15}", name, mne_str, mi_str, sn_str);
+        println!(
+            "{:<45} {:<15} {:<15} {:<15} {:<15}",
+            name, mne_str, mi_str, sn_str, je_str
+        );
 
-        let vs_mi = match (mne, mi) {
+        let vs_mi = match (comparison.mnemosyne, comparison.mimalloc) {
             (Some(mn_v), Some(mi_v)) => format!("{:.2}x", mn_v / mi_v),
             _ => "N/A".to_string(),
         };
-        let vs_sn = match (mne, sn) {
+        let vs_sn = match (comparison.mnemosyne, comparison.snmalloc) {
             (Some(mn_v), Some(sn_v)) => format!("{:.2}x", mn_v / sn_v),
+            _ => "N/A".to_string(),
+        };
+        let vs_je = match (comparison.mnemosyne, comparison.jemalloc) {
+            (Some(mn_v), Some(je_v)) => format!("{:.2}x", mn_v / je_v),
             _ => "N/A".to_string(),
         };
 
         markdown.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} |\n",
-            name, mne_str, mi_str, sn_str, vs_mi, vs_sn
+            "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            name, mne_str, mi_str, sn_str, je_str, vs_mi, vs_sn, vs_je
         ));
     }
-    println!("==========================================================================================\n");
+    println!("==========================================================================================================\n");
 
     fs::create_dir_all("benchmarks")?;
     fs::write("benchmarks/allocator_comparison.md", markdown)?;
 
     Ok(())
+}
+
+#[derive(Default)]
+struct AllocatorComparison {
+    mnemosyne: Option<f64>,
+    mimalloc: Option<f64>,
+    snmalloc: Option<f64>,
+    jemalloc: Option<f64>,
 }
 
 fn write_metadata_json(path: &str) -> io::Result<()> {

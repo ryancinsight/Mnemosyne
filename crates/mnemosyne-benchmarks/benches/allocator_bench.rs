@@ -364,6 +364,10 @@ fn bench_allocator_cycles(c: &mut Criterion) {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { alloc_dealloc(&snmalloc_rs::SnMalloc, *layout) })
         });
+        group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
+            // Safety: `layout` comes from the static valid benchmark layout table.
+            b.iter(|| unsafe { alloc_dealloc(&tikv_jemallocator::Jemalloc, *layout) })
+        });
     }
     group.finish();
 }
@@ -388,6 +392,10 @@ fn bench_allocator_bursts(c: &mut Criterion) {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { burst_alloc_dealloc(&snmalloc_rs::SnMalloc, *layout) })
         });
+        group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
+            // Safety: `layout` comes from the static valid benchmark layout table.
+            b.iter(|| unsafe { burst_alloc_dealloc(&tikv_jemallocator::Jemalloc, *layout) })
+        });
     }
     group.finish();
 }
@@ -396,6 +404,7 @@ fn bench_cross_thread_free(c: &mut Criterion) {
     static MNEMOSYNE: mnemosyne::Mnemosyne = mnemosyne::Mnemosyne;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
+    static JEMALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
     let mut group = c.benchmark_group("Cross-thread free handoff");
     for (name, layout) in [("small/32", SMALL_LAYOUT), ("medium/1024", MEDIUM_LAYOUT)] {
@@ -417,6 +426,12 @@ fn bench_cross_thread_free(c: &mut Criterion) {
             b.iter(|| snmalloc_worker.alloc_then_handoff(*layout))
         });
         drop(snmalloc_worker);
+
+        let jemalloc_worker = HandoffWorker::new(&JEMALLOC);
+        group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
+            b.iter(|| jemalloc_worker.alloc_then_handoff(*layout))
+        });
+        drop(jemalloc_worker);
     }
 
     let stats = mnemosyne::memory_stats();
@@ -434,6 +449,7 @@ fn bench_multithreaded_alloc(c: &mut Criterion) {
     static MNEMOSYNE: mnemosyne::Mnemosyne = mnemosyne::Mnemosyne;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
+    static JEMALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
     let mut group = c.benchmark_group("Threaded small allocation cycles");
     group.throughput(Throughput::Elements((THREADS * THREAD_ALLOCS) as u64));
@@ -450,6 +466,10 @@ fn bench_multithreaded_alloc(c: &mut Criterion) {
     group.bench_function("SnMalloc", |b| b.iter(|| snmalloc_workers.run()));
     drop(snmalloc_workers);
 
+    let jemalloc_workers = ThreadCycleWorkers::new(&JEMALLOC);
+    group.bench_function("Jemalloc", |b| b.iter(|| jemalloc_workers.run()));
+    drop(jemalloc_workers);
+
     group.finish();
 }
 
@@ -457,6 +477,7 @@ fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
     static MNEMOSYNE: mnemosyne::Mnemosyne = mnemosyne::Mnemosyne;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
+    static JEMALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
     let mut group = c.benchmark_group("Threaded saturated small allocation cycles");
     group.throughput(Throughput::Elements(
@@ -480,6 +501,12 @@ fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
         b.iter(|| snmalloc_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
     });
     drop(snmalloc_workers);
+
+    let jemalloc_workers = ThreadCycleWorkers::new(&JEMALLOC);
+    group.bench_function("Jemalloc", |b| {
+        b.iter(|| jemalloc_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
+    });
+    drop(jemalloc_workers);
 
     group.finish();
 }

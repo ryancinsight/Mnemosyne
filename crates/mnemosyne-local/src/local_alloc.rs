@@ -84,6 +84,54 @@ unsafe fn pop_page_free_block(page: &mut Page) -> NonNull<mnemosyne_core::types:
     block
 }
 
+/// Unlinks the page identified by `target` from the singly-linked list
+/// whose head is stored in `head_slot`.
+///
+/// Returns `true` when the target was found and removed (and its
+/// `next_page` cleared), or `false` when the target is not in this list.
+/// Callers that maintain pages in two parallel lists (active and full) use
+/// the boolean result to short-circuit the second walk.
+///
+/// The function walks the list linearly and mutates exactly three
+/// pointers in the success path: the previous node's `next_page` (or the
+/// list head if the target is the first node), and the target's
+/// `next_page` (cleared so the unlinked node is detached). No pointer is
+/// touched on the not-found path.
+///
+/// # Safety
+///
+/// Every node reachable from `*head_slot` must be a live `Page` owned by
+/// the caller's allocator, and `target` must either be inside this list
+/// or be a pointer that the caller still owns (so the `next_page` clear
+/// on a found node is well-defined). The list is traversed by raw
+/// pointer; the caller must not concurrently mutate the list.
+#[inline]
+unsafe fn unlink_page_from_list(head_slot: &mut Option<NonNull<Page>>, target: *mut Page) -> bool {
+    let mut prev: Option<NonNull<Page>> = None;
+    let mut curr = *head_slot;
+    while let Some(curr_ptr) = curr {
+        if curr_ptr.as_ptr() == target {
+            // Safety: `target` is a live page node and the caller owns its
+            // next_page field; the relink writes a single pointer slot
+            // (either the previous node's next_page or the head).
+            unsafe {
+                let next = (*target).next_page;
+                if let Some(mut prev_ptr) = prev {
+                    prev_ptr.as_mut().next_page = next;
+                } else {
+                    *head_slot = next;
+                }
+                (*target).next_page = None;
+            }
+            return true;
+        }
+        prev = Some(curr_ptr);
+        // Safety: `curr_ptr` is a live page node held by this list.
+        curr = unsafe { curr_ptr.as_ref().next_page };
+    }
+    false
+}
+
 /// Reclaims any pending cross-thread frees on `page` and, if reclamation
 /// added blocks to the local free list, pops one block and increments the
 /// page's `alloc_count`.
@@ -629,80 +677,25 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline]
     #[must_use]
     pub(crate) unsafe fn unlink_full_page(&mut self, page_ptr: *mut Page, class: usize) -> bool {
-        let mut prev: Option<NonNull<Page>> = None;
-        let mut curr = self.full_pages[class];
-        let mut found = false;
-        while let Some(curr_ptr) = curr {
-            if curr_ptr.as_ptr() == page_ptr {
-                // Safety: page_ptr points to a valid Page node. We adjust the surrounding pointers.
-                unsafe {
-                    if let Some(mut prev_ptr) = prev {
-                        prev_ptr.as_mut().next_page = (*page_ptr).next_page;
-                    } else {
-                        self.full_pages[class] = (*page_ptr).next_page;
-                    }
-                    (*page_ptr).next_page = None;
-                }
-                found = true;
-                break;
-            }
-            prev = Some(curr_ptr);
-            // Safety: curr_ptr is a valid NonNull pointer pointing to Page inside full list.
-            curr = unsafe { curr_ptr.as_ref().next_page };
-        }
-        found
+        // Safety: `full_pages[class]` is the head of a singly-linked page
+        // list owned by this allocator, and `page_ptr` is checked against
+        // every node before any field write.
+        unsafe { unlink_page_from_list(&mut self.full_pages[class], page_ptr) }
     }
 
     /// Helper to unlink a page from the active pages or full pages list of a class.
     #[inline]
     pub(crate) unsafe fn unlink_page(&mut self, page_ptr: *mut Page, class: usize) {
-        // 1. Try to unlink from active_pages
-        let mut prev: Option<NonNull<Page>> = None;
-        let mut curr = self.active_pages[class];
-        let mut found = false;
-        while let Some(curr_ptr) = curr {
-            if curr_ptr.as_ptr() == page_ptr {
-                // Safety: page_ptr points to a valid Page node. We adjust the surrounding pointers.
-                unsafe {
-                    if let Some(mut prev_ptr) = prev {
-                        prev_ptr.as_mut().next_page = (*page_ptr).next_page;
-                    } else {
-                        self.active_pages[class] = (*page_ptr).next_page;
-                    }
-                    (*page_ptr).next_page = None;
-                }
-                found = true;
-                break;
-            }
-            prev = Some(curr_ptr);
-            // Safety: curr_ptr is a valid NonNull pointer pointing to Page inside active list.
-            curr = unsafe { curr_ptr.as_ref().next_page };
-        }
-
-        if found {
+        // Safety: both `active_pages[class]` and `full_pages[class]` are heads of
+        // singly-linked page lists owned by this allocator. `page_ptr` is checked
+        // against each node before any pointer field is mutated, so a stale
+        // pointer cannot corrupt the surrounding nodes.
+        let removed_from_active =
+            unsafe { unlink_page_from_list(&mut self.active_pages[class], page_ptr) };
+        if removed_from_active {
             return;
         }
-
-        // 2. Try to unlink from full_pages
-        let mut prev: Option<NonNull<Page>> = None;
-        let mut curr = self.full_pages[class];
-        while let Some(curr_ptr) = curr {
-            if curr_ptr.as_ptr() == page_ptr {
-                // Safety: page_ptr points to a valid Page node. We adjust the surrounding pointers.
-                unsafe {
-                    if let Some(mut prev_ptr) = prev {
-                        prev_ptr.as_mut().next_page = (*page_ptr).next_page;
-                    } else {
-                        self.full_pages[class] = (*page_ptr).next_page;
-                    }
-                    (*page_ptr).next_page = None;
-                }
-                break;
-            }
-            prev = Some(curr_ptr);
-            // Safety: curr_ptr is a valid NonNull pointer pointing to Page inside full list.
-            curr = unsafe { curr_ptr.as_ref().next_page };
-        }
+        let _ = unsafe { unlink_page_from_list(&mut self.full_pages[class], page_ptr) };
     }
 
     /// Helper to unlink a segment from the owned segments list.

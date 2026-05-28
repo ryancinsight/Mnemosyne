@@ -101,3 +101,4 @@
 ## Remaining
 
 - [patch] Cross-thread handoff rows show material bounded-sample variance between focused and full benchmark runs. Derive a variance-aware refresh policy before tightening the selected cross-thread threshold.
+- [patch] `unlink_full_page` and `unlink_page` each open-coded the same singly-linked page-list walk against `active_pages[class]` and `full_pages[class]`, producing three near-identical traversal blocks across the two functions. Factored the walk into `unlink_page_from_list(head_slot: &mut Option<NonNull<Page>>, target: *mut Page) -> bool`, an `#[inline]` helper that takes the list head by mutable reference so the relink-or-head-update is a single match expression. `unlink_full_page` now delegates to the helper; `unlink_page` invokes it twice (active list first, full list second) with the short-circuit on the returned boolean. Release-mode codegen is unchanged because monomorphization inlines the helper at each call site.
