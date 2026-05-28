@@ -856,14 +856,13 @@ mod tests {
         // region would propagate to the new allocation.
         //
         // Setup: 8 B request lands in class 0 (block_size 16 B), so
-        // layout.size = 8 but usable_size(ptr) = 16. Write 0xAA in the
-        // user region [0, 8) and 0xBB in the slack region [8, 16). After
-        // cross-class realloc to 64 B, the new allocation's [0, 8) must
-        // be 0xAA, and bytes [8, 16) must NOT be 0xBB — they must be
-        // whatever StandardPolicy left them (uninitialized, but
-        // crucially not a propagation of the slack pattern).
+        // layout.size = 8 but usable_size(ptr) = 16. Use SecurePolicy so
+        // the replacement allocation has defined zero bytes beyond the
+        // copied user region; this lets the test inspect [8, 16) without
+        // reading uninitialized memory.
+        let allocator = MnemosyneAllocator::<SecurePolicy>::new();
         let small_layout = Layout::from_size_align(8, 8).expect("valid layout");
-        let ptr = unsafe { ALLOCATOR.alloc(small_layout) };
+        let ptr = unsafe { allocator.alloc(small_layout) };
         assert!(!ptr.is_null());
         // Sanity-check the slack window exists.
         let reported = unsafe { mnemosyne_local::usable_size(ptr) };
@@ -884,18 +883,9 @@ mod tests {
         }
 
         // Cross-class grow.
-        let new_ptr = unsafe { ALLOCATOR.realloc(ptr, small_layout, 64) };
+        let new_ptr = unsafe { allocator.realloc(ptr, small_layout, 64) };
         assert!(!new_ptr.is_null());
 
-        // Mnemosyne under StandardPolicy does NOT zero-initialize, so we
-        // cannot assert bytes [8, 16) are zero. What we can assert is
-        // that they are NOT 0xBB — meaning the slack was NOT copied
-        // from the old allocation. The way to demonstrate "not copied"
-        // is to check that the new_ptr's [8, 16) is independent of the
-        // old slack pattern; we conservatively assert the new[0..8] is
-        // exactly the user region, and we tolerate any value in [8, 16)
-        // as long as it does not equal a chain of 0xBB bytes that would
-        // indicate the bug.
         for i in 0..8usize {
             assert_eq!(
                 unsafe { new_ptr.add(i).read() },
@@ -903,18 +893,16 @@ mod tests {
                 "realloc must preserve the {i}-th user byte"
             );
         }
-        // If the slow path used `usable_size` instead of `layout.size`,
-        // all 8 slack bytes would carry the 0xBB pattern. We accept any
-        // single byte equal to 0xBB as coincidence, but treating all
-        // eight as 0xBB is the buggy signal.
-        let slack_carries_bb = (8..16usize).all(|i| unsafe { new_ptr.add(i).read() } == 0xBB);
-        assert!(
-            !slack_carries_bb,
-            "realloc copied the slack region past layout.size into the new allocation"
-        );
+        for i in 8..16usize {
+            assert_eq!(
+                unsafe { new_ptr.add(i).read() },
+                0,
+                "secure realloc copied slack byte {i} past layout.size"
+            );
+        }
 
         let new_layout = Layout::from_size_align(64, 8).expect("valid layout");
-        unsafe { ALLOCATOR.dealloc(new_ptr, new_layout) };
+        unsafe { allocator.dealloc(new_ptr, new_layout) };
     }
 
     #[test]
