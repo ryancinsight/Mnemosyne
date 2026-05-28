@@ -57,6 +57,33 @@ fn record_cross_thread_reclaimed(count: usize) {
     CROSS_THREAD_RECLAIMED_BLOCKS.fetch_add(count, Ordering::Relaxed);
 }
 
+/// Pops the head block from an initialized page-local free list.
+///
+/// # Safety
+///
+/// `page.free` must be `Some`; callers establish this through an existing
+/// local free list, a successful `Page::reclaim_thread_free`, or
+/// `Page::initialize_free_list`.
+#[inline(always)]
+unsafe fn pop_page_free_block(page: &mut Page) -> NonNull<mnemosyne_core::types::Block> {
+    debug_assert!(
+        page.free.is_some(),
+        "page {} free list empty before pop; block_size={}, alloc_count={}, max_blocks={}",
+        page.page_index,
+        page.block_size,
+        page.alloc_count,
+        page.max_blocks
+    );
+    let block = match page.free {
+        Some(block) => block,
+        None => unsafe { core::hint::unreachable_unchecked() },
+    };
+    unsafe {
+        page.free = (*block.as_ptr()).next;
+    }
+    block
+}
+
 /// Thread-local cache for fast-path small allocations.
 pub struct ThreadAllocator<B: HasSegmentPool = DefaultBackend> {
     /// Active pages per size class.
@@ -154,19 +181,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             let reclaimed = unsafe { page.reclaim_thread_free() };
             if reclaimed > 0 {
                 record_cross_thread_reclaimed(reclaimed);
-                debug_assert!(
-                    page.free.is_some(),
-                    "reclaim_thread_free({reclaimed}) did not populate active page free list"
-                );
                 // Safety: `reclaim_thread_free` returned a nonzero count, which by
                 // its post-condition links the drained blocks onto `page.free`.
-                let block = match page.free {
-                    Some(b) => b,
-                    None => unsafe { core::hint::unreachable_unchecked() },
-                };
-                unsafe {
-                    page.free = (*block.as_ptr()).next;
-                }
+                let block = unsafe { pop_page_free_block(page) };
                 page.alloc_count += 1;
                 return block.as_ptr() as *mut u8;
             }
@@ -239,11 +256,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             let reclaimed = active_page.reclaim_thread_free();
             if reclaimed > 0 {
                 record_cross_thread_reclaimed(reclaimed);
-                let block = match active_page.free {
-                    Some(b) => b,
-                    None => core::hint::unreachable_unchecked(),
-                };
-                active_page.free = (*block.as_ptr()).next;
+                // Safety: `reclaim_thread_free` returned a nonzero count, which by
+                // its post-condition links the drained blocks onto `page.free`.
+                let block = pop_page_free_block(active_page);
                 active_page.alloc_count += 1;
                 return block.as_ptr() as *mut u8;
             } else if active_page.free.is_none() && active_page.local_free.is_none() {
@@ -271,18 +286,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 let reclaimed = page.reclaim_thread_free();
                 if reclaimed > 0 {
                     record_cross_thread_reclaimed(reclaimed);
-                    debug_assert!(
-                        page.free.is_some(),
-                        "reclaim_thread_free({reclaimed}) did not populate full page free list"
-                    );
 
                     // Allocate from it
-                    let block = match page.free {
-                        Some(b) => b,
-                        None => core::hint::unreachable_unchecked(),
-                    };
-                    // Safety: block is verified to be valid.
-                    page.free = (*block.as_ptr()).next;
+                    // Safety: `reclaim_thread_free` returned a nonzero count, which by
+                    // its post-condition links the drained blocks onto `page.free`.
+                    let block = pop_page_free_block(page);
                     page.alloc_count += 1;
 
                     if page.alloc_count < page.max_blocks {
@@ -313,19 +321,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // Safety: new_page_ptr is valid and points to a Page inside a segment owned by us.
         let page = &mut *new_page_ptr;
-        debug_assert!(
-            page.free.is_some(),
-            "new page for class {class} has no initialized free block"
-        );
         // Safety: `get_new_page` guarantees a freshly initialized page whose
         // `initialize_free_list` populated `free` with at least one block.
-        let block = match page.free {
-            Some(b) => b,
-            None => core::hint::unreachable_unchecked(),
-        };
+        let block = pop_page_free_block(page);
 
-        // Safety: block is valid and points to a Block within the page.
-        page.free = (*block.as_ptr()).next;
         page.alloc_count += 1;
 
         // If it becomes full immediately, move to full list
