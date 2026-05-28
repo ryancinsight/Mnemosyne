@@ -305,8 +305,8 @@ mod tests {
 
     #[test]
     fn huge_mapping_suffix_uses_raw_mapping_base() {
-        let mut segment_storage = [0u8; core::mem::size_of::<Segment>()];
-        let segment = segment_storage.as_mut_ptr().cast::<Segment>();
+        let mut segment_storage = core::mem::MaybeUninit::<Segment>::uninit();
+        let segment = segment_storage.as_mut_ptr();
         let raw = 0x1000usize as *mut u8;
         unsafe {
             Segment::initialize(segment, raw);
