@@ -26,6 +26,9 @@ baseline only after an intentional threshold-policy decision.
 - `usable_size` benchmarks now cover Mnemosyne, mimalloc, snmalloc, and
   target-gated jemalloc; the summary includes `usable size latency/`
   rows, but the threshold baseline remains unchanged.
+- `realloc` benchmarks now cover within-class and cross-class realloc
+  cycles; the summary includes `realloc latency/` rows, but the
+  threshold baseline remains unchanged.
 
 ## 2026-05-28
 
@@ -56,3 +59,4 @@ The `Threaded saturated small allocation cycles` group replaces the historical t
 The historical `Threaded small allocation cycles` row remains in the side-by-side report for continuity, but it is not a threshold-gated baseline row because per-sample bounded-channel scheduling variance can dominate allocator changes.
 The memory report includes page-reset, guard-install, retained-pool reset, page-refill, recycle, fresh-page, fresh-segment, orphan-adoption, and recycle-sweep counters. After recycle-sweep deferral, the report allocation mix measured `19` page refills and `1` recycle sweep.
 The current usable-size comparison measured Mnemosyne at `14.005 ns` for 32-byte cycles and `14.437 ns` for 1024-byte cycles on this Windows GNU target.
+The current realloc comparison measured Mnemosyne at `13.321 ns` for within-class `24 -> 32` cycles and `29.162 ns` for cross-class `32 -> 64` cycles on this Windows GNU target.

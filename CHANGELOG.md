@@ -101,3 +101,4 @@
 - Added `Usable size latency` Criterion coverage for Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc, and included those rows in generated allocator comparison reports.
 - Optimized `usable_size` small-allocation classification by reading the target page block size before the huge-allocation metadata fallback.
 - Overrode `GlobalAlloc::realloc` on `Mnemosyne` and `MnemosyneAllocator<P, B>` to consult `usable_size(ptr)` and return the same pointer unchanged when the new size fits inside the existing size-class block. Secure policies keep replacement allocation on growth so new bytes are zero-initialized.
+- Added `Realloc latency` Criterion coverage for within-class and cross-class realloc cycles across Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc.

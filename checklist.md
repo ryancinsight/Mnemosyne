@@ -194,5 +194,8 @@ Target version: 0.1.0
 - [x] [patch] Extend huge usable-size coverage across 8 B, 64 KiB, 1 MiB, and segment-aligned huge allocations.
 
 - [x] [minor] Add `GlobalAlloc::realloc` override on `Mnemosyne` that returns `ptr` unchanged when `new_size <= usable_size(ptr)`.
-- [x] [minor] Add equivalent `GlobalAlloc::realloc` override on the generic `MnemosyneAllocator<P, B>` so policy-aware allocations also skip the alloc+copy+free round trip when the request fits in the current class.
-- [x] [minor] Add four regression tests for in-place realloc: same-pointer for within-class grow/shrink, copy semantics across classes, null→alloc, and zero-size→free.
+- [x] [minor] Add equivalent `GlobalAlloc::realloc` override on the generic `MnemosyneAllocator<P, B>` so standard policy allocations skip the alloc+copy+free round trip when the request fits in the current class.
+- [x] [patch] Preserve `SecurePolicy` zero-initialization by forcing replacement allocation for secure realloc growth even when the request fits in the current usable block.
+- [x] [minor] Add regression tests for in-place realloc: same-pointer for within-class grow/shrink, copy semantics across classes, null-to-alloc, zero-size-to-free, secure replacement growth, and zero-size null realloc.
+- [x] [minor] Add `Realloc latency` Criterion coverage for within-class and cross-class realloc cycles across Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc.
+- [x] [patch] Add `realloc latency/` to generated benchmark summary and allocator comparison reports.

@@ -10,6 +10,8 @@
 | allocator cycle latency/small_32 | 12.975 | 2.781 | 16.407 | N/A | 4.67x | 0.79x | N/A |
 | cross-thread free handoff/medium_1024 | 29595.096 | 189914.770 | 42633.831 | N/A | 0.16x | 0.69x | N/A |
 | cross-thread free handoff/small_32 | 23387.667 | 21452.626 | 25740.203 | N/A | 1.09x | 0.91x | N/A |
+| realloc latency/cross_class_32_to_64 | 29.162 | 13.033 | 33.215 | N/A | 2.24x | 0.88x | N/A |
+| realloc latency/within_class_24_to_32 | 13.321 | 4.614 | 17.486 | N/A | 2.89x | 0.76x | N/A |
 | segment cache eviction | 59078.183 | N/A | N/A | N/A | N/A | N/A | N/A |
 | threaded saturated small allocation cycles | 201364.191 | 55540.651 | 264325.501 | N/A | 3.63x | 0.76x | N/A |
 | threaded small allocation cycles | 39867.045 | 7434.712 | 26918.384 | N/A | 5.36x | 1.48x | N/A |

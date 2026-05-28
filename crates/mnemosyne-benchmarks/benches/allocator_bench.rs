@@ -99,6 +99,7 @@ unsafe extern "system" fn fallback_virtual_alloc_2_from_app(
 // Safety: all benchmark layouts use nonzero power-of-two alignments and fixed
 // positive sizes.
 const SMALL_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(32, 8) };
+const SMALL_WITHIN_CLASS_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(24, 8) };
 const MEDIUM_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(1024, 8) };
 const LARGE_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(8192, 8) };
 const BATCH_ALLOCS: usize = 256;
@@ -189,6 +190,39 @@ where
     black_box(size);
     // Safety: `ptr` was returned by the same allocator for `layout` above.
     allocator.dealloc(ptr, layout);
+}
+
+#[inline(always)]
+/// Allocates one block, reallocates it to `new_size`, and deallocates the
+/// resulting block.
+///
+/// # Safety
+///
+/// `old_layout` must be valid for `allocator`, `new_size` must be valid
+/// with `old_layout.align()`, and the allocator must accept deallocation
+/// of the pointer returned by `realloc` with the derived new layout.
+unsafe fn alloc_realloc_dealloc<A: GlobalAlloc>(
+    allocator: &A,
+    old_layout: Layout,
+    new_size: usize,
+) {
+    // Safety: benchmark callers provide a valid `Layout`; null allocation
+    // results are rejected before the pointer is passed to realloc.
+    let ptr = require_allocated(
+        allocator.alloc(black_box(old_layout)),
+        "alloc_realloc_dealloc",
+    );
+    // Safety: benchmark constants use valid size/alignment pairs.
+    let new_layout = unsafe { Layout::from_size_align_unchecked(new_size, old_layout.align()) };
+    // Safety: `ptr` was returned by `allocator` for `old_layout`, and
+    // `new_size` is valid for `old_layout.align()`.
+    let new_ptr = require_allocated(
+        allocator.realloc(ptr, old_layout, black_box(new_size)),
+        "alloc_realloc_dealloc",
+    );
+    black_box(new_ptr);
+    // Safety: `new_ptr` was returned by the same allocator's realloc call.
+    allocator.dealloc(new_ptr, new_layout);
 }
 
 struct HandoffBatch {
@@ -444,7 +478,7 @@ fn bench_usable_size(c: &mut Criterion) {
             b.iter(|| unsafe {
                 alloc_usable_dealloc(&mnemosyne::Mnemosyne, *layout, |ptr| {
                     // Safety: `ptr` came from the Mnemosyne allocator above.
-                    unsafe { mnemosyne::usable_size(ptr) }
+                    mnemosyne::usable_size(ptr)
                 })
             })
         });
@@ -453,7 +487,7 @@ fn bench_usable_size(c: &mut Criterion) {
             b.iter(|| unsafe {
                 alloc_usable_dealloc(&mimalloc::MiMalloc, *layout, |ptr| {
                     // Safety: `ptr` came from the mimalloc allocator above.
-                    unsafe { mimalloc::MiMalloc.usable_size(ptr) }
+                    mimalloc::MiMalloc.usable_size(ptr)
                 })
             })
         });
@@ -479,6 +513,58 @@ fn bench_usable_size(c: &mut Criterion) {
                     })
                 })
             });
+        }
+    }
+    group.finish();
+}
+
+fn bench_realloc(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Realloc latency");
+    for (name, layout, new_size) in [
+        ("within_class_24_to_32", SMALL_WITHIN_CLASS_LAYOUT, 32usize),
+        ("cross_class_32_to_64", SMALL_LAYOUT, 64usize),
+    ] {
+        group.throughput(Throughput::Elements(1));
+        group.bench_with_input(
+            BenchmarkId::new("Mnemosyne", name),
+            &(layout, new_size),
+            |b, (layout, new_size)| {
+                // Safety: inputs come from the static valid benchmark layout table.
+                b.iter(|| unsafe {
+                    alloc_realloc_dealloc(&mnemosyne::Mnemosyne, *layout, *new_size)
+                })
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("MiMalloc", name),
+            &(layout, new_size),
+            |b, (layout, new_size)| {
+                // Safety: inputs come from the static valid benchmark layout table.
+                b.iter(|| unsafe { alloc_realloc_dealloc(&mimalloc::MiMalloc, *layout, *new_size) })
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("SnMalloc", name),
+            &(layout, new_size),
+            |b, (layout, new_size)| {
+                // Safety: inputs come from the static valid benchmark layout table.
+                b.iter(|| unsafe {
+                    alloc_realloc_dealloc(&snmalloc_rs::SnMalloc, *layout, *new_size)
+                })
+            },
+        );
+        #[cfg(not(windows))]
+        {
+            group.bench_with_input(
+                BenchmarkId::new("Jemalloc", name),
+                &(layout, new_size),
+                |b, (layout, new_size)| {
+                    // Safety: inputs come from the static valid benchmark layout table.
+                    b.iter(|| unsafe {
+                        alloc_realloc_dealloc(&tikv_jemallocator::Jemalloc, *layout, *new_size)
+                    })
+                },
+            );
         }
     }
     group.finish();
@@ -637,6 +723,7 @@ criterion_group! {
         bench_allocator_cycles,
         bench_allocator_bursts,
         bench_usable_size,
+        bench_realloc,
         bench_cross_thread_free,
         bench_multithreaded_alloc,
         bench_saturated_multithreaded_alloc,
