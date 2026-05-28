@@ -19,6 +19,12 @@ pub struct ArenaMemoryStats {
     pub purged_segments: usize,
     pub purge_calls: usize,
     pub purged_bytes: usize,
+    /// Number of segments whose physical backing was released by a
+    /// confirmed `page_reset` while the segment itself remained cached
+    /// in the retained pool.
+    pub reset_segments: usize,
+    /// Number of `reset_segment_pool` invocations.
+    pub reset_calls: usize,
 }
 
 /// Outcome of attempting to release a segment mapping.
@@ -36,6 +42,8 @@ pub struct GlobalSegmentPool {
     retained: AtomicUsize,
     purged: AtomicUsize,
     purge_calls: AtomicUsize,
+    reset_segments: AtomicUsize,
+    reset_calls: AtomicUsize,
 }
 
 impl GlobalSegmentPool {
@@ -46,6 +54,8 @@ impl GlobalSegmentPool {
             retained: AtomicUsize::new(0),
             purged: AtomicUsize::new(0),
             purge_calls: AtomicUsize::new(0),
+            reset_segments: AtomicUsize::new(0),
+            reset_calls: AtomicUsize::new(0),
         }
     }
 
@@ -147,6 +157,22 @@ impl GlobalSegmentPool {
         self.purge_calls.fetch_add(1, Ordering::Relaxed);
         self.purged.fetch_add(count, Ordering::Relaxed);
     }
+
+    #[inline]
+    pub fn reset_segments_count(&self) -> usize {
+        self.reset_segments.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn reset_call_count(&self) -> usize {
+        self.reset_calls.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    fn record_reset(&self, count: usize) {
+        self.reset_calls.fetch_add(1, Ordering::Relaxed);
+        self.reset_segments.fetch_add(count, Ordering::Relaxed);
+    }
 }
 
 /// The global segment pool instance.
@@ -216,6 +242,8 @@ pub fn arena_memory_stats<B: HasSegmentPool>() -> ArenaMemoryStats {
         purged_segments: pool.purged_count(),
         purge_calls: pool.purge_call_count(),
         purged_bytes: pool.purged_count() * SEGMENT_MAPPING_SIZE,
+        reset_segments: pool.reset_segments_count(),
+        reset_calls: pool.reset_call_count(),
     }
 }
 
@@ -369,6 +397,66 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
         }
     }
     pool.record_purge(purged);
+}
+
+/// Drops the physical backing of every retained free segment without
+/// removing them from the cache.
+///
+/// Walks the retained pool by draining it into a fixed-size stack
+/// buffer, asks the backend to reset the physical pages of each
+/// drained segment's mapping, and pushes the segments back onto the
+/// pool so they remain available for reuse. The address ranges stay
+/// owned by the allocator; only the OS-visible RSS is released.
+///
+/// Used as a lighter-weight RSS-reduction knob than `purge_segment_pool`
+/// for callers that want to keep the segment cache warm but reduce
+/// resident set size on idle periods.
+///
+/// # Safety
+///
+/// Calls `MemoryBackend::page_reset` on every segment in the pool. Each
+/// segment must currently be a valid initialized retained mapping —
+/// which is guaranteed because we only operate on segments popped from
+/// the retained pool by this function and then push them back. Concurrent
+/// allocators may temporarily observe an empty pool and fall back to OS
+/// allocation; this is intended for quiescent periods.
+pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
+    let pool = B::global_segment_pool();
+    // Drain into a fixed-size stack buffer (the pool is bounded to
+    // MAX_RETAINED_SEGMENTS, so this never overflows).
+    let mut buffer: [*mut Segment; MAX_RETAINED_SEGMENTS] =
+        [core::ptr::null_mut(); MAX_RETAINED_SEGMENTS];
+    let mut drained = 0usize;
+    while drained < MAX_RETAINED_SEGMENTS {
+        match pool.pop() {
+            Some(segment) => {
+                buffer[drained] = segment;
+                drained += 1;
+            }
+            None => break,
+        }
+    }
+
+    // Reset each segment's mapping and push it back. The reset result is
+    // advisory: a backend without `page_reset` support (or a kernel that
+    // declines the advice) returns false, in which case we leave the
+    // mapping untouched and simply re-cache the segment.
+    let mut reset_count = 0usize;
+    for slot in buffer.iter().take(drained) {
+        let segment = *slot;
+        // Safety: segment was popped from the retained pool above and is
+        // an initialized mapping owned by this allocator until we push it
+        // back below.
+        let raw_ptr = unsafe { (*segment).raw_alloc_ptr };
+        // Safety: raw_ptr covers SEGMENT_MAPPING_SIZE bytes per the
+        // arena allocation contract.
+        if unsafe { B::page_reset(raw_ptr, SEGMENT_MAPPING_SIZE) } {
+            reset_count += 1;
+        }
+        pool.push_unbounded(segment);
+    }
+
+    pool.record_reset(reset_count);
 }
 
 #[cfg(test)]

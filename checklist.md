@@ -162,3 +162,8 @@ Target version: 0.1.0
 - [x] [minor] Sprint A: Implement `page_reset` on `WindowsBackend` via `VirtualAlloc(MEM_RESET)`.
 - [x] [minor] Sprint A: Add `page_reset_calls`/`page_reset_bytes` telemetry to `BackendMemoryStats` and `MemoryStats`; wire through `MemoryBackendWrapper`.
 - [x] [minor] Sprint A: Add three regression tests pinning page-reset telemetry semantics and round-trip behavior on an active mapping.
+
+- [x] [minor] Sprint A wire-through: Add `reset_segment_pool` arena function that drains the retained pool, calls `page_reset` on each cached segment, and pushes them back.
+- [x] [minor] Sprint A wire-through: Add `reset_segments` / `reset_calls` telemetry to `ArenaMemoryStats` and `mnemosyne::MemoryStats`.
+- [x] [minor] Sprint A wire-through: Add public `mnemosyne::reset()` and `mnemosyne::reset_generic<B>()` APIs.
+- [x] [minor] Sprint A wire-through: Add `test_reset_keeps_segments_cached_and_records_telemetry` integration test pinning the reset/purge separation and telemetry deltas.

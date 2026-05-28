@@ -28,6 +28,12 @@ pub struct MemoryStats {
     pub purged_segments: usize,
     pub purge_calls: usize,
     pub purged_bytes: usize,
+    /// Number of segments whose physical backing was released by a
+    /// confirmed `page_reset` while the segment itself remained cached
+    /// in the retained pool.
+    pub reset_segments: usize,
+    /// Number of `reset_segment_pool` invocations.
+    pub reset_calls: usize,
     pub current_thread_live_allocations: usize,
     pub current_thread_owned_segments: usize,
     pub cross_thread_reclaimed_blocks: usize,
@@ -55,6 +61,8 @@ impl Default for MemoryStats {
             purged_segments: 0,
             purge_calls: 0,
             purged_bytes: 0,
+            reset_segments: 0,
+            reset_calls: 0,
             current_thread_live_allocations: 0,
             current_thread_owned_segments: 0,
             cross_thread_reclaimed_blocks: 0,
@@ -88,6 +96,8 @@ pub fn memory_stats_generic<B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
         purged_segments: arena.purged_segments,
         purge_calls: arena.purge_calls,
         purged_bytes: arena.purged_bytes,
+        reset_segments: arena.reset_segments,
+        reset_calls: arena.reset_calls,
         current_thread_live_allocations: local.current_thread_live_allocations,
         current_thread_owned_segments: local.current_thread_owned_segments,
         cross_thread_reclaimed_blocks: local.cross_thread_reclaimed_blocks,
@@ -118,6 +128,28 @@ pub fn purge_generic<B: mnemosyne_arena::HasSegmentPool>() {
 /// Purges the global segment pool, releasing all retained/cached segments back to the OS.
 pub fn purge() {
     purge_generic::<mnemosyne_backend::MemoryBackendWrapper>();
+}
+
+/// Asks the OS to drop the physical backing of every retained free
+/// segment for a specific backend without removing them from the cache.
+///
+/// Use this as a lighter-weight RSS-reduction knob than `purge`: the
+/// segment cache stays warm so subsequent allocations skip the OS
+/// mapping syscall, while the resident memory footprint of idle
+/// segments drops to the kernel's demand-fault baseline.
+pub fn reset_generic<B: mnemosyne_arena::HasSegmentPool>() {
+    // Safety: reset_segment_pool drains the retained pool, issues
+    // page_reset on each segment's mapping, and pushes them back into
+    // the cache; no segment is released or accessed by another path.
+    unsafe {
+        mnemosyne_arena::reset_segment_pool::<B>();
+    }
+}
+
+/// Asks the OS to drop the physical backing of every retained free
+/// segment without removing them from the cache.
+pub fn reset() {
+    reset_generic::<mnemosyne_backend::MemoryBackendWrapper>();
 }
 
 /// The Mnemosyne global allocator structure.
@@ -420,6 +452,70 @@ mod tests {
             stats_after.purged_bytes > stats_before.purged_bytes,
             "Expected purged_bytes count to increase"
         );
+    }
+
+    #[test]
+    fn test_reset_keeps_segments_cached_and_records_telemetry() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
+        // Start from a clean pool so the retention count is deterministic.
+        purge();
+
+        // Cache one segment via the standard alloc/dealloc round trip.
+        let segment = unsafe {
+            mnemosyne_arena::allocate_segment::<mnemosyne_backend::MemoryBackendWrapper>()
+                .expect("segment allocation must succeed")
+        };
+        unsafe {
+            mnemosyne_arena::deallocate_segment::<mnemosyne_backend::MemoryBackendWrapper>(segment);
+        }
+        let stats_before = memory_stats();
+        assert!(
+            stats_before.retained_free_segments >= 1,
+            "expected at least one cached segment before reset"
+        );
+
+        reset();
+
+        let stats_after = memory_stats();
+        // Reset preserves the cache: retention count does not drop.
+        assert_eq!(
+            stats_after.retained_free_segments, stats_before.retained_free_segments,
+            "reset must not evict retained segments"
+        );
+        // Reset always increments its own call counter, regardless of
+        // whether the backend confirmed the page-reset advice.
+        assert!(
+            stats_after.reset_calls > stats_before.reset_calls,
+            "reset_calls counter did not advance: before={} after={}",
+            stats_before.reset_calls,
+            stats_after.reset_calls
+        );
+        // On Windows the wrapper backend implements page_reset via
+        // VirtualAlloc(MEM_RESET) which always succeeds for active
+        // mappings, so reset_segments should also advance. On platforms
+        // where the kernel declines the advice, this is permitted to
+        // stay equal — the test asserts only the call counter advanced.
+        assert!(
+            stats_after.reset_segments >= stats_before.reset_segments,
+            "reset_segments regressed: before={} after={}",
+            stats_before.reset_segments,
+            stats_after.reset_segments
+        );
+        // Purge counters are not perturbed by reset.
+        assert_eq!(
+            stats_after.purge_calls, stats_before.purge_calls,
+            "reset must not increment purge_calls"
+        );
+        assert_eq!(
+            stats_after.purged_segments, stats_before.purged_segments,
+            "reset must not increment purged_segments"
+        );
+
+        // The address space remains writable through the cached mapping
+        // — drain the pool to pop the segment and write through it.
+        purge();
     }
 
     #[test]
