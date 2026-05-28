@@ -137,4 +137,7 @@ Target version: 0.1.0
 - [x] [patch] Add value-semantic messages to production `debug_assert!` checks while preserving debug-only code generation.
 - [x] [patch] Verify no predicate-only `debug_assert!` sites remain in production crates.
 
-- [ ] [patch] Audit local allocator remote-free reclaim paths for duplicated block-pop logic.
+- [x] [patch] Audit local allocator remote-free reclaim paths for duplicated block-pop logic.
+- [x] [patch] Refresh selected Mnemosyne threshold-gated Criterion rows and regenerate `target/criterion` summaries.
+
+- [ ] [patch] Investigate full all-allocator Criterion quick-run timeout while focused gated rows complete.

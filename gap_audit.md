@@ -94,3 +94,5 @@
 - [patch] `ThreadAllocator::alloc` (active page), `alloc_cold` (active-page recheck), and `alloc_cold` (full-pages sweep) each open-coded the identical four-step sequence: drain `page.thread_free` via `reclaim_thread_free`, record cross-thread reclamation telemetry on nonzero count, pop the freshly linked head from `page.free`, and bump `page.alloc_count`. Extracted `try_reclaim_and_allocate(&mut Page) -> Option<NonNull<Block>>` as an `#[inline(always)]` helper that performs the sequence once; release-mode codegen is unchanged because the helper monomorphizes inline at every call site, and each call site collapses from ten lines of duplicated unsafe code plus its safety comment to a single match-and-return statement.
 
 ## Remaining
+
+- [patch] Full `cargo bench -p mnemosyne-benchmarks --bench allocator_bench -- --quick` and the broad `Mnemosyne` Criterion filter exceeded the 300s command cap in this environment, although each selected threshold-gated Mnemosyne row completed when run directly and `benchmark_summary -- --enforce-thresholds` passed. Investigate whether the broad Criterion filter leaves a worker or report-generation path alive.

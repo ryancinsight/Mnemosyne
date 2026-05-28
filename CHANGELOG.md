@@ -79,3 +79,4 @@
 - Documented the `size_to_class(0)` zero-size mapping contract and added boundary-walking coverage that verifies every consecutive size-class transition (including the four piecewise jump points at 128/129, 512/513, 2048/2049, and 8192/8193) is exact.
 - Extracted `try_reclaim_and_allocate` `#[inline(always)]` helper that folds the three "drain `thread_free` → record telemetry → pop free block → bump alloc_count" sites in `ThreadAllocator::alloc` and `alloc_cold` into a single routine; hot-path codegen is preserved by monomorphization.
 - Added value-semantic messages to production `debug_assert!` invariant checks while preserving release-mode zero-cost behavior.
+- Refreshed selected Mnemosyne threshold-gated Criterion rows after the remote-free helper refactor; full broad Criterion filters are tracked for follow-up because they exceeded the local command cap.

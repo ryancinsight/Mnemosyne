@@ -74,7 +74,8 @@
 - [patch] Audit generated benchmark artifact freshness and documentation references for the current allocator comparison set.
 - [patch] Audit test-only panic diagnostics without reducing assertion strength.
 - [patch] Audit production debug assertions for value-semantic invariant messages and zero-cost release behavior.
+- [patch] Audit local allocator remote-free reclaim paths for duplicated block-pop logic.
 
 ## Next
 
-- [patch] Audit local allocator remote-free reclaim paths for duplicated block-pop logic.
+- [patch] Investigate full all-allocator Criterion quick-run timeout while focused gated rows complete.
