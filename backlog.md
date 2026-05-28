@@ -77,8 +77,10 @@
 - [patch] Audit local allocator remote-free reclaim paths for duplicated block-pop logic.
 - [patch] Investigate full all-allocator Criterion quick-run timeout while focused gated rows complete.
 - [patch] Guard local-free full-page reactivation on confirmed full-list unlink.
-
 - [patch] Audit benchmark baseline metadata after bounded Criterion harness configuration.
+- [patch] Refresh source-controlled benchmark baseline excerpt from bounded Criterion harness output.
 - [patch] Optimize thread_free segment owner check by introducing get_allocator_ptr to LocalAllocatorSelector.
 
 ## Next
+
+- [patch] Derive a variance-aware refresh policy for cross-thread handoff benchmark rows before tightening selected thresholds.

@@ -144,7 +144,9 @@ Target version: 0.1.0
 - [x] [patch] Replace unsupported `--quick` benchmark invocation with an explicit bounded Criterion smoke configuration.
 - [x] [patch] Make `unlink_full_page` return whether the page was actually removed and only re-activate pages after a confirmed full-list unlink.
 
-- [ ] [patch] Audit benchmark baseline metadata after bounded Criterion harness configuration.
+- [x] [patch] Audit benchmark baseline metadata after bounded Criterion harness configuration.
+- [x] [patch] Refresh `benchmarks/allocator_baseline_excerpt.csv` from a complete bounded Criterion run and verify `--enforce-thresholds`.
+- [x] [patch] Confirm `thread_free` uses `LocalAllocatorSelector::get_allocator_ptr` for the owner-token check without opening the TLS allocator cell.
 
 - [x] [patch] Add compile-time `const _: () = assert!(...)` invariants in `mnemosyne-core::constants` pinning `SEGMENT_SIZE`/`PAGE_SIZE` power-of-two, `SEGMENT_ALIGN == SEGMENT_SIZE`, `PAGE_ALIGN == PAGE_SIZE`, `PAGES_PER_SEGMENT * PAGE_SIZE == SEGMENT_SIZE`, `PAGES_PER_SEGMENT >= 2`, `MAX_SMALL_ALLOC_SIZE <= PAGE_SIZE`, `MAX_ALLOC_SIZE >= SEGMENT_SIZE`, and `NUM_SIZE_CLASSES > 0`.
 - [x] [patch] Add compile-time cross-checks in `mnemosyne-core::size_class` that `class_to_size(NUM_SIZE_CLASSES - 1) == MAX_SMALL_ALLOC_SIZE` and `class_to_size(NUM_SIZE_CLASSES) == 0`.

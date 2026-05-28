@@ -83,3 +83,5 @@
 - Replaced the unsupported `--quick` benchmark invocation with an explicit bounded Criterion smoke configuration in `allocator_bench`.
 - Added eleven compile-time `const _: () = assert!(...)` items across `mnemosyne-core::constants` and `mnemosyne-core::size_class` pinning power-of-two layout sizes, `SEGMENT_ALIGN`/`PAGE_ALIGN` agreement, `PAGES_PER_SEGMENT * PAGE_SIZE == SEGMENT_SIZE`, `MAX_SMALL_ALLOC_SIZE <= PAGE_SIZE`, `MAX_ALLOC_SIZE >= SEGMENT_SIZE`, `NUM_SIZE_CLASSES > 0`, and the size-class schedule endpoints. Constant drift now produces a compile error.
 - Made local-free full-page reactivation conditional on `unlink_full_page` finding and removing the page from the full-list, preventing stale or already-unlinked pages from being inserted into the active-page list.
+- Refreshed the source-controlled selected Mnemosyne benchmark baseline from the bounded Criterion smoke harness and synchronized the baseline metadata.
+- Confirmed `thread_free` owner-token checks use `LocalAllocatorSelector::get_allocator_ptr`, avoiding an allocator-cell borrow for the pointer comparison before the local-free mutation path.

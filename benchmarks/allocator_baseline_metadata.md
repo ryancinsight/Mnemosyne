@@ -7,10 +7,9 @@ and `allocator_comparison.md`. Treat the baseline as the threshold-gated
 reference (regenerated only with `--refresh-baseline`) and the comparison
 report as a snapshot of the most recent comparison run.
 
-The baseline below pre-dates the following local-allocator changes. The
-current generated comparison files under `target/criterion/` capture the
-latest local run; refresh the source-controlled baseline only after an
-intentional threshold-policy decision.
+The baseline below was refreshed from the bounded Criterion smoke harness
+after the following local-allocator changes. Refresh the source-controlled
+baseline only after an intentional threshold-policy decision.
 
 - `allocate_large_or_huge` mapping slack reduced from
   `size + alignment + 2 * SEGMENT_SIZE` to
@@ -44,6 +43,6 @@ for local optimization work.
 The comparison report records current-to-baseline mean and median ratios for selected Mnemosyne rows.
 The summary command does not mutate the source-controlled baseline unless `--refresh-baseline` is provided.
 Default summary runs report threshold ratios without failing the command. Threshold enforcement is explicit with `--enforce-thresholds`; the selected gate currently applies per-row thresholds to small/medium/large Mnemosyne cycle latency, small burst retention, small cross-thread handoff, saturated threaded cycles, and segment cache eviction.
-The `Threaded saturated small allocation cycles` group replaces the historical threaded row in the source-controlled baseline excerpt. It isolates allocator throughput from bounded-channel worker coordination by increasing per-command allocation work while preserving the same allocator set and worker topology. The current generated bounded smoke sample measured Mnemosyne at `208.204 us`, mimalloc at `79.660 us`, and snmalloc at `282.682 us` for 64k four-worker small allocation cycles.
+The `Threaded saturated small allocation cycles` group replaces the historical threaded row in the source-controlled baseline excerpt. It isolates allocator throughput from bounded-channel worker coordination by increasing per-command allocation work while preserving the same allocator set and worker topology. The current generated bounded smoke sample measured Mnemosyne at `212.409 us`, mimalloc at `76.664 us`, and snmalloc at `266.515 us` for 64k four-worker small allocation cycles.
 The historical `Threaded small allocation cycles` row remains in the side-by-side report for continuity, but it is not a threshold-gated baseline row because per-sample bounded-channel scheduling variance can dominate allocator changes.
 The memory report includes page-refill, recycle, fresh-page, fresh-segment, orphan-adoption, and recycle-sweep counters. After recycle-sweep deferral, the report allocation mix measured `19` page refills and `1` recycle sweep.
