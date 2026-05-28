@@ -160,10 +160,14 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
         // the metadata slot immediately preceding the user pointer.
         let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
         let huge_size = unsafe { (*segment).pages[0].block_size };
-        // huge_size is the full backend mapping size; the usable
-        // payload is the suffix from the user pointer to the end of
-        // the mapping.
-        return (segment as usize + huge_size) - ptr as usize;
+        // The usable suffix runs from the user pointer to the end of
+        // the OS-side mapping, which begins at `raw_alloc_ptr` (NOT at
+        // the aligned segment header — the arena rounds raw_alloc_ptr
+        // up to SEGMENT_ALIGN, so segment_ptr can sit up to
+        // SEGMENT_ALIGN-1 bytes past raw_alloc_ptr, and using
+        // segment_ptr as the base over-reports by that offset).
+        let raw_ptr = unsafe { (*segment).raw_alloc_ptr };
+        return (raw_ptr as usize + huge_size) - ptr as usize;
     }
 
     let segment_addr = (ptr as usize) & !(SEGMENT_SIZE - 1);
@@ -189,9 +193,13 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
 
     // Safety: non-segment-aligned large/huge allocations store the segment
     // pointer in the metadata slot immediately preceding the user pointer.
+    // The mapping base is `raw_alloc_ptr`, not the aligned segment header
+    // (see the segment-aligned branch above for the over-report
+    // derivation).
     let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
     let huge_size = unsafe { (*segment).pages[0].block_size };
-    (segment as usize + huge_size) - ptr as usize
+    let raw_ptr = unsafe { (*segment).raw_alloc_ptr };
+    (raw_ptr as usize + huge_size) - ptr as usize
 }
 
 /// Returns a statistics snapshot for the current thread allocator.
@@ -306,9 +314,15 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         if P::ENABLE_POISONING {
             // Safety: ptr is a valid large/huge allocation, so the segment header pointer
             // is stored in the metadata slot immediately preceding the user pointer.
+            // The poison region runs from `ptr` to the end of the OS-side
+            // mapping (`raw_alloc_ptr + huge_size`), not to
+            // `segment + huge_size` — the latter sits up to SEGMENT_ALIGN-1
+            // bytes past the mapping end and would write across the OS
+            // boundary.
             let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
             let huge_size = unsafe { (*segment).pages[0].block_size };
-            let size = (segment as usize + huge_size) - ptr as usize;
+            let raw_ptr = unsafe { (*segment).raw_alloc_ptr };
+            let size = (raw_ptr as usize + huge_size) - ptr as usize;
             unsafe { poison_freed_bytes::<P>(ptr, size) };
         }
         // Safety: ptr was returned by a large/huge allocation, so the segment header pointer
@@ -347,11 +361,14 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
     let page = unsafe { &mut (*segment).pages[page_index] };
     if page.block_size == 0 {
         if P::ENABLE_POISONING {
-            // Safety: ptr is a valid large/huge allocation, so the segment header pointer
-            // is stored in the metadata slot immediately preceding the user pointer.
+            // Safety: see the segment-aligned branch above for the
+            // raw_alloc_ptr derivation; using segment_ptr here would
+            // write `aligned_addr - raw_alloc_ptr` bytes past the OS
+            // mapping boundary.
             let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
             let huge_size = unsafe { (*segment).pages[0].block_size };
-            let size = (segment as usize + huge_size) - ptr as usize;
+            let raw_ptr = unsafe { (*segment).raw_alloc_ptr };
+            let size = (raw_ptr as usize + huge_size) - ptr as usize;
             unsafe { poison_freed_bytes::<P>(ptr, size) };
         }
         // Safety: non-small allocations keep the owning segment in the
@@ -502,6 +519,50 @@ mod tests {
             );
 
             let recovered = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+            let _released = unsafe {
+                mnemosyne_arena::deallocate_large_or_huge::<MemoryBackendWrapper>(ptr, recovered)
+            };
+        }
+    }
+
+    #[test]
+    fn usable_size_does_not_over_report_past_mapping_end_for_huge_allocations() {
+        // Strict assertion that catches the SEGMENT_ALIGN-1 byte over-report
+        // that resulted from using segment_ptr (aligned_addr) as the
+        // mapping base instead of segment.raw_alloc_ptr. We compute the
+        // distance from ptr to the end of the *actual* OS mapping
+        // (raw_alloc_ptr + huge_size) and assert usable_size never exceeds it.
+        let request = 4 * 1024 * 1024;
+        for &align in &[8usize, 64 * 1024, 1024 * 1024, SEGMENT_SIZE] {
+            // Safety: power-of-two alignment, non-zero size.
+            let ptr = unsafe {
+                mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(request, align)
+            };
+            assert!(!ptr.is_null(), "huge allocation failed for align {align}");
+
+            let recovered = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+            let huge_size = unsafe { (*recovered).pages[0].block_size };
+            let raw_ptr = unsafe { (*recovered).raw_alloc_ptr } as usize;
+            let mapping_end = raw_ptr + huge_size;
+            let actual_remaining = mapping_end - ptr as usize;
+
+            let reported = unsafe { usable_size(ptr) };
+            assert!(
+                reported <= actual_remaining,
+                "usable_size {} exceeds remaining mapping {} (raw_ptr={:#x}, ptr={:?}, huge_size={}) for align {align}",
+                reported,
+                actual_remaining,
+                raw_ptr,
+                ptr,
+                huge_size,
+            );
+            assert!(
+                reported >= request,
+                "usable_size {} is below requested {} for align {align}",
+                reported,
+                request,
+            );
+
             let _released = unsafe {
                 mnemosyne_arena::deallocate_large_or_huge::<MemoryBackendWrapper>(ptr, recovered)
             };
