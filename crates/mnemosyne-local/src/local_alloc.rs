@@ -267,6 +267,30 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             .map_or(false, |current| current.as_ptr() == segment)
     }
 
+    /// Updates the active slicing segment marker.
+    ///
+    /// # Safety
+    ///
+    /// Any segment in `segment` and the previous `current_segment` must be
+    /// owned exclusively by this allocator while the marker is updated.
+    #[inline(always)]
+    unsafe fn set_current_segment(&mut self, segment: Option<NonNull<Segment>>) {
+        if self.current_segment == segment {
+            return;
+        }
+        if let Some(current) = self.current_segment {
+            unsafe {
+                (*current.as_ptr()).is_current = false;
+            }
+        }
+        if let Some(next) = segment {
+            unsafe {
+                (*next.as_ptr()).is_current = true;
+            }
+        }
+        self.current_segment = segment;
+    }
+
     /// Returns a statistics snapshot for this thread allocator.
     pub fn stats(&self) -> ThreadAllocatorStats {
         let mut live_allocations = 0;
@@ -426,7 +450,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         (*seg_ptr).next_owned_segment = self.owned_segments_head;
                         self.owned_segments_head = seg_ptr;
 
-                        self.current_segment = Some(NonNull::new_unchecked(seg_ptr));
+                        self.set_current_segment(Some(NonNull::new_unchecked(seg_ptr)));
                         self.next_page_index = PAGES_PER_SEGMENT;
 
                         for i in 1..PAGES_PER_SEGMENT {
@@ -488,7 +512,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         (*seg_ptr).owner = SegmentOwner::from_ptr(self as *mut ThreadAllocator<B>);
                         (*seg_ptr).next_owned_segment = self.owned_segments_head;
                         self.owned_segments_head = seg_ptr;
-                        self.current_segment = Some(NonNull::new_unchecked(seg_ptr));
+                        self.set_current_segment(Some(NonNull::new_unchecked(seg_ptr)));
                     }
                     self.next_page_index = 1; // page 0 is segment header
                 }
@@ -516,10 +540,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let page = unsafe { &mut *page_ptr };
         page.block_size = block_size;
 
-        // Initialize free blocks in the page.
-        // Safety: page_start is valid for page initialization.
         let page_start = unsafe { (seg as *mut u8).add(page.page_index * PAGE_SIZE) };
-        // Safety: page start pointer is valid and page.block_size is set.
         unsafe {
             page.initialize_free_list(page_start);
         }
@@ -648,7 +669,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 .current_segment
                 .map_or(false, |p| p.as_ptr() == segment)
             {
-                self.current_segment = None;
+                self.set_current_segment(None);
                 self.next_page_index = 0;
             }
 
@@ -732,6 +753,7 @@ impl<B: HasSegmentPool> Drop for ThreadAllocator<B> {
                 }
 
                 (*curr).owner = SegmentOwner::NONE;
+                (*curr).is_current = false;
                 (*curr).next_owned_segment = core::ptr::null_mut();
 
                 if total_allocations == 0 {

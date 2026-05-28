@@ -382,9 +382,25 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
     // Determine whether the current thread holds the segment owner token.
     // Safety: segment header is initialized and owner field is valid.
     let owner = unsafe { (*segment).owner };
+    let current_allocator = B::get_allocator_ptr();
 
-    B::with_allocator(|alloc_ref| {
-        if owner.matches(alloc_ref.as_ptr().cast::<core::ffi::c_void>()) {
+    if owner.matches(current_allocator) {
+        debug_assert!(page.alloc_count > 0, "local free observed zero alloc_count");
+        let was_full = page.alloc_count == page.max_blocks;
+        let becomes_empty = page.alloc_count == 1;
+        // Safety: the owner token matched this thread's allocator. If the page
+        // is not full and the free cannot trigger non-current segment reclaim,
+        // the page-local metadata update does not need access to allocator lists.
+        if !was_full && (!becomes_empty || unsafe { (*segment).is_current }) {
+            unsafe {
+                (*block).next = page.free;
+                page.free = Some(NonNull::new_unchecked(block));
+                page.alloc_count -= 1;
+            }
+            return;
+        }
+
+        B::with_allocator(|alloc_ref| {
             // Local free: try to update the page metadata in the thread cache.
             if let Ok(mut alloc) = alloc_ref.try_borrow_mut() {
                 // Safety: segment and block are verified to be owned by this thread allocator.
@@ -410,15 +426,21 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
                 }
                 return;
             }
-        }
 
-        // Cross-thread, orphan, or re-entrant/borrowed local free: push onto
-        // the owning page's queue. The owner batch-reclaims this block after
-        // local page lists are exhausted.
-        unsafe {
-            page.thread_free.push(NonNull::new_unchecked(block));
-        }
-    });
+            // Re-entrant/borrowed local free: push onto the owning page's queue.
+            // The owner batch-reclaims this block after local page lists are exhausted.
+            unsafe {
+                page.thread_free.push(NonNull::new_unchecked(block));
+            }
+        });
+        return;
+    }
+
+    // Cross-thread or orphan free: push onto the owning page's queue. The owner
+    // batch-reclaims this block after local page lists are exhausted.
+    unsafe {
+        page.thread_free.push(NonNull::new_unchecked(block));
+    }
 }
 
 #[cfg(test)]
@@ -545,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn reentrant_local_free_uses_page_queue() {
+    fn reentrant_current_segment_local_free_uses_metadata_fast_path() {
         let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(32, 8) };
         assert!(
             !ptr.is_null(),
@@ -568,18 +590,10 @@ mod tests {
             unsafe { thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr) };
         });
 
-        assert_eq!(page.alloc_count, 1);
-        assert!(
-            !page.thread_free.is_empty(),
-            "reentrant free did not enqueue into page-local thread_free"
-        );
-
-        let reclaimed = unsafe { page.reclaim_thread_free() };
-        assert_eq!(reclaimed, 1);
         assert_eq!(page.alloc_count, 0);
         assert!(
             page.thread_free.is_empty(),
-            "thread_free list was not empty after reclaim"
+            "current-segment local free should not enqueue into page-local thread_free"
         );
         assert_eq!(page.free.map(NonNull::as_ptr), Some(ptr as *mut Block));
     }

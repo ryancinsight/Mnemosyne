@@ -58,6 +58,10 @@ baseline only after an intentional threshold-policy decision.
 - Standard-policy small realloc now proves same-class growth from the old
   `Layout` before falling back to `usable_size`, avoiding a pointer metadata
   query for within-class requests such as `24 -> 32`.
+- Same-thread frees on the active segment now use a segment current-marker to
+  return blocks directly to the page free list without taking the allocator
+  `RefCell` mutable-borrow path when no page-list relink or segment reclaim is
+  required.
 
 ## 2026-05-28
 
@@ -92,4 +96,4 @@ The current realloc comparison measured Mnemosyne at `11.492 ns` for within-clas
 The current isolated usable-size query comparison measured Mnemosyne at `0.411 ns` for 32-byte pointers and `0.383 ns` for 1024-byte pointers on this Windows GNU target.
 The current allocation-only comparison measured Mnemosyne at `17.686 ns` for 32-byte allocations and `31.260 ns` for 1024-byte allocations on this Windows GNU target, versus System at `38.856 ns` and `225.653 ns`, mimalloc at `19.136 ns` and `364.778 ns`, and snmalloc at `18.839 ns` and `111.322 ns`.
 The current deallocation-only comparison measured Mnemosyne at `6.414 ns` for 32-byte frees and `29.820 ns` for 1024-byte frees on this Windows GNU target, versus System at `20.864 ns` and `92.887 ns`, mimalloc at `5.828 ns` and `114.297 ns`, and snmalloc at `17.283 ns` and `71.771 ns`.
-The current selected mimalloc-regression refresh measured Mnemosyne at `19.883 us` for threaded small allocation cycles, `194.881 us` for threaded saturated small allocation cycles, and `11.116 ns` for `usable size latency/small_32`.
+The current selected mimalloc-regression refresh measured Mnemosyne at `17.573 us` for threaded small allocation cycles, `148.843 us` for threaded saturated small allocation cycles, and `11.116 ns` for `usable size latency/small_32`.

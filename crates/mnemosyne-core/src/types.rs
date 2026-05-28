@@ -152,6 +152,7 @@ impl Page {
                 prev = Some(NonNull::new_unchecked(block_ptr));
             }
         }
+
         self.free = prev;
     }
 }
@@ -167,6 +168,8 @@ pub struct Segment {
     pub raw_alloc_ptr: *mut u8,
     /// Permission identity for the owner ThreadAllocator cache.
     pub owner: SegmentOwner,
+    /// True while this segment is the owner's active page-slicing segment.
+    pub is_current: bool,
     /// Pointer to the next segment owned by the same ThreadAllocator.
     pub next_owned_segment: *mut Segment,
     /// Pointer to the next free segment in the global pool.
@@ -191,6 +194,7 @@ impl Segment {
             let segment = &mut *aligned_ptr;
             segment.raw_alloc_ptr = raw_alloc_ptr;
             segment.owner = SegmentOwner::NONE;
+            segment.is_current = false;
             segment.next_owned_segment = core::ptr::null_mut();
             segment.next_free_segment = core::ptr::null_mut();
 

@@ -98,9 +98,10 @@
 - [minor] Add deallocation-only latency benchmarks to isolate free-side cost across Mnemosyne, System, mimalloc, snmalloc, and target-gated jemalloc.
 - [patch] Remove dead `Page::local_free` state and allocation fast-path branch after verifying all local frees route through `Page::free`.
 - [patch] Add small-realloc size-class proof fast path to avoid `usable_size` metadata lookup when the old `Layout` already proves the existing class covers the new request.
+- [patch] Add a current-segment marker so same-thread frees on the active segment bypass the allocator-cell mutable borrow when no page-list mutation or segment reclaim is required.
 
 ## Next
 
-- [patch] Investigate mimalloc's remaining within-class realloc advantage after the size-class proof fast path.
+- [patch] Investigate mimalloc's remaining within-class realloc and threaded-row advantage after the current-segment local-free fast path.
 - [patch] Derive a variance-aware refresh policy for cross-thread handoff benchmark rows before tightening selected thresholds.
 - [patch] Run the jemalloc comparator leg on a target where `tikv-jemallocator` links and refresh comparison rows.
