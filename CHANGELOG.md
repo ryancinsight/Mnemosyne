@@ -94,3 +94,6 @@
 - Added an opt-in `mnemosyne-arena/segment-tail-guards` feature with `SEGMENT_TAIL_GUARD_SIZE = 4 KiB` (compile-time `is_power_of_two` and `<= SEGMENT_ALIGN` checks). When enabled, `allocate_segment` installs a `PROT_NONE` / `PAGE_NOACCESS` guard at `aligned_addr + SEGMENT_SIZE` on every fresh OS-backed segment. The default feature set leaves the install disabled so benchmarked allocator paths keep zero guard-install overhead.
 - Extended `memory_report` with page-reset, guard-install, reset-segment, and reset-call telemetry columns plus a `reset_after` phase before purge.
 - Stabilized the reset integration test around the real invariant: reset must not reduce retained segment count, while process-wide retained segments may increase when other thread-local allocators return segments.
+- Marked `size_to_class` and `class_to_size` as `#[inline(always)]` so allocator hot paths receive cross-crate mapper bodies under monomorphization.
+- Moved secure-policy small-free poisoning after small-page classification so poisoned frees reuse the classifier's page metadata lookup.
+- Refreshed `allocator_comparison.md`; the current run reports Mnemosyne small cycle latency at `12.975 ns` and saturated threaded small cycles at `201.364 us`.

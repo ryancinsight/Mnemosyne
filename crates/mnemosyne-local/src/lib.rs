@@ -259,25 +259,15 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         unsafe { (*segment).pages[0].block_size > 0 }
     };
 
-    if P::ENABLE_POISONING {
-        let size = if is_large_or_huge {
+    if is_large_or_huge {
+        if P::ENABLE_POISONING {
             // Safety: ptr is a valid large/huge allocation, so the segment header pointer
             // is stored in the metadata slot immediately preceding the user pointer.
             let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
             let huge_size = unsafe { (*segment).pages[0].block_size };
-            (segment as usize + huge_size) - ptr as usize
-        } else {
-            let segment_addr = (ptr as usize) & !(SEGMENT_SIZE - 1);
-            let segment = segment_addr as *mut Segment;
-            let page_index = (ptr as usize - segment_addr) / PAGE_SIZE;
-            // Safety: page_index is within bounds of segment pages array.
-            let page = unsafe { &mut (*segment).pages[page_index] };
-            page.block_size
-        };
-        unsafe { poison_freed_bytes::<P>(ptr, size) };
-    }
-
-    if is_large_or_huge {
+            let size = (segment as usize + huge_size) - ptr as usize;
+            unsafe { poison_freed_bytes::<P>(ptr, size) };
+        }
         // Safety: ptr was returned by a large/huge allocation, so the segment header pointer
         // is stored in the metadata slot immediately preceding the user pointer.
         let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
@@ -321,6 +311,10 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         0,
         "small free ptr must be aligned to the page's block stride"
     );
+
+    if P::ENABLE_POISONING {
+        unsafe { poison_freed_bytes::<P>(ptr, page.block_size) };
+    }
 
     let block = ptr as *mut Block;
 

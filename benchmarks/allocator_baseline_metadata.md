@@ -21,6 +21,8 @@ baseline only after an intentional threshold-policy decision.
 - `MemoryBackend::deallocate` now returns a release-success boolean and
   the wrapper telemetry decrements `current_mapped_bytes` only on
   confirmed release.
+- `size_to_class` and `class_to_size` are forced inline across crate
+  boundaries so small allocation hot paths receive the mapper body.
 
 ## 2026-05-28
 
@@ -47,6 +49,6 @@ on the current target.
 The comparison report records current-to-baseline mean and median ratios for selected Mnemosyne rows.
 The summary command does not mutate the source-controlled baseline unless `--refresh-baseline` is provided.
 Default summary runs report threshold ratios without failing the command. Threshold enforcement is explicit with `--enforce-thresholds`; the selected gate currently applies per-row thresholds to small/medium/large Mnemosyne cycle latency, small burst retention, small cross-thread handoff, saturated threaded cycles, and segment cache eviction.
-The `Threaded saturated small allocation cycles` group replaces the historical threaded row in the source-controlled baseline excerpt. It isolates allocator throughput from bounded-channel worker coordination by increasing per-command allocation work while preserving the same allocator set and worker topology. The current generated bounded smoke sample measured Mnemosyne at `212.409 us`, mimalloc at `76.664 us`, and snmalloc at `266.515 us` for 64k four-worker small allocation cycles.
+The `Threaded saturated small allocation cycles` group replaces the historical threaded row in the source-controlled baseline excerpt. It isolates allocator throughput from bounded-channel worker coordination by increasing per-command allocation work while preserving the same allocator set and worker topology. The current generated bounded smoke sample measured Mnemosyne at `201.364 us`, mimalloc at `55.541 us`, and snmalloc at `264.326 us` for 64k four-worker small allocation cycles.
 The historical `Threaded small allocation cycles` row remains in the side-by-side report for continuity, but it is not a threshold-gated baseline row because per-sample bounded-channel scheduling variance can dominate allocator changes.
 The memory report includes page-reset, guard-install, retained-pool reset, page-refill, recycle, fresh-page, fresh-segment, orphan-adoption, and recycle-sweep counters. After recycle-sweep deferral, the report allocation mix measured `19` page refills and `1` recycle sweep.

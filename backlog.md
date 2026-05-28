@@ -83,6 +83,9 @@
 - [patch] Add jemalloc to allocator benchmark comparator coverage and generated comparison reports.
 - [patch] Add opt-in segment tail guards without default benchmark overhead.
 - [patch] Extend memory report with page-reset and guard-install telemetry.
+- [patch] Force cross-crate inlining for size-class mapping on allocator hot paths.
+- [patch] Move secure-policy small-free poisoning after classification so the small page metadata lookup is shared.
+- [patch] Reject layout-aware `GlobalAlloc::dealloc` small-free classification after saturated threaded benchmark regression.
 
 ## Next
 

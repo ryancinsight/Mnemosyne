@@ -176,7 +176,11 @@ Target version: 0.1.0
 - [x] [patch] Sprint B tail guard: add opt-in `mnemosyne-arena/segment-tail-guards` feature and install a 4 KiB guard in fresh-segment tail slack only when enabled.
 - [x] [patch] Sprint B tail guard: add feature-gated regression coverage for exact tail-guard address and size.
 - [x] [patch] Extend `memory_report` with page-reset, guard-install, reset-segment, and reset-call telemetry plus a `reset_after` phase.
+- [x] [patch] Mark `size_to_class` and `class_to_size` as `#[inline(always)]` so downstream allocator crates receive the piecewise mapper body for monomorphized hot paths.
+- [x] [patch] Move secure-policy small-free poisoning after small-page classification to avoid the duplicate page lookup in the poisoned free path.
+- [x] [patch] Reject layout-aware `GlobalAlloc::dealloc` small-free classification after `Threaded saturated small allocation cycles/Mnemosyne` regressed to about `248.94 us`.
+- [x] [patch] Refresh `benchmarks/allocator_comparison.md` after the current cycle and saturated threaded benchmark runs.
 
 - [x] [minor] Sprint B wire-through: Add `SEGMENT_TAIL_GUARD_SIZE = 4096` constant with compile-time `is_power_of_two` and slack-bound checks.
-- [x] [minor] Sprint B wire-through: Install a guard region at `aligned_addr + SEGMENT_SIZE` on every fresh segment via `B::make_guard`; best-effort, failure silently skipped.
+- [x] [minor] Sprint B wire-through: Install a guard region at `aligned_addr + SEGMENT_SIZE` via `B::make_guard` only when `mnemosyne-arena/segment-tail-guards` is enabled; default builds compile out the guard path.
 - [x] [minor] Sprint B wire-through: Add `fresh_segment_install_increments_guard_telemetry_and_round_trips` test pinning the guard-install delta and clean post-release telemetry.
