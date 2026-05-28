@@ -184,3 +184,7 @@ Target version: 0.1.0
 - [x] [minor] Sprint B wire-through: Add `SEGMENT_TAIL_GUARD_SIZE = 4096` constant with compile-time `is_power_of_two` and slack-bound checks.
 - [x] [minor] Sprint B wire-through: Install a guard region at `aligned_addr + SEGMENT_SIZE` via `B::make_guard` only when `mnemosyne-arena/segment-tail-guards` is enabled; default builds compile out the guard path.
 - [x] [minor] Sprint B wire-through: Add `fresh_segment_install_increments_guard_telemetry_and_round_trips` test pinning the guard-install delta and clean post-release telemetry.
+
+- [x] [minor] Add `mnemosyne_local::usable_size(ptr)` returning the size-class block size for small allocations, the payload remainder for huge allocations, and 0 for null.
+- [x] [minor] Re-export `usable_size` from the top-level `mnemosyne` crate alongside `SizeClassOccupancy`.
+- [x] [minor] Add `usable_size_returns_block_size_for_small_allocations`, `usable_size_returns_payload_remainder_for_huge_allocations`, and `usable_size_returns_zero_for_null_pointer` regression tests.

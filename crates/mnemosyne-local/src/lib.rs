@@ -116,6 +116,69 @@ macro_rules! impl_local_allocator_selector {
 impl_local_allocator_selector!(mnemosyne_backend::MemoryBackendWrapper);
 impl_local_allocator_selector!(mnemosyne_backend::CudaUnifiedBackend);
 
+/// Returns the actual usable byte count of the allocation at `ptr`.
+///
+/// For small allocations this returns the size-class block size (which
+/// may exceed the original allocation request because Mnemosyne rounds
+/// up to the next size class). For large/huge allocations it returns
+/// the distance from `ptr` to the end of the recorded payload mapping.
+/// Returns `0` for a null pointer.
+///
+/// Mirrors `mi_usable_size` (mimalloc) and `malloc_usable_size`
+/// (glibc/jemalloc): the value is the maximum number of bytes the
+/// caller may dereference through `ptr` without overflowing the
+/// allocation. Useful for Rust `Vec<T>` capacity-rounding and for any
+/// caller that wants to know the allocator's actual reservation
+/// without doing a follow-up `realloc`.
+///
+/// # Safety
+///
+/// `ptr` must either be null or be a pointer previously returned by a
+/// Mnemosyne allocation entry point. Calling this with a pointer that
+/// originated from a different allocator is undefined behavior; the
+/// function uses the same segment-rounding classification as
+/// `thread_free` and dereferences the resulting segment header.
+pub unsafe fn usable_size(ptr: *mut u8) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+
+    // Classification mirrors `thread_free`: segment-aligned pointers are
+    // huge-aligned huge allocations; otherwise the segment header tells
+    // us whether the rounded-down segment is a huge mapping (Page 0
+    // block_size > 0) or a small-allocation segment.
+    let is_large_or_huge = if (ptr as usize) & (SEGMENT_SIZE - 1) == 0 {
+        true
+    } else {
+        let segment_addr = (ptr as usize) & !(SEGMENT_SIZE - 1);
+        let segment = segment_addr as *mut Segment;
+        // Safety: the rounded-down segment header is initialized for both
+        // small and large/huge allocations whose alignment is below
+        // SEGMENT_SIZE.
+        unsafe { (*segment).pages[0].block_size > 0 }
+    };
+
+    if is_large_or_huge {
+        // Safety: large/huge allocations store the segment pointer in
+        // the metadata slot immediately preceding the user pointer.
+        let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+        let huge_size = unsafe { (*segment).pages[0].block_size };
+        // huge_size is the full backend mapping size; the usable
+        // payload is the suffix from the user pointer to the end of
+        // the mapping.
+        return (segment as usize + huge_size) - ptr as usize;
+    }
+
+    let segment_addr = (ptr as usize) & !(SEGMENT_SIZE - 1);
+    let segment = segment_addr as *mut Segment;
+    let page_index = (ptr as usize - segment_addr) / PAGE_SIZE;
+    // Safety: page_index is in [1, PAGES_PER_SEGMENT) for any pointer
+    // produced by the small-allocation path; we read only the page's
+    // `block_size` field.
+    let page = unsafe { &(*segment).pages[page_index] };
+    page.block_size
+}
+
 /// Returns a statistics snapshot for the current thread allocator.
 pub fn thread_allocator_stats<B: HasSegmentPool + LocalAllocatorSelector<B>>(
 ) -> ThreadAllocatorStats {
@@ -377,6 +440,75 @@ mod tests {
     use mnemosyne_backend::MemoryBackendWrapper;
     use mnemosyne_core::constants::MAX_ALLOC_SIZE;
     use mnemosyne_core::policy::StandardPolicy;
+
+    #[test]
+    fn usable_size_returns_block_size_for_small_allocations() {
+        // Mnemosyne rounds small allocation requests up to the next
+        // size class, so the usable size should match `class_to_size`
+        // for every (request, alignment) pair the small-alloc test
+        // sweep exercises, regardless of the *requested* size.
+        for &(req_size, req_align) in &[(8usize, 8usize), (16, 8), (32, 16), (64, 8), (1024, 8)] {
+            let ptr = unsafe {
+                thread_alloc::<StandardPolicy, MemoryBackendWrapper>(req_size, req_align)
+            };
+            assert!(
+                !ptr.is_null(),
+                "alloc({req_size}, {req_align}) returned null"
+            );
+
+            let reported = unsafe { usable_size(ptr) };
+            assert!(
+                reported >= req_size,
+                "usable_size({req_size}, {req_align}) = {reported} is below the request"
+            );
+            assert!(
+                reported >= req_align,
+                "usable_size({req_size}, {req_align}) = {reported} is below the adjusted minimum (alignment)"
+            );
+            // The reported size is whatever size class the page is
+            // sliced into; verify it matches a real class.
+            let segment_addr = (ptr as usize) & !(SEGMENT_SIZE - 1);
+            let segment = segment_addr as *mut Segment;
+            let page_index = (ptr as usize - segment_addr) / PAGE_SIZE;
+            let page = unsafe { &(*segment).pages[page_index] };
+            assert_eq!(
+                reported, page.block_size,
+                "usable_size disagrees with the page's recorded block_size"
+            );
+
+            unsafe { thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr) };
+        }
+    }
+
+    #[test]
+    fn usable_size_returns_payload_remainder_for_huge_allocations() {
+        // Direct large allocation through the arena. The returned
+        // pointer carries enough payload to cover the requested size,
+        // and `usable_size` reports at least that much (it may report
+        // more because the arena reserves alignment slack).
+        let request = 4 * 1024 * 1024;
+        // Safety: power-of-two alignment, non-zero size.
+        let ptr =
+            unsafe { mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(request, 8) };
+        assert!(!ptr.is_null());
+
+        let reported = unsafe { usable_size(ptr) };
+        assert!(
+            reported >= request,
+            "usable_size = {reported} is below the requested huge size {request}"
+        );
+
+        let recovered = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+        let _released = unsafe {
+            mnemosyne_arena::deallocate_large_or_huge::<MemoryBackendWrapper>(ptr, recovered)
+        };
+    }
+
+    #[test]
+    fn usable_size_returns_zero_for_null_pointer() {
+        let reported = unsafe { usable_size(core::ptr::null_mut()) };
+        assert_eq!(reported, 0);
+    }
 
     #[test]
     fn small_alloc_returns_block_aligned_ptr_outside_metadata_page() {

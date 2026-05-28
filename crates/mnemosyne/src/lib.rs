@@ -8,7 +8,7 @@ use mnemosyne_local::{thread_alloc_layout, thread_free, LocalAllocatorSelector};
 
 pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
 pub use mnemosyne_core::{AllocPolicy, SecurePolicy, StandardPolicy};
-pub use mnemosyne_local::SizeClassOccupancy;
+pub use mnemosyne_local::{usable_size, SizeClassOccupancy};
 
 /// Snapshot of Mnemosyne memory mapping and segment cache state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

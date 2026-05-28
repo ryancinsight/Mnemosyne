@@ -126,7 +126,7 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | `#[global_allocator]` for Rust | Implemented (`Mnemosyne`, `MnemosyneAllocator<P, B>`) | jemallocator, mimalloc-rs, snmalloc-rs | Parity. | done |
 | **C ABI (`malloc`/`free`/`calloc`/`realloc`)** | Not implemented | jemalloc, mimalloc, snmalloc all ship C shims; mimalloc-rs / snmalloc-rs offer optional C-API | Enables `LD_PRELOAD` and use from C/C++ code linked into Rust binaries. | `[major]` |
 | **`posix_memalign` / `aligned_alloc` / `memalign`** | Indirectly via `GlobalAlloc` Layout | mimalloc, jemalloc | Same scope as C ABI above. | `[major]` |
-| **`malloc_usable_size`** | Not exposed | mimalloc `mi_usable_size`, jemalloc `malloc_usable_size` | Lets Rust `Vec` shrink without reallocating. | `[minor]` |
+| **`malloc_usable_size`** | Implemented as `mnemosyne::usable_size(ptr)` / `mnemosyne_local::usable_size(ptr)` | mimalloc `mi_usable_size`, jemalloc `malloc_usable_size` | Lets Rust `Vec` shrink without reallocating. Returns size-class block size for small, payload remainder for huge, 0 for null. | done |
 | Custom backend (`MemoryBackend` trait, `HasSegmentPool` trait) | Implemented; CPU + CUDA backends shipped | mimalloc has `mi_os_*` indirection; jemalloc has `extent_hooks` | Parity for opt-in backend; CUDA backend exceeds typical allocator scope. | done |
 | **HSA / ROCm / Metal / vRAM backends** | Not implemented (CUDA only beyond OS) | None at parity level; jemalloc has external arena hooks | Differentiator if implemented. | `[minor]` |
 

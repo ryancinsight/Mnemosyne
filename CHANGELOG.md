@@ -97,3 +97,4 @@
 - Marked `size_to_class` and `class_to_size` as `#[inline(always)]` so allocator hot paths receive cross-crate mapper bodies under monomorphization.
 - Moved secure-policy small-free poisoning after small-page classification so poisoned frees reuse the classifier's page metadata lookup.
 - Refreshed `allocator_comparison.md`; the current run reports Mnemosyne small cycle latency at `12.975 ns` and saturated threaded small cycles at `201.364 us`.
+- Added `mnemosyne::usable_size(ptr)` (re-exported from `mnemosyne_local`) that returns the allocator's actual reservation for a previously-allocated pointer: the size-class block size for small allocations, the payload remainder for huge allocations, and 0 for null. Mirrors `mi_usable_size` / `malloc_usable_size` from mimalloc and glibc/jemalloc.
