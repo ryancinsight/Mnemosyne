@@ -349,24 +349,28 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
         Segment::initialize(aligned_ptr, raw_ptr);
     }
 
-    // Install a tail guard immediately after the segment's user-page
-    // region. Forward OOB writes that walk past Page 31 land in this
-    // guard region instead of an unrelated mapping. The address lives
-    // inside the `SEGMENT_MAPPING_SIZE - SEGMENT_SIZE` slack the arena
-    // reserves to satisfy `SEGMENT_ALIGN` rounding, so it is always
-    // part of the same backend allocation and is released together
-    // with the segment by `B::deallocate(raw_ptr, SEGMENT_MAPPING_SIZE)`.
-    // The install is best-effort: a backend without a `make_guard`
-    // implementation (default `false`) or a kernel that declines the
-    // request (e.g. macOS-arm64 where the OS page size exceeds 4 KiB)
-    // silently skips, leaving the slack accessible. Backend telemetry
-    // (`guard_install_calls`) surfaces the actual install count.
-    //
-    // Safety: aligned_addr + SEGMENT_SIZE is inside the raw mapping
-    // because slack-after >= OS_PAGE_SIZE >= SEGMENT_TAIL_GUARD_SIZE on
-    // supported targets. `make_guard` never invalidates the mapping.
-    let tail_guard_addr = aligned_addr + SEGMENT_SIZE;
-    let _guarded = unsafe { B::make_guard(tail_guard_addr as *mut u8, SEGMENT_TAIL_GUARD_SIZE) };
+    #[cfg(feature = "segment-tail-guards")]
+    {
+        // Install a tail guard immediately after the segment's user-page
+        // region. Forward OOB writes that walk past Page 31 land in this
+        // guard region instead of an unrelated mapping. The address lives
+        // inside the `SEGMENT_MAPPING_SIZE - SEGMENT_SIZE` slack the arena
+        // reserves to satisfy `SEGMENT_ALIGN` rounding, so it is always
+        // part of the same backend allocation and is released together
+        // with the segment by `B::deallocate(raw_ptr, SEGMENT_MAPPING_SIZE)`.
+        // The install is best-effort: a backend without a `make_guard`
+        // implementation (default `false`) or a kernel that declines the
+        // request (e.g. macOS-arm64 where the OS page size exceeds 4 KiB)
+        // silently skips, leaving the slack accessible. Backend telemetry
+        // (`guard_install_calls`) surfaces the actual install count.
+        //
+        // Safety: aligned_addr + SEGMENT_SIZE is inside the raw mapping
+        // because slack-after >= OS_PAGE_SIZE >= SEGMENT_TAIL_GUARD_SIZE on
+        // supported targets. `make_guard` never invalidates the mapping.
+        let tail_guard_addr = aligned_addr + SEGMENT_SIZE;
+        let _guarded =
+            unsafe { B::make_guard(tail_guard_addr as *mut u8, SEGMENT_TAIL_GUARD_SIZE) };
+    }
 
     Some(aligned_ptr)
 }
@@ -504,6 +508,7 @@ mod tests {
     use super::*;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use mnemosyne_core::MemoryBackend;
+    #[cfg(feature = "segment-tail-guards")]
     use std::alloc::{alloc, dealloc, Layout};
 
     struct FailingReleaseBackend;
@@ -533,14 +538,21 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "segment-tail-guards")]
     struct GuardRecordingBackend;
 
+    #[cfg(feature = "segment-tail-guards")]
     static GUARD_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+    #[cfg(feature = "segment-tail-guards")]
     static GUARD_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+    #[cfg(feature = "segment-tail-guards")]
     static GUARD_CALLS: AtomicUsize = AtomicUsize::new(0);
+    #[cfg(feature = "segment-tail-guards")]
     static LAST_GUARD_PTR: AtomicUsize = AtomicUsize::new(0);
+    #[cfg(feature = "segment-tail-guards")]
     static LAST_GUARD_SIZE: AtomicUsize = AtomicUsize::new(0);
 
+    #[cfg(feature = "segment-tail-guards")]
     impl MemoryBackend for GuardRecordingBackend {
         unsafe fn allocate(size: usize) -> *mut u8 {
             let layout = Layout::from_size_align(size, SEGMENT_ALIGN)
@@ -565,6 +577,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "segment-tail-guards")]
     impl HasSegmentPool for GuardRecordingBackend {
         fn global_segment_pool() -> &'static GlobalSegmentPool {
             &GUARD_POOL
@@ -603,6 +616,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "segment-tail-guards")]
     #[test]
     fn fresh_segment_install_increments_guard_telemetry_and_round_trips() {
         // A fresh segment allocated through the default backend installs
@@ -663,6 +677,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "segment-tail-guards")]
     #[test]
     fn fresh_segment_installs_tail_guard_in_alignment_slack() {
         while GuardRecordingBackend::global_segment_pool().pop().is_some() {}

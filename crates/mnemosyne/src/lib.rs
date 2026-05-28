@@ -488,10 +488,14 @@ mod tests {
         reset();
 
         let stats_after = memory_stats();
-        // Reset preserves the cache: retention count does not drop.
-        assert_eq!(
-            stats_after.retained_free_segments, stats_before.retained_free_segments,
-            "reset must not evict retained segments"
+        // Reset preserves the cache: retention count does not drop. The
+        // process-wide retained pool may grow if another completed test
+        // thread's TLS allocator returns an owned segment concurrently.
+        assert!(
+            stats_after.retained_free_segments >= stats_before.retained_free_segments,
+            "reset must not evict retained segments: before={} after={}",
+            stats_before.retained_free_segments,
+            stats_after.retained_free_segments
         );
         // Reset always increments its own call counter, regardless of
         // whether the backend confirmed the page-reset advice.

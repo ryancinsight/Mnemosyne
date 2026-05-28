@@ -81,6 +81,8 @@
 - [patch] Refresh source-controlled benchmark baseline excerpt from bounded Criterion harness output.
 - [patch] Optimize thread_free segment owner check by introducing get_allocator_ptr to LocalAllocatorSelector.
 - [patch] Add jemalloc to allocator benchmark comparator coverage and generated comparison reports.
+- [patch] Add opt-in segment tail guards without default benchmark overhead.
+- [patch] Extend memory report with page-reset and guard-install telemetry.
 
 ## Next
 

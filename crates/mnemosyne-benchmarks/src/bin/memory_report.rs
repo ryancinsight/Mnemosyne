@@ -36,12 +36,14 @@ fn main() -> Result<(), &'static str> {
     }
 
     let after = mnemosyne::memory_stats();
-    println!("phase,current_mapped_bytes,peak_mapped_bytes,map_calls,unmap_calls,retained_free_segments,max_retained_free_segments,retained_free_bytes,purged_segments,purge_calls,purged_bytes,current_thread_live_allocations,current_thread_owned_segments,cross_thread_reclaimed_blocks,page_refills,recycled_pages,fresh_pages,fresh_segments,orphan_segments_adopted,recycle_sweeps");
+    println!("phase,current_mapped_bytes,peak_mapped_bytes,map_calls,unmap_calls,page_reset_calls,page_reset_bytes,guard_install_calls,guard_install_bytes,retained_free_segments,max_retained_free_segments,retained_free_bytes,purged_segments,purge_calls,purged_bytes,reset_segments,reset_calls,current_thread_live_allocations,current_thread_owned_segments,cross_thread_reclaimed_blocks,page_refills,recycled_pages,fresh_pages,fresh_segments,orphan_segments_adopted,recycle_sweeps");
     print_stats("before", before);
     print_stats("during", during);
     print_stats("after", after);
     let eviction_after = run_segment_eviction()?;
     print_stats("eviction_after", eviction_after);
+    let reset_after = reset_segment_cache()?;
+    print_stats("reset_after", reset_after);
     let purge_after = purge_segment_cache()?;
     print_stats("purge_after", purge_after);
     println!("phase,size_class,active_pages,empty_pages,live_allocations,total_slots");
@@ -51,18 +53,24 @@ fn main() -> Result<(), &'static str> {
 
 fn print_stats(phase: &str, stats: mnemosyne::MemoryStats) {
     println!(
-        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
         phase,
         stats.current_mapped_bytes,
         stats.peak_mapped_bytes,
         stats.map_calls,
         stats.unmap_calls,
+        stats.page_reset_calls,
+        stats.page_reset_bytes,
+        stats.guard_install_calls,
+        stats.guard_install_bytes,
         stats.retained_free_segments,
         stats.max_retained_free_segments,
         stats.retained_free_bytes,
         stats.purged_segments,
         stats.purge_calls,
         stats.purged_bytes,
+        stats.reset_segments,
+        stats.reset_calls,
         stats.current_thread_live_allocations,
         stats.current_thread_owned_segments,
         stats.cross_thread_reclaimed_blocks,
@@ -110,6 +118,15 @@ fn run_segment_eviction() -> Result<mnemosyne::MemoryStats, &'static str> {
     let stats = mnemosyne::memory_stats();
     if stats.retained_free_segments > stats.max_retained_free_segments {
         return Err("Retained free segments exceeded the maximum allowed limit");
+    }
+    Ok(stats)
+}
+
+fn reset_segment_cache() -> Result<mnemosyne::MemoryStats, &'static str> {
+    mnemosyne::reset();
+    let stats = mnemosyne::memory_stats();
+    if stats.retained_free_segments > stats.max_retained_free_segments {
+        return Err("Retained free segments exceeded the maximum allowed limit after reset");
     }
     Ok(stats)
 }

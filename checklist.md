@@ -173,6 +173,9 @@ Target version: 0.1.0
 - [x] [minor] Sprint B seam: Implement `make_guard` on `WindowsBackend` (`VirtualProtect(PAGE_NOACCESS)`).
 - [x] [minor] Sprint B seam: Add `guard_install_calls`/`guard_install_bytes` telemetry to `BackendMemoryStats` and `MemoryStats`; wire through `MemoryBackendWrapper`.
 - [x] [minor] Sprint B seam: Add three regression tests pinning guard-install telemetry semantics, confirmed-install + reservation persistence, and null/zero rejection.
+- [x] [patch] Sprint B tail guard: add opt-in `mnemosyne-arena/segment-tail-guards` feature and install a 4 KiB guard in fresh-segment tail slack only when enabled.
+- [x] [patch] Sprint B tail guard: add feature-gated regression coverage for exact tail-guard address and size.
+- [x] [patch] Extend `memory_report` with page-reset, guard-install, reset-segment, and reset-call telemetry plus a `reset_after` phase.
 
 - [x] [minor] Sprint B wire-through: Add `SEGMENT_TAIL_GUARD_SIZE = 4096` constant with compile-time `is_power_of_two` and slack-bound checks.
 - [x] [minor] Sprint B wire-through: Install a guard region at `aligned_addr + SEGMENT_SIZE` on every fresh segment via `B::make_guard`; best-effort, failure silently skipped.
