@@ -110,3 +110,4 @@
 - Removed the dead `Page::local_free` metadata field and its allocation fast-path branch; local frees already return blocks directly to `Page::free` and re-entrant/cross-thread frees use `Page::thread_free`.
 - Added a small-realloc size-class proof fast path so standard-policy realloc returns the same pointer without a `usable_size` metadata query when the old `Layout` already proves the existing small size class covers the new request.
 - Added a current-segment marker to segment metadata so same-thread frees on the active segment return blocks to the page free list without taking the allocator `RefCell` mutation path.
+- Added a combined allocator guard selector so small allocations clear the TLS re-entrancy guard inside the allocator access path instead of performing a separate TLS lookup.

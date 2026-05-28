@@ -65,6 +65,22 @@ pub trait LocalAllocatorSelector<B: HasSegmentPool>: HasSegmentPool {
     /// Sets the re-entrancy / TLS allocation state flag.
     fn set_is_allocating(val: bool);
 
+    /// Runs `f` with the thread-local allocator when the allocation guard is clear.
+    ///
+    /// Returns `None` when allocation is already in progress on this thread.
+    /// Implementations may override this to combine guard management with
+    /// allocator access and avoid repeated TLS lookups on hot allocation paths.
+    fn with_allocator_guard<R>(
+        f: impl FnOnce(&core::cell::RefCell<ThreadAllocator<B>>) -> R,
+    ) -> Option<R> {
+        if Self::check_and_set_allocating() {
+            return None;
+        }
+        let result = Self::with_allocator(f);
+        Self::set_is_allocating(false);
+        Some(result)
+    }
+
     /// Returns the raw pointer to the thread-local allocator cache.
     fn get_allocator_ptr() -> *mut core::ffi::c_void;
 }
@@ -102,6 +118,21 @@ macro_rules! impl_local_allocator_selector {
                 #[inline(always)]
                 fn set_is_allocating(val: bool) {
                     IS_ALLOCATING.with(|c| c.set(val))
+                }
+
+                #[inline(always)]
+                fn with_allocator_guard<R>(
+                    f: impl FnOnce(&std::cell::RefCell<$crate::ThreadAllocator<$backend>>) -> R,
+                ) -> Option<R> {
+                    IS_ALLOCATING.with(|c| {
+                        if c.get() {
+                            return None;
+                        }
+                        c.set(true);
+                        let result = ALLOCATOR.with(f);
+                        c.set(false);
+                        Some(result)
+                    })
                 }
 
                 #[inline(always)]
@@ -256,10 +287,14 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
 
     let adjusted_size = if size < align { align } else { size };
 
-    // Check if we are re-entering (e.g. during TLS initialization or recursive calls)
-    let bypassed = B::check_and_set_allocating();
-
-    if bypassed {
+    let Some(ptr) = B::with_allocator_guard(|alloc_ref| {
+        if let Ok(mut alloc) = alloc_ref.try_borrow_mut() {
+            // Safety: alloc is exclusively borrowed and valid. alloc.alloc handles safety.
+            unsafe { alloc.alloc(adjusted_size) }
+        } else {
+            core::ptr::null_mut()
+        }
+    }) else {
         // Fall back to direct arena/huge allocation to break recursion.
         // Safety: size and align are forwarded. allocate_large_or_huge handles safety.
         let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align) };
@@ -267,19 +302,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
             unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
         }
         return ptr;
-    }
-
-    // Attempt allocation through the thread-local cache.
-    let ptr = B::with_allocator(|alloc_ref| {
-        if let Ok(mut alloc) = alloc_ref.try_borrow_mut() {
-            // Safety: alloc is exclusively borrowed and valid. alloc.alloc handles safety.
-            unsafe { alloc.alloc(adjusted_size) }
-        } else {
-            core::ptr::null_mut()
-        }
-    });
-
-    B::set_is_allocating(false);
+    };
 
     let final_ptr = if ptr.is_null() {
         // Fallback for large allocations or failed cache allocations.

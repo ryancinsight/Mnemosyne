@@ -215,3 +215,5 @@ Target version: 0.1.0
 - [x] [patch] Refresh selected mimalloc-regression rows: threaded small allocation cycles, usable size latency/small_32, threaded saturated small allocation cycles, and realloc latency/within_class_24_to_32.
 - [x] [patch] Add current-segment local-free fast path that bypasses allocator-cell mutable borrow when the free does not require page-list relinking or non-current segment reclaim.
 - [x] [patch] Refresh threaded small and saturated small allocation rows after the current-segment local-free fast path.
+- [x] [minor] Add `LocalAllocatorSelector::with_allocator_guard` with a macro override that combines re-entrancy guard management and allocator access.
+- [x] [patch] Refresh threaded small and saturated small allocation rows after allocation guard TLS consolidation.
