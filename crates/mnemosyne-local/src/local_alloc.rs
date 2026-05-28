@@ -135,16 +135,6 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     page.free = (*block.as_ptr()).next;
                 }
                 page.alloc_count += 1;
-
-                // If page is now full, move it to full_pages list
-                if page.alloc_count == page.max_blocks {
-                    // Safety: page_ptr and class are valid.
-                    unsafe {
-                        self.unlink_page(page_ptr.as_ptr(), class);
-                        page.next_page = self.full_pages[class];
-                        self.full_pages[class] = Some(page_ptr);
-                    }
-                }
                 return block.as_ptr() as *mut u8;
             }
 
@@ -157,16 +147,6 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 }
                 page.local_free = None;
                 page.alloc_count += 1;
-
-                // If page is now full, move it to full_pages list
-                if page.alloc_count == page.max_blocks {
-                    // Safety: page_ptr and class are valid.
-                    unsafe {
-                        self.unlink_page(page_ptr.as_ptr(), class);
-                        page.next_page = self.full_pages[class];
-                        self.full_pages[class] = Some(page_ptr);
-                    }
-                }
                 return block.as_ptr() as *mut u8;
             }
 
@@ -174,7 +154,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             let reclaimed = unsafe { page.reclaim_thread_free() };
             if reclaimed > 0 {
                 record_cross_thread_reclaimed(reclaimed);
-                debug_assert!(page.free.is_some());
+                debug_assert!(
+                    page.free.is_some(),
+                    "reclaim_thread_free({reclaimed}) did not populate active page free list"
+                );
                 // Safety: `reclaim_thread_free` returned a nonzero count, which by
                 // its post-condition links the drained blocks onto `page.free`.
                 let block = match page.free {
@@ -185,16 +168,6 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     page.free = (*block.as_ptr()).next;
                 }
                 page.alloc_count += 1;
-
-                // If page is now full, move it to full_pages list
-                if page.alloc_count == page.max_blocks {
-                    // Safety: page_ptr and class are valid.
-                    unsafe {
-                        self.unlink_page(page_ptr.as_ptr(), class);
-                        page.next_page = self.full_pages[class];
-                        self.full_pages[class] = Some(page_ptr);
-                    }
-                }
                 return block.as_ptr() as *mut u8;
             }
         }
@@ -260,80 +233,107 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// Marked as `#[inline(never)]` to prevent pollution of instruction cache.
     #[inline(never)]
     unsafe fn alloc_cold(&mut self, class: usize) -> *mut u8 {
-        // 1. Check if any page in full_pages has reclaimed cross-thread frees!
-        let mut curr_opt = self.full_pages[class];
-        while let Some(mut page_ptr) = curr_opt {
-            let page = unsafe { page_ptr.as_mut() };
-            // Safety: page points to a valid Page structure.
-            let reclaimed = unsafe { page.reclaim_thread_free() };
+        // 1. Move the current active page to full_pages if it is indeed full.
+        if let Some(mut active_ptr) = self.active_pages[class] {
+            let active_page = active_ptr.as_mut();
+            let reclaimed = active_page.reclaim_thread_free();
             if reclaimed > 0 {
                 record_cross_thread_reclaimed(reclaimed);
-                debug_assert!(page.free.is_some());
-
-                // Page is no longer full! Move it back to active list.
-                // Safety: page_ptr.as_ptr() and class are valid.
-                unsafe {
-                    self.unlink_page(page_ptr.as_ptr(), class);
-                    page.next_page = self.active_pages[class];
-                    self.active_pages[class] = Some(page_ptr);
-                }
-
-                // Allocate from it
-                let block = match page.free {
+                let block = match active_page.free {
                     Some(b) => b,
-                    None => unsafe { core::hint::unreachable_unchecked() },
+                    None => core::hint::unreachable_unchecked(),
                 };
-                // Safety: block is verified to be valid.
-                unsafe {
-                    page.free = (*block.as_ptr()).next;
-                }
-                page.alloc_count += 1;
-
-                // If it becomes full again, move it back to full list
-                if page.alloc_count == page.max_blocks {
-                    // Safety: page_ptr.as_ptr() and class are valid.
-                    unsafe {
-                        self.unlink_page(page_ptr.as_ptr(), class);
-                        page.next_page = self.full_pages[class];
-                        self.full_pages[class] = Some(page_ptr);
-                    }
-                }
+                active_page.free = (*block.as_ptr()).next;
+                active_page.alloc_count += 1;
                 return block.as_ptr() as *mut u8;
+            } else if active_page.free.is_none() && active_page.local_free.is_none() {
+                // The page is truly full! Move it to full_pages.
+                self.active_pages[class] = active_page.next_page;
+                active_page.next_page = self.full_pages[class];
+                self.full_pages[class] = Some(active_ptr);
             }
+        }
+
+        // 2. Check if any page in full_pages has reclaimed cross-thread frees!
+        // We only check pages that actually have pending cross-thread frees.
+        // Also limit loop to 8 pages to bound search latency under threaded saturation.
+        let mut prev: Option<NonNull<Page>> = None;
+        let mut curr_opt = self.full_pages[class];
+        let mut checked = 0;
+        while let Some(mut page_ptr) = curr_opt {
+            if checked >= 8 {
+                break;
+            }
+            checked += 1;
+            let page = page_ptr.as_mut();
+            // Safety: page points to a valid Page structure.
+            if !page.thread_free.is_empty() {
+                let reclaimed = page.reclaim_thread_free();
+                if reclaimed > 0 {
+                    record_cross_thread_reclaimed(reclaimed);
+                    debug_assert!(
+                        page.free.is_some(),
+                        "reclaim_thread_free({reclaimed}) did not populate full page free list"
+                    );
+
+                    // Allocate from it
+                    let block = match page.free {
+                        Some(b) => b,
+                        None => core::hint::unreachable_unchecked(),
+                    };
+                    // Safety: block is verified to be valid.
+                    page.free = (*block.as_ptr()).next;
+                    page.alloc_count += 1;
+
+                    if page.alloc_count < page.max_blocks {
+                        // Page is no longer full! Move it back to active list.
+                        // Safety: page_ptr and class are valid.
+                        if let Some(mut p) = prev {
+                            p.as_mut().next_page = page.next_page;
+                        } else {
+                            self.full_pages[class] = page.next_page;
+                        }
+                        page.next_page = self.active_pages[class];
+                        self.active_pages[class] = Some(page_ptr);
+                    }
+                    return block.as_ptr() as *mut u8;
+                }
+            }
+            prev = Some(page_ptr);
             curr_opt = page.next_page;
         }
 
+        // 3. Allocate a brand new page
         // Safety: get_new_page is called to retrieve a page.
-        let new_page_ptr = unsafe { self.get_new_page(class) };
+        let new_page_ptr = self.get_new_page(class);
         if new_page_ptr.is_null() {
             return core::ptr::null_mut();
         }
         self.page_refills += 1;
 
         // Safety: new_page_ptr is valid and points to a Page inside a segment owned by us.
-        let page = unsafe { &mut *new_page_ptr };
-        debug_assert!(page.free.is_some());
+        let page = &mut *new_page_ptr;
+        debug_assert!(
+            page.free.is_some(),
+            "new page for class {class} has no initialized free block"
+        );
         // Safety: `get_new_page` guarantees a freshly initialized page whose
         // `initialize_free_list` populated `free` with at least one block.
         let block = match page.free {
             Some(b) => b,
-            None => unsafe { core::hint::unreachable_unchecked() },
+            None => core::hint::unreachable_unchecked(),
         };
 
         // Safety: block is valid and points to a Block within the page.
-        unsafe {
-            page.free = (*block.as_ptr()).next;
-        }
+        page.free = (*block.as_ptr()).next;
         page.alloc_count += 1;
 
         // If it becomes full immediately, move to full list
         if page.alloc_count == page.max_blocks {
             // Safety: new_page_ptr and class are valid.
-            unsafe {
-                self.unlink_page(new_page_ptr, class);
-                page.next_page = self.full_pages[class];
-                self.full_pages[class] = Some(NonNull::new_unchecked(new_page_ptr));
-            }
+            self.active_pages[class] = page.next_page;
+            page.next_page = self.full_pages[class];
+            self.full_pages[class] = Some(NonNull::new_unchecked(new_page_ptr));
         }
         block.as_ptr() as *mut u8
     }
@@ -442,7 +442,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
         }
 
-        debug_assert!(self.current_segment.is_some());
+        debug_assert!(
+            self.current_segment.is_some(),
+            "get_new_page reached slicing path without a current segment"
+        );
         // Safety: control only reaches here after the preceding branch either
         // observed a Some `current_segment` or installed one via
         // `allocate_segment`. The null-return path above precludes None.
@@ -503,7 +506,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                     // Recycle the page if it has zero active allocations and is already initialized
                     if pg.alloc_count == 0 && pg.block_size > 0 {
-                        debug_assert!(size_to_class(pg.block_size).is_some());
+                        debug_assert!(
+                            size_to_class(pg.block_size).is_some(),
+                            "recyclable page block_size {} has no size class",
+                            pg.block_size
+                        );
                         // Safety: `pg.block_size` was previously assigned from
                         // `class_to_size(class)` for `class < NUM_SIZE_CLASSES`,
                         // so its inverse mapping always resolves.
@@ -596,6 +603,30 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 (*segment).next_owned_segment = core::ptr::null_mut();
                 deallocate_segment::<B>(segment);
             }
+        }
+    }
+
+    /// Helper to unlink a page specifically from the full pages list of a class.
+    #[inline]
+    pub(crate) unsafe fn unlink_full_page(&mut self, page_ptr: *mut Page, class: usize) {
+        let mut prev: Option<NonNull<Page>> = None;
+        let mut curr = self.full_pages[class];
+        while let Some(curr_ptr) = curr {
+            if curr_ptr.as_ptr() == page_ptr {
+                // Safety: page_ptr points to a valid Page node. We adjust the surrounding pointers.
+                unsafe {
+                    if let Some(mut prev_ptr) = prev {
+                        prev_ptr.as_mut().next_page = (*page_ptr).next_page;
+                    } else {
+                        self.full_pages[class] = (*page_ptr).next_page;
+                    }
+                    (*page_ptr).next_page = None;
+                }
+                break;
+            }
+            prev = Some(curr_ptr);
+            // Safety: curr_ptr is a valid NonNull pointer pointing to Page inside full list.
+            curr = unsafe { curr_ptr.as_ref().next_page };
         }
     }
 
@@ -727,6 +758,7 @@ mod tests {
         mnemosyne_arena::GlobalSegmentPool::new();
     static MOCK_ORPHAN_POOL: mnemosyne_arena::GlobalSegmentPool =
         mnemosyne_arena::GlobalSegmentPool::new();
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     impl MemoryBackend for MockBackend {
         unsafe fn allocate(size: usize) -> *mut u8 {
@@ -759,6 +791,9 @@ mod tests {
 
     #[test]
     fn test_custom_backend_injection() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
         ALLOC_COUNT.store(0, Ordering::SeqCst);
         DEALLOC_COUNT.store(0, Ordering::SeqCst);
 
@@ -766,14 +801,21 @@ mod tests {
         let mut alloc = ThreadAllocator::<MockBackend>::new();
         // Safety: alloc is initialized and valid.
         let ptr = unsafe { alloc.alloc(32) };
-        assert!(!ptr.is_null());
+        assert!(!ptr.is_null(), "MockBackend small allocation failed");
+        unsafe {
+            crate::thread_free::<mnemosyne_core::StandardPolicy, MockBackend>(ptr);
+        }
 
         // Verify large allocation directly calls MockBackend
         // Safety: size and align are valid.
         let large_ptr =
             unsafe { mnemosyne_arena::allocate_large_or_huge::<MockBackend>(1024 * 1024, 8) };
-        assert!(!large_ptr.is_null());
-        assert!(ALLOC_COUNT.load(Ordering::SeqCst) >= 1);
+        assert!(!large_ptr.is_null(), "MockBackend large allocation failed");
+        assert!(
+            ALLOC_COUNT.load(Ordering::SeqCst) >= 1,
+            "MockBackend allocate counter was {}",
+            ALLOC_COUNT.load(Ordering::SeqCst)
+        );
 
         // Safety: large_ptr points to huge allocation segment.
         unsafe {
@@ -782,17 +824,24 @@ mod tests {
             let _released =
                 mnemosyne_arena::deallocate_large_or_huge::<MockBackend>(large_ptr, seg);
         }
-        assert!(DEALLOC_COUNT.load(Ordering::SeqCst) >= 1);
+        assert!(
+            DEALLOC_COUNT.load(Ordering::SeqCst) >= 1,
+            "MockBackend deallocate counter was {}",
+            DEALLOC_COUNT.load(Ordering::SeqCst)
+        );
     }
 
     #[test]
     fn test_page_recycling_different_classes() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
         let mut alloc = ThreadAllocator::<DefaultBackend>::new();
 
         // 1. Allocate a block of size class 0 (16 bytes now)
         // Safety: alloc is initialized and valid.
         let ptr1 = unsafe { alloc.alloc(16) };
-        assert!(!ptr1.is_null());
+        assert!(!ptr1.is_null(), "initial 16-byte allocation failed");
 
         // We should have 1 owned segment now
         let first_stats = alloc.stats();
@@ -825,10 +874,14 @@ mod tests {
         alloc.next_page_index = PAGES_PER_SEGMENT;
         // Safety: alloc is initialized and valid.
         let ptr2 = unsafe { alloc.alloc(32) };
-        assert!(!ptr2.is_null());
+        assert!(!ptr2.is_null(), "recycled 32-byte allocation failed");
 
         // Assert that allocation stayed within the allocator's bounded owned-segment set.
-        assert!(alloc.stats().current_thread_owned_segments <= 2);
+        assert!(
+            alloc.stats().current_thread_owned_segments <= 2,
+            "owned segment count exceeded bound: {}",
+            alloc.stats().current_thread_owned_segments
+        );
 
         // Verify that allocation reused the owned segment and produced a page for the target class.
         let segment_addr2 = (ptr2 as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
@@ -839,16 +892,39 @@ mod tests {
         assert_eq!(segment_addr2, segment_addr);
         assert_eq!(size_to_class(page2.block_size), Some(expected_class));
         assert_eq!(page2.block_size, class_to_size(expected_class));
-        assert!(page2.alloc_count > 0);
+        assert!(
+            page2.alloc_count > 0,
+            "recycled page should hold at least one allocation but had {}",
+            page2.alloc_count
+        );
+        unsafe {
+            crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(ptr2);
+        }
 
         let recycled_stats = alloc.stats();
-        assert!(recycled_stats.page_refills >= 2);
-        assert!(recycled_stats.recycled_pages >= 1);
-        assert!(recycled_stats.recycle_sweeps >= recycled_stats.page_refills);
+        assert!(
+            recycled_stats.page_refills >= 2,
+            "expected at least 2 page refills after recycle, observed {}",
+            recycled_stats.page_refills
+        );
+        assert!(
+            recycled_stats.recycled_pages >= 1,
+            "expected at least 1 recycled page after class change, observed {}",
+            recycled_stats.recycled_pages
+        );
+        assert!(
+            recycled_stats.recycle_sweeps >= recycled_stats.page_refills,
+            "recycle sweeps {} should bound page refills {}",
+            recycled_stats.recycle_sweeps,
+            recycled_stats.page_refills,
+        );
     }
 
     #[test]
     fn test_snmalloc_message_passing() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
         use std::thread;
 
         // Purge global segment pool to ensure we must allocate from the OS.
@@ -860,7 +936,10 @@ mod tests {
         let mut alloc_a = ThreadAllocator::<DefaultBackend>::new();
         // Safety: alloc_a is initialized and valid.
         let ptr = unsafe { alloc_a.alloc(32) };
-        assert!(!ptr.is_null());
+        assert!(
+            !ptr.is_null(),
+            "producer allocation for cross-thread free failed"
+        );
 
         let ptr_usize = ptr as usize;
 
@@ -873,7 +952,7 @@ mod tests {
                 );
             }
         });
-        handle.join().unwrap();
+        handle.join().expect("cross-thread free worker panicked");
 
         let mut reclaimed_remote_free = false;
         let segment_addr = (ptr as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
@@ -883,18 +962,28 @@ mod tests {
         for _ in 0..max_blocks {
             // Safety: alloc_a is valid.
             let ptr2 = unsafe { alloc_a.alloc(32) };
-            assert!(!ptr2.is_null());
+            assert!(
+                !ptr2.is_null(),
+                "reclaim probe allocation failed before reclaiming remote free"
+            );
             if ptr2 == ptr {
                 reclaimed_remote_free = true;
                 break;
             }
         }
 
-        assert!(reclaimed_remote_free);
+        assert!(
+            reclaimed_remote_free,
+            "cross-thread freed block was not reclaimed after {} small allocations",
+            max_blocks
+        );
     }
 
     #[test]
     fn test_orphan_segment_reuse() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
         use std::sync::mpsc;
         use std::thread;
 
@@ -910,19 +999,23 @@ mod tests {
             let mut alloc_a = ThreadAllocator::<DefaultBackend>::new();
             // Safety: alloc_a is valid.
             let ptr = unsafe { alloc_a.alloc(32) };
-            assert!(!ptr.is_null());
-            tx.send(ptr as usize).unwrap();
+            assert!(!ptr.is_null(), "orphan producer allocation failed");
+            tx.send(ptr as usize)
+                .expect("orphan producer failed to send live allocation pointer");
         })
         .join()
-        .unwrap();
+        .expect("orphan producer thread panicked");
 
-        let live_ptr = rx.recv().unwrap() as *mut u8;
+        let live_ptr = rx
+            .recv()
+            .expect("orphan producer did not send live allocation pointer")
+            as *mut u8;
 
         // Thread B allocates a block. It should reuse the orphaned segment from A!
         let mut alloc_b = ThreadAllocator::<DefaultBackend>::new();
         // Safety: alloc_b is valid.
         let ptr_b = unsafe { alloc_b.alloc(64) };
-        assert!(!ptr_b.is_null());
+        assert!(!ptr_b.is_null(), "orphan consumer allocation failed");
 
         // Assert that B reused the orphaned segment: current owned segments must be 1, not 2!
         assert_eq!(alloc_b.stats().current_thread_owned_segments, 1);
@@ -931,6 +1024,7 @@ mod tests {
         // Safety: pointers are valid and exclusive.
         unsafe {
             crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(live_ptr);
+            crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(ptr_b);
         }
     }
 }

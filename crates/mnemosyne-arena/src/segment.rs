@@ -426,6 +426,9 @@ mod tests {
         assert_eq!(after.purged_bytes, before.purged_bytes);
         assert_eq!(FAILING_DEALLOC_CALLS.load(Ordering::Relaxed), 1);
 
-        assert!(FailingReleaseBackend::global_segment_pool().pop().is_some());
+        assert!(
+            FailingReleaseBackend::global_segment_pool().pop().is_some(),
+            "failed release segment was not retained in the pool"
+        );
     }
 }

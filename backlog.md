@@ -68,7 +68,13 @@
 - [patch] Audit allocator alignment request handling so invalid public `Layout` alignments cannot reach arena alignment math.
 - [patch] Audit zero-size allocation behavior for `GlobalAlloc` and direct `thread_alloc` callers.
 - [patch] Audit allocation request size bounds against `Layout` maximum and backend mapping arithmetic.
+- [patch] Audit duplicated allocation request validation across global, local, and arena entry points.
+- [patch] Tighten huge-allocation backend mapping size and pin the memory-efficiency contract with telemetry.
+- [patch] Remove dead page back-pointer metadata and keep `Page` within one cache line.
+- [patch] Audit generated benchmark artifact freshness and documentation references for the current allocator comparison set.
+- [patch] Audit test-only panic diagnostics without reducing assertion strength.
+- [patch] Audit production debug assertions for value-semantic invariant messages and zero-cost release behavior.
 
 ## Next
 
-- [patch] Audit duplicated allocation request validation across global, local, and arena entry points.
+- [patch] Audit local allocator remote-free reclaim paths for duplicated block-pop logic.

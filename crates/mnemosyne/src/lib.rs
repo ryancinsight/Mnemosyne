@@ -4,7 +4,7 @@
 
 use core::alloc::{GlobalAlloc, Layout};
 use mnemosyne_core::NUM_SIZE_CLASSES;
-use mnemosyne_local::{thread_alloc, thread_free, LocalAllocatorSelector};
+use mnemosyne_local::{thread_alloc_layout, thread_free, LocalAllocatorSelector};
 
 pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
 pub use mnemosyne_core::{AllocPolicy, SecurePolicy, StandardPolicy};
@@ -128,7 +128,7 @@ unsafe impl GlobalAlloc for Mnemosyne {
         // Safety: thread_alloc is safe because the size and alignment are derived
         // from a valid Layout, and the returned pointer is verified or null.
         unsafe {
-            thread_alloc::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
+            thread_alloc_layout::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
                 layout.size(),
                 layout.align(),
             )
@@ -183,7 +183,7 @@ unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
         }
         // Safety: thread_alloc is safe because size and alignment are derived
         // from a valid Layout, and the returned pointer is verified or null.
-        unsafe { thread_alloc::<P, B>(layout.size(), layout.align()) }
+        unsafe { thread_alloc_layout::<P, B>(layout.size(), layout.align()) }
     }
 
     // Safety: The ptr must be valid and previously returned by alloc.
@@ -209,7 +209,9 @@ mod tests {
 
     #[test]
     fn test_basic_allocation() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
         let x = std::boxed::Box::new(42);
         assert_eq!(*x, 42);
         drop(x);
@@ -217,7 +219,9 @@ mod tests {
 
     #[test]
     fn test_multithreaded_allocation() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
         let mut handles = std::vec::Vec::new();
         for _ in 0..10 {
             handles.push(thread::spawn(|| {
@@ -231,13 +235,15 @@ mod tests {
             }));
         }
         for handle in handles {
-            handle.join().unwrap();
+            handle.join().expect("allocation worker thread panicked");
         }
     }
 
     #[test]
     fn test_overflow_protection() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
         // 1. Direct call to thread_alloc with size that triggers overflow
         let ptr1 = unsafe {
             mnemosyne_local::thread_alloc::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
@@ -251,7 +257,8 @@ mod tests {
         );
 
         // 2. Request a layout of isize::MAX (largest valid layout size) which will fail OS allocation
-        let layout = Layout::from_size_align(isize::MAX as usize - 7, 8).unwrap();
+        let layout = Layout::from_size_align(isize::MAX as usize - 7, 8)
+            .expect("isize::MAX - 7 with 8-byte alignment is a valid Layout");
         let ptr2 = unsafe { ALLOCATOR.alloc(layout) };
         assert!(
             ptr2.is_null(),
@@ -261,29 +268,41 @@ mod tests {
 
     #[test]
     fn test_zero_size_allocation_returns_null() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        let layout = Layout::from_size_align(0, 8).unwrap();
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
+        let layout =
+            Layout::from_size_align(0, 8).expect("zero-size 8-byte aligned Layout is valid");
 
         let ptr = unsafe { ALLOCATOR.alloc(layout) };
-        assert!(ptr.is_null());
+        assert!(ptr.is_null(), "zero-size Mnemosyne alloc returned {ptr:?}");
 
         let allocator = MnemosyneAllocator::<StandardPolicy>::new();
         let generic_ptr = unsafe { allocator.alloc(layout) };
-        assert!(generic_ptr.is_null());
+        assert!(
+            generic_ptr.is_null(),
+            "zero-size generic allocator returned {generic_ptr:?}"
+        );
     }
 
     #[test]
     fn test_segment_reclamation() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
         // Allocate and deallocate large blocks multiple times
         // If segments are not reclaimed/reused, this would exhaust virtual address space or leak memory.
         for _ in 0..20 {
             let mut allocations = std::vec::Vec::new();
             for _ in 0..10 {
                 // Allocate 1MB blocks (large allocations)
-                let layout = Layout::from_size_align(1024 * 1024, 8).unwrap();
+                let layout = Layout::from_size_align(1024 * 1024, 8)
+                    .expect("1 MiB with 8-byte alignment is a valid Layout");
                 let ptr = unsafe { ALLOCATOR.alloc(layout) };
-                assert!(!ptr.is_null());
+                assert!(
+                    !ptr.is_null(),
+                    "1 MiB segment-reclamation allocation failed"
+                );
                 allocations.push((ptr, layout));
             }
             for (ptr, layout) in allocations {
@@ -294,20 +313,27 @@ mod tests {
 
     #[test]
     fn test_memory_stats_retention_bound() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
         const SIZES: [usize; 40] = [
             8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 160, 192, 224, 256,
             288, 320, 352, 384, 416, 448, 480, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536,
             1664, 1792, 1920, 2048,
         ];
-        let empty_layout = Layout::from_size_align(8, 8).unwrap();
+        let empty_layout =
+            Layout::from_size_align(8, 8).expect("8-byte size and alignment is a valid Layout");
         let mut allocations = [(core::ptr::null_mut(), empty_layout); SIZES.len()];
         let baseline_live_allocations = memory_stats().current_thread_live_allocations;
 
         for (index, size) in SIZES.into_iter().enumerate() {
-            let layout = Layout::from_size_align(size, 8).unwrap();
+            let layout = Layout::from_size_align(size, 8)
+                .expect("test size table contains valid 8-byte aligned Layout sizes");
             let ptr = unsafe { ALLOCATOR.alloc(layout) };
-            assert!(!ptr.is_null());
+            assert!(
+                !ptr.is_null(),
+                "memory-stats allocation failed for size {size}"
+            );
             allocations[index] = (ptr, layout);
         }
 
@@ -321,8 +347,18 @@ mod tests {
         }
 
         let stats = memory_stats();
-        assert!(stats.current_mapped_bytes <= stats.peak_mapped_bytes);
-        assert!(stats.retained_free_segments <= stats.max_retained_free_segments);
+        assert!(
+            stats.current_mapped_bytes <= stats.peak_mapped_bytes,
+            "current_mapped_bytes ({}) exceeds peak_mapped_bytes ({})",
+            stats.current_mapped_bytes,
+            stats.peak_mapped_bytes
+        );
+        assert!(
+            stats.retained_free_segments <= stats.max_retained_free_segments,
+            "retained_free_segments ({}) exceeds bound ({})",
+            stats.retained_free_segments,
+            stats.max_retained_free_segments
+        );
         assert_eq!(
             stats.current_thread_live_allocations,
             baseline_live_allocations
@@ -335,7 +371,9 @@ mod tests {
 
     #[test]
     fn test_purge() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
         // Clear any existing segments in the pool.
         purge();
 
@@ -377,10 +415,13 @@ mod tests {
 
     #[test]
     fn test_large_alignment() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
         let alignments = [32 * 1024, 64 * 1024, 128 * 1024, 2 * 1024 * 1024];
         for align in alignments {
-            let layout = Layout::from_size_align(4096, align).unwrap();
+            let layout = Layout::from_size_align(4096, align)
+                .expect("large-alignment test table contains valid Layout alignments");
             let ptr = unsafe { ALLOCATOR.alloc(layout) };
             assert!(!ptr.is_null(), "Allocation failed for alignment {}", align);
             assert_eq!(
@@ -403,13 +444,15 @@ mod tests {
 
     #[test]
     fn test_secure_policy() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
         let allocator = MnemosyneAllocator::<SecurePolicy>::new();
-        let layout = Layout::from_size_align(128, 8).unwrap();
+        let layout = Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
 
         // 1. Test zero-initialization
         let ptr = unsafe { allocator.alloc(layout) };
-        assert!(!ptr.is_null());
+        assert!(!ptr.is_null(), "secure-policy allocation failed");
 
         // Verify that the memory is indeed zero-initialized
         let slice = unsafe { core::slice::from_raw_parts(ptr, 128) };
@@ -443,11 +486,13 @@ mod tests {
 
     #[test]
     fn test_cuda_unified_backend() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
         let allocator = MnemosyneAllocator::<StandardPolicy, CudaUnifiedBackend>::new();
-        let layout = Layout::from_size_align(128, 8).unwrap();
+        let layout = Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
         let ptr = unsafe { allocator.alloc(layout) };
-        assert!(!ptr.is_null());
+        assert!(!ptr.is_null(), "CUDA unified backend allocation failed");
 
         unsafe {
             ptr.write(42);

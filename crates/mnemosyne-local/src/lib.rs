@@ -10,8 +10,9 @@ pub use local_alloc::{SizeClassOccupancy, ThreadAllocator, ThreadAllocatorStats}
 
 use core::ptr::NonNull;
 use mnemosyne_arena::{allocate_large_or_huge, deallocate_large_or_huge, HasSegmentPool};
-use mnemosyne_core::constants::{MAX_ALLOC_SIZE, PAGES_PER_SEGMENT, PAGE_SIZE, SEGMENT_SIZE};
+use mnemosyne_core::constants::{PAGES_PER_SEGMENT, PAGE_SIZE, SEGMENT_SIZE};
 use mnemosyne_core::types::{Block, Page, Segment};
+use mnemosyne_core::validation::{is_valid_alloc_request, is_valid_layout_alloc_request};
 
 use mnemosyne_core::policy::AllocPolicy;
 
@@ -132,16 +133,43 @@ pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
     size: usize,
     align: usize,
 ) -> *mut u8 {
-    if size == 0 {
-        return core::ptr::null_mut();
-    }
-    if size > MAX_ALLOC_SIZE {
-        return core::ptr::null_mut();
-    }
-    if align == 0 || !align.is_power_of_two() || align > SEGMENT_SIZE {
+    if !is_valid_alloc_request(size, align) {
         return core::ptr::null_mut();
     }
 
+    unsafe { thread_alloc_checked::<P, B>(size, align) }
+}
+
+/// Allocates from a Rust `Layout`-validated request.
+///
+/// This preserves the global allocator hot path by relying on `Layout` for the
+/// nonzero power-of-two alignment contract while still enforcing Mnemosyne's
+/// allocator-specific bounds.
+///
+/// # Safety
+///
+/// `size` must be nonzero and `align` must come from a valid `Layout`.
+#[inline(always)]
+pub unsafe fn thread_alloc_layout<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+    size: usize,
+    align: usize,
+) -> *mut u8 {
+    if !is_valid_layout_alloc_request(size, align) {
+        return core::ptr::null_mut();
+    }
+
+    debug_assert!(
+        align != 0 && align.is_power_of_two(),
+        "Layout-validated allocation received invalid alignment {align}"
+    );
+    unsafe { thread_alloc_checked::<P, B>(size, align) }
+}
+
+#[inline(always)]
+unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+    size: usize,
+    align: usize,
+) -> *mut u8 {
     if align > 16 {
         // Fall back to direct arena/huge allocation to break recursion and get high alignment (64KB aligned page-starts).
         // Safety: allocate_large_or_huge handles safety.
@@ -299,7 +327,6 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         let success = B::with_allocator(|alloc_ref| {
             if let Ok(mut alloc) = alloc_ref.try_borrow_mut() {
                 // Safety: segment and block are verified to be owned by this thread allocator.
-                // We thread block into page free list and try reclaiming the segment if empty.
                 unsafe {
                     (*block).next = page.free;
                     page.free = Some(NonNull::new_unchecked(block));
@@ -309,7 +336,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
                     }
                     if was_full {
                         if let Some(class) = mnemosyne_core::size_to_class(page.block_size) {
-                            alloc.unlink_page(page as *mut Page, class);
+                            alloc.unlink_full_page(page as *mut Page, class);
                             page.next_page = alloc.active_pages[class];
                             alloc.active_pages[class] =
                                 Some(NonNull::new_unchecked(page as *mut Page));
@@ -345,6 +372,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
 mod tests {
     use super::*;
     use mnemosyne_backend::MemoryBackendWrapper;
+    use mnemosyne_core::constants::MAX_ALLOC_SIZE;
     use mnemosyne_core::policy::StandardPolicy;
 
     #[test]
@@ -394,7 +422,10 @@ mod tests {
     #[test]
     fn reentrant_local_free_uses_page_queue() {
         let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(32, 8) };
-        assert!(!ptr.is_null());
+        assert!(
+            !ptr.is_null(),
+            "reentrant local-free setup allocation failed"
+        );
 
         let segment_addr = (ptr as usize) & !(SEGMENT_SIZE - 1);
         let segment = segment_addr as *mut Segment;
@@ -402,7 +433,10 @@ mod tests {
         let page = unsafe { &mut (*segment).pages[page_index] };
 
         assert_eq!(page.alloc_count, 1);
-        assert!(page.thread_free.is_empty());
+        assert!(
+            page.thread_free.is_empty(),
+            "thread_free list should start empty before reentrant free"
+        );
 
         MemoryBackendWrapper::with_allocator(|alloc_ref| {
             let _borrow = alloc_ref.borrow_mut();
@@ -410,12 +444,18 @@ mod tests {
         });
 
         assert_eq!(page.alloc_count, 1);
-        assert!(!page.thread_free.is_empty());
+        assert!(
+            !page.thread_free.is_empty(),
+            "reentrant free did not enqueue into page-local thread_free"
+        );
 
         let reclaimed = unsafe { page.reclaim_thread_free() };
         assert_eq!(reclaimed, 1);
         assert_eq!(page.alloc_count, 0);
-        assert!(page.thread_free.is_empty());
+        assert!(
+            page.thread_free.is_empty(),
+            "thread_free list was not empty after reclaim"
+        );
         assert_eq!(page.free.map(NonNull::as_ptr), Some(ptr as *mut Block));
     }
 
@@ -442,6 +482,27 @@ mod tests {
     fn thread_alloc_rejects_size_above_layout_bound() {
         let ptr =
             unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(MAX_ALLOC_SIZE + 1, 8) };
-        assert!(ptr.is_null());
+        assert!(
+            ptr.is_null(),
+            "above-MAX_ALLOC_SIZE thread_alloc returned {ptr:?}"
+        );
+    }
+
+    #[test]
+    fn thread_alloc_layout_uses_layout_validated_fast_entry() {
+        let ptr = unsafe { thread_alloc_layout::<StandardPolicy, MemoryBackendWrapper>(64, 8) };
+        assert!(
+            !ptr.is_null(),
+            "Layout-validated thread_alloc fast entry returned null"
+        );
+        unsafe { thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr) };
+
+        let oversized = unsafe {
+            thread_alloc_layout::<StandardPolicy, MemoryBackendWrapper>(64, SEGMENT_SIZE * 2)
+        };
+        assert!(
+            oversized.is_null(),
+            "Layout-validated oversized alignment returned {oversized:?}"
+        );
     }
 }

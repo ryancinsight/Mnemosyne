@@ -1,8 +1,9 @@
 //! Global arena operations coordinating large and huge allocations.
 
 use crate::segment::{checked_align_up, deallocate_segment, HasSegmentPool};
-use mnemosyne_core::constants::{MAX_ALLOC_SIZE, PAGE_SIZE, SEGMENT_ALIGN, SEGMENT_SIZE};
+use mnemosyne_core::constants::{MAX_ALLOC_SIZE, PAGE_SIZE, SEGMENT_ALIGN};
 use mnemosyne_core::types::Segment;
+use mnemosyne_core::validation::is_valid_alloc_request;
 
 /// Allocates a block of memory of the given size and alignment.
 ///
@@ -13,35 +14,34 @@ use mnemosyne_core::types::Segment;
 ///
 /// Returns a raw pointer to the allocated block, or null on failure.
 pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(size: usize, align: usize) -> *mut u8 {
-    if size == 0 {
-        return core::ptr::null_mut();
-    }
-    if size > MAX_ALLOC_SIZE {
-        return core::ptr::null_mut();
-    }
-    if align == 0 || !align.is_power_of_two() {
+    if !is_valid_alloc_request(size, align) {
         return core::ptr::null_mut();
     }
     let alignment = align;
-    if alignment > SEGMENT_SIZE {
-        return core::ptr::null_mut();
-    }
 
-    // To guarantee that we can fit a segment header aligned to SEGMENT_ALIGN,
-    // plus align the user payload to alignment, and have size bytes of payload,
-    // we use checked arithmetic.
-    let base_size = match size.checked_add(alignment) {
-        Some(val) => match val.checked_add(SEGMENT_SIZE) {
-            Some(v) => v,
-            None => return core::ptr::null_mut(),
-        },
-        None => return core::ptr::null_mut(),
-    };
-
-    // To ensure we can align the allocation to SEGMENT_SIZE, we allocate an extra SEGMENT_SIZE.
-    let total_alloc_size = match base_size.checked_add(SEGMENT_SIZE) {
+    // Tight backend mapping size derivation.
+    //
+    // The mapping must satisfy `payload_end <= raw_ptr + total_alloc_size`,
+    // where:
+    //   aligned_addr - raw_ptr   <= SEGMENT_ALIGN - 1  (round-up to SEGMENT_ALIGN)
+    //   reserved prefix          == PAGE_SIZE          (segment header window)
+    //   user_addr - prefix_end   <= alignment - 1      (round-up to alignment)
+    //   payload                  == size
+    //
+    // Summing the upper bounds yields `(SEGMENT_ALIGN - 1) + PAGE_SIZE +
+    // (alignment - 1) + size`, which is strictly less than
+    // `size + alignment + SEGMENT_ALIGN + PAGE_SIZE`. The prior derivation
+    // reserved an entire extra `SEGMENT_SIZE` for the payload-alignment
+    // slack, leaving roughly `SEGMENT_SIZE - PAGE_SIZE` (~2 MiB - 64 KiB) of
+    // memory unused per huge mapping. The tighter formula removes that
+    // slack while preserving the worst-case bound and the upstream
+    // `MAX_ALLOC_SIZE` cap.
+    let total_alloc_size = match size
+        .checked_add(alignment)
+        .and_then(|val| val.checked_add(SEGMENT_ALIGN))
+        .and_then(|val| val.checked_add(PAGE_SIZE))
+    {
         Some(val) if val <= MAX_ALLOC_SIZE => val,
-        None => return core::ptr::null_mut(),
         _ => return core::ptr::null_mut(),
     };
 
@@ -133,11 +133,11 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(size: usize, align: usiz
     );
     debug_assert!(
         metadata_addr >= aligned_addr && metadata_addr < user_addr,
-        "metadata slot must remain inside the reserved prefix"
+        "metadata slot {metadata_addr:#x} must remain inside reserved prefix [{aligned_addr:#x}, {user_addr:#x})"
     );
     debug_assert!(
         payload_end <= mapping_end,
-        "payload must remain inside the backend mapping"
+        "payload end {payload_end:#x} must remain inside backend mapping end {mapping_end:#x}"
     );
 
     // Safety: aligned_ptr is within the allocated region and aligned to a segment boundary.
@@ -195,9 +195,12 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
     use crate::segment::GlobalSegmentPool;
     use core::sync::atomic::{AtomicUsize, Ordering};
+    use mnemosyne_core::constants::SEGMENT_SIZE;
     use mnemosyne_core::MemoryBackend;
 
     struct FailingHugeReleaseBackend;
@@ -205,6 +208,7 @@ mod tests {
     static FAILING_HUGE_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
     static FAILING_HUGE_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
     static FAILING_HUGE_DEALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     impl MemoryBackend for FailingHugeReleaseBackend {
         unsafe fn allocate(_size: usize) -> *mut u8 {
@@ -229,6 +233,7 @@ mod tests {
 
     #[test]
     fn huge_allocation_metadata_slot_round_trips_across_alignments() {
+        let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
         use mnemosyne_backend::MemoryBackendWrapper;
         // The fast path in `thread_alloc` already routes any `align > 16` to
         // `allocate_large_or_huge`, but the function itself must remain sound
@@ -255,14 +260,30 @@ mod tests {
             // free path does, and verify it points to the segment header
             // whose `raw_alloc_ptr` covers the user pointer.
             let recovered = unsafe { *((user_ptr as *mut *mut Segment).sub(1)) };
-            assert!(!recovered.is_null());
+            assert!(
+                !recovered.is_null(),
+                "metadata slot returned a null segment pointer for align {align}"
+            );
             let raw_ptr = unsafe { (*recovered).raw_alloc_ptr };
             let huge_size = unsafe { (*recovered).pages[0].block_size };
-            assert!(raw_ptr as usize <= user_ptr as usize);
-            assert!(user_ptr as usize + size <= raw_ptr as usize + huge_size);
+            assert!(
+                raw_ptr as usize <= user_ptr as usize,
+                "raw_ptr {raw_ptr:?} above user_ptr {user_ptr:?} for align {align}"
+            );
+            assert!(
+                user_ptr as usize + size <= raw_ptr as usize + huge_size,
+                "payload [{user_ptr:?}, +{size}) escapes mapping [{raw_ptr:?}, +{huge_size}) for align {align}"
+            );
             let metadata_addr = (user_ptr as usize) - core::mem::size_of::<*mut Segment>();
-            assert!(metadata_addr >= recovered as usize);
-            assert!(metadata_addr < user_ptr as usize);
+            assert!(
+                metadata_addr >= recovered as usize,
+                "metadata slot {metadata_addr:#x} precedes segment header {:#x} for align {align}",
+                recovered as usize
+            );
+            assert!(
+                metadata_addr < user_ptr as usize,
+                "metadata slot {metadata_addr:#x} not strictly before user_ptr {user_ptr:?} for align {align}"
+            );
 
             // Safety: round-trip release using the resolved segment pointer.
             let released =
@@ -273,6 +294,7 @@ mod tests {
 
     #[test]
     fn huge_allocation_rejects_non_power_of_two_alignment() {
+        let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
         use mnemosyne_backend::MemoryBackendWrapper;
 
         for &align in &[0usize, 3, 6, 12, 24, 48, 96] {
@@ -287,39 +309,89 @@ mod tests {
     }
 
     #[test]
+    fn huge_allocation_consumes_tight_mapping_size() {
+        let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
+        use mnemosyne_backend::{backend_memory_stats, MemoryBackendWrapper};
+        // The tight mapping formula reserves exactly
+        // `size + alignment + SEGMENT_ALIGN + PAGE_SIZE`. Verify the backend
+        // counter observed precisely that increment, so future regressions
+        // that re-introduce the SEGMENT_SIZE-of-slack would fail loudly.
+        let size = 4 * 1024 * 1024;
+        let align = 8;
+        let expected = size + align + SEGMENT_ALIGN + PAGE_SIZE;
+
+        let before = backend_memory_stats();
+        // Safety: power-of-two alignment, non-zero size.
+        let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align) };
+        assert!(
+            !user_ptr.is_null(),
+            "tight-mapping huge allocation returned null"
+        );
+        let during = backend_memory_stats();
+
+        let mapped = during.current_mapped_bytes - before.current_mapped_bytes;
+        assert_eq!(
+            mapped, expected,
+            "huge allocation slack regressed: mapped {mapped} bytes vs expected {expected}"
+        );
+
+        // Round-trip release; the safety contract is preserved.
+        let recovered = unsafe { *((user_ptr as *mut *mut Segment).sub(1)) };
+        let released =
+            unsafe { deallocate_large_or_huge::<MemoryBackendWrapper>(user_ptr, recovered) };
+        assert!(
+            released,
+            "tight-mapping round-trip release reported failure"
+        );
+    }
+
+    #[test]
     fn huge_allocation_rejects_alignment_above_segment_size() {
+        let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
         use mnemosyne_backend::MemoryBackendWrapper;
 
         // Safety: this verifies local validation rejects alignments that would
         // break segment-rounding free classification.
         let user_ptr =
             unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(4096, SEGMENT_SIZE * 2) };
-        assert!(user_ptr.is_null());
+        assert!(
+            user_ptr.is_null(),
+            "above-segment alignment was accepted: {user_ptr:?}"
+        );
     }
 
     #[test]
     fn huge_allocation_rejects_zero_size() {
+        let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
         use mnemosyne_backend::MemoryBackendWrapper;
 
         // Safety: this verifies local validation rejects zero-size direct
         // arena requests before backend allocation.
         let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(0, 8) };
-        assert!(user_ptr.is_null());
+        assert!(
+            user_ptr.is_null(),
+            "zero-size huge allocation returned {user_ptr:?}"
+        );
     }
 
     #[test]
     fn huge_allocation_rejects_request_exceeding_layout_bound() {
+        let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
         use mnemosyne_backend::MemoryBackendWrapper;
 
         // Safety: this verifies local validation rejects payloads whose
         // required mapping would exceed the pointer-offset-safe allocation
         // bound before any backend allocation attempt.
         let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(MAX_ALLOC_SIZE, 8) };
-        assert!(user_ptr.is_null());
+        assert!(
+            user_ptr.is_null(),
+            "MAX_ALLOC_SIZE huge allocation reached backend and returned {user_ptr:?}"
+        );
     }
 
     #[test]
     fn huge_deallocation_returns_backend_release_status() {
+        let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
         let mut segment = core::mem::MaybeUninit::<Segment>::uninit();
         let segment_ptr = segment.as_mut_ptr();
 
@@ -332,7 +404,7 @@ mod tests {
             deallocate_large_or_huge::<FailingHugeReleaseBackend>(0x2000 as *mut u8, segment_ptr)
         };
 
-        assert!(!released);
+        assert!(!released, "failing huge release backend reported success");
         assert_eq!(FAILING_HUGE_DEALLOC_CALLS.load(Ordering::Relaxed), 1);
     }
 }

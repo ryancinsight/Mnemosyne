@@ -19,7 +19,11 @@ unsafe impl Sync for Block {}
 
 /// Metadata representing a page of memory.
 ///
-/// Each page manages blocks of a single size class.
+/// Each page manages blocks of a single size class. The field layout keeps
+/// the eight-byte pointer/atomic fields contiguous so the struct fits in a
+/// single 64-byte cache line on 64-bit targets, and the back-pointer to the
+/// parent segment is omitted because every caller recovers it by rounding
+/// the page address down to `SEGMENT_ALIGN`.
 pub struct Page {
     /// Thread-local free list of blocks.
     pub free: Option<NonNull<Block>>,
@@ -35,8 +39,6 @@ pub struct Page {
     pub max_blocks: usize,
     /// Pointer to the next page in the thread-local size class list.
     pub next_page: Option<NonNull<Page>>,
-    /// Pointer to the parent segment containing this page.
-    pub segment: Option<NonNull<Segment>>,
     /// The page index inside its parent segment.
     pub page_index: usize,
 }
@@ -86,14 +88,8 @@ impl Page {
             alloc_count: 0,
             max_blocks: 0,
             next_page: None,
-            segment: None,
             page_index,
         }
-    }
-
-    /// Checks if the page has no active allocations.
-    pub fn is_empty(&self) -> bool {
-        self.alloc_count == 0
     }
 
     /// Atomically drains cross-thread frees into the page-local free list.
@@ -120,7 +116,12 @@ impl Page {
             current = unsafe { (*node.as_ptr()).next };
         }
 
-        debug_assert!(self.alloc_count >= count);
+        debug_assert!(
+            self.alloc_count >= count,
+            "reclaim count {} exceeds page allocation count {}",
+            count,
+            self.alloc_count
+        );
         self.alloc_count -= count;
 
         unsafe {
@@ -197,9 +198,15 @@ impl Segment {
             segment.next_owned_segment = core::ptr::null_mut();
             segment.next_free_segment = core::ptr::null_mut();
 
+            // Page 0 holds segment metadata and is never allocated from;
+            // only pages 1..PAGES_PER_SEGMENT need explicit free-list state.
+            // We still initialize page 0 with `Page::new(0)` so debugging and
+            // memory-tracing tools observe uniform metadata across the
+            // whole array. No page stores a back-pointer to the segment
+            // because every caller recovers it by rounding the page address
+            // down to `SEGMENT_ALIGN`.
             for i in 0..PAGES_PER_SEGMENT {
                 segment.pages[i] = Page::new(i);
-                segment.pages[i].segment = Some(NonNull::new_unchecked(aligned_ptr));
             }
         }
     }
@@ -209,6 +216,23 @@ impl Segment {
 mod tests {
     use super::*;
     use crate::constants::PAGE_SIZE;
+
+    #[test]
+    fn page_struct_size_stays_within_one_cache_line() {
+        // Page metadata is hot: every allocation reads and writes
+        // `page.free`, `page.local_free`, `page.alloc_count`, and
+        // `page.block_size`. Keeping the struct within a single 64-byte
+        // cache line on 64-bit targets ensures the fast path touches only
+        // one cache line per page operation. The struct is currently 8
+        // `usize`-sized fields = 64 bytes; this test guards against
+        // accidental growth back to 72 bytes (e.g. by re-adding a back
+        // pointer to the parent segment).
+        assert!(
+            core::mem::size_of::<Page>() <= 64,
+            "Page exceeds one 64-byte cache line ({} bytes)",
+            core::mem::size_of::<Page>()
+        );
+    }
 
     #[test]
     fn test_page_reclaim_thread_free() {
@@ -232,6 +256,9 @@ mod tests {
         assert_eq!(reclaimed, 1);
         assert_eq!(page.alloc_count, 0);
         assert_eq!(page.free, Some(first));
-        assert!(page.thread_free.is_empty());
+        assert!(
+            page.thread_free.is_empty(),
+            "thread_free list was not empty after reclaim"
+        );
     }
 }

@@ -85,8 +85,18 @@ mod tests {
         );
         assert_eq!(during.map_calls, before.map_calls + 1);
         assert_eq!(during.unmap_calls, before.unmap_calls);
-        assert!(during.peak_mapped_bytes >= during.current_mapped_bytes);
-        assert!(during.peak_mapped_bytes >= before.peak_mapped_bytes);
+        assert!(
+            during.peak_mapped_bytes >= during.current_mapped_bytes,
+            "peak {} below current {} after record_map",
+            during.peak_mapped_bytes,
+            during.current_mapped_bytes
+        );
+        assert!(
+            during.peak_mapped_bytes >= before.peak_mapped_bytes,
+            "peak {} below pre-map peak {}",
+            during.peak_mapped_bytes,
+            before.peak_mapped_bytes
+        );
 
         record_unmap(size);
         let after = backend_memory_stats();
@@ -94,7 +104,12 @@ mod tests {
         assert_eq!(after.current_mapped_bytes, before.current_mapped_bytes);
         assert_eq!(after.map_calls, before.map_calls + 1);
         assert_eq!(after.unmap_calls, before.unmap_calls + 1);
-        assert!(after.peak_mapped_bytes >= during.peak_mapped_bytes);
+        assert!(
+            after.peak_mapped_bytes >= during.peak_mapped_bytes,
+            "peak {} regressed below mid-cycle peak {}",
+            after.peak_mapped_bytes,
+            during.peak_mapped_bytes
+        );
     }
 
     #[test]

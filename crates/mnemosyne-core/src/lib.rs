@@ -7,12 +7,14 @@ pub mod policy;
 pub mod size_class;
 pub mod sync;
 pub mod types;
+pub mod validation;
 
 pub use constants::*;
 pub use policy::{AllocPolicy, SecurePolicy, StandardPolicy};
 pub use size_class::*;
 pub use sync::*;
 pub use types::*;
+pub use validation::{is_valid_alloc_request, is_valid_layout_alloc_request};
 
 /// Trait defining the contract for low-level virtual memory mapping backends.
 pub trait MemoryBackend: Send + Sync + 'static {

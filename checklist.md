@@ -107,7 +107,33 @@ Target version: 0.1.0
 - [x] [patch] Reject direct `thread_alloc` requests above `MAX_ALLOC_SIZE`.
 - [x] [patch] Reject arena mappings whose total backend mapping requirement exceeds `MAX_ALLOC_SIZE`.
 - [x] [patch] Add size-bound rejection tests for local and arena allocation entry points.
+- [x] [patch] Split global allocation routing through `thread_alloc_layout` for `Layout`-validated hot-path requests.
+- [x] [patch] Release local allocator test allocations and serialize shared-state tests to keep workspace verification deterministic.
+
+- [x] [patch] Extract `is_valid_alloc_request` and `is_valid_layout_alloc_request` `const fn` predicates in `mnemosyne-core::validation`.
+- [x] [patch] Replace per-clause `size`/`align` checks in `thread_alloc`, `thread_alloc_layout`, and `allocate_large_or_huge` with the centralized validators.
+- [x] [patch] Add value-semantic coverage for each validator clause in `mnemosyne-core::validation::tests`.
+
+- [x] [patch] Tighten huge-allocation backend mapping to `size + alignment + SEGMENT_ALIGN + PAGE_SIZE`, eliminating the `SEGMENT_SIZE`-of-slack overshoot in the prior derivation.
+- [x] [patch] Add `huge_allocation_consumes_tight_mapping_size` to pin the new mapping formula via backend telemetry deltas.
+
+- [x] [patch] Remove the dead `Page::segment` back-pointer field and unused `Page::is_empty` helper.
+- [x] [patch] Document the no-back-pointer rationale and drop the per-page `segment` write loop from `Segment::initialize`.
+- [x] [patch] Add `page_struct_size_stays_within_one_cache_line` to pin `size_of::<Page>() <= 64`.
 
 ## Open
 
-- [ ] [patch] Audit duplicated allocation request validation across global, local, and arena entry points.
+- [x] [patch] Audit generated benchmark artifact freshness and documentation references for the current allocator comparison set.
+- [x] [patch] Document the source-controlled baseline versus generated `target/criterion` artifact boundary.
+- [x] [patch] Update benchmark metadata wording for the active `--enforce-thresholds` gate and current saturated threaded comparator sample.
+
+- [x] [patch] Add value-semantic diagnostic messages to bare `assert!` invocations in `mnemosyne`, `mnemosyne-arena`, `mnemosyne-backend`, and `mnemosyne-local` tests so failure output names the unexpected value.
+- [x] [patch] Replace bare test `unwrap()` calls with contextual `expect()` diagnostics in allocator, local allocator, and channel/thread test code.
+- [x] [patch] Serialize arena allocation tests that inspect process-wide backend telemetry so exact mapped-byte assertions remain deterministic.
+- [x] [patch] Document the `size_to_class(0)` zero-size mapping contract and add `size_class_boundaries_are_exact` plus `size_class_zero_maps_to_smallest_class` coverage at every piecewise transition.
+
+- [x] [patch] Audit production debug assertions for value-semantic invariant messages and zero-cost release behavior.
+- [x] [patch] Add value-semantic messages to production `debug_assert!` checks while preserving debug-only code generation.
+- [x] [patch] Verify no predicate-only `debug_assert!` sites remain in production crates.
+
+- [ ] [patch] Audit local allocator remote-free reclaim paths for duplicated block-pop logic.
