@@ -22,6 +22,11 @@ pub struct MemoryStats {
     pub page_reset_calls: usize,
     /// Cumulative byte count passed to confirmed `page_reset` calls.
     pub page_reset_bytes: usize,
+    /// Number of confirmed backend `make_guard` calls (Unix `mprotect(PROT_NONE)`,
+    /// Windows `VirtualProtect(PAGE_NOACCESS)`).
+    pub guard_install_calls: usize,
+    /// Cumulative byte count passed to confirmed `make_guard` calls.
+    pub guard_install_bytes: usize,
     pub retained_free_segments: usize,
     pub max_retained_free_segments: usize,
     pub retained_free_bytes: usize,
@@ -55,6 +60,8 @@ impl Default for MemoryStats {
             unmap_calls: 0,
             page_reset_calls: 0,
             page_reset_bytes: 0,
+            guard_install_calls: 0,
+            guard_install_bytes: 0,
             retained_free_segments: 0,
             max_retained_free_segments: 0,
             retained_free_bytes: 0,
@@ -90,6 +97,8 @@ pub fn memory_stats_generic<B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
         unmap_calls: backend.unmap_calls,
         page_reset_calls: backend.page_reset_calls,
         page_reset_bytes: backend.page_reset_bytes,
+        guard_install_calls: backend.guard_install_calls,
+        guard_install_bytes: backend.guard_install_bytes,
         retained_free_segments: arena.retained_free_segments,
         max_retained_free_segments: arena.max_retained_free_segments,
         retained_free_bytes: arena.retained_free_bytes,

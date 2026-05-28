@@ -22,6 +22,8 @@ static MAP_CALLS: AtomicUsize = AtomicUsize::new(0);
 static UNMAP_CALLS: AtomicUsize = AtomicUsize::new(0);
 static PAGE_RESET_CALLS: AtomicUsize = AtomicUsize::new(0);
 static PAGE_RESET_BYTES: AtomicUsize = AtomicUsize::new(0);
+static GUARD_INSTALL_CALLS: AtomicUsize = AtomicUsize::new(0);
+static GUARD_INSTALL_BYTES: AtomicUsize = AtomicUsize::new(0);
 
 /// Snapshot of OS mappings requested by Mnemosyne.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -38,6 +40,15 @@ pub struct BackendMemoryStats {
     pub page_reset_calls: usize,
     /// Cumulative byte count passed to confirmed `page_reset` calls.
     pub page_reset_bytes: usize,
+    /// Number of `make_guard` calls the OS confirmed.
+    ///
+    /// A guard install changes only the protection bits of an addressed
+    /// range; the mapping remains reserved, so this counter is
+    /// independent of `unmap_calls` and `current_mapped_bytes` is not
+    /// decremented.
+    pub guard_install_calls: usize,
+    /// Cumulative byte count passed to confirmed `make_guard` calls.
+    pub guard_install_bytes: usize,
 }
 
 #[inline]
@@ -76,6 +87,18 @@ fn record_page_reset(size: usize) {
     PAGE_RESET_BYTES.fetch_add(size, Ordering::Relaxed);
 }
 
+/// Records a confirmed guard-region install.
+///
+/// Same accounting rationale as `record_page_reset`: the mapping remains
+/// reserved and `current_mapped_bytes` is intentionally unchanged. The
+/// counter increments lets external monitors observe how much of the
+/// reserved address space has been converted into guard regions.
+#[inline]
+fn record_guard_install(size: usize) {
+    GUARD_INSTALL_CALLS.fetch_add(1, Ordering::Relaxed);
+    GUARD_INSTALL_BYTES.fetch_add(size, Ordering::Relaxed);
+}
+
 /// Returns the current backend memory mapping counters.
 ///
 /// The snapshot uses relaxed atomics because these counters are telemetry only:
@@ -88,6 +111,8 @@ pub fn backend_memory_stats() -> BackendMemoryStats {
         unmap_calls: UNMAP_CALLS.load(Ordering::Relaxed),
         page_reset_calls: PAGE_RESET_CALLS.load(Ordering::Relaxed),
         page_reset_bytes: PAGE_RESET_BYTES.load(Ordering::Relaxed),
+        guard_install_calls: GUARD_INSTALL_CALLS.load(Ordering::Relaxed),
+        guard_install_bytes: GUARD_INSTALL_BYTES.load(Ordering::Relaxed),
     }
 }
 
@@ -254,6 +279,90 @@ mod tests {
         assert!(!zero_reset, "zero-size reset must not be accepted");
         let _ = unsafe { MemoryBackendWrapper::deallocate(ptr, 4096) };
     }
+
+    #[test]
+    fn guard_telemetry_increments_call_and_byte_counters_only() {
+        // record_guard_install must increment both counters without
+        // perturbing current_mapped_bytes, page_reset, or unmap counters.
+        let before = backend_memory_stats();
+        let size = 4096;
+        record_guard_install(size);
+        let after = backend_memory_stats();
+        assert_eq!(
+            after.guard_install_calls,
+            before.guard_install_calls + 1,
+            "guard_install_calls counter did not advance"
+        );
+        assert_eq!(
+            after.guard_install_bytes,
+            before.guard_install_bytes + size,
+            "guard_install_bytes counter did not advance by the guard size"
+        );
+        assert_eq!(
+            after.current_mapped_bytes, before.current_mapped_bytes,
+            "make_guard must not decrement current_mapped_bytes"
+        );
+        assert_eq!(after.page_reset_calls, before.page_reset_calls);
+        assert_eq!(after.unmap_calls, before.unmap_calls);
+    }
+
+    #[test]
+    fn wrapper_make_guard_records_confirmed_install_and_keeps_mapping_reserved() {
+        use mnemosyne_core::MemoryBackend;
+        // Allocate, guard the whole region, confirm telemetry, then
+        // release. The mapping must still be releasable after a guard
+        // install because VirtualFree/munmap only require a valid
+        // reservation, not RW access.
+        let size = 64 * 1024;
+        let ptr = unsafe { MemoryBackendWrapper::allocate(size) };
+        assert!(!ptr.is_null());
+
+        // Touch the mapping before guarding to confirm it is initially
+        // accessible.
+        unsafe {
+            ptr.write_volatile(0xAA);
+            assert_eq!(ptr.read_volatile(), 0xAA);
+        }
+
+        let stats_before = backend_memory_stats();
+        let guarded = unsafe { MemoryBackendWrapper::make_guard(ptr, size) };
+        let stats_after = backend_memory_stats();
+
+        assert!(
+            guarded,
+            "make_guard reported failure on a fresh writable mapping"
+        );
+        assert_eq!(
+            stats_after.guard_install_calls,
+            stats_before.guard_install_calls + 1
+        );
+        assert_eq!(
+            stats_after.guard_install_bytes,
+            stats_before.guard_install_bytes + size
+        );
+        assert_eq!(
+            stats_after.current_mapped_bytes, stats_before.current_mapped_bytes,
+            "make_guard must never alter current_mapped_bytes"
+        );
+
+        // Release the mapping. VirtualFree(MEM_RELEASE) / munmap accept
+        // a region regardless of its protection state.
+        let released = unsafe { MemoryBackendWrapper::deallocate(ptr, size) };
+        assert!(released);
+    }
+
+    #[test]
+    fn wrapper_make_guard_rejects_null_and_zero() {
+        use mnemosyne_core::MemoryBackend;
+        let null_guard = unsafe { MemoryBackendWrapper::make_guard(core::ptr::null_mut(), 4096) };
+        assert!(!null_guard, "null pointer must not be accepted for guard");
+
+        let ptr = unsafe { MemoryBackendWrapper::allocate(4096) };
+        assert!(!ptr.is_null());
+        let zero_guard = unsafe { MemoryBackendWrapper::make_guard(ptr, 0) };
+        assert!(!zero_guard, "zero-size guard must not be accepted");
+        let _ = unsafe { MemoryBackendWrapper::deallocate(ptr, 4096) };
+    }
 }
 
 /// High-level OS page mapping backend helper.
@@ -343,5 +452,24 @@ impl mnemosyne_core::MemoryBackend for MemoryBackendWrapper {
             record_page_reset(size);
         }
         reset
+    }
+
+    /// Installs a `PROT_NONE` / `PAGE_NOACCESS` guard region on an
+    /// active mapping. Telemetry records confirmed installs only
+    /// (`guard_install_calls`, `guard_install_bytes`);
+    /// `current_mapped_bytes` is intentionally not decremented because
+    /// the mapping remains reserved.
+    #[inline(always)]
+    unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
+        if ptr.is_null() || size == 0 {
+            return false;
+        }
+        // Safety: caller upholds the per-platform make_guard contract.
+        let guarded =
+            unsafe { <DefaultBackend as mnemosyne_core::MemoryBackend>::make_guard(ptr, size) };
+        if guarded {
+            record_guard_install(size);
+        }
+        guarded
     }
 }

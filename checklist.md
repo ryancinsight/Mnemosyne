@@ -167,3 +167,9 @@ Target version: 0.1.0
 - [x] [minor] Sprint A wire-through: Add `reset_segments` / `reset_calls` telemetry to `ArenaMemoryStats` and `mnemosyne::MemoryStats`.
 - [x] [minor] Sprint A wire-through: Add public `mnemosyne::reset()` and `mnemosyne::reset_generic<B>()` APIs.
 - [x] [minor] Sprint A wire-through: Add `test_reset_keeps_segments_cached_and_records_telemetry` integration test pinning the reset/purge separation and telemetry deltas.
+
+- [x] [minor] Sprint B seam: Add `MemoryBackend::make_guard(ptr, size) -> bool` trait method with default `false` impl.
+- [x] [minor] Sprint B seam: Implement `make_guard` on `UnixBackend` (`mprotect(PROT_NONE)`).
+- [x] [minor] Sprint B seam: Implement `make_guard` on `WindowsBackend` (`VirtualProtect(PAGE_NOACCESS)`).
+- [x] [minor] Sprint B seam: Add `guard_install_calls`/`guard_install_bytes` telemetry to `BackendMemoryStats` and `MemoryStats`; wire through `MemoryBackendWrapper`.
+- [x] [minor] Sprint B seam: Add three regression tests pinning guard-install telemetry semantics, confirmed-install + reservation persistence, and null/zero rejection.

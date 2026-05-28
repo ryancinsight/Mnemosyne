@@ -73,4 +73,32 @@ pub trait MemoryBackend: Send + Sync + 'static {
     unsafe fn page_reset(ptr: *mut u8, size: usize) -> bool {
         false
     }
+
+    /// Marks a page-aligned range as an inaccessible guard region.
+    ///
+    /// On Unix the implementation calls `mprotect(ptr, size, PROT_NONE)`;
+    /// on Windows it calls `VirtualProtect(ptr, size, PAGE_NOACCESS, _)`.
+    /// Either flavor leaves the address range mapped (so subsequent
+    /// `deallocate` calls still cover it) but raises a fault on any read
+    /// or write. The default implementation returns `false` so backends
+    /// without an equivalent operation silently opt out.
+    ///
+    /// Callers should treat the guard as one-way: there is no
+    /// corresponding "remove guard" operation in this trait. A backend
+    /// that needs to reuse the range must release the entire mapping via
+    /// `deallocate` and re-allocate.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a system-page-aligned address inside an active
+    /// mapping from this backend, `size` must be a non-zero multiple of
+    /// the system page size, and `[ptr, ptr + size)` must lie entirely
+    /// within a single allocation returned by `allocate`. After a
+    /// successful guard install, every read or write to the range raises
+    /// the platform's protection fault — callers must ensure no live
+    /// allocator data lives in the range.
+    #[allow(unused_variables)]
+    unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
+        false
+    }
 }

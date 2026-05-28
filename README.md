@@ -48,7 +48,11 @@ Its design incorporates core lessons from modern allocator research (specificall
 *   `MemoryBackendWrapper` records `page_reset_calls` and `page_reset_bytes` telemetry on confirmed resets; the arena pool tracks `reset_calls` and `reset_segments` separately. Neither path decrements `current_mapped_bytes` — the virtual mapping remains owned by the allocator and only the resident set drops.
 *   This complements `purge()` (which releases both address space and RSS) as a lighter-weight RSS-reduction knob for idle periods.
 
-### 10. Tight Huge-Allocation Mapping Derivation
+### 10. Guard-Region Backend Seam (`make_guard`)
+*   `MemoryBackend::make_guard(ptr, size) -> bool` installs a `PROT_NONE` (Unix `mprotect`) or `PAGE_NOACCESS` (Windows `VirtualProtect`) region inside an active mapping. The address range stays reserved and is releasable via `deallocate`, but any read or write raises an access-violation fault. The default trait impl returns `false` so backends without an equivalent operation silently opt out.
+*   `MemoryBackendWrapper` records `guard_install_calls` and `guard_install_bytes` telemetry on confirmed installs and intentionally does not decrement `current_mapped_bytes`. The seam is the prerequisite for an arena-level guard policy that places PROT_NONE pages at high-traffic OOB-write boundaries (segment header, page edges).
+
+### 11. Tight Huge-Allocation Mapping Derivation
 *   `allocate_large_or_huge` reserves exactly `size + alignment + SEGMENT_ALIGN + PAGE_SIZE` from the backend, derived from a four-step layout walk over the worst-case slacks (segment-alignment round-up, page-zero reserved prefix, payload-alignment round-up, payload). The prior derivation over-reserved by an entire `SEGMENT_SIZE`, wasting ~2 MiB − 64 KiB of mapped memory per huge allocation; the tight formula is pinned by `huge_allocation_consumes_tight_mapping_size` which asserts the exact backend telemetry delta.
 *   Power-of-two alignments above `SEGMENT_ALIGN` are rejected at the entry point so that free classification can always recover the segment header by segment rounding or metadata-slot lookup, without a side registry.
 

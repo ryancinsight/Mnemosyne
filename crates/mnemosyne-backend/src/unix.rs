@@ -4,6 +4,7 @@ use core::ffi::{c_int, c_void};
 #[cfg(target_os = "linux")]
 use mnemosyne_core::constants::SEGMENT_SIZE;
 
+const PROT_NONE: c_int = 0;
 const PROT_READ: c_int = 1;
 const PROT_WRITE: c_int = 2;
 const MAP_PRIVATE: c_int = 2;
@@ -57,6 +58,8 @@ extern "C" {
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
     fn madvise(addr: *mut c_void, length: usize, advice: c_int) -> c_int;
+
+    fn mprotect(addr: *mut c_void, length: usize, prot: c_int) -> c_int;
 }
 
 /// Issues a Linux `MADV_HUGEPAGE` hint for a freshly mapped segment-sized
@@ -170,6 +173,21 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
             let _ = size;
             false
         }
+    }
+
+    /// Installs a `PROT_NONE` guard region via `mprotect`. Every Unix
+    /// target implements `mprotect`, so the impl applies uniformly.
+    /// Returns `true` when the kernel confirmed the protection change.
+    unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
+        if ptr.is_null() || size == 0 {
+            return false;
+        }
+        // Safety: caller guarantees `ptr` is page-aligned inside an active
+        // mapping and `size` is a non-zero multiple of the system page
+        // size. `mprotect` does not invalidate the mapping; it only
+        // changes access permissions.
+        let res = unsafe { mprotect(ptr as *mut c_void, size, PROT_NONE) };
+        res == 0
     }
 }
 

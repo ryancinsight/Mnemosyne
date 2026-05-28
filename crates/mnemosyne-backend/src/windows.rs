@@ -11,6 +11,10 @@ const MEM_RELEASE: u32 = 0x00008000;
 /// re-zero on next access, but the mapping itself stays committed.
 const MEM_RESET: u32 = 0x00080000;
 const PAGE_READWRITE: u32 = 0x04;
+/// `PAGE_NOACCESS` makes the page region raise an access-violation
+/// fault on any read, write, or execute attempt while keeping the
+/// mapping reserved.
+const PAGE_NOACCESS: u32 = 0x01;
 
 extern "system" {
     fn VirtualAlloc(
@@ -21,6 +25,13 @@ extern "system" {
     ) -> *mut c_void;
 
     fn VirtualFree(lpAddress: *mut c_void, dwSize: usize, dwFreeType: u32) -> i32;
+
+    fn VirtualProtect(
+        lpAddress: *mut c_void,
+        dwSize: usize,
+        flNewProtect: u32,
+        lpflOldProtect: *mut u32,
+    ) -> i32;
 }
 
 /// Windows virtual memory backend using `VirtualAlloc`/`VirtualFree`.
@@ -83,5 +94,28 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
         // mapping committed and never invalidates the address range.
         let result = unsafe { VirtualAlloc(ptr as *const c_void, size, MEM_RESET, PAGE_READWRITE) };
         !result.is_null()
+    }
+
+    /// Installs a `PAGE_NOACCESS` guard region via `VirtualProtect`.
+    /// Subsequent reads or writes to the protected pages raise an
+    /// access-violation. The mapping itself remains reserved, so a
+    /// later `deallocate` covering the range still releases cleanly.
+    unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
+        if ptr.is_null() || size == 0 {
+            return false;
+        }
+        let mut old_protect: u32 = 0;
+        // Safety: ptr is inside an active VirtualAlloc-managed region and
+        // size is a multiple of the system page size. VirtualProtect
+        // changes only the protection bits.
+        let res = unsafe {
+            VirtualProtect(
+                ptr as *mut c_void,
+                size,
+                PAGE_NOACCESS,
+                &mut old_protect as *mut u32,
+            )
+        };
+        res != 0
     }
 }
