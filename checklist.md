@@ -199,3 +199,5 @@ Target version: 0.1.0
 - [x] [minor] Add regression tests for in-place realloc: same-pointer for within-class grow/shrink, copy semantics across classes, null-to-alloc, zero-size-to-free, secure replacement growth, and zero-size null realloc.
 - [x] [minor] Add `Realloc latency` Criterion coverage for within-class and cross-class realloc cycles across Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc.
 - [x] [patch] Add `realloc latency/` to generated benchmark summary and allocator comparison reports.
+- [x] [minor] Add `Usable size query latency` Criterion coverage for isolated metadata-query cost across Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc.
+- [x] [patch] Add `usable size query latency/` to generated benchmark summary and allocator comparison reports.

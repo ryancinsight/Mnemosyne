@@ -29,6 +29,10 @@ baseline only after an intentional threshold-policy decision.
 - `realloc` benchmarks now cover within-class and cross-class realloc
   cycles; the summary includes `realloc latency/` rows, but the
   threshold baseline remains unchanged.
+- `usable_size` query benchmarks now isolate raw metadata lookup cost
+  from allocation/deallocation cost; the summary includes
+  `usable size query latency/` rows, but the threshold baseline remains
+  unchanged.
 
 ## 2026-05-28
 
@@ -58,5 +62,6 @@ Default summary runs report threshold ratios without failing the command. Thresh
 The `Threaded saturated small allocation cycles` group replaces the historical threaded row in the source-controlled baseline excerpt. It isolates allocator throughput from bounded-channel worker coordination by increasing per-command allocation work while preserving the same allocator set and worker topology. The current generated bounded smoke sample measured Mnemosyne at `201.364 us`, mimalloc at `55.541 us`, and snmalloc at `264.326 us` for 64k four-worker small allocation cycles.
 The historical `Threaded small allocation cycles` row remains in the side-by-side report for continuity, but it is not a threshold-gated baseline row because per-sample bounded-channel scheduling variance can dominate allocator changes.
 The memory report includes page-reset, guard-install, retained-pool reset, page-refill, recycle, fresh-page, fresh-segment, orphan-adoption, and recycle-sweep counters. After recycle-sweep deferral, the report allocation mix measured `19` page refills and `1` recycle sweep.
-The current usable-size comparison measured Mnemosyne at `14.005 ns` for 32-byte cycles and `14.437 ns` for 1024-byte cycles on this Windows GNU target.
-The current realloc comparison measured Mnemosyne at `13.321 ns` for within-class `24 -> 32` cycles and `29.162 ns` for cross-class `32 -> 64` cycles on this Windows GNU target.
+The current usable-size comparison measured Mnemosyne at `16.077 ns` for 32-byte cycles and `15.593 ns` for 1024-byte cycles on this Windows GNU target.
+The current realloc comparison measured Mnemosyne at `13.831 ns` for within-class `24 -> 32` cycles and `36.456 ns` for cross-class `32 -> 64` cycles on this Windows GNU target.
+The current isolated usable-size query comparison measured Mnemosyne at `0.411 ns` for 32-byte pointers and `0.383 ns` for 1024-byte pointers on this Windows GNU target.

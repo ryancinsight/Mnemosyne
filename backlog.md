@@ -91,6 +91,7 @@
 - [minor] Override `GlobalAlloc::realloc` with an in-place standard-policy fast path when the new request fits in `usable_size(ptr)`.
 - [patch] Preserve secure-policy realloc zero-initialization by forcing replacement allocation on growth.
 - [minor] Add realloc latency benchmarks for within-class and cross-class realloc cycles across Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc.
+- [minor] Add isolated usable-size query latency benchmarks that separate metadata lookup cost from allocation/deallocation cost.
 
 ## Next
 

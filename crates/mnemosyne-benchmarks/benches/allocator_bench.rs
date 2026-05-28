@@ -518,6 +518,72 @@ fn bench_usable_size(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_usable_size_query(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Usable size query latency");
+    for (name, layout) in [("small/32", SMALL_LAYOUT), ("medium/1024", MEDIUM_LAYOUT)] {
+        group.throughput(Throughput::Elements(1));
+
+        // Safety: `layout` comes from the static valid benchmark layout table.
+        let mnemosyne_ptr =
+            unsafe { require_allocated(mnemosyne::Mnemosyne.alloc(layout), "usable_size_query") };
+        group.bench_with_input(
+            BenchmarkId::new("Mnemosyne", name),
+            &mnemosyne_ptr,
+            |b, ptr| b.iter(|| unsafe { mnemosyne::usable_size(black_box(*ptr)) }),
+        );
+        // Safety: pointer was allocated by Mnemosyne for `layout` above.
+        unsafe { mnemosyne::Mnemosyne.dealloc(mnemosyne_ptr, layout) };
+
+        // Safety: `layout` comes from the static valid benchmark layout table.
+        let mimalloc_ptr =
+            unsafe { require_allocated(mimalloc::MiMalloc.alloc(layout), "usable_size_query") };
+        group.bench_with_input(
+            BenchmarkId::new("MiMalloc", name),
+            &mimalloc_ptr,
+            |b, ptr| b.iter(|| unsafe { mimalloc::MiMalloc.usable_size(black_box(*ptr)) }),
+        );
+        // Safety: pointer was allocated by MiMalloc for `layout` above.
+        unsafe { mimalloc::MiMalloc.dealloc(mimalloc_ptr, layout) };
+
+        // Safety: `layout` comes from the static valid benchmark layout table.
+        let snmalloc_ptr =
+            unsafe { require_allocated(snmalloc_rs::SnMalloc.alloc(layout), "usable_size_query") };
+        group.bench_with_input(
+            BenchmarkId::new("SnMalloc", name),
+            &snmalloc_ptr,
+            |b, ptr| {
+                b.iter(
+                    || match snmalloc_rs::SnMalloc.usable_size(black_box(*ptr)) {
+                        Some(size) => size,
+                        None => benchmark_failure("usable_size_query", "snmalloc returned None"),
+                    },
+                )
+            },
+        );
+        // Safety: pointer was allocated by SnMalloc for `layout` above.
+        unsafe { snmalloc_rs::SnMalloc.dealloc(snmalloc_ptr, layout) };
+
+        #[cfg(not(windows))]
+        {
+            // Safety: `layout` comes from the static valid benchmark layout table.
+            let jemalloc_ptr = unsafe {
+                require_allocated(
+                    tikv_jemallocator::Jemalloc.alloc(layout),
+                    "usable_size_query",
+                )
+            };
+            group.bench_with_input(
+                BenchmarkId::new("Jemalloc", name),
+                &jemalloc_ptr,
+                |b, ptr| b.iter(|| unsafe { tikv_jemallocator::usable_size(black_box(*ptr)) }),
+            );
+            // Safety: pointer was allocated by Jemalloc for `layout` above.
+            unsafe { tikv_jemallocator::Jemalloc.dealloc(jemalloc_ptr, layout) };
+        }
+    }
+    group.finish();
+}
+
 fn bench_realloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("Realloc latency");
     for (name, layout, new_size) in [
@@ -723,6 +789,7 @@ criterion_group! {
         bench_allocator_cycles,
         bench_allocator_bursts,
         bench_usable_size,
+        bench_usable_size_query,
         bench_realloc,
         bench_cross_thread_free,
         bench_multithreaded_alloc,
