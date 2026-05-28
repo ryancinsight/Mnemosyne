@@ -2,14 +2,14 @@
 
 | Benchmark | Mnemosyne (ns) | MiMalloc (ns) | SnMalloc (ns) | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| allocator burst retention/large_8192 | 8097.886 | 546531.210 | 19932.688 | 0.01x | 0.41x |
-| allocator burst retention/medium_1024 | 3550.455 | 88419.780 | 7300.294 | 0.04x | 0.49x |
-| allocator burst retention/small_32 | 3358.014 | 997.006 | 4140.650 | 3.37x | 0.81x |
-| allocator cycle latency/large_8192 | 13.673 | 15.594 | 17.603 | 0.88x | 0.78x |
-| allocator cycle latency/medium_1024 | 13.243 | 6.270 | 16.762 | 2.11x | 0.79x |
-| allocator cycle latency/small_32 | 12.925 | 2.794 | 16.293 | 4.63x | 0.79x |
-| cross-thread free handoff/medium_1024 | 26913.384 | 185155.442 | 38601.196 | 0.15x | 0.70x |
-| cross-thread free handoff/small_32 | 19197.338 | 7369.711 | 23013.837 | 2.60x | 0.83x |
-| segment cache eviction | 61139.487 | N/A | N/A | N/A | N/A |
-| threaded saturated small allocation cycles | 208204.245 | 79659.639 | 282682.156 | 2.61x | 0.74x |
-| threaded small allocation cycles | 38537.584 | 6611.215 | 26321.064 | 5.83x | 1.46x |
+| allocator burst retention/large_8192 | 8138.002 | 504206.596 | 19199.061 | 0.02x | 0.42x |
+| allocator burst retention/medium_1024 | 3657.976 | 89825.526 | 7289.730 | 0.04x | 0.50x |
+| allocator burst retention/small_32 | 3420.556 | 1232.755 | 4060.147 | 2.77x | 0.84x |
+| allocator cycle latency/large_8192 | 13.785 | 14.954 | 17.209 | 0.92x | 0.80x |
+| allocator cycle latency/medium_1024 | 13.865 | 6.164 | 16.394 | 2.25x | 0.85x |
+| allocator cycle latency/small_32 | 12.961 | 2.815 | 16.348 | 4.60x | 0.79x |
+| cross-thread free handoff/medium_1024 | 27726.782 | 177615.830 | 36294.049 | 0.16x | 0.76x |
+| cross-thread free handoff/small_32 | 21623.121 | 20723.864 | 22583.750 | 1.04x | 0.96x |
+| segment cache eviction | 70720.456 | N/A | N/A | N/A | N/A |
+| threaded saturated small allocation cycles | 207070.840 | 75726.595 | 283351.290 | 2.73x | 0.73x |
+| threaded small allocation cycles | 36367.103 | 5943.689 | 23178.870 | 6.12x | 1.57x |

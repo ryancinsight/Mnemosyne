@@ -64,6 +64,9 @@ pub trait LocalAllocatorSelector<B: HasSegmentPool>: HasSegmentPool {
 
     /// Sets the re-entrancy / TLS allocation state flag.
     fn set_is_allocating(val: bool);
+
+    /// Returns the raw pointer to the thread-local allocator cache.
+    fn get_allocator_ptr() -> *mut core::ffi::c_void;
 }
 
 /// Helper macro to generate zero-cost backend-specific thread-local cache pools.
@@ -99,6 +102,11 @@ macro_rules! impl_local_allocator_selector {
                 #[inline(always)]
                 fn set_is_allocating(val: bool) {
                     IS_ALLOCATING.with(|c| c.set(val))
+                }
+
+                #[inline(always)]
+                fn get_allocator_ptr() -> *mut core::ffi::c_void {
+                    ALLOCATOR.with(|cell| cell.as_ptr().cast())
                 }
             }
         };
@@ -320,7 +328,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
     // Safety: segment header is initialized and owner field is valid.
     let owner = unsafe { (*segment).owner };
 
-    let current_alloc_ptr = B::with_allocator(|cell| cell.as_ptr());
+    let current_alloc_ptr = B::get_allocator_ptr();
 
     if owner.matches(current_alloc_ptr) {
         // Local free: try to update the page metadata in the thread cache.

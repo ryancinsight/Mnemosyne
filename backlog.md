@@ -78,6 +78,7 @@
 - [patch] Investigate full all-allocator Criterion quick-run timeout while focused gated rows complete.
 - [patch] Guard local-free full-page reactivation on confirmed full-list unlink.
 
-## Next
-
 - [patch] Audit benchmark baseline metadata after bounded Criterion harness configuration.
+- [patch] Optimize thread_free segment owner check by introducing get_allocator_ptr to LocalAllocatorSelector.
+
+## Next
