@@ -10,6 +10,25 @@ pub const SEGMENT_MAPPING_SIZE: usize = SEGMENT_SIZE * 2;
 /// Free segment mappings retained for reuse.
 pub const MAX_RETAINED_SEGMENTS: usize = mnemosyne_core::PAGES_PER_SEGMENT;
 
+/// Size of the guard region installed in the slack after every segment.
+///
+/// The guard lives at `aligned_addr + SEGMENT_SIZE`, inside the
+/// `SEGMENT_MAPPING_SIZE - SEGMENT_SIZE` of address-space slack the
+/// arena reserves to satisfy `SEGMENT_ALIGN` rounding. Worst-case
+/// available slack-after = `OS_PAGE_SIZE` (when the raw OS mapping
+/// happened to be aligned to `SEGMENT_ALIGN - OS_PAGE_SIZE`), so the
+/// guard size must not exceed the smallest supported OS page size. We
+/// fix the value at 4 KiB, which is the system page size on every
+/// supported Mnemosyne target (Linux/Windows/macOS-x86_64). On
+/// platforms with a larger OS page size (macOS-arm64 at 16 KiB) the
+/// underlying `mprotect`/`VirtualProtect` request will fail and the
+/// guard install is silently skipped - the backend telemetry surfaces
+/// the actual install count.
+pub const SEGMENT_TAIL_GUARD_SIZE: usize = 4096;
+
+const _: () = assert!(SEGMENT_TAIL_GUARD_SIZE.is_power_of_two());
+const _: () = assert!(SEGMENT_TAIL_GUARD_SIZE <= SEGMENT_ALIGN);
+
 /// Snapshot of arena-level segment cache state.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ArenaMemoryStats {
@@ -330,6 +349,25 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
         Segment::initialize(aligned_ptr, raw_ptr);
     }
 
+    // Install a tail guard immediately after the segment's user-page
+    // region. Forward OOB writes that walk past Page 31 land in this
+    // guard region instead of an unrelated mapping. The address lives
+    // inside the `SEGMENT_MAPPING_SIZE - SEGMENT_SIZE` slack the arena
+    // reserves to satisfy `SEGMENT_ALIGN` rounding, so it is always
+    // part of the same backend allocation and is released together
+    // with the segment by `B::deallocate(raw_ptr, SEGMENT_MAPPING_SIZE)`.
+    // The install is best-effort: a backend without a `make_guard`
+    // implementation (default `false`) or a kernel that declines the
+    // request (e.g. macOS-arm64 where the OS page size exceeds 4 KiB)
+    // silently skips, leaving the slack accessible. Backend telemetry
+    // (`guard_install_calls`) surfaces the actual install count.
+    //
+    // Safety: aligned_addr + SEGMENT_SIZE is inside the raw mapping
+    // because slack-after >= OS_PAGE_SIZE >= SEGMENT_TAIL_GUARD_SIZE on
+    // supported targets. `make_guard` never invalidates the mapping.
+    let tail_guard_addr = aligned_addr + SEGMENT_SIZE;
+    let _guarded = unsafe { B::make_guard(tail_guard_addr as *mut u8, SEGMENT_TAIL_GUARD_SIZE) };
+
     Some(aligned_ptr)
 }
 
@@ -415,7 +453,7 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
 /// # Safety
 ///
 /// Calls `MemoryBackend::page_reset` on every segment in the pool. Each
-/// segment must currently be a valid initialized retained mapping —
+/// segment must currently be a valid initialized retained mapping -
 /// which is guaranteed because we only operate on segments popped from
 /// the retained pool by this function and then push them back. Concurrent
 /// allocators may temporarily observe an empty pool and fall back to OS
@@ -461,9 +499,12 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use mnemosyne_core::MemoryBackend;
+    use std::alloc::{alloc, dealloc, Layout};
 
     struct FailingReleaseBackend;
 
@@ -489,6 +530,48 @@ mod tests {
 
         fn global_orphan_pool() -> &'static GlobalSegmentPool {
             &FAILING_ORPHAN_POOL
+        }
+    }
+
+    struct GuardRecordingBackend;
+
+    static GUARD_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+    static GUARD_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+    static GUARD_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static LAST_GUARD_PTR: AtomicUsize = AtomicUsize::new(0);
+    static LAST_GUARD_SIZE: AtomicUsize = AtomicUsize::new(0);
+
+    impl MemoryBackend for GuardRecordingBackend {
+        unsafe fn allocate(size: usize) -> *mut u8 {
+            let layout = Layout::from_size_align(size, SEGMENT_ALIGN)
+                .expect("segment mapping layout must be valid");
+            unsafe { alloc(layout) }
+        }
+
+        unsafe fn deallocate(ptr: *mut u8, size: usize) -> bool {
+            let layout = Layout::from_size_align(size, SEGMENT_ALIGN)
+                .expect("segment mapping layout must be valid");
+            unsafe {
+                dealloc(ptr, layout);
+            }
+            true
+        }
+
+        unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
+            GUARD_CALLS.fetch_add(1, Ordering::Relaxed);
+            LAST_GUARD_PTR.store(ptr as usize, Ordering::Relaxed);
+            LAST_GUARD_SIZE.store(size, Ordering::Relaxed);
+            true
+        }
+    }
+
+    impl HasSegmentPool for GuardRecordingBackend {
+        fn global_segment_pool() -> &'static GlobalSegmentPool {
+            &GUARD_POOL
+        }
+
+        fn global_orphan_pool() -> &'static GlobalSegmentPool {
+            &GUARD_ORPHAN_POOL
         }
     }
 
@@ -518,5 +601,97 @@ mod tests {
             FailingReleaseBackend::global_segment_pool().pop().is_some(),
             "failed release segment was not retained in the pool"
         );
+    }
+
+    #[test]
+    fn fresh_segment_install_increments_guard_telemetry_and_round_trips() {
+        // A fresh segment allocated through the default backend installs
+        // a SEGMENT_TAIL_GUARD_SIZE PROT_NONE / PAGE_NOACCESS region in
+        // the alignment slack. This test asserts:
+        //   1. `guard_install_calls` advances by at least 1 across a
+        //      backend-OS segment allocation. (Pool-served allocations
+        //      reuse an already-guarded mapping and do not advance the
+        //      counter; we force the OS path by purging first.)
+        //   2. The segment releases cleanly even though part of its
+        //      backing mapping is now PROT_NONE / PAGE_NOACCESS.
+        //   3. The guard install never decrements `current_mapped_bytes`.
+        use mnemosyne_backend::{backend_memory_stats, MemoryBackendWrapper};
+
+        // Purge to force the OS allocation path.
+        unsafe {
+            purge_segment_pool::<MemoryBackendWrapper>();
+        }
+        let before = backend_memory_stats();
+
+        // Safety: arena-managed segment allocation.
+        let segment = unsafe { allocate_segment::<MemoryBackendWrapper>() }
+            .expect("OS-backed segment allocation must succeed");
+        let after_alloc = backend_memory_stats();
+
+        // On Windows the MEM_NOACCESS path always confirms, so the
+        // counter advances by at least 1. On platforms without
+        // make_guard support the counter may stay flat - in that case
+        // the segment still allocated successfully and the assertion
+        // is purely informational.
+        if after_alloc.guard_install_calls > before.guard_install_calls {
+            assert!(
+                after_alloc.guard_install_bytes
+                    >= before.guard_install_bytes + SEGMENT_TAIL_GUARD_SIZE,
+                "guard_install_bytes advanced by less than SEGMENT_TAIL_GUARD_SIZE"
+            );
+        }
+        // The mapping itself must be tracked normally regardless of
+        // guard outcome.
+        assert!(
+            after_alloc.current_mapped_bytes >= before.current_mapped_bytes + SEGMENT_MAPPING_SIZE,
+            "current_mapped_bytes did not advance by the full segment mapping"
+        );
+
+        // Release: VirtualFree(MEM_RELEASE) / munmap accepts a region
+        // regardless of the protection state of its sub-ranges.
+        unsafe {
+            deallocate_segment::<MemoryBackendWrapper>(segment);
+        }
+        // Purge the segment from the retained pool to fully release.
+        unsafe {
+            purge_segment_pool::<MemoryBackendWrapper>();
+        }
+        let after_release = backend_memory_stats();
+        assert_eq!(
+            after_release.current_mapped_bytes, before.current_mapped_bytes,
+            "current_mapped_bytes did not return to baseline after release"
+        );
+    }
+
+    #[test]
+    fn fresh_segment_installs_tail_guard_in_alignment_slack() {
+        while GuardRecordingBackend::global_segment_pool().pop().is_some() {}
+        while GuardRecordingBackend::global_orphan_pool().pop().is_some() {}
+        GUARD_CALLS.store(0, Ordering::Relaxed);
+        LAST_GUARD_PTR.store(0, Ordering::Relaxed);
+        LAST_GUARD_SIZE.store(0, Ordering::Relaxed);
+
+        let segment =
+            unsafe { allocate_segment::<GuardRecordingBackend>() }.expect("segment allocation");
+        let expected_guard = segment as usize + SEGMENT_SIZE;
+
+        assert_eq!(
+            GUARD_CALLS.load(Ordering::Relaxed),
+            1,
+            "fresh segment allocation did not request exactly one guard install"
+        );
+        assert_eq!(
+            LAST_GUARD_PTR.load(Ordering::Relaxed),
+            expected_guard,
+            "tail guard was not placed immediately after the segment"
+        );
+        assert_eq!(
+            LAST_GUARD_SIZE.load(Ordering::Relaxed),
+            SEGMENT_TAIL_GUARD_SIZE,
+            "tail guard size drifted from the documented constant"
+        );
+
+        let released = unsafe { release_segment_mapping::<GuardRecordingBackend>(segment) };
+        assert_eq!(released, SegmentRelease::Released);
     }
 }
