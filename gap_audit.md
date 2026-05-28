@@ -91,6 +91,6 @@
 
 - [patch] Production debug assertions included terse predicate-only checks in page remote-free reclamation, layout-validated alignment, small-free classification, page initialization, current-segment slicing, and page recycling. Each now carries the relevant count, class, block size, alignment, or address range in its debug failure message. The checks remain `debug_assert!`, so release builds keep the same zero-cost behavior.
 
-## Remaining
+- [patch] `ThreadAllocator::alloc` (active page), `alloc_cold` (active-page recheck), and `alloc_cold` (full-pages sweep) each open-coded the identical four-step sequence: drain `page.thread_free` via `reclaim_thread_free`, record cross-thread reclamation telemetry on nonzero count, pop the freshly linked head from `page.free`, and bump `page.alloc_count`. Extracted `try_reclaim_and_allocate(&mut Page) -> Option<NonNull<Block>>` as an `#[inline(always)]` helper that performs the sequence once; release-mode codegen is unchanged because the helper monomorphizes inline at every call site, and each call site collapses from ten lines of duplicated unsafe code plus its safety comment to a single match-and-return statement.
 
-- [patch] Local allocator remote-free reclaim paths repeat the same "reclaim then pop the first free block" sequence in the active-page, full-page, and cold new-page paths. Audit whether this can be factored into an inlined helper without adding branches or losing monomorphization.
+## Remaining

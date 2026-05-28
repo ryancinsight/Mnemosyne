@@ -131,6 +131,7 @@ Target version: 0.1.0
 - [x] [patch] Replace bare test `unwrap()` calls with contextual `expect()` diagnostics in allocator, local allocator, and channel/thread test code.
 - [x] [patch] Serialize arena allocation tests that inspect process-wide backend telemetry so exact mapped-byte assertions remain deterministic.
 - [x] [patch] Document the `size_to_class(0)` zero-size mapping contract and add `size_class_boundaries_are_exact` plus `size_class_zero_maps_to_smallest_class` coverage at every piecewise transition.
+- [x] [patch] Extract `try_reclaim_and_allocate` helper that folds the three "drain remote frees → record → pop free block → bump alloc_count" sites in `ThreadAllocator::alloc` and `alloc_cold` into a single `#[inline(always)]` routine.
 
 - [x] [patch] Audit production debug assertions for value-semantic invariant messages and zero-cost release behavior.
 - [x] [patch] Add value-semantic messages to production `debug_assert!` checks while preserving debug-only code generation.

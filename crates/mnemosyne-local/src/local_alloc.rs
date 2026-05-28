@@ -84,6 +84,40 @@ unsafe fn pop_page_free_block(page: &mut Page) -> NonNull<mnemosyne_core::types:
     block
 }
 
+/// Reclaims any pending cross-thread frees on `page` and, if reclamation
+/// added blocks to the local free list, pops one block and increments the
+/// page's `alloc_count`.
+///
+/// Returns the popped block when reclamation succeeded, or `None` when
+/// `page.thread_free` was empty.
+///
+/// The helper folds the three-step "drain remote frees, record telemetry,
+/// allocate from the drained head" sequence used by `alloc` (active page),
+/// `alloc_cold` (active-page recheck), and `alloc_cold` (full-page sweep)
+/// into one site that is `#[inline(always)]` so monomorphization preserves
+/// the prior hot-path codegen.
+///
+/// # Safety
+///
+/// Same contract as `Page::reclaim_thread_free`: the page must belong to
+/// the allocator context performing the reconciliation and every block in
+/// `page.thread_free` must belong to this page.
+#[inline(always)]
+unsafe fn try_reclaim_and_allocate(
+    page: &mut Page,
+) -> Option<NonNull<mnemosyne_core::types::Block>> {
+    let reclaimed = unsafe { page.reclaim_thread_free() };
+    if reclaimed == 0 {
+        return None;
+    }
+    record_cross_thread_reclaimed(reclaimed);
+    // Safety: `reclaim_thread_free` returning a nonzero count guarantees
+    // that the drained chain is now linked onto `page.free`.
+    let block = unsafe { pop_page_free_block(page) };
+    page.alloc_count += 1;
+    Some(block)
+}
+
 /// Thread-local cache for fast-path small allocations.
 pub struct ThreadAllocator<B: HasSegmentPool = DefaultBackend> {
     /// Active pages per size class.
@@ -178,13 +212,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
 
             // 3. Reclaim batched cross-thread frees only after local lists are empty.
-            let reclaimed = unsafe { page.reclaim_thread_free() };
-            if reclaimed > 0 {
-                record_cross_thread_reclaimed(reclaimed);
-                // Safety: `reclaim_thread_free` returned a nonzero count, which by
-                // its post-condition links the drained blocks onto `page.free`.
-                let block = unsafe { pop_page_free_block(page) };
-                page.alloc_count += 1;
+            // Safety: `page` is owned by this allocator and `try_reclaim_and_allocate`
+            // upholds the `Page::reclaim_thread_free` contract on its behalf.
+            if let Some(block) = unsafe { try_reclaim_and_allocate(page) } {
                 return block.as_ptr() as *mut u8;
             }
         }
@@ -253,15 +283,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // 1. Move the current active page to full_pages if it is indeed full.
         if let Some(mut active_ptr) = self.active_pages[class] {
             let active_page = active_ptr.as_mut();
-            let reclaimed = active_page.reclaim_thread_free();
-            if reclaimed > 0 {
-                record_cross_thread_reclaimed(reclaimed);
-                // Safety: `reclaim_thread_free` returned a nonzero count, which by
-                // its post-condition links the drained blocks onto `page.free`.
-                let block = pop_page_free_block(active_page);
-                active_page.alloc_count += 1;
+            // Safety: `active_page` is owned by this allocator.
+            if let Some(block) = try_reclaim_and_allocate(active_page) {
                 return block.as_ptr() as *mut u8;
-            } else if active_page.free.is_none() && active_page.local_free.is_none() {
+            }
+            if active_page.free.is_none() && active_page.local_free.is_none() {
                 // The page is truly full! Move it to full_pages.
                 self.active_pages[class] = active_page.next_page;
                 active_page.next_page = self.full_pages[class];
@@ -281,18 +307,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
             checked += 1;
             let page = page_ptr.as_mut();
-            // Safety: page points to a valid Page structure.
+            // Skip pages whose remote-free queue is empty without touching
+            // metadata; saves an atomic swap on every iteration that has no
+            // pending remote frees.
             if !page.thread_free.is_empty() {
-                let reclaimed = page.reclaim_thread_free();
-                if reclaimed > 0 {
-                    record_cross_thread_reclaimed(reclaimed);
-
-                    // Allocate from it
-                    // Safety: `reclaim_thread_free` returned a nonzero count, which by
-                    // its post-condition links the drained blocks onto `page.free`.
-                    let block = pop_page_free_block(page);
-                    page.alloc_count += 1;
-
+                // Safety: `page` is owned by this allocator.
+                if let Some(block) = try_reclaim_and_allocate(page) {
                     if page.alloc_count < page.max_blocks {
                         // Page is no longer full! Move it back to active list.
                         // Safety: page_ptr and class are valid.
