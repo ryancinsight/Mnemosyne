@@ -106,3 +106,4 @@
 - Added `Allocator allocation latency` Criterion coverage with drop-guard cleanup to isolate allocation cost from deallocation cost.
 - Added `std::alloc::System` allocator comparator rows and System ratio columns to generated benchmark reports for portable allocator-operation groups.
 - Optimized `thread_free` by classifying small frees from the target page block size before the huge-allocation fallback and by deriving the owner-token comparison from the existing allocator TLS access.
+- Added `Allocator deallocation latency` Criterion coverage that allocates during setup and measures only deallocation across Mnemosyne, System, mimalloc, snmalloc, and target-gated jemalloc.

@@ -207,3 +207,5 @@ Target version: 0.1.0
 - [x] [patch] Extend generated allocator comparison reports with System value and Mnemosyne-vs-System ratio columns.
 - [x] [patch] Optimize small-free classification by reading the target page's block size before the huge-allocation metadata fallback.
 - [x] [patch] Remove duplicate TLS lookup from local-free owner checks by deriving the current allocator token inside the existing allocator-cell access.
+- [x] [minor] Add `Allocator deallocation latency` Criterion coverage with setup-allocated pointers so the measured routine isolates `dealloc`.
+- [x] [patch] Add `allocator deallocation latency/` to generated benchmark summary and allocator comparison reports.

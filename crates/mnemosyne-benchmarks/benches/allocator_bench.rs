@@ -169,6 +169,17 @@ unsafe fn alloc_dealloc<A: GlobalAlloc>(allocator: &A, layout: Layout) {
     allocator.dealloc(ptr, layout);
 }
 
+#[inline(always)]
+/// Deallocates a pointer allocated by the same allocator during benchmark setup.
+///
+/// # Safety
+///
+/// `ptr` must be non-null, allocated by `allocator` for `layout`, and not
+/// deallocated elsewhere.
+unsafe fn dealloc_only<A: GlobalAlloc>(allocator: &A, ptr: *mut u8, layout: Layout) {
+    allocator.dealloc(black_box(ptr), layout);
+}
+
 #[inline(never)]
 /// Allocates and deallocates a fixed batch for burst-retention benchmarks.
 ///
@@ -510,6 +521,61 @@ fn bench_allocator_alloc(c: &mut Criterion) {
                     |_| unsafe {
                         AllocatedBlock::new(&tikv_jemallocator::Jemalloc, *layout, "alloc_only")
                     },
+                    BatchSize::SmallInput,
+                )
+            });
+        }
+    }
+    group.finish();
+}
+
+fn bench_allocator_dealloc(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Allocator deallocation latency");
+    for (name, layout) in [("small/32", SMALL_LAYOUT), ("medium/1024", MEDIUM_LAYOUT)] {
+        group.throughput(Throughput::Bytes(layout.size() as u64));
+        group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
+            b.iter_batched(
+                || unsafe {
+                    require_allocated(mnemosyne::Mnemosyne.alloc(*layout), "dealloc_only")
+                },
+                |ptr| unsafe { dealloc_only(&mnemosyne::Mnemosyne, ptr, *layout) },
+                BatchSize::SmallInput,
+            )
+        });
+        group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
+            b.iter_batched(
+                || unsafe { require_allocated(System.alloc(*layout), "dealloc_only") },
+                |ptr| unsafe { dealloc_only(&System, ptr, *layout) },
+                BatchSize::SmallInput,
+            )
+        });
+        group.bench_with_input(BenchmarkId::new("MiMalloc", name), &layout, |b, layout| {
+            b.iter_batched(
+                || unsafe { require_allocated(mimalloc::MiMalloc.alloc(*layout), "dealloc_only") },
+                |ptr| unsafe { dealloc_only(&mimalloc::MiMalloc, ptr, *layout) },
+                BatchSize::SmallInput,
+            )
+        });
+        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+            b.iter_batched(
+                || unsafe {
+                    require_allocated(snmalloc_rs::SnMalloc.alloc(*layout), "dealloc_only")
+                },
+                |ptr| unsafe { dealloc_only(&snmalloc_rs::SnMalloc, ptr, *layout) },
+                BatchSize::SmallInput,
+            )
+        });
+        #[cfg(not(windows))]
+        {
+            group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
+                b.iter_batched(
+                    || unsafe {
+                        require_allocated(
+                            tikv_jemallocator::Jemalloc.alloc(*layout),
+                            "dealloc_only",
+                        )
+                    },
+                    |ptr| unsafe { dealloc_only(&tikv_jemallocator::Jemalloc, ptr, *layout) },
                     BatchSize::SmallInput,
                 )
             });
@@ -899,6 +965,7 @@ criterion_group! {
     targets =
         bench_allocator_cycles,
         bench_allocator_alloc,
+        bench_allocator_dealloc,
         bench_allocator_bursts,
         bench_usable_size,
         bench_usable_size_query,

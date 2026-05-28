@@ -41,6 +41,10 @@ baseline only after an intentional threshold-policy decision.
   allocation/deallocation cycle, burst, realloc, cross-thread handoff, and
   saturated threaded groups. Portable usable-size rows remain `N/A` because
   `std::alloc::System` exposes no stable usable-size API.
+- Deallocation-only benchmarks now allocate each block during Criterion setup
+  and measure only the allocator `dealloc` call; the summary includes
+  `allocator deallocation latency/` rows, but the threshold baseline remains
+  unchanged.
 - The small-free classifier reads the target page's `block_size` before the
   huge-allocation metadata fallback, and local-free owner checks derive the
   current allocator token from the existing TLS access. This removes duplicate
@@ -79,3 +83,4 @@ The current usable-size comparison measured Mnemosyne at `16.077 ns` for 32-byte
 The current realloc comparison measured Mnemosyne at `13.831 ns` for within-class `24 -> 32` cycles and `36.456 ns` for cross-class `32 -> 64` cycles on this Windows GNU target.
 The current isolated usable-size query comparison measured Mnemosyne at `0.411 ns` for 32-byte pointers and `0.383 ns` for 1024-byte pointers on this Windows GNU target.
 The current allocation-only comparison measured Mnemosyne at `18.224 ns` for 32-byte allocations and `24.992 ns` for 1024-byte allocations on this Windows GNU target, versus System at `36.162 ns` and `105.018 ns`.
+The current deallocation-only comparison measured Mnemosyne at `6.414 ns` for 32-byte frees and `29.820 ns` for 1024-byte frees on this Windows GNU target, versus System at `20.864 ns` and `92.887 ns`, mimalloc at `5.828 ns` and `114.297 ns`, and snmalloc at `17.283 ns` and `71.771 ns`.

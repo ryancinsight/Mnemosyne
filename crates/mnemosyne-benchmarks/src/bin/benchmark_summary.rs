@@ -11,8 +11,9 @@ const METADATA_PATH: &str = "target/criterion/benchmark_metadata.json";
 const BASELINE_PATH: &str = "benchmarks/allocator_baseline_excerpt.csv";
 const REFRESH_BASELINE_FLAG: &str = "--refresh-baseline";
 const ENFORCE_THRESHOLDS_FLAG: &str = "--enforce-thresholds";
-const ACTIVE_GROUPS: [&str; 10] = [
+const ACTIVE_GROUPS: [&str; 11] = [
     "allocator allocation latency/",
+    "allocator deallocation latency/",
     "allocator burst retention/",
     "allocator cycle latency/",
     "cross-thread free handoff/",
