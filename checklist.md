@@ -188,3 +188,11 @@ Target version: 0.1.0
 - [x] [minor] Add `mnemosyne_local::usable_size(ptr)` returning the size-class block size for small allocations, the payload remainder for huge allocations, and 0 for null.
 - [x] [minor] Re-export `usable_size` from the top-level `mnemosyne` crate alongside `SizeClassOccupancy`.
 - [x] [minor] Add `usable_size_returns_block_size_for_small_allocations`, `usable_size_returns_payload_remainder_for_huge_allocations`, and `usable_size_returns_zero_for_null_pointer` regression tests.
+- [x] [minor] Add `Usable size latency` Criterion coverage for Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc.
+- [x] [patch] Add `usable size latency/` to generated benchmark summary and allocator comparison reports.
+- [x] [patch] Optimize `usable_size` small-pointer classification by reading the target page block size before falling back to huge metadata.
+- [x] [patch] Extend huge usable-size coverage across 8 B, 64 KiB, 1 MiB, and segment-aligned huge allocations.
+
+- [x] [minor] Add `GlobalAlloc::realloc` override on `Mnemosyne` that returns `ptr` unchanged when `new_size <= usable_size(ptr)`.
+- [x] [minor] Add equivalent `GlobalAlloc::realloc` override on the generic `MnemosyneAllocator<P, B>` so policy-aware allocations also skip the alloc+copy+free round trip when the request fits in the current class.
+- [x] [minor] Add four regression tests for in-place realloc: same-pointer for within-class grow/shrink, copy semantics across classes, null→alloc, and zero-size→free.

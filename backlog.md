@@ -86,6 +86,8 @@
 - [patch] Force cross-crate inlining for size-class mapping on allocator hot paths.
 - [patch] Move secure-policy small-free poisoning after classification so the small page metadata lookup is shared.
 - [patch] Reject layout-aware `GlobalAlloc::dealloc` small-free classification after saturated threaded benchmark regression.
+- [minor] Add usable-size latency benchmarks for Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc.
+- [patch] Optimize `usable_size` small-allocation classification by reading target page metadata before the Page 0 huge-allocation fallback.
 
 ## Next
 

@@ -98,3 +98,6 @@
 - Moved secure-policy small-free poisoning after small-page classification so poisoned frees reuse the classifier's page metadata lookup.
 - Refreshed `allocator_comparison.md`; the current run reports Mnemosyne small cycle latency at `12.975 ns` and saturated threaded small cycles at `201.364 us`.
 - Added `mnemosyne::usable_size(ptr)` (re-exported from `mnemosyne_local`) that returns the allocator's actual reservation for a previously-allocated pointer: the size-class block size for small allocations, the payload remainder for huge allocations, and 0 for null. Mirrors `mi_usable_size` / `malloc_usable_size` from mimalloc and glibc/jemalloc.
+- Added `Usable size latency` Criterion coverage for Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc, and included those rows in generated allocator comparison reports.
+- Optimized `usable_size` small-allocation classification by reading the target page block size before the huge-allocation metadata fallback.
+- Overrode `GlobalAlloc::realloc` on `Mnemosyne` and `MnemosyneAllocator<P, B>` to consult `usable_size(ptr)` and return the same pointer unchanged when the new size fits inside the existing size-class block. Secure policies keep replacement allocation on growth so new bytes are zero-initialized.

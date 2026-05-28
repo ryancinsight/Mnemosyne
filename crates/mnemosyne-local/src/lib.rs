@@ -143,22 +143,7 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
         return 0;
     }
 
-    // Classification mirrors `thread_free`: segment-aligned pointers are
-    // huge-aligned huge allocations; otherwise the segment header tells
-    // us whether the rounded-down segment is a huge mapping (Page 0
-    // block_size > 0) or a small-allocation segment.
-    let is_large_or_huge = if (ptr as usize) & (SEGMENT_SIZE - 1) == 0 {
-        true
-    } else {
-        let segment_addr = (ptr as usize) & !(SEGMENT_SIZE - 1);
-        let segment = segment_addr as *mut Segment;
-        // Safety: the rounded-down segment header is initialized for both
-        // small and large/huge allocations whose alignment is below
-        // SEGMENT_SIZE.
-        unsafe { (*segment).pages[0].block_size > 0 }
-    };
-
-    if is_large_or_huge {
+    if (ptr as usize) & (SEGMENT_SIZE - 1) == 0 {
         // Safety: large/huge allocations store the segment pointer in
         // the metadata slot immediately preceding the user pointer.
         let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
@@ -172,11 +157,29 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
     let segment_addr = (ptr as usize) & !(SEGMENT_SIZE - 1);
     let segment = segment_addr as *mut Segment;
     let page_index = (ptr as usize - segment_addr) / PAGE_SIZE;
-    // Safety: page_index is in [1, PAGES_PER_SEGMENT) for any pointer
-    // produced by the small-allocation path; we read only the page's
-    // `block_size` field.
+
+    debug_assert!(
+        page_index < PAGES_PER_SEGMENT,
+        "usable_size pointer page_index {} exceeds segment page count {}",
+        page_index,
+        PAGES_PER_SEGMENT
+    );
+
+    // Safety: for small allocations, page_index is in [1, PAGES_PER_SEGMENT)
+    // and the target page records the size-class block size. For non-segment
+    // aligned huge allocations, the user pointer still lands within the
+    // segment metadata window but the target page's block_size remains zero,
+    // routing below to the metadata-slot fallback.
     let page = unsafe { &(*segment).pages[page_index] };
-    page.block_size
+    if page.block_size > 0 {
+        return page.block_size;
+    }
+
+    // Safety: non-segment-aligned large/huge allocations store the segment
+    // pointer in the metadata slot immediately preceding the user pointer.
+    let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+    let huge_size = unsafe { (*segment).pages[0].block_size };
+    (segment as usize + huge_size) - ptr as usize
 }
 
 /// Returns a statistics snapshot for the current thread allocator.
@@ -487,21 +490,24 @@ mod tests {
         // and `usable_size` reports at least that much (it may report
         // more because the arena reserves alignment slack).
         let request = 4 * 1024 * 1024;
-        // Safety: power-of-two alignment, non-zero size.
-        let ptr =
-            unsafe { mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(request, 8) };
-        assert!(!ptr.is_null());
+        for &align in &[8usize, 64 * 1024, 1024 * 1024, SEGMENT_SIZE] {
+            // Safety: power-of-two alignment, non-zero size.
+            let ptr = unsafe {
+                mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(request, align)
+            };
+            assert!(!ptr.is_null(), "huge allocation failed for align {align}");
 
-        let reported = unsafe { usable_size(ptr) };
-        assert!(
-            reported >= request,
-            "usable_size = {reported} is below the requested huge size {request}"
-        );
+            let reported = unsafe { usable_size(ptr) };
+            assert!(
+                reported >= request,
+                "usable_size = {reported} is below the requested huge size {request} for align {align}"
+            );
 
-        let recovered = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-        let _released = unsafe {
-            mnemosyne_arena::deallocate_large_or_huge::<MemoryBackendWrapper>(ptr, recovered)
-        };
+            let recovered = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+            let _released = unsafe {
+                mnemosyne_arena::deallocate_large_or_huge::<MemoryBackendWrapper>(ptr, recovered)
+            };
+        }
     }
 
     #[test]

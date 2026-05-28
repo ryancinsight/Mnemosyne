@@ -23,6 +23,9 @@ baseline only after an intentional threshold-policy decision.
   confirmed release.
 - `size_to_class` and `class_to_size` are forced inline across crate
   boundaries so small allocation hot paths receive the mapper body.
+- `usable_size` benchmarks now cover Mnemosyne, mimalloc, snmalloc, and
+  target-gated jemalloc; the summary includes `usable size latency/`
+  rows, but the threshold baseline remains unchanged.
 
 ## 2026-05-28
 
@@ -52,3 +55,4 @@ Default summary runs report threshold ratios without failing the command. Thresh
 The `Threaded saturated small allocation cycles` group replaces the historical threaded row in the source-controlled baseline excerpt. It isolates allocator throughput from bounded-channel worker coordination by increasing per-command allocation work while preserving the same allocator set and worker topology. The current generated bounded smoke sample measured Mnemosyne at `201.364 us`, mimalloc at `55.541 us`, and snmalloc at `264.326 us` for 64k four-worker small allocation cycles.
 The historical `Threaded small allocation cycles` row remains in the side-by-side report for continuity, but it is not a threshold-gated baseline row because per-sample bounded-channel scheduling variance can dominate allocator changes.
 The memory report includes page-reset, guard-install, retained-pool reset, page-refill, recycle, fresh-page, fresh-segment, orphan-adoption, and recycle-sweep counters. After recycle-sweep deferral, the report allocation mix measured `19` page refills and `1` recycle sweep.
+The current usable-size comparison measured Mnemosyne at `14.005 ns` for 32-byte cycles and `14.437 ns` for 1024-byte cycles on this Windows GNU target.

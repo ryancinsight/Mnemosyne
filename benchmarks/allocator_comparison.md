@@ -13,3 +13,5 @@
 | segment cache eviction | 59078.183 | N/A | N/A | N/A | N/A | N/A | N/A |
 | threaded saturated small allocation cycles | 201364.191 | 55540.651 | 264325.501 | N/A | 3.63x | 0.76x | N/A |
 | threaded small allocation cycles | 39867.045 | 7434.712 | 26918.384 | N/A | 5.36x | 1.48x | N/A |
+| usable size latency/medium_1024 | 14.437 | 6.439 | 17.867 | N/A | 2.24x | 0.81x | N/A |
+| usable size latency/small_32 | 14.005 | 3.076 | 17.936 | N/A | 4.55x | 0.78x | N/A |

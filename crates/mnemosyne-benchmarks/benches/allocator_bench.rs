@@ -162,6 +162,35 @@ unsafe fn burst_alloc_dealloc<A: GlobalAlloc>(allocator: &A, layout: Layout) {
     }
 }
 
+#[inline(always)]
+/// Allocates one block, queries the allocator's usable-size API, and
+/// deallocates the block.
+///
+/// # Safety
+///
+/// `layout` must be valid for `allocator`, `usable_size` must accept only
+/// pointers returned by that allocator, and deallocation must use the same
+/// layout used for allocation.
+unsafe fn alloc_usable_dealloc<A, F>(allocator: &A, layout: Layout, usable_size: F)
+where
+    A: GlobalAlloc,
+    F: Fn(*mut u8) -> usize,
+{
+    // Safety: benchmark callers provide a valid `Layout`; null allocation
+    // results are rejected before either usable-size probing or deallocation.
+    let ptr = require_allocated(allocator.alloc(black_box(layout)), "alloc_usable_dealloc");
+    let size = usable_size(ptr);
+    if size < layout.size() {
+        benchmark_failure(
+            "alloc_usable_dealloc",
+            "usable size was smaller than allocation layout",
+        );
+    }
+    black_box(size);
+    // Safety: `ptr` was returned by the same allocator for `layout` above.
+    allocator.dealloc(ptr, layout);
+}
+
 struct HandoffBatch {
     ptrs: [usize; CROSS_THREAD_ALLOCS],
     layout: Layout,
@@ -406,6 +435,55 @@ fn bench_allocator_bursts(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_usable_size(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Usable size latency");
+    for (name, layout) in [("small/32", SMALL_LAYOUT), ("medium/1024", MEDIUM_LAYOUT)] {
+        group.throughput(Throughput::Elements(1));
+        group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
+            // Safety: `layout` comes from the static valid benchmark layout table.
+            b.iter(|| unsafe {
+                alloc_usable_dealloc(&mnemosyne::Mnemosyne, *layout, |ptr| {
+                    // Safety: `ptr` came from the Mnemosyne allocator above.
+                    unsafe { mnemosyne::usable_size(ptr) }
+                })
+            })
+        });
+        group.bench_with_input(BenchmarkId::new("MiMalloc", name), &layout, |b, layout| {
+            // Safety: `layout` comes from the static valid benchmark layout table.
+            b.iter(|| unsafe {
+                alloc_usable_dealloc(&mimalloc::MiMalloc, *layout, |ptr| {
+                    // Safety: `ptr` came from the mimalloc allocator above.
+                    unsafe { mimalloc::MiMalloc.usable_size(ptr) }
+                })
+            })
+        });
+        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+            // Safety: `layout` comes from the static valid benchmark layout table.
+            b.iter(|| unsafe {
+                alloc_usable_dealloc(&snmalloc_rs::SnMalloc, *layout, |ptr| {
+                    match snmalloc_rs::SnMalloc.usable_size(ptr) {
+                        Some(size) => size,
+                        None => benchmark_failure("alloc_usable_dealloc", "snmalloc returned None"),
+                    }
+                })
+            })
+        });
+        #[cfg(not(windows))]
+        {
+            group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
+                // Safety: `layout` comes from the static valid benchmark layout table.
+                b.iter(|| unsafe {
+                    alloc_usable_dealloc(&tikv_jemallocator::Jemalloc, *layout, |ptr| {
+                        // Safety: `ptr` came from the jemalloc allocator above.
+                        unsafe { tikv_jemallocator::usable_size(ptr) }
+                    })
+                })
+            });
+        }
+    }
+    group.finish();
+}
+
 fn bench_cross_thread_free(c: &mut Criterion) {
     static MNEMOSYNE: mnemosyne::Mnemosyne = mnemosyne::Mnemosyne;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -558,6 +636,7 @@ criterion_group! {
     targets =
         bench_allocator_cycles,
         bench_allocator_bursts,
+        bench_usable_size,
         bench_cross_thread_free,
         bench_multithreaded_alloc,
         bench_saturated_multithreaded_alloc,

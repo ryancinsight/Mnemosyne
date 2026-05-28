@@ -54,9 +54,10 @@ Its design incorporates core lessons from modern allocator research (specificall
 *   `MemoryBackendWrapper` records `guard_install_calls` and `guard_install_bytes` telemetry on confirmed installs and intentionally does not decrement `current_mapped_bytes`. The install is best-effort: backends without `make_guard` support (default impl) or kernels with an OS page size larger than the guard size (macOS-arm64) silently skip without affecting correctness.
 *   The default feature set leaves segment-tail guards disabled so production builds and benchmark runs keep zero guard-install overhead.
 
-### 11. `usable_size` API
+### 11. `usable_size` API and In-Place `realloc`
 *   `mnemosyne::usable_size(ptr)` returns the allocator's actual reservation for a previously-allocated pointer — the size-class block size for small allocations (which may exceed the original request because Mnemosyne rounds up to the next class), the distance from the user pointer to the end of the payload mapping for huge allocations, and 0 for null. Mirrors `mi_usable_size` (mimalloc) and `malloc_usable_size` (glibc/jemalloc).
-*   Useful for `Vec<T>` capacity rounding and for any caller that wants to know the actual reservation without a follow-up `realloc`.
+*   `Mnemosyne` and `MnemosyneAllocator<P, B>` override `GlobalAlloc::realloc` to consult `usable_size(ptr)` first and return the same pointer unchanged when the new size fits inside the existing size-class block. This eliminates the alloc/copy/free round trip on the common `Vec::push` capacity-rounding case. Secure policies keep replacement allocation on growth so new bytes are zero-initialized.
+*   Small-allocation probes read the target page's size-class metadata directly and fall back to the huge-allocation metadata slot only for uninitialized large/huge pages.
 
 ### 12. Tight Huge-Allocation Mapping Derivation
 *   `allocate_large_or_huge` reserves exactly `size + alignment + SEGMENT_ALIGN + PAGE_SIZE` from the backend, derived from a four-step layout walk over the worst-case slacks (segment-alignment round-up, page-zero reserved prefix, payload-alignment round-up, payload). The prior derivation over-reserved by an entire `SEGMENT_SIZE`, wasting ~2 MiB − 64 KiB of mapped memory per huge allocation; the tight formula is pinned by `huge_allocation_consumes_tight_mapping_size` which asserts the exact backend telemetry delta.
@@ -146,7 +147,7 @@ cargo run -p mnemosyne-benchmarks --bin memory_report --release
 ```
 
 ### Running the Performance Benchmarks
-To compare Mnemosyne, MiMalloc, and SnMalloc performance across latency, bursts, threaded cycles, and saturated threaded cycles:
+To compare Mnemosyne, MiMalloc, and SnMalloc performance across latency, bursts, usable-size probes, threaded cycles, and saturated threaded cycles:
 ```bash
 # Run Criterion microbenchmarks
 cargo bench -p mnemosyne-benchmarks --bench allocator_bench
