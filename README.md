@@ -42,7 +42,11 @@ Its design incorporates core lessons from modern allocator research (specificall
 *   `UnixBackend::allocate` issues `madvise(MADV_HUGEPAGE)` on Linux for mappings that are at least one full `SEGMENT_SIZE` (2 MiB) and a multiple thereof. The kernel can then back each segment with a single 2 MiB transparent huge page, halving TLB pressure on hot segment-metadata access.
 *   The advice is purely advisory and ignored on kernels without THP support; the mapping itself is never invalidated by a hint failure. Non-Linux Unix targets compile a no-op stub.
 
-### 9. Tight Huge-Allocation Mapping Derivation
+### 9. Page-Level OS Reclaim (`page_reset`)
+*   `MemoryBackend::page_reset(ptr, size) -> bool` lets a backend release the physical backing of an idle page range while keeping the virtual mapping committed: `MADV_DONTNEED` on Linux, `MADV_FREE` on macOS/FreeBSD, `VirtualAlloc(MEM_RESET)` on Windows. The default trait impl returns `false` so backends without an equivalent operation silently opt out.
+*   `MemoryBackendWrapper` records `page_reset_calls` and `page_reset_bytes` telemetry on confirmed resets, and intentionally does *not* decrement `current_mapped_bytes` — the virtual mapping remains owned by the allocator and only the physical backing has been released.
+
+### 10. Tight Huge-Allocation Mapping Derivation
 *   `allocate_large_or_huge` reserves exactly `size + alignment + SEGMENT_ALIGN + PAGE_SIZE` from the backend, derived from a four-step layout walk over the worst-case slacks (segment-alignment round-up, page-zero reserved prefix, payload-alignment round-up, payload). The prior derivation over-reserved by an entire `SEGMENT_SIZE`, wasting ~2 MiB − 64 KiB of mapped memory per huge allocation; the tight formula is pinned by `huge_allocation_consumes_tight_mapping_size` which asserts the exact backend telemetry delta.
 *   Power-of-two alignments above `SEGMENT_ALIGN` are rejected at the entry point so that free classification can always recover the segment header by segment rounding or metadata-slot lookup, without a side registry.
 

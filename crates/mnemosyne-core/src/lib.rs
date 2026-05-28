@@ -40,4 +40,37 @@ pub trait MemoryBackend: Send + Sync + 'static {
     /// The ptr must be valid and size must match the allocated size.
     #[must_use = "ignoring the release result drops the OS-failure signal; bind it to `_released` and document why no recovery is possible"]
     unsafe fn deallocate(ptr: *mut u8, size: usize) -> bool;
+
+    /// Asks the OS to drop the physical backing of a mapped page range while
+    /// keeping the virtual address range reserved and accessible.
+    ///
+    /// Returns `true` when the OS confirmed the reset, `false` when the
+    /// backend either does not implement page-level reset, the call failed,
+    /// or the platform's reset semantics are too lax for this allocator's
+    /// purposes (for example, `MADV_FREE` on a backend that requires
+    /// observable zeroing).
+    ///
+    /// The reset is *advisory at the address-space level* — the mapping
+    /// remains readable and writable after the call. Subsequent reads may
+    /// return zeroed pages (Linux `MADV_DONTNEED`, Windows
+    /// `VirtualAlloc(MEM_RESET)` after touch) or the previous contents
+    /// until the next write (macOS `MADV_FREE`). Callers must therefore
+    /// treat the contents of the reset region as undefined.
+    ///
+    /// The default implementation returns `false` so a backend that has no
+    /// equivalent operation (such as the CUDA unified memory backend)
+    /// silently opts out without breaking the trait surface.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a system-page-aligned address inside an active mapping
+    /// from this backend, `size` must be a non-zero multiple of the system
+    /// page size, and `[ptr, ptr + size)` must lie entirely within a single
+    /// allocation returned by `allocate`. After a successful reset the
+    /// region may be re-faulted by the kernel; callers must not assume the
+    /// previous bytes are still present.
+    #[allow(unused_variables)]
+    unsafe fn page_reset(ptr: *mut u8, size: usize) -> bool {
+        false
+    }
 }

@@ -156,3 +156,9 @@ Target version: 0.1.0
 
 - [x] [patch] Sprint A: Add Linux `MADV_HUGEPAGE` hint in `UnixBackend::allocate` for segment-sized mappings; gate to `target_os = "linux"`; advisory failure ignored.
 - [x] [patch] Sprint A: Add `segment_sized_allocation_survives_hugepage_hint` and `sub_segment_allocation_skips_hugepage_hint` Linux-gated regression tests.
+
+- [x] [minor] Sprint A: Add `MemoryBackend::page_reset(ptr, size) -> bool` trait method with default `false` impl.
+- [x] [minor] Sprint A: Implement `page_reset` on `UnixBackend` (Linux `MADV_DONTNEED`, macOS/FreeBSD `MADV_FREE`).
+- [x] [minor] Sprint A: Implement `page_reset` on `WindowsBackend` via `VirtualAlloc(MEM_RESET)`.
+- [x] [minor] Sprint A: Add `page_reset_calls`/`page_reset_bytes` telemetry to `BackendMemoryStats` and `MemoryStats`; wire through `MemoryBackendWrapper`.
+- [x] [minor] Sprint A: Add three regression tests pinning page-reset telemetry semantics and round-trip behavior on an active mapping.

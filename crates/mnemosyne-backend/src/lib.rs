@@ -20,6 +20,8 @@ static CURRENT_MAPPED_BYTES: AtomicUsize = AtomicUsize::new(0);
 static PEAK_MAPPED_BYTES: AtomicUsize = AtomicUsize::new(0);
 static MAP_CALLS: AtomicUsize = AtomicUsize::new(0);
 static UNMAP_CALLS: AtomicUsize = AtomicUsize::new(0);
+static PAGE_RESET_CALLS: AtomicUsize = AtomicUsize::new(0);
+static PAGE_RESET_BYTES: AtomicUsize = AtomicUsize::new(0);
 
 /// Snapshot of OS mappings requested by Mnemosyne.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -28,6 +30,14 @@ pub struct BackendMemoryStats {
     pub peak_mapped_bytes: usize,
     pub map_calls: usize,
     pub unmap_calls: usize,
+    /// Number of `page_reset` calls that the OS confirmed.
+    ///
+    /// A reset releases the physical backing of an addressed range while
+    /// keeping the virtual mapping intact, so this counter is independent
+    /// of `unmap_calls` and `current_mapped_bytes` is not decremented.
+    pub page_reset_calls: usize,
+    /// Cumulative byte count passed to confirmed `page_reset` calls.
+    pub page_reset_bytes: usize,
 }
 
 #[inline]
@@ -54,6 +64,18 @@ fn record_unmap_failure() {
     UNMAP_CALLS.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Records a confirmed page reset.
+///
+/// Unlike `record_unmap`, this does not decrement `current_mapped_bytes`
+/// because the virtual mapping is still committed and remains observable
+/// through the allocator's address-space accounting; the OS has only
+/// released the underlying physical backing.
+#[inline]
+fn record_page_reset(size: usize) {
+    PAGE_RESET_CALLS.fetch_add(1, Ordering::Relaxed);
+    PAGE_RESET_BYTES.fetch_add(size, Ordering::Relaxed);
+}
+
 /// Returns the current backend memory mapping counters.
 ///
 /// The snapshot uses relaxed atomics because these counters are telemetry only:
@@ -64,6 +86,8 @@ pub fn backend_memory_stats() -> BackendMemoryStats {
         peak_mapped_bytes: PEAK_MAPPED_BYTES.load(Ordering::Relaxed),
         map_calls: MAP_CALLS.load(Ordering::Relaxed),
         unmap_calls: UNMAP_CALLS.load(Ordering::Relaxed),
+        page_reset_calls: PAGE_RESET_CALLS.load(Ordering::Relaxed),
+        page_reset_bytes: PAGE_RESET_BYTES.load(Ordering::Relaxed),
     }
 }
 
@@ -136,6 +160,100 @@ mod tests {
         let cleared = backend_memory_stats();
         assert_eq!(cleared.current_mapped_bytes, before.current_mapped_bytes);
     }
+
+    #[test]
+    fn page_reset_telemetry_increments_call_and_byte_counters_only() {
+        // record_page_reset must increment both call and byte counters
+        // without touching current_mapped_bytes, because a reset releases
+        // physical backing while leaving the virtual mapping committed.
+        let before = backend_memory_stats();
+        let size = 8192;
+
+        record_page_reset(size);
+        let after = backend_memory_stats();
+
+        assert_eq!(
+            after.page_reset_calls,
+            before.page_reset_calls + 1,
+            "page_reset_calls counter did not advance"
+        );
+        assert_eq!(
+            after.page_reset_bytes,
+            before.page_reset_bytes + size,
+            "page_reset_bytes counter did not advance by the reset size"
+        );
+        assert_eq!(
+            after.current_mapped_bytes, before.current_mapped_bytes,
+            "page_reset must not decrement current_mapped_bytes"
+        );
+        assert_eq!(
+            after.unmap_calls, before.unmap_calls,
+            "page_reset must not increment unmap_calls"
+        );
+    }
+
+    #[test]
+    fn wrapper_page_reset_round_trips_on_active_mapping() {
+        use mnemosyne_core::MemoryBackend;
+        // Allocate, reset a sub-range, write through the reset region,
+        // and release. Demonstrates that the wrapper telemetry tracks
+        // confirmed resets while leaving the mapping committed and
+        // writable.
+        let size = 64 * 1024;
+        // Safety: requesting a multiple of the system page size.
+        let ptr = unsafe { MemoryBackendWrapper::allocate(size) };
+        assert!(!ptr.is_null());
+
+        let stats_before = backend_memory_stats();
+        // Safety: ptr covers `size` bytes; the reset request is valid
+        // for the full mapping.
+        let reset = unsafe { MemoryBackendWrapper::page_reset(ptr, size) };
+        let stats_after = backend_memory_stats();
+
+        if reset {
+            assert_eq!(
+                stats_after.page_reset_calls,
+                stats_before.page_reset_calls + 1
+            );
+            assert_eq!(
+                stats_after.page_reset_bytes,
+                stats_before.page_reset_bytes + size
+            );
+        }
+        // current_mapped_bytes must not change regardless of reset outcome.
+        assert_eq!(
+            stats_after.current_mapped_bytes, stats_before.current_mapped_bytes,
+            "page_reset must never alter current_mapped_bytes"
+        );
+
+        // The mapping remains writable after reset. Touch a byte to prove
+        // the kernel did not unmap the region.
+        // Safety: ptr is still a valid committed mapping of `size` bytes.
+        unsafe {
+            ptr.write_volatile(0xCC);
+            assert_eq!(ptr.read_volatile(), 0xCC);
+        }
+
+        // Safety: ptr is the exact base of the mapping.
+        let released = unsafe { MemoryBackendWrapper::deallocate(ptr, size) };
+        assert!(released);
+    }
+
+    #[test]
+    fn wrapper_page_reset_rejects_null_and_zero() {
+        use mnemosyne_core::MemoryBackend;
+        let null_reset = unsafe { MemoryBackendWrapper::page_reset(core::ptr::null_mut(), 4096) };
+        assert!(!null_reset, "null pointer must not be accepted for reset");
+
+        // Allocate a small mapping just for the size==0 check; size==0 must
+        // be rejected before reaching the platform API.
+        // Safety: requesting a system-page-aligned size.
+        let ptr = unsafe { MemoryBackendWrapper::allocate(4096) };
+        assert!(!ptr.is_null());
+        let zero_reset = unsafe { MemoryBackendWrapper::page_reset(ptr, 0) };
+        assert!(!zero_reset, "zero-size reset must not be accepted");
+        let _ = unsafe { MemoryBackendWrapper::deallocate(ptr, 4096) };
+    }
 }
 
 /// High-level OS page mapping backend helper.
@@ -206,5 +324,24 @@ impl mnemosyne_core::MemoryBackend for MemoryBackendWrapper {
             record_unmap_failure();
         }
         released
+    }
+
+    /// Drops the physical backing of an idle page range while keeping the
+    /// virtual mapping committed. Telemetry records confirmed resets only
+    /// (call count and byte count); `current_mapped_bytes` is intentionally
+    /// not decremented because the address space remains owned by the
+    /// allocator.
+    #[inline(always)]
+    unsafe fn page_reset(ptr: *mut u8, size: usize) -> bool {
+        if ptr.is_null() || size == 0 {
+            return false;
+        }
+        // Safety: caller upholds the per-platform page_reset contract.
+        let reset =
+            unsafe { <DefaultBackend as mnemosyne_core::MemoryBackend>::page_reset(ptr, size) };
+        if reset {
+            record_page_reset(size);
+        }
+        reset
     }
 }

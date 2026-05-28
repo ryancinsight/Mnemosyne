@@ -15,6 +15,24 @@ const MAP_ANON: c_int = 0x20;
 
 const MAP_FAILED: *mut c_void = -1isize as *mut c_void;
 
+/// Linux `MADV_DONTNEED` advice constant.
+///
+/// Instructs the kernel to drop the physical backing of the addressed
+/// range while keeping the mapping itself valid. Subsequent reads return
+/// zeroed pages produced by the standard demand-fault path. Defined as
+/// `4` on Linux.
+#[cfg(target_os = "linux")]
+const MADV_DONTNEED: c_int = 4;
+
+/// macOS / BSD `MADV_FREE` advice constant.
+///
+/// Tells the kernel that the addressed range no longer needs to retain
+/// its current contents; the kernel may reclaim the physical pages
+/// lazily and a subsequent read may return either the prior contents or
+/// zeros. Defined as `5` on the BSDs and macOS.
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+const MADV_FREE: c_int = 5;
+
 /// Linux `MADV_HUGEPAGE` advice constant.
 ///
 /// Hints the kernel that the mapping is a good candidate for Transparent
@@ -37,7 +55,7 @@ extern "C" {
 
     fn munmap(addr: *mut c_void, length: usize) -> c_int;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
     fn madvise(addr: *mut c_void, length: usize, advice: c_int) -> c_int;
 }
 
@@ -119,6 +137,39 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
         let res = unsafe { munmap(ptr as *mut c_void, size) };
         debug_assert_eq!(res, 0, "munmap failed");
         res == 0
+    }
+
+    /// Drops the physical backing of the addressed range while keeping the
+    /// virtual mapping valid. Uses `MADV_DONTNEED` on Linux (subsequent
+    /// reads return zero) and `MADV_FREE` on macOS/FreeBSD (subsequent
+    /// reads may return the prior contents or zero). Other Unix targets
+    /// fall back to the default `false` no-op.
+    unsafe fn page_reset(ptr: *mut u8, size: usize) -> bool {
+        if ptr.is_null() || size == 0 {
+            return false;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // Safety: caller guarantees `ptr` is page-aligned inside an
+            // active mapping and `size` is a non-zero multiple of the
+            // system page size; madvise never invalidates the mapping.
+            let res = unsafe { madvise(ptr as *mut c_void, size, MADV_DONTNEED) };
+            return res == 0;
+        }
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        {
+            // Safety: same contract as the Linux branch; macOS/FreeBSD
+            // MADV_FREE has identical "do not invalidate the mapping"
+            // semantics.
+            let res = unsafe { madvise(ptr as *mut c_void, size, MADV_FREE) };
+            return res == 0;
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+        {
+            let _ = ptr;
+            let _ = size;
+            false
+        }
     }
 }
 
