@@ -247,19 +247,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 return block.as_ptr() as *mut u8;
             }
 
-            // 2. Check local_free list (reclaim local deallocations)
-            if let Some(block) = page.local_free {
-                // Safety: block points to a valid free Block inside the page.
-                // We move local_free to page.free and return the head block.
-                unsafe {
-                    page.free = (*block.as_ptr()).next;
-                }
-                page.local_free = None;
-                page.alloc_count += 1;
-                return block.as_ptr() as *mut u8;
-            }
-
-            // 3. Reclaim batched cross-thread frees only after local lists are empty.
+            // 2. Reclaim batched cross-thread frees only after the local list is empty.
             // Safety: `page` is owned by this allocator and `try_reclaim_and_allocate`
             // upholds the `Page::reclaim_thread_free` contract on its behalf.
             if let Some(block) = unsafe { try_reclaim_and_allocate(page) } {
@@ -335,7 +323,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             if let Some(block) = try_reclaim_and_allocate(active_page) {
                 return block.as_ptr() as *mut u8;
             }
-            if active_page.free.is_none() && active_page.local_free.is_none() {
+            if active_page.free.is_none() {
                 // The page is truly full! Move it to full_pages.
                 self.active_pages[class] = active_page.next_page;
                 active_page.next_page = self.full_pages[class];

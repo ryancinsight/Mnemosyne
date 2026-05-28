@@ -2,14 +2,14 @@
 
 | Benchmark | Mnemosyne (ns) | System (ns) | MiMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs System | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| allocator allocation latency/medium_1024 | 24.992 | 105.018 | 322.661 | 92.734 | N/A | 0.24x | 0.08x | 0.27x | N/A |
-| allocator allocation latency/small_32 | 18.224 | 36.162 | 16.860 | 14.835 | N/A | 0.50x | 1.08x | 1.23x | N/A |
+| allocator allocation latency/medium_1024 | 31.260 | 225.653 | 364.778 | 111.322 | N/A | 0.14x | 0.09x | 0.28x | N/A |
+| allocator allocation latency/small_32 | 17.686 | 38.856 | 19.136 | 18.839 | N/A | 0.46x | 0.92x | 0.94x | N/A |
 | allocator burst retention/large_8192 | 8156.318 | 9762.789 | 415899.799 | 20012.661 | N/A | 0.84x | 0.02x | 0.41x | N/A |
 | allocator burst retention/medium_1024 | 3807.490 | 8545.817 | 89547.593 | 7824.978 | N/A | 0.45x | 0.04x | 0.49x | N/A |
 | allocator burst retention/small_32 | 3526.223 | 7028.778 | 898.409 | 4468.358 | N/A | 0.50x | 3.92x | 0.79x | N/A |
-| allocator cycle latency/large_8192 | 13.405 | 26.218 | 19.935 | 22.805 | N/A | 0.51x | 0.67x | 0.59x | N/A |
-| allocator cycle latency/medium_1024 | 12.956 | 24.887 | 6.403 | 20.530 | N/A | 0.52x | 2.02x | 0.63x | N/A |
-| allocator cycle latency/small_32 | 12.600 | 28.209 | 3.294 | 20.685 | N/A | 0.45x | 3.83x | 0.61x | N/A |
+| allocator cycle latency/large_8192 | 11.537 | 26.218 | 19.935 | 22.805 | N/A | 0.44x | 0.58x | 0.51x | N/A |
+| allocator cycle latency/medium_1024 | 11.184 | 24.887 | 6.403 | 20.530 | N/A | 0.45x | 1.75x | 0.54x | N/A |
+| allocator cycle latency/small_32 | 12.168 | 28.209 | 3.294 | 20.685 | N/A | 0.43x | 3.69x | 0.59x | N/A |
 | allocator deallocation latency/medium_1024 | 29.820 | 92.887 | 114.297 | 71.771 | N/A | 0.32x | 0.26x | 0.42x | N/A |
 | allocator deallocation latency/small_32 | 6.414 | 20.864 | 5.828 | 17.283 | N/A | 0.31x | 1.10x | 0.37x | N/A |
 | cross-thread free handoff/medium_1024 | 25777.748 | 35551.765 | 161137.953 | 40503.867 | N/A | 0.73x | 0.16x | 0.64x | N/A |

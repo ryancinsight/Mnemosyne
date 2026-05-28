@@ -16,8 +16,9 @@ baseline only after an intentional threshold-policy decision.
   `size + alignment + SEGMENT_ALIGN + PAGE_SIZE`, saving ~2 MiB − 64 KiB
   per huge allocation.
 - `Page` shrunk from 72 bytes (straddling a 64-byte cache line for
-  half the array) to 64 bytes (one page per cache line) after removing
-  the dead `segment` back-pointer field and `is_empty` helper.
+  half the array) to one-cache-line metadata after removing the dead
+  `segment` back-pointer field, `is_empty` helper, and later the unused
+  `local_free` list.
 - `MemoryBackend::deallocate` now returns a release-success boolean and
   the wrapper telemetry decrements `current_mapped_bytes` only on
   confirmed release.
@@ -50,6 +51,10 @@ baseline only after an intentional threshold-policy decision.
   current allocator token from the existing TLS access. This removes duplicate
   metadata/TLS work from the deallocation hot path without changing the
   re-entrant page-queue contract.
+- Removed the unused `Page::local_free` list. Local frees already return
+  blocks directly to `Page::free`, while re-entrant and cross-thread frees use
+  `Page::thread_free`; the removed field had no production writer and added an
+  allocation hot-path branch.
 
 ## 2026-05-28
 
@@ -82,5 +87,5 @@ The memory report includes page-reset, guard-install, retained-pool reset, page-
 The current usable-size comparison measured Mnemosyne at `16.077 ns` for 32-byte cycles and `15.593 ns` for 1024-byte cycles on this Windows GNU target.
 The current realloc comparison measured Mnemosyne at `13.831 ns` for within-class `24 -> 32` cycles and `36.456 ns` for cross-class `32 -> 64` cycles on this Windows GNU target.
 The current isolated usable-size query comparison measured Mnemosyne at `0.411 ns` for 32-byte pointers and `0.383 ns` for 1024-byte pointers on this Windows GNU target.
-The current allocation-only comparison measured Mnemosyne at `18.224 ns` for 32-byte allocations and `24.992 ns` for 1024-byte allocations on this Windows GNU target, versus System at `36.162 ns` and `105.018 ns`.
+The current allocation-only comparison measured Mnemosyne at `17.686 ns` for 32-byte allocations and `31.260 ns` for 1024-byte allocations on this Windows GNU target, versus System at `38.856 ns` and `225.653 ns`, mimalloc at `19.136 ns` and `364.778 ns`, and snmalloc at `18.839 ns` and `111.322 ns`.
 The current deallocation-only comparison measured Mnemosyne at `6.414 ns` for 32-byte frees and `29.820 ns` for 1024-byte frees on this Windows GNU target, versus System at `20.864 ns` and `92.887 ns`, mimalloc at `5.828 ns` and `114.297 ns`, and snmalloc at `17.283 ns` and `71.771 ns`.

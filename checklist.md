@@ -209,3 +209,5 @@ Target version: 0.1.0
 - [x] [patch] Remove duplicate TLS lookup from local-free owner checks by deriving the current allocator token inside the existing allocator-cell access.
 - [x] [minor] Add `Allocator deallocation latency` Criterion coverage with setup-allocated pointers so the measured routine isolates `dealloc`.
 - [x] [patch] Add `allocator deallocation latency/` to generated benchmark summary and allocator comparison reports.
+- [x] [patch] Remove dead `Page::local_free` metadata and the allocation fast-path branch that checked it.
+- [x] [patch] Refresh allocator comparison rows after `Page::local_free` removal.

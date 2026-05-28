@@ -20,15 +20,13 @@ unsafe impl Sync for Block {}
 /// Metadata representing a page of memory.
 ///
 /// Each page manages blocks of a single size class. The field layout keeps
-/// the eight-byte pointer/atomic fields contiguous so the struct fits in a
-/// single 64-byte cache line on 64-bit targets, and the back-pointer to the
-/// parent segment is omitted because every caller recovers it by rounding
-/// the page address down to `SEGMENT_ALIGN`.
+/// the eight-byte pointer/atomic fields contiguous so the struct stays within
+/// a single 64-byte cache line on 64-bit targets, and the back-pointer to the
+/// parent segment is omitted because every caller recovers it by rounding the
+/// page address down to `SEGMENT_ALIGN`.
 pub struct Page {
     /// Thread-local free list of blocks.
     pub free: Option<NonNull<Block>>,
-    /// Thread-local list of recently freed blocks.
-    pub local_free: Option<NonNull<Block>>,
     /// Lock-free list of blocks freed by other threads.
     pub thread_free: AtomicFreeList,
     /// Size of the blocks allocated in this page.
@@ -82,7 +80,6 @@ impl Page {
     pub const fn new(page_index: usize) -> Self {
         Self {
             free: None,
-            local_free: None,
             thread_free: AtomicFreeList::new(),
             block_size: 0,
             alloc_count: 0,
@@ -156,7 +153,6 @@ impl Page {
             }
         }
         self.free = prev;
-        self.local_free = None;
     }
 }
 
@@ -220,13 +216,10 @@ mod tests {
     #[test]
     fn page_struct_size_stays_within_one_cache_line() {
         // Page metadata is hot: every allocation reads and writes
-        // `page.free`, `page.local_free`, `page.alloc_count`, and
-        // `page.block_size`. Keeping the struct within a single 64-byte
-        // cache line on 64-bit targets ensures the fast path touches only
-        // one cache line per page operation. The struct is currently 8
-        // `usize`-sized fields = 64 bytes; this test guards against
-        // accidental growth back to 72 bytes (e.g. by re-adding a back
-        // pointer to the parent segment).
+        // `page.free`, `page.alloc_count`, and `page.block_size`. Keeping
+        // the struct within a single 64-byte cache line on 64-bit targets
+        // ensures the fast path touches only one cache line per page
+        // operation.
         assert!(
             core::mem::size_of::<Page>() <= 64,
             "Page exceeds one 64-byte cache line ({} bytes)",

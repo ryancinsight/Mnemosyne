@@ -96,9 +96,10 @@
 - [minor] Add system allocator comparator rows to the allocator benchmark matrix and generated comparison reports.
 - [patch] Optimize small-free classification and local-free owner checks to remove duplicate metadata and TLS work from deallocation hot paths.
 - [minor] Add deallocation-only latency benchmarks to isolate free-side cost across Mnemosyne, System, mimalloc, snmalloc, and target-gated jemalloc.
+- [patch] Remove dead `Page::local_free` state and allocation fast-path branch after verifying all local frees route through `Page::free`.
 
 ## Next
 
-- [patch] Investigate small allocation-only setup/drop attribution versus mimalloc and snmalloc now that deallocation-only rows isolate free-side cost.
+- [patch] Add a direct allocator allocation microbenchmark that avoids `Drop` guard setup/drop attribution noise.
 - [patch] Derive a variance-aware refresh policy for cross-thread handoff benchmark rows before tightening selected thresholds.
 - [patch] Run the jemalloc comparator leg on a target where `tikv-jemallocator` links and refresh comparison rows.
