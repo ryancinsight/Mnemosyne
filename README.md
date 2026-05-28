@@ -147,7 +147,7 @@ cargo run -p mnemosyne-benchmarks --bin memory_report --release
 ```
 
 ### Running the Performance Benchmarks
-To compare Mnemosyne, MiMalloc, and SnMalloc performance across allocation latency, realloc latency, bursts, combined usable-size probes, isolated usable-size metadata queries, threaded cycles, and saturated threaded cycles:
+To compare Mnemosyne, MiMalloc, and SnMalloc performance across allocation-only latency, allocation/deallocation cycle latency, realloc latency, bursts, combined usable-size probes, isolated usable-size metadata queries, threaded cycles, and saturated threaded cycles:
 ```bash
 # Run Criterion microbenchmarks
 cargo bench -p mnemosyne-benchmarks --bench allocator_bench

@@ -33,6 +33,10 @@ baseline only after an intentional threshold-policy decision.
   from allocation/deallocation cost; the summary includes
   `usable size query latency/` rows, but the threshold baseline remains
   unchanged.
+- Allocation-only benchmarks now use a drop guard so Criterion measures
+  allocation latency while cleanup returns blocks to each allocator; the
+  summary includes `allocator allocation latency/` rows, but the threshold
+  baseline remains unchanged.
 
 ## 2026-05-28
 
@@ -65,3 +69,4 @@ The memory report includes page-reset, guard-install, retained-pool reset, page-
 The current usable-size comparison measured Mnemosyne at `16.077 ns` for 32-byte cycles and `15.593 ns` for 1024-byte cycles on this Windows GNU target.
 The current realloc comparison measured Mnemosyne at `13.831 ns` for within-class `24 -> 32` cycles and `36.456 ns` for cross-class `32 -> 64` cycles on this Windows GNU target.
 The current isolated usable-size query comparison measured Mnemosyne at `0.411 ns` for 32-byte pointers and `0.383 ns` for 1024-byte pointers on this Windows GNU target.
+The current allocation-only comparison measured Mnemosyne at `13.673 ns` for 32-byte allocations and `27.809 ns` for 1024-byte allocations on this Windows GNU target.

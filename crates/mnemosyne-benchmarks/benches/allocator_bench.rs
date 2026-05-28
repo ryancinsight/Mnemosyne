@@ -1,5 +1,7 @@
 use core::alloc::{GlobalAlloc, Layout};
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{
+    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
+};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::thread;
 use std::time::Duration;
@@ -123,6 +125,31 @@ fn require_allocated(ptr: *mut u8, context: &str) -> *mut u8 {
         benchmark_failure(context, "allocator returned a null pointer");
     }
     ptr
+}
+
+struct AllocatedBlock<'a, A: GlobalAlloc> {
+    allocator: &'a A,
+    ptr: *mut u8,
+    layout: Layout,
+}
+
+impl<'a, A: GlobalAlloc> AllocatedBlock<'a, A> {
+    #[inline(always)]
+    unsafe fn new(allocator: &'a A, layout: Layout, context: &str) -> Self {
+        let ptr = require_allocated(allocator.alloc(black_box(layout)), context);
+        Self {
+            allocator,
+            ptr,
+            layout,
+        }
+    }
+}
+
+impl<A: GlobalAlloc> Drop for AllocatedBlock<'_, A> {
+    fn drop(&mut self) {
+        // Safety: `ptr` was allocated by `allocator` for `layout` in `new`.
+        unsafe { self.allocator.dealloc(self.ptr, self.layout) };
+    }
 }
 
 #[inline(always)]
@@ -432,6 +459,47 @@ fn bench_allocator_cycles(c: &mut Criterion) {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
                 // Safety: `layout` comes from the static valid benchmark layout table.
                 b.iter(|| unsafe { alloc_dealloc(&tikv_jemallocator::Jemalloc, *layout) })
+            });
+        }
+    }
+    group.finish();
+}
+
+fn bench_allocator_alloc(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Allocator allocation latency");
+    for (name, layout) in [("small/32", SMALL_LAYOUT), ("medium/1024", MEDIUM_LAYOUT)] {
+        group.throughput(Throughput::Bytes(layout.size() as u64));
+        group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
+            b.iter_batched(
+                || (),
+                |_| unsafe { AllocatedBlock::new(&mnemosyne::Mnemosyne, *layout, "alloc_only") },
+                BatchSize::SmallInput,
+            )
+        });
+        group.bench_with_input(BenchmarkId::new("MiMalloc", name), &layout, |b, layout| {
+            b.iter_batched(
+                || (),
+                |_| unsafe { AllocatedBlock::new(&mimalloc::MiMalloc, *layout, "alloc_only") },
+                BatchSize::SmallInput,
+            )
+        });
+        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+            b.iter_batched(
+                || (),
+                |_| unsafe { AllocatedBlock::new(&snmalloc_rs::SnMalloc, *layout, "alloc_only") },
+                BatchSize::SmallInput,
+            )
+        });
+        #[cfg(not(windows))]
+        {
+            group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
+                b.iter_batched(
+                    || (),
+                    |_| unsafe {
+                        AllocatedBlock::new(&tikv_jemallocator::Jemalloc, *layout, "alloc_only")
+                    },
+                    BatchSize::SmallInput,
+                )
             });
         }
     }
@@ -787,6 +855,7 @@ criterion_group! {
         .measurement_time(Duration::from_millis(500));
     targets =
         bench_allocator_cycles,
+        bench_allocator_alloc,
         bench_allocator_bursts,
         bench_usable_size,
         bench_usable_size_query,

@@ -201,3 +201,5 @@ Target version: 0.1.0
 - [x] [patch] Add `realloc latency/` to generated benchmark summary and allocator comparison reports.
 - [x] [minor] Add `Usable size query latency` Criterion coverage for isolated metadata-query cost across Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc.
 - [x] [patch] Add `usable size query latency/` to generated benchmark summary and allocator comparison reports.
+- [x] [minor] Add `Allocator allocation latency` Criterion coverage with drop-guard cleanup for allocation-only attribution across Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc.
+- [x] [patch] Add `allocator allocation latency/` to generated benchmark summary and allocator comparison reports.

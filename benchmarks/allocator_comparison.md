@@ -2,6 +2,8 @@
 
 | Benchmark | Mnemosyne (ns) | MiMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| allocator allocation latency/medium_1024 | 27.809 | 290.380 | 105.118 | N/A | 0.10x | 0.26x | N/A |
+| allocator allocation latency/small_32 | 13.673 | 16.211 | 16.099 | N/A | 0.84x | 0.85x | N/A |
 | allocator burst retention/large_8192 | 8558.102 | 523983.206 | 19989.143 | N/A | 0.02x | 0.43x | N/A |
 | allocator burst retention/medium_1024 | 3844.775 | 102133.846 | 7607.013 | N/A | 0.04x | 0.51x | N/A |
 | allocator burst retention/small_32 | 3444.365 | 1076.564 | 4388.343 | N/A | 3.20x | 0.78x | N/A |

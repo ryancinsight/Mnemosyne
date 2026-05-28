@@ -103,3 +103,4 @@
 - Overrode `GlobalAlloc::realloc` on `Mnemosyne` and `MnemosyneAllocator<P, B>` to consult `usable_size(ptr)` and return the same pointer unchanged when the new size fits inside the existing size-class block. Secure policies keep replacement allocation on growth so new bytes are zero-initialized.
 - Added `Realloc latency` Criterion coverage for within-class and cross-class realloc cycles across Mnemosyne, mimalloc, snmalloc, and target-gated jemalloc.
 - Added `Usable size query latency` Criterion coverage that isolates raw usable-size metadata lookup from allocation/deallocation cost.
+- Added `Allocator allocation latency` Criterion coverage with drop-guard cleanup to isolate allocation cost from deallocation cost.
