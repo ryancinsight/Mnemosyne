@@ -108,3 +108,4 @@
 - Optimized `thread_free` by classifying small frees from the target page block size before the huge-allocation fallback and by deriving the owner-token comparison from the existing allocator TLS access.
 - Added `Allocator deallocation latency` Criterion coverage that allocates during setup and measures only deallocation across Mnemosyne, System, mimalloc, snmalloc, and target-gated jemalloc.
 - Removed the dead `Page::local_free` metadata field and its allocation fast-path branch; local frees already return blocks directly to `Page::free` and re-entrant/cross-thread frees use `Page::thread_free`.
+- Added a small-realloc size-class proof fast path so standard-policy realloc returns the same pointer without a `usable_size` metadata query when the old `Layout` already proves the existing small size class covers the new request.

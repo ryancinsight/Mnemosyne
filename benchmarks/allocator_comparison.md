@@ -14,12 +14,12 @@
 | allocator deallocation latency/small_32 | 6.414 | 20.864 | 5.828 | 17.283 | N/A | 0.31x | 1.10x | 0.37x | N/A |
 | cross-thread free handoff/medium_1024 | 25777.748 | 35551.765 | 161137.953 | 40503.867 | N/A | 0.73x | 0.16x | 0.64x | N/A |
 | cross-thread free handoff/small_32 | 19049.876 | 36856.715 | 14007.058 | 21678.814 | N/A | 0.52x | 1.36x | 0.88x | N/A |
-| realloc latency/cross_class_32_to_64 | 32.121 | 48.250 | 8.986 | 36.711 | N/A | 0.67x | 3.57x | 0.87x | N/A |
-| realloc latency/within_class_24_to_32 | 14.738 | 49.111 | 5.250 | 18.947 | N/A | 0.30x | 2.81x | 0.78x | N/A |
+| realloc latency/cross_class_32_to_64 | 24.666 | 49.156 | 9.814 | 34.805 | N/A | 0.50x | 2.51x | 0.71x | N/A |
+| realloc latency/within_class_24_to_32 | 11.492 | 54.303 | 5.151 | 19.629 | N/A | 0.21x | 2.23x | 0.59x | N/A |
 | segment cache eviction | 59078.183 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| threaded saturated small allocation cycles | 204220.164 | 386645.939 | 74456.200 | 255348.010 | N/A | 0.53x | 2.74x | 0.80x | N/A |
-| threaded small allocation cycles | 39867.045 | N/A | 7434.712 | 26918.384 | N/A | N/A | 5.36x | 1.48x | N/A |
-| usable size latency/medium_1024 | 15.593 | N/A | 8.373 | 22.415 | N/A | N/A | 1.86x | 0.70x | N/A |
-| usable size latency/small_32 | 16.077 | N/A | 3.047 | 26.209 | N/A | N/A | 5.28x | 0.61x | N/A |
+| threaded saturated small allocation cycles | 194880.821 | 451865.887 | 81152.125 | 311044.887 | N/A | 0.43x | 2.40x | 0.63x | N/A |
+| threaded small allocation cycles | 19882.561 | 38916.203 | 6022.018 | 25011.464 | N/A | 0.51x | 3.30x | 0.79x | N/A |
+| usable size latency/medium_1024 | 11.686 | N/A | 6.708 | 20.756 | N/A | N/A | 1.74x | 0.56x | N/A |
+| usable size latency/small_32 | 11.116 | N/A | 5.280 | 20.790 | N/A | N/A | 2.11x | 0.53x | N/A |
 | usable size query latency/medium_1024 | 0.383 | N/A | 0.544 | 0.520 | N/A | N/A | 0.70x | 0.74x | N/A |
 | usable size query latency/small_32 | 0.411 | N/A | 0.589 | 0.497 | N/A | N/A | 0.70x | 0.83x | N/A |

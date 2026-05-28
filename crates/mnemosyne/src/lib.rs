@@ -3,7 +3,7 @@
 #![no_std]
 
 use core::alloc::{GlobalAlloc, Layout};
-use mnemosyne_core::NUM_SIZE_CLASSES;
+use mnemosyne_core::{class_to_size, size_to_class, NUM_SIZE_CLASSES};
 use mnemosyne_local::{thread_alloc_layout, thread_free, LocalAllocatorSelector};
 
 pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
@@ -161,6 +161,25 @@ pub fn reset() {
     reset_generic::<mnemosyne_backend::MemoryBackendWrapper>();
 }
 
+#[inline(always)]
+fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> bool {
+    if layout.align() > 16 {
+        return false;
+    }
+
+    let old_adjusted_size = if layout.size() < layout.align() {
+        layout.align()
+    } else {
+        layout.size()
+    };
+
+    let Some(class) = size_to_class(old_adjusted_size) else {
+        return false;
+    };
+
+    new_size <= class_to_size(class)
+}
+
 /// The Mnemosyne global allocator structure.
 ///
 /// Implements `core::alloc::GlobalAlloc` and routes allocations to the
@@ -215,7 +234,7 @@ unsafe impl GlobalAlloc for Mnemosyne {
     /// the given `layout`; `new_size` must be a valid `Layout` size
     /// when paired with `layout.align()`. Same contract as the default
     /// `GlobalAlloc::realloc`.
-    #[inline]
+    #[inline(always)]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         if new_size == 0 {
             // Safety: caller-confirmed dealloc, mirroring default contract.
@@ -229,6 +248,9 @@ unsafe impl GlobalAlloc for Mnemosyne {
             return unsafe {
                 self.alloc(Layout::from_size_align_unchecked(new_size, layout.align()))
             };
+        }
+        if small_realloc_fits_existing_class(layout, new_size) {
+            return ptr;
         }
         // Safety: ptr was produced by this allocator, so usable_size is
         // safe and returns the page's block_size (small) or the payload
@@ -316,7 +338,7 @@ unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
     /// # Safety
     ///
     /// Same contract as `Mnemosyne::realloc`.
-    #[inline]
+    #[inline(always)]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         if new_size == 0 {
             if !ptr.is_null() {
@@ -328,6 +350,12 @@ unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
             return unsafe {
                 self.alloc(Layout::from_size_align_unchecked(new_size, layout.align()))
             };
+        }
+        if !P::ZERO_INITIALIZE
+            && !P::ENABLE_POISONING
+            && small_realloc_fits_existing_class(layout, new_size)
+        {
+            return ptr;
         }
         let current_usable = unsafe { usable_size(ptr) };
         if !P::ZERO_INITIALIZE && !P::ENABLE_POISONING && new_size <= current_usable {

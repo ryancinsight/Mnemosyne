@@ -211,3 +211,5 @@ Target version: 0.1.0
 - [x] [patch] Add `allocator deallocation latency/` to generated benchmark summary and allocator comparison reports.
 - [x] [patch] Remove dead `Page::local_free` metadata and the allocation fast-path branch that checked it.
 - [x] [patch] Refresh allocator comparison rows after `Page::local_free` removal.
+- [x] [patch] Add standard-policy small-realloc size-class proof fast path before the `usable_size` fallback.
+- [x] [patch] Refresh selected mimalloc-regression rows: threaded small allocation cycles, usable size latency/small_32, threaded saturated small allocation cycles, and realloc latency/within_class_24_to_32.
