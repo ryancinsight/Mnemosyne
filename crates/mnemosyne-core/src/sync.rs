@@ -18,8 +18,33 @@ pub struct AtomicFreeList {
     head: core::sync::atomic::AtomicPtr<Block>,
 }
 
+/// On 64-bit targets the head is a single `AtomicUsize` that packs the list
+/// head address (low bits) with a wrapping push counter (high bits), so
+/// `pop_all` returns the block count in O(1) without walking the list.
+///
+/// Layout: bits `0..PACKED_PTR_BITS` hold the head block address; the
+/// remaining high bits hold a push counter.
+///
+/// # Portability contract
+///
+/// The packing assumes every block address fits in `PACKED_PTR_BITS` (48) bits.
+/// That holds for mainstream 64-bit userspace targets: x86-64 and AArch64
+/// canonical low-half addresses use at most 48 bits under 4-level paging, and
+/// Linux/Windows keep default `mmap`/`VirtualAlloc` allocations below `2^47`
+/// even when 5-level paging (LA57) or large VAs are enabled. `push`
+/// `debug_assert!`s the invariant. The counter cannot wrap in practice because
+/// a page holds at most `PAGE_SIZE / MIN_BLOCK_SIZE` (<= 4096) blocks, far
+/// below the counter's `2^(64 - PACKED_PTR_BITS)` capacity. The 32-bit fallback
+/// `impl` below stores a bare `AtomicPtr` and counts in O(k).
 #[cfg(target_pointer_width = "64")]
 impl AtomicFreeList {
+    /// Low bits reserved for the packed block address.
+    const PACKED_PTR_BITS: u32 = 48;
+    /// Mask selecting the packed address bits.
+    const PTR_MASK: usize = (1usize << Self::PACKED_PTR_BITS) - 1;
+    /// Mask wrapping the push counter to the remaining high bits.
+    const COUNT_WRAP_MASK: usize = (1usize << (usize::BITS - Self::PACKED_PTR_BITS)) - 1;
+
     /// Creates a new empty `AtomicFreeList`.
     pub const fn new() -> Self {
         Self {
@@ -33,30 +58,34 @@ impl AtomicFreeList {
     #[inline]
     pub fn push(&self, block: NonNull<Block>) {
         let block_ptr = block.as_ptr();
-        let block_usize = block_ptr as usize;
-        // Ensure the pointer fits in 48 bits (bits 48-63 must be 0)
+        // Expose provenance so the address can round-trip through `usize` and
+        // back to a usable pointer under strict-provenance rules (the bare
+        // `as usize` / `as *mut` casts this replaced are not strict-provenance
+        // clean and make Miri warn that it may miss pointer bugs).
+        let block_addr = block_ptr.expose_provenance();
         debug_assert_eq!(
-            block_usize & 0xFFFF_0000_0000_0000,
+            block_addr & !Self::PTR_MASK,
             0,
-            "Pointer uses upper 16 bits: {:p}",
-            block_ptr
+            "block address {:p} does not fit in {} bits; the packed deallocation \
+             queue requires canonical low-half userspace addresses",
+            block_ptr,
+            Self::PACKED_PTR_BITS
         );
 
         let mut current = self.head.load(Ordering::Relaxed);
         loop {
-            // Unpack current head pointer
-            let current_ptr = (current & 0x0000_FFFF_FFFF_FFFF) as *mut Block;
-            // Unpack current count and increment
-            let current_count = current >> 48;
-            let next_count = (current_count + 1) & 0xFFFF;
+            let current_addr = current & Self::PTR_MASK;
+            let current_ptr = core::ptr::with_exposed_provenance_mut::<Block>(current_addr);
+            let next_count =
+                ((current >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
 
-            // Safety: block_ptr is guaranteed to be valid, writeable, aligned memory,
-            // exclusive to the thread calling push.
+            // Safety: block_ptr is valid, writeable, aligned memory, exclusive
+            // to the pushing thread until the CAS publishes it.
             unsafe {
                 (*block_ptr).next = NonNull::new(current_ptr);
             }
 
-            let next_val = (next_count << 48) | block_usize;
+            let next_val = (next_count << Self::PACKED_PTR_BITS) | block_addr;
 
             match self.head.compare_exchange_weak(
                 current,
@@ -76,19 +105,16 @@ impl AtomicFreeList {
     #[inline]
     pub fn pop_all(&self) -> Option<(NonNull<Block>, usize)> {
         let val = self.head.swap(0, Ordering::Acquire);
-        if val == 0 {
-            None
-        } else {
-            let ptr_val = val & 0x0000_FFFF_FFFF_FFFF;
-            let count = val >> 48;
-            NonNull::new(ptr_val as *mut Block).map(|head| (head, count))
-        }
+        let addr = val & Self::PTR_MASK;
+        let count = val >> Self::PACKED_PTR_BITS;
+        let ptr = core::ptr::with_exposed_provenance_mut::<Block>(addr);
+        NonNull::new(ptr).map(|head| (head, count))
     }
 
     /// Checks if the atomic list is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        (self.head.load(Ordering::Relaxed) & 0x0000_FFFF_FFFF_FFFF) == 0
+        (self.head.load(Ordering::Relaxed) & Self::PTR_MASK) == 0
     }
 }
 

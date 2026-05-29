@@ -395,44 +395,30 @@ impl_local_allocator_selector!(mnemosyne_backend::CudaUnifiedBackend);
 /// originated from a different allocator is undefined behavior; the
 /// function uses the same segment-rounding classification as
 /// `thread_free` and dereferences the resulting segment header.
+#[inline]
 pub unsafe fn usable_size(ptr: *mut u8) -> usize {
     if ptr.is_null() {
         return 0;
-    }
-
-    if (ptr as usize) & (SEGMENT_SIZE - 1) == 0 {
-        // Safety: large/huge allocations store the segment pointer in
-        // the metadata slot immediately preceding the user pointer.
-        // The helper computes the suffix from the OS mapping base
-        // (`raw_alloc_ptr`), not from the aligned segment header.
-        let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-        return unsafe { (*segment).huge_mapping_suffix_from(ptr) };
     }
 
     let segment_addr = (ptr as usize) & !(SEGMENT_SIZE - 1);
     let segment = segment_addr as *mut Segment;
     let page_index = (ptr as usize - segment_addr) / PAGE_SIZE;
 
-    debug_assert!(
-        page_index < PAGES_PER_SEGMENT,
-        "usable_size pointer page_index {} exceeds segment page count {}",
-        page_index,
-        PAGES_PER_SEGMENT
-    );
-
     // Safety: for small allocations, page_index is in [1, PAGES_PER_SEGMENT)
-    // and the target page records the size-class block size. For non-segment
-    // aligned huge allocations, the user pointer still lands within the
-    // segment metadata window but the target page's block_size remains zero,
-    // routing below to the metadata-slot fallback.
-    let page = unsafe { &(*segment).pages[page_index] };
-    if page.block_size > 0 {
-        return page.block_size;
+    // and the target page records the size-class block size. If page_index is
+    // 0 (segment-aligned huge allocation) or the page's block_size is 0
+    // (non-segment-aligned huge allocation), we route to the metadata-slot fallback.
+    if page_index > 0 {
+        let page = unsafe { &(*segment).pages[page_index] };
+        let size = page.block_size;
+        if size > 0 {
+            return size;
+        }
     }
 
-    // Safety: non-segment-aligned large/huge allocations store the segment
-    // pointer in the metadata slot immediately preceding the user pointer.
-    // The helper centralizes the OS-mapping-base derivation.
+    // Safety: large/huge allocations store the segment pointer in the metadata
+    // slot immediately preceding the user pointer.
     let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
     unsafe { (*segment).huge_mapping_suffix_from(ptr) }
 }

@@ -19,7 +19,7 @@
 | segment cache eviction | 65130.762 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 | threaded saturated small allocation cycles | 104849.023 | 394683.594 | 78212.646 | 267621.289 | N/A | 0.27x | 1.34x | 0.39x | N/A |
 | threaded small allocation cycles | 8920.557 | 34432.593 | 5269.980 | 23019.006 | N/A | 0.26x | 1.69x | 0.39x | N/A |
-| usable size latency/medium_1024 | 4.395 | N/A | 6.270 | 17.140 | N/A | N/A | 0.70x | 0.26x | N/A |
-| usable size latency/small_32 | 6.100 | N/A | 3.415 | 16.145 | N/A | N/A | 1.79x | 0.38x | N/A |
+| usable size latency/medium_1024 | 5.433 | N/A | 6.515 | 16.729 | N/A | N/A | 0.83x | 0.32x | N/A |
+| usable size latency/small_32 | 4.001 | N/A | 2.900 | 16.600 | N/A | N/A | 1.38x | 0.24x | N/A |
 | usable size query latency/medium_1024 | 0.402 | N/A | 0.631 | 0.591 | N/A | N/A | 0.64x | 0.68x | N/A |
 | usable size query latency/small_32 | 0.380 | N/A | 0.688 | 0.536 | N/A | N/A | 0.55x | 0.71x | N/A |
