@@ -7,6 +7,97 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::thread;
 use std::time::Duration;
 
+/// Jemalloc comparator abstraction.
+///
+/// Exposes a single `Jemalloc` `GlobalAlloc` and a `usable_size` helper so the
+/// benchmark bodies are identical across platforms. On non-Windows targets this
+/// is `tikv-jemallocator`; on Windows (under the `system-jemalloc` feature) it
+/// is a thin `GlobalAlloc` over a system-installed `libjemalloc_s.a`, using
+/// jemalloc's sized `je_*x` API for parity with `tikv-jemallocator`. The module
+/// only exists when `build.rs` determined jemalloc is available
+/// (`jemalloc_available` cfg); every use site is gated the same way.
+#[cfg(jemalloc_available)]
+mod bench_jemalloc {
+    #[cfg(not(windows))]
+    pub use tikv_jemallocator::{usable_size, Jemalloc};
+
+    #[cfg(windows)]
+    pub use sys::{usable_size, SystemJemalloc as Jemalloc};
+
+    #[cfg(windows)]
+    mod sys {
+        use core::alloc::{GlobalAlloc, Layout};
+
+        // Link the system jemalloc static library directly from this object.
+        // `build.rs` emits the `-L` search path (e.g. MSYS2 `ucrt64/lib`); the
+        // `#[link]` attribute embeds the `-l` requirement in the bench crate
+        // itself, which is more reliable than build-script `rustc-link-lib`
+        // propagation across the separate bench crate.
+        #[link(name = "jemalloc_s", kind = "static")]
+        extern "C" {
+            fn je_mallocx(size: usize, flags: i32) -> *mut u8;
+            fn je_rallocx(ptr: *mut u8, size: usize, flags: i32) -> *mut u8;
+            fn je_sdallocx(ptr: *mut u8, size: usize, flags: i32);
+            fn je_malloc_usable_size(ptr: *const u8) -> usize;
+        }
+
+        /// jemalloc `MALLOCX_ZERO` flag (request zeroed memory).
+        const MALLOCX_ZERO: i32 = 0x40;
+
+        /// Encodes the jemalloc `mallocx`/`sdallocx`/`rallocx` flags for a
+        /// layout. Mirrors `tikv-jemallocator`'s `layout_to_flags`: no
+        /// alignment flag when the alignment is within jemalloc's natural
+        /// size-class guarantee (`<= 16` on 64-bit and `<= size`); otherwise
+        /// `MALLOCX_ALIGN(align)`, which is `log2(align)` for power-of-two
+        /// alignments.
+        #[inline]
+        fn flags(layout: Layout) -> i32 {
+            let align = layout.align();
+            if align <= 16 && align <= layout.size() {
+                0
+            } else {
+                align.trailing_zeros() as i32
+            }
+        }
+
+        /// `GlobalAlloc` over the system jemalloc static library.
+        pub struct SystemJemalloc;
+
+        // Safety: jemalloc's allocator is thread-safe and satisfies the
+        // `GlobalAlloc` contract; the sized `je_*x` calls forward layout size
+        // and alignment exactly.
+        unsafe impl GlobalAlloc for SystemJemalloc {
+            unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+                je_mallocx(layout.size(), flags(layout))
+            }
+
+            unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+                je_mallocx(layout.size(), flags(layout) | MALLOCX_ZERO)
+            }
+
+            unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+                je_sdallocx(ptr, layout.size(), flags(layout));
+            }
+
+            unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+                // Safety: new_size is nonzero and align is the original
+                // power-of-two alignment, a valid layout.
+                let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
+                je_rallocx(ptr, new_size, flags(new_layout))
+            }
+        }
+
+        /// Mirrors `tikv_jemallocator::usable_size`.
+        ///
+        /// # Safety
+        ///
+        /// `ptr` must have been returned by this allocator and still be live.
+        pub unsafe fn usable_size<T>(ptr: *const T) -> usize {
+            je_malloc_usable_size(ptr as *const u8)
+        }
+    }
+}
+
 // MinGW linker compatibility stubs for snmalloc
 #[no_mangle]
 pub static mut __imp_VirtualAlloc2FromApp: unsafe extern "system" fn(
@@ -470,11 +561,11 @@ fn bench_allocator_cycles(c: &mut Criterion) {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { alloc_dealloc(&snmalloc_rs::SnMalloc, *layout) })
         });
-        #[cfg(not(windows))]
+        #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
                 // Safety: `layout` comes from the static valid benchmark layout table.
-                b.iter(|| unsafe { alloc_dealloc(&tikv_jemallocator::Jemalloc, *layout) })
+                b.iter(|| unsafe { alloc_dealloc(&bench_jemalloc::Jemalloc, *layout) })
             });
         }
     }
@@ -513,13 +604,13 @@ fn bench_allocator_alloc(c: &mut Criterion) {
                 BatchSize::SmallInput,
             )
         });
-        #[cfg(not(windows))]
+        #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
                 b.iter_batched(
                     || (),
                     |_| unsafe {
-                        AllocatedBlock::new(&tikv_jemallocator::Jemalloc, *layout, "alloc_only")
+                        AllocatedBlock::new(&bench_jemalloc::Jemalloc, *layout, "alloc_only")
                     },
                     BatchSize::SmallInput,
                 )
@@ -565,17 +656,14 @@ fn bench_allocator_dealloc(c: &mut Criterion) {
                 BatchSize::SmallInput,
             )
         });
-        #[cfg(not(windows))]
+        #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
                 b.iter_batched(
                     || unsafe {
-                        require_allocated(
-                            tikv_jemallocator::Jemalloc.alloc(*layout),
-                            "dealloc_only",
-                        )
+                        require_allocated(bench_jemalloc::Jemalloc.alloc(*layout), "dealloc_only")
                     },
-                    |ptr| unsafe { dealloc_only(&tikv_jemallocator::Jemalloc, ptr, *layout) },
+                    |ptr| unsafe { dealloc_only(&bench_jemalloc::Jemalloc, ptr, *layout) },
                     BatchSize::SmallInput,
                 )
             });
@@ -608,11 +696,11 @@ fn bench_allocator_bursts(c: &mut Criterion) {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { burst_alloc_dealloc(&snmalloc_rs::SnMalloc, *layout) })
         });
-        #[cfg(not(windows))]
+        #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
                 // Safety: `layout` comes from the static valid benchmark layout table.
-                b.iter(|| unsafe { burst_alloc_dealloc(&tikv_jemallocator::Jemalloc, *layout) })
+                b.iter(|| unsafe { burst_alloc_dealloc(&bench_jemalloc::Jemalloc, *layout) })
             });
         }
     }
@@ -652,14 +740,15 @@ fn bench_usable_size(c: &mut Criterion) {
                 })
             })
         });
-        #[cfg(not(windows))]
+        #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
                 // Safety: `layout` comes from the static valid benchmark layout table.
                 b.iter(|| unsafe {
-                    alloc_usable_dealloc(&tikv_jemallocator::Jemalloc, *layout, |ptr| {
-                        // Safety: `ptr` came from the jemalloc allocator above.
-                        unsafe { tikv_jemallocator::usable_size(ptr) }
+                    alloc_usable_dealloc(&bench_jemalloc::Jemalloc, *layout, |ptr| {
+                        // Safety: `ptr` came from the jemalloc allocator above;
+                        // the call is covered by the enclosing `unsafe` block.
+                        bench_jemalloc::usable_size(ptr)
                     })
                 })
             });
@@ -713,22 +802,19 @@ fn bench_usable_size_query(c: &mut Criterion) {
         // Safety: pointer was allocated by SnMalloc for `layout` above.
         unsafe { snmalloc_rs::SnMalloc.dealloc(snmalloc_ptr, layout) };
 
-        #[cfg(not(windows))]
+        #[cfg(jemalloc_available)]
         {
             // Safety: `layout` comes from the static valid benchmark layout table.
             let jemalloc_ptr = unsafe {
-                require_allocated(
-                    tikv_jemallocator::Jemalloc.alloc(layout),
-                    "usable_size_query",
-                )
+                require_allocated(bench_jemalloc::Jemalloc.alloc(layout), "usable_size_query")
             };
             group.bench_with_input(
                 BenchmarkId::new("Jemalloc", name),
                 &jemalloc_ptr,
-                |b, ptr| b.iter(|| unsafe { tikv_jemallocator::usable_size(black_box(*ptr)) }),
+                |b, ptr| b.iter(|| unsafe { bench_jemalloc::usable_size(black_box(*ptr)) }),
             );
             // Safety: pointer was allocated by Jemalloc for `layout` above.
-            unsafe { tikv_jemallocator::Jemalloc.dealloc(jemalloc_ptr, layout) };
+            unsafe { bench_jemalloc::Jemalloc.dealloc(jemalloc_ptr, layout) };
         }
     }
     group.finish();
@@ -777,7 +863,7 @@ fn bench_realloc(c: &mut Criterion) {
                 })
             },
         );
-        #[cfg(not(windows))]
+        #[cfg(jemalloc_available)]
         {
             group.bench_with_input(
                 BenchmarkId::new("Jemalloc", name),
@@ -785,7 +871,7 @@ fn bench_realloc(c: &mut Criterion) {
                 |b, (layout, new_size)| {
                     // Safety: inputs come from the static valid benchmark layout table.
                     b.iter(|| unsafe {
-                        alloc_realloc_dealloc(&tikv_jemallocator::Jemalloc, *layout, *new_size)
+                        alloc_realloc_dealloc(&bench_jemalloc::Jemalloc, *layout, *new_size)
                     })
                 },
             );
@@ -799,8 +885,8 @@ fn bench_cross_thread_free(c: &mut Criterion) {
     static SYSTEM: System = System;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
-    #[cfg(not(windows))]
-    static JEMALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+    #[cfg(jemalloc_available)]
+    static JEMALLOC: bench_jemalloc::Jemalloc = bench_jemalloc::Jemalloc;
 
     let mut group = c.benchmark_group("Cross-thread free handoff");
     for (name, layout) in [("small/32", SMALL_LAYOUT), ("medium/1024", MEDIUM_LAYOUT)] {
@@ -829,7 +915,7 @@ fn bench_cross_thread_free(c: &mut Criterion) {
         });
         drop(snmalloc_worker);
 
-        #[cfg(not(windows))]
+        #[cfg(jemalloc_available)]
         {
             let jemalloc_worker = HandoffWorker::new(&JEMALLOC);
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
@@ -855,8 +941,8 @@ fn bench_multithreaded_alloc(c: &mut Criterion) {
     static SYSTEM: System = System;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
-    #[cfg(not(windows))]
-    static JEMALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+    #[cfg(jemalloc_available)]
+    static JEMALLOC: bench_jemalloc::Jemalloc = bench_jemalloc::Jemalloc;
 
     let mut group = c.benchmark_group("Threaded small allocation cycles");
     group.throughput(Throughput::Elements((THREADS * THREAD_ALLOCS) as u64));
@@ -877,7 +963,7 @@ fn bench_multithreaded_alloc(c: &mut Criterion) {
     group.bench_function("SnMalloc", |b| b.iter(|| snmalloc_workers.run()));
     drop(snmalloc_workers);
 
-    #[cfg(not(windows))]
+    #[cfg(jemalloc_available)]
     {
         let jemalloc_workers = ThreadCycleWorkers::new(&JEMALLOC);
         group.bench_function("Jemalloc", |b| b.iter(|| jemalloc_workers.run()));
@@ -892,8 +978,8 @@ fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
     static SYSTEM: System = System;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
-    #[cfg(not(windows))]
-    static JEMALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+    #[cfg(jemalloc_available)]
+    static JEMALLOC: bench_jemalloc::Jemalloc = bench_jemalloc::Jemalloc;
 
     let mut group = c.benchmark_group("Threaded saturated small allocation cycles");
     group.throughput(Throughput::Elements(
@@ -924,7 +1010,7 @@ fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
     });
     drop(snmalloc_workers);
 
-    #[cfg(not(windows))]
+    #[cfg(jemalloc_available)]
     {
         let jemalloc_workers = ThreadCycleWorkers::new(&JEMALLOC);
         group.bench_function("Jemalloc", |b| {

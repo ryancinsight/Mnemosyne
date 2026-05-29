@@ -2,6 +2,17 @@
 name = "mnemosyne-benchmarks"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
+
+[features]
+# Opt-in jemalloc comparator on Windows by linking a system-installed
+# `libjemalloc_s.a` (e.g. MSYS2 `mingw-w64-*-jemalloc`). `tikv-jemallocator`
+# builds jemalloc from source, which does not link on windows-gnu, so the
+# Windows jemalloc column is gated behind this feature and the system lib.
+# `build.rs` locates the lib (via PATH `*/{ucrt64,mingw64}/bin` siblings or
+# `MNEMOSYNE_JEMALLOC_LIB_DIR`) and emits the `jemalloc_available` cfg. On
+# non-Windows targets jemalloc is always available through `tikv-jemallocator`.
+system-jemalloc = []
 
 [dependencies]
 mimalloc = { version = "0.1", features = ["extended"] }
