@@ -277,6 +277,7 @@ Target version: 0.1.0
 - [x] [patch] Keep `MIN_BLOCK_SIZE = 16` as the single source for the first size-class stride and small-allocation alignment ceiling; remove the stale compact-counter width assertions after compact counters were rejected.
 
 - [x] [patch] Add `crates/mnemosyne-c-shim/include/mnemosyne.h` C declaration header matching the seven exported `extern "C"` symbols, documenting per-function null/zero/overflow/alignment contracts; reference it from README highlight #13.
+- [x] [minor] Sprint C: Add dynamic interposition C demo (`examples/interpose_demo.c`) and dynamic verification build scripts (`run_demo.sh` for Unix, `run_demo.ps1` for Windows) to demonstrate dynamic linking and interposition ABI compliance.
 
 - [x] [patch] Add `smallest_class_page_saturates_without_duplicate_or_early_refill` runtime witness: fill a 16-byte page to its 4096-block capacity, assert `alloc_count == max_blocks` with all-distinct non-null pointers, and confirm the next allocation refills a fresh page rather than returning a duplicate pointer from the full page.
 
