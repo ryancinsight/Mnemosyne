@@ -213,12 +213,16 @@ unsafe fn realloc_copy_grow<A: GlobalAlloc>(
     layout: Layout,
     new_size: usize,
 ) -> *mut u8 {
+    debug_assert!(
+        new_size > layout.size(),
+        "realloc_copy_grow called when new_size <= layout.size()"
+    );
     let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
     // Safety: same contract as the default GlobalAlloc::realloc.
     let new_ptr = unsafe { allocator.alloc(new_layout) };
     if !new_ptr.is_null() {
         unsafe {
-            core::ptr::copy_nonoverlapping(ptr, new_ptr, core::cmp::min(layout.size(), new_size));
+            core::ptr::copy_nonoverlapping(ptr, new_ptr, layout.size());
             allocator.dealloc(ptr, layout);
         }
     }

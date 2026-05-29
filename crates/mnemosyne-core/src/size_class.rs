@@ -1,6 +1,6 @@
 //! Size class calculations and mapping.
 
-use crate::constants::{MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, NUM_SIZE_CLASSES};
+use crate::constants::{MAX_SMALL_ALLOC_SIZE, NUM_SIZE_CLASSES};
 
 /// Maps an allocation size to its corresponding size class index.
 ///
@@ -66,19 +66,20 @@ pub const fn size_to_class(size: usize) -> Option<usize> {
     Some(class)
 }
 
+const CLASS_TO_SIZE: [u16; NUM_SIZE_CLASSES] = [
+    16, 32, 48, 64, 80, 96, 112, 128,
+    160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512,
+    640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048,
+    2560, 3072, 3584, 4096, 4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192,
+];
+
 /// Maps a size class index to its maximum block size.
 ///
 /// Returns `0` if the class index is out of bounds (>= `NUM_SIZE_CLASSES`).
 #[inline(always)]
 pub const fn class_to_size(class: usize) -> usize {
-    if class < 8 {
-        (class + 1) * MIN_BLOCK_SIZE
-    } else if class < 20 {
-        128 + (class - 7) * 32
-    } else if class < 32 {
-        512 + (class - 19) * 128
-    } else if class < NUM_SIZE_CLASSES {
-        2048 + (class - 31) * 512
+    if class < NUM_SIZE_CLASSES {
+        CLASS_TO_SIZE[class] as usize
     } else {
         0
     }
