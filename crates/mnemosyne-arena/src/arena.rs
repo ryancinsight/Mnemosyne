@@ -12,7 +12,14 @@ use mnemosyne_core::validation::is_valid_alloc_request;
 ///
 /// # Safety
 ///
-/// Returns a raw pointer to the allocated block, or null on failure.
+/// This function is unsafe because it allocates raw virtual memory and performs
+/// low-level pointer arithmetic. Callers must guarantee:
+/// - `size` is non-zero.
+/// - `align` is a non-zero power of two.
+/// - `align <= SEGMENT_SIZE` (to ensure the small-free classifier can safely
+///   recover the segment header via segment rounding or the metadata slot).
+/// - The returned pointer must be deallocated using `deallocate_large_or_huge`
+///   with the same memory backend `B`.
 pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(size: usize, align: usize) -> *mut u8 {
     if !is_valid_alloc_request(size, align) {
         return core::ptr::null_mut();
@@ -171,8 +178,14 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(size: usize, align: usiz
 ///
 /// # Safety
 ///
-/// The pointer must have been returned by a previous call to `allocate_large_or_huge`
-/// or be a block from a segment.
+/// This function is unsafe because it performs raw pointer dereferencing and
+/// releases OS-level memory mappings. Callers must guarantee:
+/// - `ptr` must be a pointer returned by a previous call to `allocate_large_or_huge`
+///   or be a block from a valid segment.
+/// - If `segment_ptr` is null, `ptr` must be preceded by a valid pointer-aligned
+///   metadata slot containing the pointer to the owning `Segment`.
+/// - If `segment_ptr` is non-null, it must point to the valid `Segment` that owns `ptr`.
+/// - The backend `B` must match the backend used to allocate the block.
 #[must_use = "ignoring the release result drops the backend failure signal; bind it to `_released` when no recovery is possible"]
 pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
     ptr: *mut u8,

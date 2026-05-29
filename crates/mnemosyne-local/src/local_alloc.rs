@@ -938,6 +938,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn thread_exit_reclaims_owned_segments_on_selected_tls_path() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
+
+        // Drain any residue so the post-join count reflects only this thread.
+        while let Some(seg) = MOCK_ORPHAN_POOL.pop() {
+            // Safety: pooled segments are valid mappings owned by the pool.
+            unsafe { mnemosyne_arena::deallocate_segment::<MockBackend>(seg) };
+        }
+
+        let handle = std::thread::spawn(|| {
+            // Safety: a 32-byte/16-align request is a valid small allocation;
+            // routing through the TLS path arms the exit sentinel (or registers standard drop)
+            // and acquires a segment owned by this thread. The block is intentionally not
+            // freed so the owning segment is still live at thread exit.
+            let ptr = unsafe {
+                crate::thread_alloc::<mnemosyne_core::StandardPolicy, MockBackend>(32, 16)
+            };
+            assert!(!ptr.is_null(), "selected-TLS small allocation failed");
+            ptr as usize
+        });
+        let block_addr = handle.join().expect("spawned allocator thread panicked");
+        assert_ne!(block_addr, 0, "spawned thread produced a null allocation");
+
+        // The exit sentinel or slot drop must have orphaned the still-live owning segment.
+        let mut reclaimed = 0usize;
+        while let Some(seg) = MOCK_ORPHAN_POOL.pop() {
+            reclaimed += 1;
+            // Safety: pooled segments are valid mappings; release the mapping
+            // (including the never-freed block) to avoid leaking the test's
+            // owned segment beyond the assertion.
+            unsafe { mnemosyne_arena::deallocate_segment::<MockBackend>(seg) };
+        }
+        assert!(
+            reclaimed >= 1,
+            "thread-exit did not reclaim the live owned segment; \
+             orphan pool received {reclaimed} segments"
+        );
+    }
+
     /// Verifies the intrusive doubly-linked owned-segments list splices any
     /// node out in place and in O(1) — without searching for a predecessor —
     /// while preserving the `prev`/`next` invariant across head, middle, and

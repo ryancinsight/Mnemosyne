@@ -9,6 +9,7 @@
 extern crate std;
 
 pub mod local_alloc;
+pub mod tls;
 
 pub use local_alloc::{SizeClassOccupancy, ThreadAllocator, ThreadAllocatorStats};
 
@@ -273,110 +274,115 @@ pub trait LocalAllocatorSelector<B: HasSegmentPool>: HasSegmentPool {
 #[macro_export]
 macro_rules! impl_local_allocator_selector {
     ($backend:ty) => {
-        // Default portable path: `std::thread_local!` with a `const {}`
-        // initializer (stable since Rust 1.59). Because `LocalAllocatorSlot::new`
-        // is a `const fn`, the compiler emits the fast accessor that skips the
-        // per-access lazy-initialization guard branch, and the slot still
-        // registers its `Drop` destructor for thread-exit segment reclamation.
-        #[cfg(not(feature = "nightly_tls"))]
         const _: () = {
-            std::thread_local! {
-                static ALLOCATOR_SLOT: $crate::LocalAllocatorSlot<$backend> = const {
-                    $crate::LocalAllocatorSlot::new()
-                };
-                static CACHED_ALLOCATOR_PTR: core::cell::Cell<*mut core::ffi::c_void> = const {
-                    core::cell::Cell::new(core::ptr::null_mut())
-                };
-            }
-
-            impl $crate::LocalAllocatorSelector<$backend> for $backend {
-                #[inline(always)]
-                fn with_allocator<R>(
-                    f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
-                ) -> Option<R> {
-                    ALLOCATOR_SLOT.with(|slot| slot.with_allocator(f))
-                }
-
-                #[inline(always)]
-                fn with_allocator_guard<R>(
-                    f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
-                ) -> Option<R> {
-                    ALLOCATOR_SLOT.with(|slot| slot.with_allocator(f))
-                }
-
-                #[inline(always)]
-                unsafe fn with_allocator_unguarded<R>(
-                    f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
-                ) -> Option<R> {
-                    // Safety: the caller upholds the no-re-entry contract; the
-                    // slot method checks the busy bit before borrowing.
-                    ALLOCATOR_SLOT.with(|slot| unsafe { slot.with_allocator_unguarded(f) })
-                }
-
-                #[inline(always)]
-                fn get_allocator_ptr() -> *mut core::ffi::c_void {
-                    let ptr = CACHED_ALLOCATOR_PTR.with(|p| p.get());
-                    if !ptr.is_null() {
-                        ptr
-                    } else {
-                        let real_ptr = ALLOCATOR_SLOT.with(|slot| slot.allocator_ptr());
-                        CACHED_ALLOCATOR_PTR.with(|p| p.set(real_ptr));
-                        real_ptr
-                    }
-                }
-            }
-        };
-
-        // Fast path: an ELF/PE `#[thread_local]` static. Accessing it lowers to
-        // a single segment-register-relative load (e.g. `%fs:OFFSET`) with no
-        // `LocalKey::with` call and no lazy-init guard — the same mechanism
-        // mimalloc uses for its default heap. A separate `std::thread_local!`
-        // sentinel (`ALLOCATOR_EXIT_GUARD`) preserves thread-exit segment
-        // reclamation because `#[thread_local]` statics are not auto-dropped.
-        #[cfg(feature = "nightly_tls")]
-        const _: () = {
+            // Under nightly_tls, we declare ALLOCATOR_SLOT with #[thread_local]
+            #[cfg(feature = "nightly_tls")]
             #[thread_local]
             static ALLOCATOR_SLOT: $crate::LocalAllocatorSlot<$backend> =
                 $crate::LocalAllocatorSlot::new();
 
+            // Under standard (not nightly_tls), we declare ALLOCATOR_SLOT via std::thread_local!
+            #[cfg(not(feature = "nightly_tls"))]
             std::thread_local! {
+                static ALLOCATOR_SLOT: $crate::LocalAllocatorSlot<$backend> = const {
+                    $crate::LocalAllocatorSlot::new()
+                };
+            }
+
+            // Expose the slot access cells/guards needed by our TLS strategies.
+            std::thread_local! {
+                static CACHED_SLOT_PTR: core::cell::Cell<*mut core::ffi::c_void> = const {
+                    core::cell::Cell::new(core::ptr::null_mut())
+                };
+
+                #[cfg(feature = "nightly_tls")]
                 static ALLOCATOR_EXIT_GUARD: $crate::ThreadExitReclaim<$backend> = const {
                     $crate::ThreadExitReclaim::new()
                 };
             }
 
+            static OS_TLS_KEY: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(u32::MAX);
+
+            struct SlotAccess;
+            impl $crate::tls::TlsSlotAccess<$backend> for SlotAccess {
+                #[inline(always)]
+                fn get_slot_standard<R>(f: impl FnOnce(&$crate::LocalAllocatorSlot<$backend>) -> R) -> R {
+                    #[cfg(feature = "nightly_tls")]
+                    {
+                        // In nightly_tls, get_slot_standard falls back to the static reference
+                        f(&ALLOCATOR_SLOT)
+                    }
+                    #[cfg(not(feature = "nightly_tls"))]
+                    {
+                        ALLOCATOR_SLOT.with(f)
+                    }
+                }
+
+                #[inline(always)]
+                fn get_cached_cell<R>(f: impl FnOnce(&core::cell::Cell<*mut core::ffi::c_void>) -> R) -> R {
+                    CACHED_SLOT_PTR.with(f)
+                }
+
+                #[inline(always)]
+                fn arm_thread_exit(slot: &$crate::LocalAllocatorSlot<$backend>) {
+                    #[cfg(feature = "nightly_tls")]
+                    {
+                        $crate::arm_thread_exit(slot, &ALLOCATOR_EXIT_GUARD);
+                    }
+                    #[cfg(not(feature = "nightly_tls"))]
+                    {
+                        // No-op for stable path: LocalAllocatorSlot is registered automatically by standard thread_local!.
+                        let _ = slot;
+                    }
+                }
+
+                #[inline(always)]
+                fn get_os_tls_key() -> &'static core::sync::atomic::AtomicU32 {
+                    &OS_TLS_KEY
+                }
+
+                #[cfg(feature = "nightly_tls")]
+                #[inline(always)]
+                fn get_slot_nightly<R>(f: impl FnOnce(&$crate::LocalAllocatorSlot<$backend>) -> R) -> R {
+                    f(&ALLOCATOR_SLOT)
+                }
+            }
+
+            // Statically select the best TLS provider based on compile target and features.
+            #[cfg(feature = "nightly_tls")]
+            type SelectedTls = $crate::tls::NightlyTls<$backend, SlotAccess>;
+
+            #[cfg(all(not(feature = "nightly_tls"), all(windows, target_arch = "x86_64")))]
+            type SelectedTls = $crate::tls::AsmTls<$backend, SlotAccess>;
+
+            #[cfg(all(not(feature = "nightly_tls"), not(all(windows, target_arch = "x86_64"))))]
+            type SelectedTls = $crate::tls::NativeOsTls<$backend, SlotAccess>;
+
             impl $crate::LocalAllocatorSelector<$backend> for $backend {
                 #[inline(always)]
                 fn with_allocator<R>(
                     f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
                 ) -> Option<R> {
-                    $crate::arm_thread_exit(&ALLOCATOR_SLOT, &ALLOCATOR_EXIT_GUARD);
-                    ALLOCATOR_SLOT.with_allocator(f)
+                    <SelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator(f)
                 }
 
                 #[inline(always)]
                 fn with_allocator_guard<R>(
                     f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
                 ) -> Option<R> {
-                    $crate::arm_thread_exit(&ALLOCATOR_SLOT, &ALLOCATOR_EXIT_GUARD);
-                    ALLOCATOR_SLOT.with_allocator(f)
+                    <SelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator_guard(f)
                 }
 
                 #[inline(always)]
                 unsafe fn with_allocator_unguarded<R>(
                     f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
                 ) -> Option<R> {
-                    // Safety: the caller upholds the no-re-entry contract. The
-                    // exit sentinel is already armed: the first allocation on a
-                    // thread has no active page and necessarily takes the
-                    // guarded path, which arms the sentinel before any segment
-                    // is owned, so the unguarded fast path need not re-arm.
-                    unsafe { ALLOCATOR_SLOT.with_allocator_unguarded(f) }
+                    unsafe { <SelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator_unguarded(f) }
                 }
 
                 #[inline(always)]
                 fn get_allocator_ptr() -> *mut core::ffi::c_void {
-                    ALLOCATOR_SLOT.allocator_ptr()
+                    <SelectedTls as $crate::tls::TlsProvider<$backend>>::get_allocator_ptr()
                 }
             }
         };

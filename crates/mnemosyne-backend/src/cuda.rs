@@ -24,7 +24,6 @@ static CU_MEM_ALLOC_MANAGED: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_
 static CU_MEM_FREE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 static CUDA_INIT_STATE: AtomicU8 = AtomicU8::new(CUDA_UNINITIALIZED);
 
-const ATOMIC_PTR_NULL: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
 const CUDA_UNINITIALIZED: u8 = 0;
 const CUDA_INITIALIZING: u8 = 1;
 const CUDA_INITIALIZED: u8 = 2;
@@ -35,18 +34,24 @@ const CUDA_INITIALIZED: u8 = 2;
 // the host backend.
 const MAX_TRACKED_CUDA_ALLOCATIONS: usize = 256;
 type CudaAllocationRegistry = [AtomicPtr<u8>; MAX_TRACKED_CUDA_ALLOCATIONS];
-static CUDA_ALLOCATIONS: CudaAllocationRegistry = [ATOMIC_PTR_NULL; MAX_TRACKED_CUDA_ALLOCATIONS];
+static CUDA_ALLOCATIONS: CudaAllocationRegistry =
+    [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_TRACKED_CUDA_ALLOCATIONS];
 
 fn register_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool {
-    for slot in registry {
-        if slot
-            .compare_exchange(
-                core::ptr::null_mut(),
-                ptr,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_ok()
+    let start_idx = (ptr as usize >> 12) % MAX_TRACKED_CUDA_ALLOCATIONS;
+    for i in 0..MAX_TRACKED_CUDA_ALLOCATIONS {
+        let idx = (start_idx + i) % MAX_TRACKED_CUDA_ALLOCATIONS;
+        let slot = &registry[idx];
+        // Double-check: cheap relaxed load avoids CAS invalidations on populated slots.
+        if slot.load(Ordering::Relaxed).is_null()
+            && slot
+                .compare_exchange(
+                    core::ptr::null_mut(),
+                    ptr,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
         {
             return true;
         }
@@ -55,20 +60,40 @@ fn register_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool
 }
 
 fn unregister_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool {
-    for slot in registry {
-        if slot
-            .compare_exchange(
-                ptr,
-                core::ptr::null_mut(),
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_ok()
+    let start_idx = (ptr as usize >> 12) % MAX_TRACKED_CUDA_ALLOCATIONS;
+    for i in 0..MAX_TRACKED_CUDA_ALLOCATIONS {
+        let idx = (start_idx + i) % MAX_TRACKED_CUDA_ALLOCATIONS;
+        let slot = &registry[idx];
+        // Double-check: cheap relaxed load avoids CAS invalidations on non-matching slots.
+        if slot.load(Ordering::Relaxed) == ptr
+            && slot
+                .compare_exchange(
+                    ptr,
+                    core::ptr::null_mut(),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
         {
             return true;
         }
     }
     false
+}
+
+fn is_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool {
+    let start_idx = (ptr as usize >> 12) % MAX_TRACKED_CUDA_ALLOCATIONS;
+    for i in 0..MAX_TRACKED_CUDA_ALLOCATIONS {
+        let idx = (start_idx + i) % MAX_TRACKED_CUDA_ALLOCATIONS;
+        if registry[idx].load(Ordering::Relaxed) == ptr {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_cuda_ptr(ptr: *mut u8) -> bool {
+    is_cuda_ptr_in(&CUDA_ALLOCATIONS, ptr)
 }
 
 unsafe fn init_cuda() {
@@ -108,13 +133,13 @@ unsafe fn init_cuda_once() {
     let lib = {
         #[cfg(target_family = "windows")]
         {
-            LoadLibraryA(b"nvcuda.dll\0".as_ptr())
+            LoadLibraryA(c"nvcuda.dll".as_ptr() as *const u8)
         }
         #[cfg(target_family = "unix")]
         {
-            let p = dlopen(b"libcuda.so\0".as_ptr(), RTLD_LAZY);
+            let p = dlopen(c"libcuda.so".as_ptr() as *const u8, RTLD_LAZY);
             if p.is_null() {
-                dlopen(b"libcuda.so.1\0".as_ptr(), RTLD_LAZY)
+                dlopen(c"libcuda.so.1".as_ptr() as *const u8, RTLD_LAZY)
             } else {
                 p
             }
@@ -132,33 +157,33 @@ unsafe fn init_cuda_once() {
     let init_sym = {
         #[cfg(target_family = "windows")]
         {
-            GetProcAddress(lib, b"cuInit\0".as_ptr())
+            GetProcAddress(lib, c"cuInit".as_ptr() as *const u8)
         }
         #[cfg(target_family = "unix")]
         {
-            dlsym(lib, b"cuInit\0".as_ptr())
+            dlsym(lib, c"cuInit".as_ptr() as *const u8)
         }
     };
 
     let alloc_sym = {
         #[cfg(target_family = "windows")]
         {
-            GetProcAddress(lib, b"cuMemAllocManaged\0".as_ptr())
+            GetProcAddress(lib, c"cuMemAllocManaged".as_ptr() as *const u8)
         }
         #[cfg(target_family = "unix")]
         {
-            dlsym(lib, b"cuMemAllocManaged\0".as_ptr())
+            dlsym(lib, c"cuMemAllocManaged".as_ptr() as *const u8)
         }
     };
 
     let free_sym = {
         #[cfg(target_family = "windows")]
         {
-            GetProcAddress(lib, b"cuMemFree\0".as_ptr())
+            GetProcAddress(lib, c"cuMemFree".as_ptr() as *const u8)
         }
         #[cfg(target_family = "unix")]
         {
-            dlsym(lib, b"cuMemFree\0".as_ptr())
+            dlsym(lib, c"cuMemFree".as_ptr() as *const u8)
         }
     };
 
@@ -179,7 +204,7 @@ unsafe fn init_cuda_once() {
 /// A zero-copy memory backend mapping memory blocks directly using CUDA managed memory.
 ///
 /// Falls back to standard host OS allocation if the Nvidia driver is not loaded or if the
-/// bounded CUDA allocation registry is full.
+/// Bounded CUDA allocation registry is full.
 pub struct CudaUnifiedBackend;
 
 impl MemoryBackend for CudaUnifiedBackend {
@@ -248,6 +273,55 @@ impl MemoryBackend for CudaUnifiedBackend {
         // Safety: Fallback to default CPU OS virtual deallocator.
         unsafe { <crate::DefaultBackend as MemoryBackend>::deallocate(ptr, size) }
     }
+
+    /// Drops the physical backing of an idle page range while keeping the
+    /// virtual mapping committed. For fallback host allocations, it forwards the
+    /// reset call to `DefaultBackend`. For active CUDA managed memory, it returns `false`.
+    ///
+    /// # Safety
+    ///
+    /// Same contract as the wrapped `MemoryBackend::page_reset`.
+    #[inline]
+    unsafe fn page_reset(ptr: *mut u8, size: usize) -> bool {
+        if !is_cuda_ptr(ptr) {
+            // Safety: Forward to host OS allocator for host fallback mappings.
+            unsafe { <crate::DefaultBackend as MemoryBackend>::page_reset(ptr, size) }
+        } else {
+            false
+        }
+    }
+
+    /// Installs a guard region. For fallback host allocations, it forwards the
+    /// guard install to `DefaultBackend`. For active CUDA managed memory, it returns `false`.
+    ///
+    /// # Safety
+    ///
+    /// Same contract as the wrapped `MemoryBackend::make_guard`.
+    #[inline]
+    unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
+        if !is_cuda_ptr(ptr) {
+            // Safety: Forward to host OS allocator for host fallback mappings.
+            unsafe { <crate::DefaultBackend as MemoryBackend>::make_guard(ptr, size) }
+        } else {
+            false
+        }
+    }
+
+    /// Releases the commit charge of a page range. For fallback host allocations, it
+    /// forwards the decommit to `DefaultBackend`. For active CUDA managed memory, it returns `false`.
+    ///
+    /// # Safety
+    ///
+    /// Same contract as the wrapped `MemoryBackend::decommit`.
+    #[inline]
+    unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
+        if !is_cuda_ptr(ptr) {
+            // Safety: Forward to host OS allocator for host fallback mappings.
+            unsafe { <crate::DefaultBackend as MemoryBackend>::decommit(ptr, size) }
+        } else {
+            false
+        }
+    }
 }
 
 /// Returns true if the CUDA unified memory driver was successfully resolved.
@@ -262,7 +336,7 @@ mod tests {
     use super::*;
 
     fn test_registry() -> CudaAllocationRegistry {
-        [ATOMIC_PTR_NULL; MAX_TRACKED_CUDA_ALLOCATIONS]
+        [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_TRACKED_CUDA_ALLOCATIONS]
     }
 
     #[test]
@@ -291,5 +365,22 @@ mod tests {
         let mut byte = 0_u8;
 
         assert!(!unregister_cuda_ptr_in(&registry, &mut byte as *mut u8));
+    }
+
+    #[test]
+    fn cuda_registry_hashing_and_fallback_forwarding() {
+        let registry = test_registry();
+        let mut byte1 = 0_u8;
+        let mut byte2 = 0_u8;
+
+        let ptr1 = &mut byte1 as *mut u8;
+        let ptr2 = &mut byte2 as *mut u8;
+
+        assert!(register_cuda_ptr_in(&registry, ptr1));
+        assert!(is_cuda_ptr_in(&registry, ptr1));
+        assert!(!is_cuda_ptr_in(&registry, ptr2));
+
+        assert!(unregister_cuda_ptr_in(&registry, ptr1));
+        assert!(!is_cuda_ptr_in(&registry, ptr1));
     }
 }

@@ -24,10 +24,15 @@ mnemosyne = { path = "../mnemosyne" }
 mnemosyne-arena = { path = "../mnemosyne-arena" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-core = { path = "../mnemosyne-core" }
+mnemosyne-local = { path = "../mnemosyne-local" }
 
 [target.'cfg(not(windows))'.dependencies]
 tikv-jemallocator = "0.6"
 
 [[bench]]
 name = "allocator_bench"
+harness = false
+
+[[bench]]
+name = "tls_bench"
 harness = false

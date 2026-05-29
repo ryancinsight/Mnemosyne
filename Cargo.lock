@@ -348,6 +348,7 @@ dependencies = [
  "mnemosyne-arena",
  "mnemosyne-backend",
  "mnemosyne-core",
+ "mnemosyne-local",
  "serde_json",
  "snmalloc-rs",
  "tikv-jemallocator",
