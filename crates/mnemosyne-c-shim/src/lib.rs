@@ -132,14 +132,11 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_vo
     let new_ptr = unsafe { malloc(new_size) };
     if !new_ptr.is_null() {
         // C semantics: preserve the lesser of the old usable region and the
-        // new size. Copying `current_usable` (not a tracked request size) is
-        // correct here because a C caller may have written the whole usable
-        // region.
-        let copy_len = if current_usable < new_size {
-            current_usable
-        } else {
-            new_size
-        };
+        // new size. The `new_size <= current_usable` case already returned
+        // above, so here `new_size > current_usable` and
+        // `min(current_usable, new_size)` is exactly `current_usable` — copy
+        // the whole old usable region (a C caller may have written all of it).
+        let copy_len = current_usable;
         // Safety: both pointers are valid for `copy_len` bytes and do not
         // overlap (malloc returned a fresh block).
         unsafe {

@@ -84,7 +84,43 @@ its predecessor.
   one verified place, and gated on the no-regression discipline. A prior
   counter-compaction experiment that shrank `Page` fields regressed benchmarks
   (`gap_audit.md`), so the layout change is deliberately conservative: derive,
-  do not narrow. **Planned next increment.**
+  do not narrow. **Foundation landed:** `Page::index_in_segment()` implements the
+  O(1) address derivation and `page_index_field_matches_address_derivation`
+  proves it equals the stored field for every page of a real segment, so the
+  `prev_page` swap is de-risked; the full splice-site conversion is the remaining
+  increment.
+
+## C ABI shim (`mnemosyne-c-shim`)
+
+Every exported `extern "C"` entry point is O(1) plus the O(1) thread-local
+allocator path it forwards to. `n` below is the requested byte count.
+
+| Operation | Complexity | Notes |
+| :--- | :---: | :--- |
+| `malloc` / `free` | O(1) | forward to `thread_alloc` / `thread_free` |
+| `calloc` | O(n) | `checked_mul` (O(1)) + mandatory `write_bytes(0)` over the request; the zeroing is inherent to the C contract (Mnemosyne does not track zeroed pages) |
+| `realloc` (in-class grow / shrink) | O(1) | `usable_size` check returns the same pointer when `new_size <= current_usable` |
+| `realloc` (cross-class grow) | O(n) | one `malloc` + `copy_nonoverlapping(current_usable)` + `free`; copy length is exactly `current_usable` (the `min` branch was dead and was removed) |
+| `aligned_alloc` / `posix_memalign` | O(1) | power-of-two/contract validation (O(1)) + `thread_alloc` |
+| `malloc_usable_size` | O(1) | segment-rounding classification + one page-metadata read |
+
+The shim holds no domain logic: it only converts arguments, applies the C/POSIX
+contracts (overflow, alignment, `malloc(0)`, `realloc(p,0)`), and forwards under
+the ZST `StandardPolicy` + `MemoryBackendWrapper`, so all dispatch is
+monomorphized.
+
+## Backend (`mnemosyne-backend`)
+
+All `MemoryBackend` operations are O(1) at the Rust layer (one syscall each); the
+kernel's own cost is excluded. Telemetry counters are single relaxed atomic adds.
+
+| Operation | Complexity | Mechanism |
+| :--- | :---: | :--- |
+| `allocate` / `deallocate` | O(1) | `mmap`/`munmap` (Unix), `VirtualAlloc`/`VirtualFree` (Windows) |
+| `page_reset` | O(1) | `madvise(MADV_DONTNEED/FREE)` / `VirtualAlloc(MEM_RESET)` (keeps commit) |
+| `decommit` | O(1) | `madvise(MADV_DONTNEED)` / `VirtualFree(MEM_DECOMMIT)` (drops commit charge); used to return aligned-mapping head slack |
+| `make_guard` | O(1) | `mprotect(PROT_NONE)` / `VirtualProtect(PAGE_NOACCESS)` |
+| `AtomicFreeList::{push,pop_all,is_empty}` | O(1) | single CAS / swap / load on a tagged `AtomicUsize` (head + 16-bit count packed); `pop_all` returns the block count without walking |
 
 ## Zero-cost / monomorphization posture
 
