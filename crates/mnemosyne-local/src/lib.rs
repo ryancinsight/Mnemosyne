@@ -421,7 +421,7 @@ impl_local_allocator_selector!(mnemosyne_backend::CudaUnifiedBackend);
 /// originated from a different allocator is undefined behavior; the
 /// function uses the same segment-rounding classification as
 /// `thread_free` and dereferences the resulting segment header.
-#[inline(always)]
+#[inline]
 pub unsafe fn usable_size(ptr: *mut u8) -> usize {
     if ptr.is_null() {
         return 0;
