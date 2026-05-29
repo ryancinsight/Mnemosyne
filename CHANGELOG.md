@@ -132,3 +132,4 @@
 - Rejected a Layout-proven small-allocation entry split after it improved allocation-only small latency but regressed retained small allocation cycles and historical threaded small cycles.
 - Serialized backend telemetry tests that mutate process-wide mapping counters, making the workspace test gate deterministic without changing production telemetry semantics.
 - Added `crates/mnemosyne-c-shim/include/mnemosyne.h` C declaration header matching the seven exported shim symbols, with per-function contract documentation, so C/C++ consumers have a ready prototype file.
+- Rejected compact `Page` counter layouts after 48-byte metadata experiments regressed saturated threaded cycles and usable-size latency.

@@ -266,5 +266,6 @@ Target version: 0.1.0
 - [x] [patch] Reject `#[inline(always)]` on exported `mnemosyne_local::usable_size` after focused Criterion rows regressed allocator cycle latency, combined usable-size latency, and raw usable-size query latency.
 - [x] [patch] Reject `thread_alloc_layout_small` after focused Criterion rows improved allocation-only small latency to about `12.057 ns` and saturated threaded cycles to about `72.657 us`, but regressed the retained small allocation cycle to about `5.574 ns` and historical threaded small cycles to about `8.650 us`.
 - [x] [patch] Serialize backend telemetry tests with a crate-local mutex so process-wide relaxed mapping counters are not compared while sibling tests mutate them.
+- [x] [patch] Reject compact `Page` counter layouts (`u16/u8` and `u32`) after both preserved a 48-byte metadata budget but regressed saturated threaded cycles (`~101.720 us` and `~114.240 us`) and/or usable-size latency.
 
 - [x] [patch] Add `crates/mnemosyne-c-shim/include/mnemosyne.h` C declaration header matching the seven exported `extern "C"` symbols, documenting per-function null/zero/overflow/alignment contracts; reference it from README highlight #13.
