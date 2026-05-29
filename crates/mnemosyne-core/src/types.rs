@@ -103,18 +103,9 @@ impl Page {
     /// metadata, and every block in `thread_free` must belong to this page.
     #[inline]
     pub unsafe fn reclaim_thread_free(&mut self) -> usize {
-        let Some(block) = self.thread_free.pop_all() else {
+        let Some((block, count)) = self.thread_free.pop_all() else {
             return 0;
         };
-
-        let mut count = 0;
-        let mut current = Some(block);
-        let mut last = block;
-        while let Some(node) = current {
-            count += 1;
-            last = node;
-            current = unsafe { (*node.as_ptr()).next };
-        }
 
         debug_assert!(
             self.alloc_count >= count,
@@ -124,10 +115,18 @@ impl Page {
         );
         self.alloc_count -= count;
 
-        unsafe {
-            (*last.as_ptr()).next = self.free;
+        if self.free.is_none() {
+            self.free = Some(block);
+        } else {
+            let mut last = block;
+            while let Some(node) = unsafe { (*last.as_ptr()).next } {
+                last = node;
+            }
+            unsafe {
+                (*last.as_ptr()).next = self.free;
+            }
+            self.free = Some(block);
         }
-        self.free = Some(block);
         count
     }
 
@@ -319,6 +318,49 @@ mod tests {
         assert_eq!(reclaimed, 1);
         assert_eq!(page.alloc_count, 0);
         assert_eq!(page.free, Some(first));
+        assert!(
+            page.thread_free.is_empty(),
+            "thread_free list was not empty after reclaim"
+        );
+    }
+
+    #[test]
+    fn test_page_reclaim_thread_free_hot_path() {
+        let mut page = Page::new(1);
+        page.block_size = 16;
+
+        #[repr(align(64))]
+        struct PageStorage([u8; PAGE_SIZE]);
+        let mut storage = PageStorage([0u8; PAGE_SIZE]);
+
+        unsafe {
+            page.initialize_free_list(storage.0.as_mut_ptr());
+        }
+
+        let b1 = page.free.expect("has b1");
+        unsafe { page.free = (*b1.as_ptr()).next; }
+        let b2 = page.free.expect("has b2");
+        unsafe { page.free = (*b2.as_ptr()).next; }
+
+        // Simulate all other blocks allocated / empty free list
+        page.free = None;
+        page.alloc_count = 2;
+
+        page.thread_free.push(b1);
+        page.thread_free.push(b2);
+
+        // Reclaim thread_free. Since page.free is None, this triggers O(1) swap.
+        let reclaimed = unsafe { page.reclaim_thread_free() };
+
+        assert_eq!(reclaimed, 2);
+        assert_eq!(page.alloc_count, 0);
+        assert_eq!(page.free, Some(b2));
+
+        unsafe {
+            let next_node = (*b2.as_ptr()).next;
+            assert_eq!(next_node, Some(b1));
+            assert_eq!((*b1.as_ptr()).next, None);
+        }
         assert!(
             page.thread_free.is_empty(),
             "thread_free list was not empty after reclaim"
