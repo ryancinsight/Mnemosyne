@@ -588,7 +588,12 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
                     }
                 }
                 if page.alloc_count == 0 && !alloc.is_current_segment(segment) {
-                    alloc.try_reclaim_segment(segment);
+                    if !alloc.try_reclaim_segment(segment) {
+                        let class = page.size_class;
+                        alloc.unlink_page(page as *mut Page, class);
+                        page.next_page = alloc.empty_pages;
+                        alloc.empty_pages = Some(NonNull::new_unchecked(page as *mut Page));
+                    }
                 }
             }
         });

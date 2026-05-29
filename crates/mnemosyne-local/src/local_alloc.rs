@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_arena::{allocate_segment, deallocate_segment, HasSegmentPool};
 use mnemosyne_backend::DefaultBackend;
-use mnemosyne_core::constants::{NUM_SIZE_CLASSES, PAGES_PER_SEGMENT, PAGE_SIZE};
+use mnemosyne_core::constants::{NUM_SIZE_CLASSES, PAGES_PER_SEGMENT, PAGE_SIZE, SEGMENT_SIZE};
 use mnemosyne_core::size_class::{class_to_size, size_to_class};
 use mnemosyne_core::types::{Page, Segment, SegmentOwner};
 
@@ -172,6 +172,8 @@ pub struct ThreadAllocator<B: HasSegmentPool = DefaultBackend> {
     pub active_pages: [Option<NonNull<Page>>; NUM_SIZE_CLASSES],
     /// Completely full pages per size class.
     pub full_pages: [Option<NonNull<Page>>; NUM_SIZE_CLASSES],
+    /// Stack of empty/defragmented pages available for recycling.
+    pub empty_pages: Option<NonNull<Page>>,
     /// Current segment being sliced into pages.
     pub current_segment: Option<NonNull<Segment>>,
     /// Index of the next page to slice in `current_segment`.
@@ -200,6 +202,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         Self {
             active_pages: [None; NUM_SIZE_CLASSES],
             full_pages: [None; NUM_SIZE_CLASSES],
+            empty_pages: None,
             current_segment: None,
             next_page_index: 0,
             owned_segments_head: core::ptr::null_mut(),
@@ -421,19 +424,36 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// # Safety
     ///
     /// Accesses and modifies segment pointers.
+    /// Obtains a new page for the given size class.
+    ///
+    /// # Safety
+    ///
+    /// Accesses and modifies segment pointers.
     unsafe fn get_new_page(&mut self, class: usize) -> *mut Page {
         let block_size = class_to_size(class);
 
-        // Prefer never-used pages in the current segment. Recycle sweeps are only
-        // needed after the active segment has no remaining unsliced pages.
-        if self.current_segment.is_none() || self.next_page_index >= PAGES_PER_SEGMENT {
-            self.recycle_sweeps += 1;
-            // Safety: try_recycle_page sweeps owned segments and unlinks/relinks pages.
-            if let Some(recycled_page) = unsafe { self.try_recycle_page(class) } {
-                self.recycled_pages += 1;
-                return recycled_page;
-            }
+        // Check if there is an empty page in the defragmentation list first.
+        if let Some(mut page_ptr) = self.empty_pages {
+            unsafe {
+                self.empty_pages = page_ptr.as_ref().next_page;
+                let page = page_ptr.as_mut();
+                page.next_page = None;
 
+                let segment_addr = (page_ptr.as_ptr() as usize) & !(SEGMENT_SIZE - 1);
+                let page_start = (segment_addr as *mut u8).add(page.page_index * PAGE_SIZE);
+                page.block_size = block_size;
+                page.size_class = class;
+                page.initialize_free_list(page_start);
+
+                page.next_page = self.active_pages[class];
+                self.active_pages[class] = Some(page_ptr);
+                self.recycled_pages += 1;
+                return page_ptr.as_ptr();
+            }
+        }
+
+        // Prefer never-used pages in the current segment.
+        if self.current_segment.is_none() || self.next_page_index >= PAGES_PER_SEGMENT {
             // Safety: allocate_segment allocates a new segment from the OS/pool.
             if let Some(seg_ptr) = unsafe { allocate_segment::<B>() } {
                 // Determine if this is an orphaned segment vs a fresh/reinitialized segment.
@@ -476,9 +496,15 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                     }
                                 } else if found_page.is_null() {
                                     found_page = page_ptr;
+                                } else {
+                                    page.next_page = self.empty_pages;
+                                    self.empty_pages = Some(NonNull::new_unchecked(page_ptr));
                                 }
                             } else if found_page.is_null() {
                                 found_page = page_ptr;
+                            } else {
+                                page.next_page = self.empty_pages;
+                                self.empty_pages = Some(NonNull::new_unchecked(page_ptr));
                             }
                         }
                     }
@@ -555,67 +581,17 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         page_ptr
     }
 
-    /// Scans owned segments for an idle, empty page to recycle for a different size class.
-    ///
-    /// # Safety
-    ///
-    /// Sweeps raw segment metadata and unlinks/re-links page nodes.
-    unsafe fn try_recycle_page(&mut self, class: usize) -> Option<*mut Page> {
-        let block_size = class_to_size(class);
-        let mut curr_seg = self.owned_segments_head;
-
-        while !curr_seg.is_null() {
-            // Safety: curr_seg is a valid pointer to a segment owned by us.
-            unsafe {
-                for i in 1..PAGES_PER_SEGMENT {
-                    let pg = &mut (*curr_seg).pages[i];
-
-                    // Reclaim thread_free first to get an accurate count
-                    if !pg.thread_free.is_empty() {
-                        let reclaimed = pg.reclaim_thread_free();
-                        if reclaimed > 0 {
-                            record_cross_thread_reclaimed(reclaimed);
-                        }
-                    }
-
-                    // Recycle the page if it has zero active allocations and is already initialized
-                    if pg.alloc_count == 0 && pg.block_size > 0 {
-                        let old_class = pg.size_class;
-                        if pg.block_size != block_size {
-                            // Unlink from old size class active list.
-                            self.unlink_page(pg as *mut Page, old_class);
-
-                            // Re-initialize for new size class.
-                            pg.block_size = block_size;
-                            pg.size_class = class;
-                            let page_start = (curr_seg as *mut u8).add(pg.page_index * PAGE_SIZE);
-                            pg.initialize_free_list(page_start);
-
-                            // Prepend to new active list.
-                            pg.next_page = self.active_pages[class];
-                            self.active_pages[class] =
-                                Some(NonNull::new_unchecked(pg as *mut Page));
-                        }
-                        return Some(pg as *mut Page);
-                    }
-                }
-                curr_seg = (*curr_seg).next_owned_segment;
-            }
-        }
-        None
-    }
-
     /// Tries to reclaim a segment if it has zero active allocations.
     ///
     /// # Safety
     ///
     /// Accesses and modifies page and segment lists.
-    pub unsafe fn try_reclaim_segment(&mut self, segment: *mut Segment) {
+    pub unsafe fn try_reclaim_segment(&mut self, segment: *mut Segment) -> bool {
         if self
             .current_segment
             .map_or(false, |current| current.as_ptr() == segment)
         {
-            return;
+            return false;
         }
 
         let mut total_allocations = 0;
@@ -647,6 +623,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         let class = pg.size_class;
                         self.unlink_page(pg as *mut Page, class);
                     }
+                    self.unlink_empty_page(pg as *mut Page);
                 }
 
                 self.unlink_owned_segment(segment);
@@ -666,6 +643,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 (*segment).next_owned_segment = core::ptr::null_mut();
                 deallocate_segment::<B>(segment);
             }
+            true
+        } else {
+            false
         }
     }
 
@@ -692,6 +672,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             return;
         }
         let _ = unsafe { unlink_page_from_list(&mut self.full_pages[class], page_ptr) };
+    }
+
+    /// Helper to unlink a page from the empty pages list.
+    #[inline]
+    pub(crate) unsafe fn unlink_empty_page(&mut self, page_ptr: *mut Page) -> bool {
+        unsafe { unlink_page_from_list(&mut self.empty_pages, page_ptr) }
     }
 
     /// Helper to unlink a segment from the owned segments list.
@@ -764,6 +750,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
         }
         self.owned_segments_head = core::ptr::null_mut();
+        self.empty_pages = None;
     }
 }
 
@@ -929,7 +916,6 @@ mod tests {
         let first_stats = alloc.stats();
         assert_eq!(first_stats.current_thread_owned_segments, 1);
         assert_eq!(first_stats.page_refills, 1);
-        assert_eq!(first_stats.recycle_sweeps, 1);
 
         // Determine which page this block belongs to
         let segment_addr = (ptr1 as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
@@ -947,6 +933,10 @@ mod tests {
             (*block).next = page.free;
             page.free = Some(NonNull::new_unchecked(block));
             page.alloc_count = 0; // Page is now empty
+            let class = page.size_class;
+            alloc.unlink_page(page as *mut Page, class);
+            page.next_page = alloc.empty_pages;
+            alloc.empty_pages = Some(NonNull::new_unchecked(page as *mut Page));
         }
 
         // 3. Now allocate a block of a DIFFERENT size class, say class 1 (32 bytes).
@@ -993,12 +983,6 @@ mod tests {
             recycled_stats.recycled_pages >= 1,
             "expected at least 1 recycled page after class change, observed {}",
             recycled_stats.recycled_pages
-        );
-        assert!(
-            recycled_stats.recycle_sweeps >= recycled_stats.page_refills,
-            "recycle sweeps {} should bound page refills {}",
-            recycled_stats.recycle_sweeps,
-            recycled_stats.page_refills,
         );
     }
 
