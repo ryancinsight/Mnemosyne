@@ -10,7 +10,7 @@ pub mod types;
 pub mod validation;
 
 pub use constants::*;
-pub use policy::{AllocPolicy, SecurePolicy, StandardPolicy};
+pub use policy::{AllocPolicy, HardenedPolicy, SecurePolicy, StandardPolicy};
 pub use size_class::*;
 pub use sync::*;
 pub use types::*;

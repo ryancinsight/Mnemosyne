@@ -1,8 +1,8 @@
 //! Global segment pool management.
 
+use super::alloc::MAX_RETAINED_SEGMENTS;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::types::Segment;
-use super::alloc::MAX_RETAINED_SEGMENTS;
 
 /// A lock-free global pool of free segments to avoid OS allocator overhead.
 #[cfg(target_pointer_width = "64")]

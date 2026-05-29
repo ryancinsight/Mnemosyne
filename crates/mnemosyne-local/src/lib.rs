@@ -537,8 +537,17 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
             if let Some(block) = page.free {
                 // Safety: `block` is the head of the page-local free list; advance the
                 // list and account the allocation.
+                let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+                    let self_addr = page as *const Page as usize;
+                    let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
+                    let segment = segment_addr as *mut Segment;
+                    let page_index = page.index_in_segment();
+                    unsafe { (*segment).keys[page_index] }
+                } else {
+                    0
+                };
                 unsafe {
-                    page.free = (*block.as_ptr()).next;
+                    page.free = (*block.as_ptr()).get_next::<P>(cookie);
                 }
                 page.alloc_count += 1;
                 return block.as_ptr() as *mut u8;
@@ -560,7 +569,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     // Fallback: enter allocator guard for cold allocations.
     let Some(ptr) = B::with_allocator_guard(|alloc| {
         // Safety: alloc is exclusively borrowed and valid.
-        unsafe { alloc.alloc_cold(class) }
+        unsafe { alloc.alloc_cold::<P>(class) }
     }) else {
         // Fall back to direct arena/huge allocation to break recursion.
         // Safety: size and align are forwarded. allocate_large_or_huge handles safety.
@@ -640,9 +649,14 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         debug_assert!(page.alloc_count > 0, "local free observed zero alloc_count");
         let page_free = page.free;
         let page_alloc_count = page.alloc_count;
+        let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+            unsafe { (*segment).keys[page_index] }
+        } else {
+            0
+        };
         if page_free.is_some() && (page_alloc_count != 1 || unsafe { (*segment).is_current }) {
             unsafe {
-                (*block).next = page_free;
+                (*block).set_next::<P>(page_free, cookie);
                 page.free = Some(NonNull::new_unchecked(block));
                 page.alloc_count = page_alloc_count - 1;
             }
@@ -652,7 +666,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         let mut done = false;
         unsafe {
             B::with_allocator_unguarded(|alloc| {
-                do_local_free_internal(alloc, block, page, segment);
+                do_local_free_internal::<P, B>(alloc, block, page, segment);
                 done = true;
             });
         }
@@ -662,19 +676,27 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
     }
 
     unsafe {
-        page.thread_free.push(NonNull::new_unchecked(block));
+        page.thread_free.push::<P>(NonNull::new_unchecked(block));
     }
 }
 
 #[inline(always)]
-unsafe fn do_local_free_internal<B: HasSegmentPool>(
+unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     alloc: &mut ThreadAllocator<B>,
     block: *mut Block,
     page: &mut Page,
     segment: *mut Segment,
 ) {
     let was_full = page.free.is_none();
-    (*block).next = page.free;
+    let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+        let page_index = page.index_in_segment();
+        unsafe { (*segment).keys[page_index] }
+    } else {
+        0
+    };
+    unsafe {
+        (*block).set_next::<P>(page.free, cookie);
+    }
     page.free = Some(NonNull::new_unchecked(block));
 
     page.alloc_count -= 1;
@@ -779,15 +801,24 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                     {
                         let active_page = unsafe { page_ptr.as_mut() };
                         if let Some(block) = active_page.free {
+                            let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+                                let self_addr = active_page as *const Page as usize;
+                                let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
+                                let segment = segment_addr as *mut Segment;
+                                let page_index = active_page.index_in_segment();
+                                unsafe { (*segment).keys[page_index] }
+                            } else {
+                                0
+                            };
                             unsafe {
-                                active_page.free = (*block.as_ptr()).next;
+                                active_page.free = (*block.as_ptr()).get_next::<P>(cookie);
                             }
                             active_page.alloc_count += 1;
                             allocated = block.as_ptr() as *mut u8;
                         }
                     }
                     if allocated.is_null() {
-                        allocated = unsafe { alloc.alloc_cold(class) };
+                        allocated = unsafe { alloc.alloc_cold::<P>(class) };
                     }
                     new_ptr = allocated;
                     if !new_ptr.is_null() {
@@ -801,14 +832,19 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                             let block = ptr as *mut Block;
                             let page_free = page_ref.free;
                             let page_alloc_count = page_ref.alloc_count;
+                            let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+                                (*segment).keys[page_index]
+                            } else {
+                                0
+                            };
                             if page_free.is_some()
                                 && (page_alloc_count != 1 || (*segment).is_current)
                             {
-                                (*block).next = page_free;
+                                (*block).set_next::<P>(page_free, cookie);
                                 page_ref.free = Some(NonNull::new_unchecked(block));
                                 page_ref.alloc_count = page_alloc_count - 1;
                             } else {
-                                do_local_free_internal(alloc, block, page_ref, segment);
+                                do_local_free_internal::<P, B>(alloc, block, page_ref, segment);
                             }
                         }
                         local_free_done = true;
@@ -843,12 +879,17 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                     let block = ptr as *mut Block;
                     let page_free = page_ref.free;
                     let page_alloc_count = page_ref.alloc_count;
+                    let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+                        (*segment).keys[page_index]
+                    } else {
+                        0
+                    };
                     if page_free.is_some() && (page_alloc_count != 1 || (*segment).is_current) {
-                        (*block).next = page_free;
+                        (*block).set_next::<P>(page_free, cookie);
                         page_ref.free = Some(NonNull::new_unchecked(block));
                         page_ref.alloc_count = page_alloc_count - 1;
                     } else {
-                        do_local_free_internal(alloc, block, page_ref, segment);
+                        do_local_free_internal::<P, B>(alloc, block, page_ref, segment);
                     }
                     freed_locally = true;
                 }
@@ -859,7 +900,9 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                     unsafe { poison_freed_bytes::<P>(ptr, page_ref.block_size) };
                 }
                 let block = ptr as *mut Block;
-                page_ref.thread_free.push(NonNull::new_unchecked(block));
+                page_ref
+                    .thread_free
+                    .push::<P>(NonNull::new_unchecked(block));
             }
         } else {
             if P::ENABLE_POISONING {
@@ -1166,6 +1209,90 @@ mod tests {
         assert!(
             oversized.is_null(),
             "Layout-validated oversized alignment returned {oversized:?}"
+        );
+    }
+
+    #[test]
+    fn hardened_policy_round_trip_alloc_free() {
+        use mnemosyne_core::HardenedPolicy;
+
+        let _guard = crate::local_alloc::TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
+
+        let ptr = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(32, 8) };
+        assert!(!ptr.is_null(), "HardenedPolicy small allocation failed");
+
+        // Verify that the memory is zero-initialized (since HardenedPolicy inherits from SecurePolicy, which zero-initializes)
+        let slice = unsafe { core::slice::from_raw_parts(ptr, 32) };
+        for &byte in slice {
+            assert_eq!(
+                byte, 0,
+                "HardenedPolicy allocation was not zero-initialized"
+            );
+        }
+
+        // Verify that we can write to it
+        unsafe {
+            core::ptr::write_bytes(ptr, 0x42, 32);
+        }
+
+        // Free the pointer
+        unsafe {
+            thread_free::<HardenedPolicy, MemoryBackendWrapper>(ptr);
+        }
+    }
+
+    #[test]
+    fn hardened_policy_detects_freelist_tamper() {
+        use mnemosyne_core::HardenedPolicy;
+
+        let _guard = crate::local_alloc::TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
+
+        // We want to verify that tamper detection works under HardenedPolicy.
+        // Let's allocate two blocks on a fresh page of class 0 (16 bytes).
+        // Since we want them on the same page, we can allocate them in sequence.
+        let ptr1 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(16, 8) };
+        let ptr2 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(16, 8) };
+        assert!(!ptr1.is_null());
+        assert!(!ptr2.is_null());
+
+        // Free them in sequence so they end up in the thread-local free list
+        unsafe {
+            thread_free::<HardenedPolicy, MemoryBackendWrapper>(ptr1);
+            thread_free::<HardenedPolicy, MemoryBackendWrapper>(ptr2);
+        }
+
+        // Now, `page.free` points to `ptr2`, and `ptr2` contains the encrypted pointer to `ptr1`.
+        // Let's tamper with the encrypted next pointer in `ptr2`.
+        // The block metadata stores the encrypted pointer in the first `Option<NonNull<Block>>` slot of the block.
+        let val2 = ptr2 as *mut usize;
+        unsafe {
+            let original_val = *val2;
+            // Corrupt the pointer (e.g. flip a bit in the address portion)
+            *val2 = original_val ^ 0x08;
+        }
+
+        // Now, try to allocate. The first allocation gets `ptr2` (which is successful).
+        let ptr3 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(16, 8) };
+        assert_eq!(ptr3, ptr2);
+
+        // The second allocation would follow the tampered pointer to `ptr1`.
+        // Since we flipped a bit, the decrypted address is incorrect and fails to match `ptr1`.
+        // In particular, the page's free pointer now contains garbage.
+        let ptr_val = ptr3 as usize;
+        let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
+        let segment = segment_addr as *mut Segment;
+        let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+        let page = unsafe { &*(*segment).pages.get_unchecked(page_index) };
+
+        let free_head = page.free.map(|p| p.as_ptr() as usize);
+        assert_ne!(
+            free_head,
+            Some(ptr1 as usize),
+            "HardenedPolicy failed to obscure/randomize the tampered pointer"
         );
     }
 }

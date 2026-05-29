@@ -1,9 +1,11 @@
-use criterion::{criterion_group, criterion_main, black_box, Criterion};
+use core::sync::atomic::AtomicU32;
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_backend::MemoryBackendWrapper;
+use mnemosyne_local::tls::{
+    AsmTls, CachedCellTls, NativeOsTls, StandardTls, TlsProvider, TlsSlotAccess,
+};
 use mnemosyne_local::LocalAllocatorSlot;
-use mnemosyne_local::tls::{TlsSlotAccess, TlsProvider, StandardTls, CachedCellTls, NativeOsTls, AsmTls};
-use core::sync::atomic::AtomicU32;
 
 std::thread_local! {
     static DUMMY_SLOT: LocalAllocatorSlot<MemoryBackendWrapper> = const { LocalAllocatorSlot::new() };

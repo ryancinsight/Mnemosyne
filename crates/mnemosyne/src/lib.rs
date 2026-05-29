@@ -4,12 +4,10 @@
 
 use core::alloc::{GlobalAlloc, Layout};
 use mnemosyne_core::NUM_SIZE_CLASSES;
-use mnemosyne_local::{
-    thread_alloc_layout, thread_free, thread_realloc, LocalAllocatorSelector,
-};
+use mnemosyne_local::{thread_alloc_layout, thread_free, thread_realloc, LocalAllocatorSelector};
 
 pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
-pub use mnemosyne_core::{AllocPolicy, SecurePolicy, StandardPolicy};
+pub use mnemosyne_core::{AllocPolicy, HardenedPolicy, SecurePolicy, StandardPolicy};
 pub use mnemosyne_local::{usable_size, SizeClassOccupancy};
 
 /// Snapshot of Mnemosyne memory mapping and segment cache state.
@@ -223,9 +221,7 @@ unsafe impl GlobalAlloc for Mnemosyne {
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         unsafe {
             thread_realloc::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
-                ptr,
-                layout,
-                new_size,
+                ptr, layout, new_size,
             )
         }
     }

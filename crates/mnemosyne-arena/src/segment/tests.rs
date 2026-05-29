@@ -4,12 +4,12 @@
 mod tests {
     extern crate std;
 
-    use super::super::pool::{GlobalSegmentPool, HasSegmentPool};
-    use super::super::stats::{arena_memory_stats, SegmentRelease};
     use super::super::alloc::{
         allocate_segment, deallocate_segment, purge_segment_pool, release_segment_mapping,
         SEGMENT_MAPPING_SIZE, SEGMENT_TAIL_GUARD_SIZE,
     };
+    use super::super::pool::{GlobalSegmentPool, HasSegmentPool};
+    use super::super::stats::{arena_memory_stats, SegmentRelease};
     use core::sync::atomic::{AtomicUsize, Ordering};
     use mnemosyne_core::constants::{SEGMENT_ALIGN, SEGMENT_SIZE};
     use mnemosyne_core::types::Segment;
@@ -198,9 +198,9 @@ mod tests {
 
     #[test]
     fn test_concurrent_aba_safeness() {
-        use std::thread;
         use std::sync::Arc;
         use std::sync::Barrier;
+        use std::thread;
 
         let pool = Arc::new(GlobalSegmentPool::new());
         let barrier = Arc::new(Barrier::new(4));
@@ -244,5 +244,74 @@ mod tests {
                 let _ = Box::from_raw(seg);
             }
         }
+    }
+
+    struct DecommitRecordingBackend;
+
+    static DECOMMIT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+    static DECOMMIT_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+    static DECOMMIT_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static DECOMMIT_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+    impl MemoryBackend for DecommitRecordingBackend {
+        unsafe fn allocate(size: usize) -> *mut u8 {
+            let layout = std::alloc::Layout::from_size_align(size, SEGMENT_ALIGN)
+                .expect("segment mapping layout must be valid");
+            unsafe { std::alloc::alloc(layout) }
+        }
+
+        unsafe fn deallocate(ptr: *mut u8, size: usize) -> bool {
+            let layout = std::alloc::Layout::from_size_align(size, SEGMENT_ALIGN)
+                .expect("segment mapping layout must be valid");
+            unsafe {
+                std::alloc::dealloc(ptr, layout);
+            }
+            true
+        }
+
+        unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
+            let _ = ptr;
+            DECOMMIT_CALLS.fetch_add(1, Ordering::Relaxed);
+            DECOMMIT_BYTES.fetch_add(size, Ordering::Relaxed);
+            true
+        }
+    }
+
+    impl HasSegmentPool for DecommitRecordingBackend {
+        fn global_segment_pool() -> &'static GlobalSegmentPool {
+            &DECOMMIT_POOL
+        }
+
+        fn global_orphan_pool() -> &'static GlobalSegmentPool {
+            &DECOMMIT_ORPHAN_POOL
+        }
+    }
+
+    #[test]
+    fn test_segment_tail_slack_decommit() {
+        while DECOMMIT_POOL.pop().is_some() {}
+        while DECOMMIT_ORPHAN_POOL.pop().is_some() {}
+        DECOMMIT_CALLS.store(0, Ordering::Relaxed);
+        DECOMMIT_BYTES.store(0, Ordering::Relaxed);
+
+        let segment =
+            unsafe { allocate_segment::<DecommitRecordingBackend>() }.expect("segment allocation");
+
+        let calls = DECOMMIT_CALLS.load(Ordering::Relaxed);
+        let bytes = DECOMMIT_BYTES.load(Ordering::Relaxed);
+        assert!(
+            calls >= 1,
+            "Expected at least 1 decommit call for slack memory, got {}",
+            calls
+        );
+        assert!(
+            bytes >= SEGMENT_SIZE - 4096,
+            "Expected at least {} bytes decommitted, got {}",
+            SEGMENT_SIZE - 4096,
+            bytes
+        );
+
+        let released = unsafe { release_segment_mapping::<DecommitRecordingBackend>(segment) };
+        assert_eq!(released, SegmentRelease::Released);
     }
 }

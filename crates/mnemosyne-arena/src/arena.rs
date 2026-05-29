@@ -171,6 +171,22 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(size: usize, align: usiz
         metadata_slot.write(aligned_ptr);
     }
 
+    let tail_slack_start = match checked_align_up(payload_end, PAGE_SIZE) {
+        Some(addr) => addr,
+        None => {
+            // Safety: Releasing raw memory back to the backend because alignment check overflowed.
+            let _released = unsafe { B::deallocate(raw_ptr, total_alloc_size) };
+            return core::ptr::null_mut();
+        }
+    };
+    if tail_slack_start < mapping_end {
+        let tail_slack_size = mapping_end - tail_slack_start;
+        // Safety: `[tail_slack_start, mapping_end)` is a page-aligned subrange of the
+        // live reservation holding no allocator or user data (it succeeds the user payload)
+        // and remains covered by the base release.
+        let _ = unsafe { B::decommit(tail_slack_start as *mut u8, tail_slack_size) };
+    }
+
     user_ptr
 }
 
@@ -201,6 +217,11 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
     } else {
         segment_ptr
     };
+
+    debug_assert!(
+        !resolved_segment_ptr.is_null(),
+        "resolved_segment_ptr must not be null"
+    );
 
     let segment = unsafe { &mut *resolved_segment_ptr };
     let huge_size = segment.pages[0].block_size;
@@ -432,5 +453,80 @@ mod tests {
 
         assert!(!released, "failing huge release backend reported success");
         assert_eq!(FAILING_HUGE_DEALLOC_CALLS.load(Ordering::Relaxed), 1);
+    }
+
+    struct DecommitRecordingHugeBackend;
+
+    static DECOMMIT_HUGE_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+    static DECOMMIT_HUGE_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+    static DECOMMIT_HUGE_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static DECOMMIT_HUGE_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+    impl MemoryBackend for DecommitRecordingHugeBackend {
+        unsafe fn allocate(size: usize) -> *mut u8 {
+            let layout = std::alloc::Layout::from_size_align(size, SEGMENT_ALIGN)
+                .expect("huge mapping layout must be valid");
+            unsafe { std::alloc::alloc(layout) }
+        }
+
+        unsafe fn deallocate(ptr: *mut u8, size: usize) -> bool {
+            let layout = std::alloc::Layout::from_size_align(size, SEGMENT_ALIGN)
+                .expect("huge mapping layout must be valid");
+            unsafe {
+                std::alloc::dealloc(ptr, layout);
+            }
+            true
+        }
+
+        unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
+            let _ = ptr;
+            DECOMMIT_HUGE_CALLS.fetch_add(1, Ordering::Relaxed);
+            DECOMMIT_HUGE_BYTES.fetch_add(size, Ordering::Relaxed);
+            true
+        }
+    }
+
+    impl HasSegmentPool for DecommitRecordingHugeBackend {
+        fn global_segment_pool() -> &'static GlobalSegmentPool {
+            &DECOMMIT_HUGE_POOL
+        }
+
+        fn global_orphan_pool() -> &'static GlobalSegmentPool {
+            &DECOMMIT_HUGE_ORPHAN_POOL
+        }
+    }
+
+    #[test]
+    fn huge_allocation_decommits_tail_slack() {
+        let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
+        DECOMMIT_HUGE_CALLS.store(0, Ordering::Relaxed);
+        DECOMMIT_HUGE_BYTES.store(0, Ordering::Relaxed);
+
+        let size = 4 * 1024 * 1024;
+        let align = 8;
+        let user_ptr =
+            unsafe { allocate_large_or_huge::<DecommitRecordingHugeBackend>(size, align) };
+        assert!(!user_ptr.is_null());
+
+        let calls = DECOMMIT_HUGE_CALLS.load(Ordering::Relaxed);
+        let bytes = DECOMMIT_HUGE_BYTES.load(Ordering::Relaxed);
+
+        assert!(
+            calls >= 1,
+            "Expected at least 1 decommit call, got {}",
+            calls
+        );
+        assert!(
+            bytes >= SEGMENT_SIZE,
+            "Expected at least {} bytes decommitted, got {}",
+            SEGMENT_SIZE,
+            bytes
+        );
+
+        let recovered = unsafe { *((user_ptr as *mut *mut Segment).sub(1)) };
+        let released = unsafe {
+            deallocate_large_or_huge::<DecommitRecordingHugeBackend>(user_ptr, recovered)
+        };
+        assert!(released);
     }
 }

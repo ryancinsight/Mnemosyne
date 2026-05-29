@@ -11,7 +11,6 @@ use crate::constants::{MAX_SMALL_ALLOC_SIZE, NUM_SIZE_CLASSES};
 /// historical mapping is preserved so callers that pass an already-adjusted
 /// minimum size still resolve to the smallest class without an extra branch.
 
-
 /// Maps an allocation size to its corresponding size class index.
 ///
 /// Returns `None` if the size exceeds `MAX_SMALL_ALLOC_SIZE`. A size of `0`
@@ -61,10 +60,9 @@ pub const fn round_up_size(size: usize) -> Option<usize> {
 }
 
 const CLASS_TO_SIZE: [u16; NUM_SIZE_CLASSES] = [
-    16, 32, 48, 64, 80, 96, 112, 128,
-    160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512,
-    640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048,
-    2560, 3072, 3584, 4096, 4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192,
+    16, 32, 48, 64, 80, 96, 112, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512,
+    640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048, 2560, 3072, 3584, 4096,
+    4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192,
 ];
 
 /// Maps a size class index to its maximum block size.

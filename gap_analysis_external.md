@@ -42,7 +42,7 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | Single-cache-line page metadata (≤ 64 B) | 64 B exactly, pinned by `page_struct_size_stays_within_one_cache_line` | mimalloc page (64 B), snmalloc slab (64 B+) | Parity. | done |
 | Bitmap free lists for very small classes | Not implemented (linked-list free lists for every class) | snmalloc 0.6 backend chunkmap | Bitmaps reduce per-block metadata for 16-byte class; cache-conflict risk. Investigate after profiling shows the 16/32 B classes are bandwidth-bound. | `[arch]` |
 | Page-local free list compaction on free | Linked list LIFO | mimalloc shifts free→local_free→thread_free in batched flushes | Mnemosyne already does the three-list dance; check whether batched flush ordering matches mimalloc's restoration logic. | `[minor]` |
-| Encrypted free list pointers (`next` XOR per-page secret) | Not implemented | mimalloc-secure, Scudo, hardened_malloc | Detects type confusion / linear UAF. Belongs in `SecurePolicy`. | `[minor]` |
+| Encrypted free list pointers (`next` XOR per-page secret) | Implemented under `HardenedPolicy` | mimalloc-secure, Scudo, hardened_malloc | Detects type confusion / linear UAF. | done |
 | Per-page guard pages | Backend seam `make_guard(ptr, size) -> bool` implemented (Unix `mprotect(PROT_NONE)`, Windows `VirtualProtect(PAGE_NOACCESS)`); arena-level placement pending | hardened_malloc, Scudo, PartitionAlloc | Backend seam delivered. Arena-level placement (e.g. between size-class pages) is the remaining work. | partial |
 | Allocation-randomized first-fit | Not implemented (always LIFO from `page.free`) | hardened_malloc, Scudo | Increases UAF reuse latency; trades cache locality. Optional `SecurePolicy` knob. | `[minor]` |
 
@@ -91,7 +91,7 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | Compile-time `SecurePolicy` ZST | Implemented | mimalloc-secure build flag | Parity for opt-in. | done |
 | Zero-on-allocation (`SecurePolicy::ZERO_INITIALIZE`) | Implemented | mimalloc-secure, Scudo, calloc-style | Parity. | done |
 | Free-time poisoning (`SecurePolicy::POISON_FREE_BYTE = 0xDE`) | Implemented | mimalloc-secure, Scudo | Parity. | done |
-| **Free-list pointer encryption (`next` XOR per-page secret)** | Not implemented | mimalloc-secure free-list encoding, Scudo cookie | Detects double-free and naive UAF link rewrites. | `[minor]` |
+| **Free-list pointer encryption (`next` XOR per-page secret)** | Implemented under `HardenedPolicy` | mimalloc-secure free-list encoding, Scudo cookie | Detects double-free and naive UAF link rewrites. | done |
 | **Chunk header checksum** | Not implemented | Scudo `Chunk::Header::Checksum` | Detects metadata corruption. Overhead vs. small classes is high. | `[minor]` |
 | **Allocator stack canary / per-segment guard pages** | Not implemented | hardened_malloc, PartitionAlloc | OOB write detection. | `[major]` |
 | **Randomized allocation ordering** | Not implemented | Scudo, hardened_malloc | UAF reuse latency. | `[minor]` |

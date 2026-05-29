@@ -9,7 +9,7 @@
 | allocator burst retention/small_32 | 1211.880 | 6879.537 | 918.301 | 4050.872 | N/A | 0.18x | 1.32x | 0.30x | N/A |
 | allocator cycle latency/large_8192 | 4.143 | 21.290 | 16.452 | 17.355 | N/A | 0.19x | 0.25x | 0.24x | N/A |
 | allocator cycle latency/medium_1024 | 4.243 | 21.471 | 6.123 | 16.480 | N/A | 0.20x | 0.69x | 0.26x | N/A |
-| allocator cycle latency/small_32 | 3.095 | 21.131 | 2.806 | 15.632 | N/A | 0.15x | 1.10x | 0.20x | N/A |
+| allocator cycle latency/small_32 | 2.046 | 21.131 | 2.806 | 15.632 | N/A | 0.10x | 0.73x | 0.13x | N/A |
 | allocator deallocation latency/medium_1024 | 23.087 | 38.690 | 133.087 | 63.766 | N/A | 0.60x | 0.17x | 0.36x | N/A |
 | allocator deallocation latency/small_32 | 4.660 | 11.795 | 6.050 | 9.512 | N/A | 0.40x | 0.77x | 0.49x | N/A |
 | cross-thread free handoff/medium_1024 | 11959.002 | 36996.755 | 181310.248 | 36608.041 | N/A | 0.32x | 0.07x | 0.33x | N/A |

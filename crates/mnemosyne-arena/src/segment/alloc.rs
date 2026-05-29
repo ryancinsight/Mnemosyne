@@ -1,10 +1,10 @@
 //! Aligned segment allocations from the OS or global pools.
 
-use mnemosyne_core::constants::{SEGMENT_ALIGN, SEGMENT_SIZE};
-use mnemosyne_core::types::Segment;
 use super::pool::HasSegmentPool;
 use super::stats::SegmentRelease;
 use super::utils::checked_align_up;
+use mnemosyne_core::constants::{SEGMENT_ALIGN, SEGMENT_SIZE};
+use mnemosyne_core::types::Segment;
 
 /// Bytes requested from the OS for each standard segment mapping.
 pub const SEGMENT_MAPPING_SIZE: usize = SEGMENT_SIZE * 2;
@@ -67,6 +67,10 @@ unsafe fn allocate_segment_from_pools<B: HasSegmentPool>() -> Option<*mut Segmen
 /// by the caller.
 #[inline(always)]
 unsafe fn try_return_to_pool<B: HasSegmentPool>(segment: *mut Segment) -> bool {
+    debug_assert!(
+        !segment.is_null(),
+        "try_return_to_pool received null segment"
+    );
     unsafe { B::global_segment_pool().try_push_retained(segment) }
 }
 
@@ -155,6 +159,20 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
             unsafe { B::make_guard(tail_guard_addr as *mut u8, SEGMENT_TAIL_GUARD_SIZE) };
     }
 
+    let tail_slack_start = if cfg!(feature = "segment-tail-guards") {
+        aligned_addr + SEGMENT_SIZE + SEGMENT_TAIL_GUARD_SIZE
+    } else {
+        aligned_addr + SEGMENT_SIZE
+    };
+    let mapping_end = raw_ptr as usize + SEGMENT_MAPPING_SIZE;
+    if tail_slack_start < mapping_end {
+        let tail_slack_size = mapping_end - tail_slack_start;
+        // Safety: `[tail_slack_start, mapping_end)` is a page-aligned subrange of the
+        // live reservation holding no allocator data (it succeeds the segment pages)
+        // and remains covered by the base release.
+        let _ = unsafe { B::decommit(tail_slack_start as *mut u8, tail_slack_size) };
+    }
+
     Some(aligned_ptr)
 }
 
@@ -192,6 +210,10 @@ pub unsafe fn deallocate_segment<B: HasSegmentPool>(segment: *mut Segment) {
 /// - The backend `B` must match the backend that allocated the segment.
 #[inline]
 pub unsafe fn release_segment_mapping<B: HasSegmentPool>(segment: *mut Segment) -> SegmentRelease {
+    debug_assert!(
+        !segment.is_null(),
+        "release_segment_mapping received null segment"
+    );
     // Safety: segment is a valid allocated Segment. We extract raw_alloc_ptr
     // and deallocate the original OS mapping.
     let released = unsafe {

@@ -1,8 +1,8 @@
 //! Highly optimized, monomorphized Thread Local Storage (TLS) provider implementations.
 
-use mnemosyne_arena::HasSegmentPool;
 use crate::{LocalAllocatorSlot, ThreadAllocator};
 use core::sync::atomic::{AtomicU32, Ordering};
+use mnemosyne_arena::HasSegmentPool;
 
 /// Trait providing access to the raw thread-local slot and exit registration hook.
 pub trait TlsSlotAccess<B: HasSegmentPool>: 'static {
@@ -39,7 +39,9 @@ pub trait TlsProvider<B: HasSegmentPool>: 'static {
     /// # Safety
     ///
     /// `f` must not re-enter the allocator.
-    unsafe fn with_allocator_unguarded<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R>;
+    unsafe fn with_allocator_unguarded<R>(
+        f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
+    ) -> Option<R>;
 
     /// Returns the raw pointer to the thread-local allocator cache.
     fn get_allocator_ptr() -> *mut core::ffi::c_void;
@@ -68,7 +70,9 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for StandardTls<B, S
     }
 
     #[inline(always)]
-    unsafe fn with_allocator_unguarded<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
+    unsafe fn with_allocator_unguarded<R>(
+        f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
+    ) -> Option<R> {
         S::get_slot_standard(|slot| unsafe { slot.with_allocator_unguarded(f) })
     }
 
@@ -118,7 +122,9 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
     }
 
     #[inline(always)]
-    unsafe fn with_allocator_unguarded<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
+    unsafe fn with_allocator_unguarded<R>(
+        f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
+    ) -> Option<R> {
         let ptr = S::get_cached_cell(|cell| cell.get());
         if !ptr.is_null() {
             let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
@@ -190,7 +196,9 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
     }
 
     #[inline(always)]
-    unsafe fn with_allocator_unguarded<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
+    unsafe fn with_allocator_unguarded<R>(
+        f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
+    ) -> Option<R> {
         let key = get_os_tls_key(S::get_os_tls_key());
         let ptr = get_os_tls_value(key);
         if !ptr.is_null() {
@@ -279,7 +287,9 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
     }
 
     #[inline(always)]
-    unsafe fn with_allocator_unguarded<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
+    unsafe fn with_allocator_unguarded<R>(
+        f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
+    ) -> Option<R> {
         #[cfg(all(windows, target_arch = "x86_64"))]
         {
             let key = get_os_tls_key(S::get_os_tls_key());
@@ -365,7 +375,9 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
     }
 
     #[inline(always)]
-    unsafe fn with_allocator_unguarded<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
+    unsafe fn with_allocator_unguarded<R>(
+        f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
+    ) -> Option<R> {
         #[cfg(feature = "nightly_tls")]
         {
             S::get_slot_nightly(|slot| unsafe { slot.with_allocator_unguarded(f) })
@@ -488,21 +500,25 @@ fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
     }
 }
 
-// --- Windows x86_64 Direct TEB/TIB Access Functions ---
-
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[inline(always)]
 unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
-    let teb: *mut u8;
-    core::arch::asm!(
-        "mov {}, gs:[0x30]",
-        out(reg) teb,
-        options(nostack, preserves_flags, readonly)
-    );
     if index < 64 {
-        let slots = teb.add(0x1480) as *mut *mut core::ffi::c_void;
-        *slots.add(index as usize)
+        let val: *mut core::ffi::c_void;
+        core::arch::asm!(
+            "mov {}, gs:[0x1480 + {} * 8]",
+            out(reg) val,
+            in(reg) index as usize,
+            options(nostack, preserves_flags, readonly)
+        );
+        val
     } else {
+        let teb: *mut u8;
+        core::arch::asm!(
+            "mov {}, gs:[0x30]",
+            out(reg) teb,
+            options(nostack, preserves_flags, readonly)
+        );
         let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
         if expansion_slots.is_null() {
             core::ptr::null_mut()
@@ -515,16 +531,20 @@ unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[inline(always)]
 unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
-    let teb: *mut u8;
-    core::arch::asm!(
-        "mov {}, gs:[0x30]",
-        out(reg) teb,
-        options(nostack, preserves_flags, readonly)
-    );
     if index < 64 {
-        let slots = teb.add(0x1480) as *mut *mut core::ffi::c_void;
-        *slots.add(index as usize) = value;
+        core::arch::asm!(
+            "mov gs:[0x1480 + {} * 8], {}",
+            in(reg) index as usize,
+            in(reg) value,
+            options(nostack, preserves_flags)
+        );
     } else {
+        let teb: *mut u8;
+        core::arch::asm!(
+            "mov {}, gs:[0x30]",
+            out(reg) teb,
+            options(nostack, preserves_flags, readonly)
+        );
         let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
         if !expansion_slots.is_null() {
             *expansion_slots.add(index as usize - 64) = value;

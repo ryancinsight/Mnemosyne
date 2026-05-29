@@ -9,9 +9,19 @@ const PROT_READ: c_int = 1;
 const PROT_WRITE: c_int = 2;
 const MAP_PRIVATE: c_int = 2;
 
-#[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
 const MAP_ANON: c_int = 0x1000;
-#[cfg(not(any(target_os = "macos", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+)))]
 const MAP_ANON: c_int = 0x20;
 
 const MAP_FAILED: *mut c_void = -1isize as *mut c_void;

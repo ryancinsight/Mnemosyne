@@ -1,7 +1,7 @@
 //! Arena memory telemetry statistics types and helpers.
 
-use super::pool::HasSegmentPool;
 use super::alloc::{MAX_RETAINED_SEGMENTS, SEGMENT_MAPPING_SIZE};
+use super::pool::HasSegmentPool;
 
 /// Snapshot of arena-level segment cache state.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

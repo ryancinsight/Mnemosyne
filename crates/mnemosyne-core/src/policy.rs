@@ -17,6 +17,9 @@ pub trait AllocPolicy: private::Sealed + Send + Sync + 'static {
 
     /// Byte pattern to write into memory when it is allocated.
     const POISON_ALLOC_BYTE: u8 = 0xAD;
+
+    /// If true, encrypt free list next pointers.
+    const ENABLE_FREE_LIST_ENCRYPTION: bool = false;
 }
 
 /// Zero-Sized Type (ZST) representing the standard allocation policy with maximum performance.
@@ -37,4 +40,15 @@ impl private::Sealed for SecurePolicy {}
 impl AllocPolicy for SecurePolicy {
     const ENABLE_POISONING: bool = true;
     const ZERO_INITIALIZE: bool = true;
+}
+
+/// Zero-Sized Type (ZST) representing a hardened allocation policy with memory poisoning, zero-initialization, and free-list encryption.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct HardenedPolicy;
+
+impl private::Sealed for HardenedPolicy {}
+impl AllocPolicy for HardenedPolicy {
+    const ENABLE_POISONING: bool = true;
+    const ZERO_INITIALIZE: bool = true;
+    const ENABLE_FREE_LIST_ENCRYPTION: bool = true;
 }

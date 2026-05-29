@@ -56,7 +56,7 @@ impl AtomicFreeList {
     ///
     /// This is used for cross-thread deallocation.
     #[inline]
-    pub fn push(&self, block: NonNull<Block>) {
+    pub fn push<P: crate::policy::AllocPolicy>(&self, block: NonNull<Block>) {
         let block_ptr = block.as_ptr();
         // A tagged-pointer free list inherently materializes pointers from
         // integers, so it uses *exposed* provenance (it cannot be
@@ -75,6 +75,15 @@ impl AtomicFreeList {
             Self::PACKED_PTR_BITS
         );
 
+        let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+            let segment_addr = block_addr & !(crate::constants::SEGMENT_SIZE - 1);
+            let page_index =
+                (block_addr & (crate::constants::SEGMENT_SIZE - 1)) >> crate::constants::PAGE_SHIFT;
+            unsafe { (*(segment_addr as *const crate::types::Segment)).keys[page_index] }
+        } else {
+            0
+        };
+
         let mut current = self.head.load(Ordering::Relaxed);
         loop {
             let current_addr = current & Self::PTR_MASK;
@@ -84,7 +93,7 @@ impl AtomicFreeList {
             // Safety: block_ptr is valid, writeable, aligned memory, exclusive
             // to the pushing thread until the CAS publishes it.
             unsafe {
-                (*block_ptr).next = NonNull::new(current_ptr);
+                (*block_ptr).set_next::<P>(NonNull::new(current_ptr), cookie);
             }
 
             let next_val = (next_count << Self::PACKED_PTR_BITS) | block_addr;
@@ -105,7 +114,7 @@ impl AtomicFreeList {
     ///
     /// This is wait-free and returns a standard local linked list along with its count in O(1).
     #[inline]
-    pub fn pop_all(&self) -> Option<(NonNull<Block>, usize)> {
+    pub fn pop_all(&self, _encrypted: bool, _cookie: usize) -> Option<(NonNull<Block>, usize)> {
         let val = self.head.swap(0, Ordering::Acquire);
         let addr = val & Self::PTR_MASK;
         let count = val >> Self::PACKED_PTR_BITS;
@@ -133,14 +142,24 @@ impl AtomicFreeList {
     ///
     /// This is used for cross-thread deallocation.
     #[inline]
-    pub fn push(&self, block: NonNull<Block>) {
+    pub fn push<P: crate::policy::AllocPolicy>(&self, block: NonNull<Block>) {
         let block_ptr = block.as_ptr();
+        let block_addr = block_ptr as usize;
+        let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+            let segment_addr = block_addr & !(crate::constants::SEGMENT_SIZE - 1);
+            let page_index =
+                (block_addr & (crate::constants::SEGMENT_SIZE - 1)) >> crate::constants::PAGE_SHIFT;
+            unsafe { (*(segment_addr as *const crate::types::Segment)).keys[page_index] }
+        } else {
+            0
+        };
+
         let mut current = self.head.load(Ordering::Relaxed);
         loop {
             // Safety: block_ptr is guaranteed to be valid, writeable, aligned memory,
             // exclusive to the thread calling push.
             unsafe {
-                (*block_ptr).next = NonNull::new(current);
+                (*block_ptr).set_next::<P>(NonNull::new(current), cookie);
             }
             match self.head.compare_exchange_weak(
                 current,
@@ -158,14 +177,14 @@ impl AtomicFreeList {
     ///
     /// This walks the list to count blocks in O(k).
     #[inline]
-    pub fn pop_all(&self) -> Option<(NonNull<Block>, usize)> {
+    pub fn pop_all(&self, encrypted: bool, cookie: usize) -> Option<(NonNull<Block>, usize)> {
         let ptr = self.head.swap(core::ptr::null_mut(), Ordering::Acquire);
         NonNull::new(ptr).map(|head| {
             let mut count = 0;
             let mut current = Some(head);
             while let Some(node) = current {
                 count += 1;
-                current = unsafe { (*node.as_ptr()).next };
+                current = unsafe { (*node.as_ptr()).get_next_dynamic(encrypted, cookie) };
             }
             (head, count)
         })

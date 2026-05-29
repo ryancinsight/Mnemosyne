@@ -9,8 +9,98 @@ use core::ptr::NonNull;
 /// Free blocks are stored inline within the allocated memory when free.
 #[repr(transparent)]
 pub struct Block {
-    /// Pointer to the next free block.
-    pub next: Option<NonNull<Block>>,
+    /// Encrypted or raw pointer to the next free block.
+    next_encoded: Option<NonNull<Block>>,
+}
+
+impl Block {
+    /// Gets the next block in the free list, decoding it if required.
+    ///
+    /// # Safety
+    ///
+    /// The block pointer must be valid and aligned.
+    #[inline(always)]
+    pub unsafe fn get_next<P: crate::policy::AllocPolicy>(
+        &self,
+        page_cookie: usize,
+    ) -> Option<NonNull<Block>> {
+        if P::ENABLE_FREE_LIST_ENCRYPTION {
+            self.next_encoded.map(|encoded| {
+                let cookie = page_cookie | 1;
+                let decoded_ptr = (encoded.as_ptr() as usize ^ cookie) as *mut Block;
+                unsafe { NonNull::new_unchecked(decoded_ptr) }
+            })
+        } else {
+            self.next_encoded
+        }
+    }
+
+    /// Gets the next block dynamically using a dynamic encrypted flag.
+    ///
+    /// # Safety
+    ///
+    /// The block pointer must be valid and aligned.
+    #[inline(always)]
+    pub unsafe fn get_next_dynamic(
+        &self,
+        encrypted: bool,
+        page_cookie: usize,
+    ) -> Option<NonNull<Block>> {
+        if encrypted {
+            self.next_encoded.map(|encoded| {
+                let cookie = page_cookie | 1;
+                let decoded_ptr = (encoded.as_ptr() as usize ^ cookie) as *mut Block;
+                unsafe { NonNull::new_unchecked(decoded_ptr) }
+            })
+        } else {
+            self.next_encoded
+        }
+    }
+
+    /// Sets the next block in the free list, encoding it if required.
+    ///
+    /// # Safety
+    ///
+    /// The block pointer must be valid and aligned.
+    #[inline(always)]
+    pub unsafe fn set_next<P: crate::policy::AllocPolicy>(
+        &mut self,
+        next: Option<NonNull<Block>>,
+        page_cookie: usize,
+    ) {
+        if P::ENABLE_FREE_LIST_ENCRYPTION {
+            self.next_encoded = next.map(|ptr| {
+                let cookie = page_cookie | 1;
+                let encoded_ptr = (ptr.as_ptr() as usize ^ cookie) as *mut Block;
+                unsafe { NonNull::new_unchecked(encoded_ptr) }
+            });
+        } else {
+            self.next_encoded = next;
+        }
+    }
+
+    /// Sets the next block dynamically using a dynamic encrypted flag.
+    ///
+    /// # Safety
+    ///
+    /// The block pointer must be valid and aligned.
+    #[inline(always)]
+    pub unsafe fn set_next_dynamic(
+        &mut self,
+        next: Option<NonNull<Block>>,
+        encrypted: bool,
+        page_cookie: usize,
+    ) {
+        if encrypted {
+            self.next_encoded = next.map(|ptr| {
+                let cookie = page_cookie | 1;
+                let encoded_ptr = (ptr.as_ptr() as usize ^ cookie) as *mut Block;
+                unsafe { NonNull::new_unchecked(encoded_ptr) }
+            });
+        } else {
+            self.next_encoded = next;
+        }
+    }
 }
 
 // Block is simple data, safe to send/sync as a memory representation.
@@ -121,18 +211,25 @@ impl Page {
         (self_addr - pages_base) / core::mem::size_of::<Page>()
     }
 
-    /// Atomically drains cross-thread frees into the page-local free list.
-    ///
-    /// Returns the number of reclaimed blocks. The caller owns the surrounding
-    /// allocator metadata update and may use the count for telemetry.
+    /// Atomically drains cross-thread frees into the page-local free list dynamically.
     ///
     /// # Safety
     ///
     /// The page must belong to the allocator context currently reconciling its
-    /// metadata, and every block in `thread_free` must belong to this page.
+    /// metadata.
     #[inline]
-    pub unsafe fn reclaim_thread_free(&mut self) -> usize {
-        let Some((block, count)) = self.thread_free.pop_all() else {
+    pub unsafe fn reclaim_thread_free_dynamic(&mut self, encrypted: bool) -> usize {
+        let cookie = if encrypted {
+            let self_addr = self as *const Page as usize;
+            let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
+            let segment = segment_addr as *mut Segment;
+            let page_index = self.index_in_segment();
+            unsafe { (*segment).keys[page_index] }
+        } else {
+            0
+        };
+
+        let Some((block, count)) = self.thread_free.pop_all(encrypted, cookie) else {
             return 0;
         };
 
@@ -148,15 +245,26 @@ impl Page {
             self.free = Some(block);
         } else {
             let mut last = block;
-            while let Some(node) = unsafe { (*last.as_ptr()).next } {
+            while let Some(node) = unsafe { (*last.as_ptr()).get_next_dynamic(encrypted, cookie) } {
                 last = node;
             }
             unsafe {
-                (*last.as_ptr()).next = self.free;
+                (*last.as_ptr()).set_next_dynamic(self.free, encrypted, cookie);
             }
             self.free = Some(block);
         }
         count
+    }
+
+    /// Atomically drains cross-thread frees into the page-local free list.
+    ///
+    /// # Safety
+    ///
+    /// The page must belong to the allocator context currently reconciling its
+    /// metadata.
+    #[inline]
+    pub unsafe fn reclaim_thread_free<P: crate::policy::AllocPolicy>(&mut self) -> usize {
+        unsafe { self.reclaim_thread_free_dynamic(P::ENABLE_FREE_LIST_ENCRYPTION) }
     }
 
     /// Initializes a page's free list for a specific block size.
@@ -165,11 +273,24 @@ impl Page {
     ///
     /// The `page_start` pointer must point to the start of the 64KB page
     /// and must be valid for reads and writes of size `PAGE_SIZE`.
-    pub unsafe fn initialize_free_list(&mut self, page_start: *mut u8) {
+    pub unsafe fn initialize_free_list<P: crate::policy::AllocPolicy>(
+        &mut self,
+        page_start: *mut u8,
+    ) {
         let block_size = self.block_size;
         let num_blocks = PAGE_SIZE / block_size;
         self.max_blocks = num_blocks;
         self.alloc_count = 0;
+
+        let self_addr = self as *const Page as usize;
+        let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
+        let segment = segment_addr as *mut Segment;
+        let page_index = self.index_in_segment();
+        let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+            unsafe { (*segment).keys[page_index] }
+        } else {
+            0
+        };
 
         let mut prev: Option<NonNull<Block>> = None;
         for i in (0..num_blocks).rev() {
@@ -179,7 +300,7 @@ impl Page {
             // We write the next node to form the linked list.
             unsafe {
                 let block_ptr = page_start.add(offset) as *mut Block;
-                (*block_ptr).next = prev;
+                (*block_ptr).set_next::<P>(prev, cookie);
                 prev = Some(NonNull::new_unchecked(block_ptr));
             }
         }
@@ -214,6 +335,10 @@ pub struct Segment {
     pub prev_owned_segment: *mut Segment,
     /// Pointer to the next free segment in the global pool.
     pub next_free_segment: *mut Segment,
+    /// If true, free list pointers in this segment are XOR-encrypted.
+    pub free_list_encrypted: bool,
+    /// Per-page keys for free-list pointer encryption.
+    pub keys: [usize; PAGES_PER_SEGMENT],
     /// The pages metadata array. Page 0 is reserved for segment metadata.
     pub pages: [Page; PAGES_PER_SEGMENT],
 }
@@ -238,6 +363,11 @@ impl Segment {
             segment.next_owned_segment = core::ptr::null_mut();
             segment.prev_owned_segment = core::ptr::null_mut();
             segment.next_free_segment = core::ptr::null_mut();
+            segment.free_list_encrypted = false;
+            for i in 0..PAGES_PER_SEGMENT {
+                segment.keys[i] =
+                    (aligned_ptr as usize).wrapping_add(i * PAGE_SIZE) ^ 0x5555555555555555;
+            }
 
             // Page 0 holds segment metadata and is never allocated from;
             // only pages 1..PAGES_PER_SEGMENT need explicit free-list state.
@@ -332,17 +462,18 @@ mod tests {
         let mut storage = PageStorage([0u8; PAGE_SIZE]);
 
         unsafe {
-            page.initialize_free_list(storage.0.as_mut_ptr());
+            page.initialize_free_list::<crate::policy::StandardPolicy>(storage.0.as_mut_ptr());
         }
 
         let first = page.free.expect("initialized page has a free block");
         unsafe {
-            page.free = (*first.as_ptr()).next;
+            page.free = (*first.as_ptr()).get_next::<crate::policy::StandardPolicy>(0);
         }
         page.alloc_count = 1;
-        page.thread_free.push(first);
+        page.thread_free
+            .push::<crate::policy::StandardPolicy>(first);
 
-        let reclaimed = unsafe { page.reclaim_thread_free() };
+        let reclaimed = unsafe { page.reclaim_thread_free::<crate::policy::StandardPolicy>() };
 
         assert_eq!(reclaimed, 1);
         assert_eq!(page.alloc_count, 0);
@@ -363,32 +494,39 @@ mod tests {
         let mut storage = PageStorage([0u8; PAGE_SIZE]);
 
         unsafe {
-            page.initialize_free_list(storage.0.as_mut_ptr());
+            page.initialize_free_list::<crate::policy::StandardPolicy>(storage.0.as_mut_ptr());
         }
 
         let b1 = page.free.expect("has b1");
-        unsafe { page.free = (*b1.as_ptr()).next; }
+        unsafe {
+            page.free = (*b1.as_ptr()).get_next::<crate::policy::StandardPolicy>(0);
+        }
         let b2 = page.free.expect("has b2");
-        unsafe { page.free = (*b2.as_ptr()).next; }
+        unsafe {
+            page.free = (*b2.as_ptr()).get_next::<crate::policy::StandardPolicy>(0);
+        }
 
         // Simulate all other blocks allocated / empty free list
         page.free = None;
         page.alloc_count = 2;
 
-        page.thread_free.push(b1);
-        page.thread_free.push(b2);
+        page.thread_free.push::<crate::policy::StandardPolicy>(b1);
+        page.thread_free.push::<crate::policy::StandardPolicy>(b2);
 
         // Reclaim thread_free. Since page.free is None, this triggers O(1) swap.
-        let reclaimed = unsafe { page.reclaim_thread_free() };
+        let reclaimed = unsafe { page.reclaim_thread_free::<crate::policy::StandardPolicy>() };
 
         assert_eq!(reclaimed, 2);
         assert_eq!(page.alloc_count, 0);
         assert_eq!(page.free, Some(b2));
 
         unsafe {
-            let next_node = (*b2.as_ptr()).next;
+            let next_node = (*b2.as_ptr()).get_next::<crate::policy::StandardPolicy>(0);
             assert_eq!(next_node, Some(b1));
-            assert_eq!((*b1.as_ptr()).next, None);
+            assert_eq!(
+                (*b1.as_ptr()).get_next::<crate::policy::StandardPolicy>(0),
+                None
+            );
         }
         assert!(
             page.thread_free.is_empty(),

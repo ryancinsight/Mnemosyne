@@ -5,9 +5,37 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_arena::{allocate_segment, deallocate_segment, HasSegmentPool};
 use mnemosyne_backend::DefaultBackend;
-use mnemosyne_core::constants::{NUM_SIZE_CLASSES, PAGES_PER_SEGMENT, PAGE_SHIFT, SEGMENT_SIZE};
+use mnemosyne_core::constants::{
+    NUM_SIZE_CLASSES, PAGES_PER_SEGMENT, PAGE_SHIFT, PAGE_SIZE, SEGMENT_SIZE,
+};
+use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::{class_to_size, size_to_class};
 use mnemosyne_core::types::{Page, Segment, SegmentOwner};
+
+std::thread_local! {
+    static TLS_SEED: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+#[inline(always)]
+fn get_tls_seed() -> usize {
+    TLS_SEED.with(|cell| {
+        let val = cell.get();
+        if val == 0 {
+            use std::hash::{BuildHasher, Hasher};
+            let state = std::collections::hash_map::RandomState::new();
+            let mut hasher = state.build_hasher();
+            hasher.write_usize(0);
+            let mut seed = hasher.finish() as usize;
+            if seed == 0 {
+                seed = 0xdeadbeeffacefeed;
+            }
+            cell.set(seed);
+            seed
+        } else {
+            val
+        }
+    })
+}
 
 static CROSS_THREAD_RECLAIMED_BLOCKS: AtomicUsize = AtomicUsize::new(0);
 
@@ -65,7 +93,9 @@ fn record_cross_thread_reclaimed(count: usize) {
 /// local free list, a successful `Page::reclaim_thread_free`, or
 /// `Page::initialize_free_list`.
 #[inline(always)]
-unsafe fn pop_page_free_block(page: &mut Page) -> NonNull<mnemosyne_core::types::Block> {
+unsafe fn pop_page_free_block<P: AllocPolicy>(
+    page: &mut Page,
+) -> NonNull<mnemosyne_core::types::Block> {
     debug_assert!(
         page.free.is_some(),
         "page {} free list empty before pop; block_size={}, alloc_count={}, max_blocks={}",
@@ -78,8 +108,17 @@ unsafe fn pop_page_free_block(page: &mut Page) -> NonNull<mnemosyne_core::types:
         Some(block) => block,
         None => unsafe { core::hint::unreachable_unchecked() },
     };
+    let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+        let self_addr = page as *const Page as usize;
+        let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
+        let segment = segment_addr as *mut Segment;
+        let page_index = page.index_in_segment();
+        unsafe { (*segment).keys[page_index] }
+    } else {
+        0
+    };
     unsafe {
-        page.free = (*block.as_ptr()).next;
+        page.free = (*block.as_ptr()).get_next::<P>(cookie);
     }
     block
 }
@@ -151,17 +190,17 @@ unsafe fn unlink_page_from_list(head_slot: &mut Option<NonNull<Page>>, target: *
 /// the allocator context performing the reconciliation and every block in
 /// `page.thread_free` must belong to this page.
 #[inline(always)]
-unsafe fn try_reclaim_and_allocate(
+unsafe fn try_reclaim_and_allocate<P: AllocPolicy>(
     page: &mut Page,
 ) -> Option<NonNull<mnemosyne_core::types::Block>> {
-    let reclaimed = unsafe { page.reclaim_thread_free() };
+    let reclaimed = unsafe { page.reclaim_thread_free::<P>() };
     if reclaimed == 0 {
         return None;
     }
     record_cross_thread_reclaimed(reclaimed);
     // Safety: `reclaim_thread_free` returning a nonzero count guarantees
     // that the drained chain is now linked onto `page.free`.
-    let block = unsafe { pop_page_free_block(page) };
+    let block = unsafe { pop_page_free_block::<P>(page) };
     page.alloc_count += 1;
     Some(block)
 }
@@ -229,7 +268,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// This method is unsafe because it works with raw pointers and handles manual memory layouts.
     #[inline(always)]
-    pub unsafe fn alloc(&mut self, size: usize) -> *mut u8 {
+    pub unsafe fn alloc<P: AllocPolicy>(&mut self, size: usize) -> *mut u8 {
         let class = match size_to_class(size) {
             Some(c) => c,
             None => return core::ptr::null_mut(),
@@ -243,8 +282,17 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             if let Some(block) = page.free {
                 // Safety: block points to a valid free Block inside the page.
                 // We update page.free to the next block in the linked list.
+                let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+                    let self_addr = page as *const Page as usize;
+                    let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
+                    let segment = segment_addr as *mut Segment;
+                    let page_index = page.index_in_segment();
+                    unsafe { (*segment).keys[page_index] }
+                } else {
+                    0
+                };
                 unsafe {
-                    page.free = (*block.as_ptr()).next;
+                    page.free = (*block.as_ptr()).get_next::<P>(cookie);
                 }
                 page.alloc_count += 1;
                 return block.as_ptr() as *mut u8;
@@ -253,14 +301,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // 2. Reclaim batched cross-thread frees only after the local list is empty.
             // Safety: `page` is owned by this allocator and `try_reclaim_and_allocate`
             // upholds the `Page::reclaim_thread_free` contract on its behalf.
-            if let Some(block) = unsafe { try_reclaim_and_allocate(page) } {
+            if let Some(block) = unsafe { try_reclaim_and_allocate::<P>(page) } {
                 return block.as_ptr() as *mut u8;
             }
         }
 
         // Outline the cold allocation path to keep alloc() small and fast.
         // Safety: Cold allocation path request is routed safely within bounds.
-        unsafe { self.alloc_cold(class) }
+        unsafe { self.alloc_cold::<P>(class) }
     }
 
     /// Returns true when `segment` is the active segment being sliced by this thread.
@@ -341,12 +389,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// Marked as `#[inline(never)]` to prevent pollution of instruction cache.
     #[inline(never)]
-    pub(crate) unsafe fn alloc_cold(&mut self, class: usize) -> *mut u8 {
+    pub(crate) unsafe fn alloc_cold<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
         // 1. Move the current active page to full_pages if it is indeed full.
         if let Some(mut active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
             let active_page = active_ptr.as_mut();
             // Safety: `active_page` is owned by this allocator.
-            if let Some(block) = try_reclaim_and_allocate(active_page) {
+            if let Some(block) = try_reclaim_and_allocate::<P>(active_page) {
                 return block.as_ptr() as *mut u8;
             }
             if active_page.free.is_none() {
@@ -376,7 +424,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // pending remote frees.
             if !page.thread_free.is_empty() {
                 // Safety: `page` is owned by this allocator.
-                if let Some(block) = try_reclaim_and_allocate(page) {
+                if let Some(block) = try_reclaim_and_allocate::<P>(page) {
                     if page.alloc_count < page.max_blocks {
                         // Page is no longer full! Move it back to active list.
                         // Safety: page_ptr and class are valid.
@@ -399,7 +447,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // 3. Allocate a brand new page
         // Safety: get_new_page is called to retrieve a page.
-        let new_page_ptr = self.get_new_page(class);
+        let new_page_ptr = self.get_new_page::<P>(class);
         if new_page_ptr.is_null() {
             return core::ptr::null_mut();
         }
@@ -409,7 +457,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let page = &mut *new_page_ptr;
         // Safety: `get_new_page` guarantees a freshly initialized page whose
         // `initialize_free_list` populated `free` with at least one block.
-        let block = pop_page_free_block(page);
+        let block = pop_page_free_block::<P>(page);
 
         page.alloc_count += 1;
 
@@ -436,7 +484,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// # Safety
     ///
     /// Accesses and modifies segment pointers.
-    unsafe fn get_new_page(&mut self, class: usize) -> *mut Page {
+    unsafe fn get_new_page<P: AllocPolicy>(&mut self, class: usize) -> *mut Page {
         let block_size = class_to_size(class);
 
         // Check if there is an empty page in the defragmentation list first.
@@ -450,7 +498,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 let page_start = (segment_addr as *mut u8).add(page.page_index << PAGE_SHIFT);
                 page.block_size = block_size;
                 page.size_class = class;
-                page.initialize_free_list(page_start);
+                page.initialize_free_list::<P>(page_start);
 
                 page.next_page = *self.active_pages.get_unchecked(class);
                 *self.active_pages.get_unchecked_mut(class) = Some(page_ptr);
@@ -472,7 +520,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     let mut found_page: *mut Page = core::ptr::null_mut();
                     // Safety: We claim ownership of this orphaned segment. We scan and register pages.
                     unsafe {
-                        self.push_owned_segment(seg_ptr);
+                        self.push_owned_segment::<P>(seg_ptr);
 
                         self.set_current_segment(Some(NonNull::new_unchecked(seg_ptr)));
                         self.next_page_index = PAGES_PER_SEGMENT;
@@ -483,7 +531,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                             if page.block_size > 0 {
                                 // Reclaim cross-thread frees to get accurate count.
-                                let reclaimed = page.reclaim_thread_free();
+                                let reclaimed = page.reclaim_thread_free::<P>();
                                 if reclaimed > 0 {
                                     record_cross_thread_reclaimed(reclaimed);
                                 }
@@ -522,7 +570,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                             unsafe { (seg_ptr as *mut u8).add(page.page_index << PAGE_SHIFT) };
                         // Safety: initializing free list for the repurposed page
                         unsafe {
-                            page.initialize_free_list(page_start);
+                            page.initialize_free_list::<P>(page_start);
                             page.next_page = *self.active_pages.get_unchecked(class);
                             *self.active_pages.get_unchecked_mut(class) =
                                 Some(NonNull::new_unchecked(found_page));
@@ -531,14 +579,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     }
 
                     // Fallback to allocating another segment recursively
-                    return unsafe { self.get_new_page(class) };
+                    return unsafe { self.get_new_page::<P>(class) };
                 } else {
                     self.fresh_segments += 1;
                     // Fresh segment initialization
                     // Safety: seg_ptr is valid, exclusive to this thread, and initialized.
                     // We set owner and insert it at the head of our owned segment list.
                     unsafe {
-                        self.push_owned_segment(seg_ptr);
+                        self.push_owned_segment::<P>(seg_ptr);
                         self.set_current_segment(Some(NonNull::new_unchecked(seg_ptr)));
                     }
                     self.next_page_index = 1; // page 0 is segment header
@@ -570,7 +618,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         let page_start = unsafe { (seg as *mut u8).add(page.page_index << PAGE_SHIFT) };
         unsafe {
-            page.initialize_free_list(page_start);
+            page.initialize_free_list::<P>(page_start);
         }
 
         // Prepend to the size class active pages list.
@@ -599,11 +647,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let mut total_allocations = 0;
         // Safety: segment is a valid pointer to a segment owned by us.
         unsafe {
+            let dynamic_encrypted = (*segment).free_list_encrypted;
             for i in 1..PAGES_PER_SEGMENT {
                 let pg = &mut (*segment).pages[i];
 
                 // Reclaim any cross-thread deallocations to get accurate alloc_count.
-                let reclaimed = pg.reclaim_thread_free();
+                let reclaimed = pg.reclaim_thread_free_dynamic(dynamic_encrypted);
                 if reclaimed > 0 {
                     record_cross_thread_reclaimed(reclaimed);
                 }
@@ -697,7 +746,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// `segment` must be a live segment owned exclusively by this allocator and
     /// must not already be linked into any owned-segments list.
     #[inline]
-    unsafe fn push_owned_segment(&mut self, segment: *mut Segment) {
+    unsafe fn push_owned_segment<P: AllocPolicy>(&mut self, segment: *mut Segment) {
         // Safety: `segment` is exclusive to this allocator; the caller
         // guarantees it is unlinked, so overwriting its link fields and
         // relinking the current head is sound.
@@ -709,6 +758,27 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 (*self.owned_segments_head).prev_owned_segment = segment;
             }
             self.owned_segments_head = segment;
+
+            if P::ENABLE_FREE_LIST_ENCRYPTION {
+                self.initialize_segment_keys(segment);
+            }
+        }
+    }
+
+    /// Populates the keys array of a newly acquired segment using the thread-local seed.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must point to a valid, writable `Segment`.
+    #[inline]
+    pub unsafe fn initialize_segment_keys(&mut self, segment: *mut Segment) {
+        let seed = get_tls_seed();
+        let segment_addr = segment as usize;
+        unsafe {
+            (*segment).free_list_encrypted = true;
+            for i in 0..PAGES_PER_SEGMENT {
+                (*segment).keys[i] = (segment_addr.wrapping_add(i * PAGE_SIZE)) ^ seed;
+            }
         }
     }
 
@@ -763,10 +833,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             unsafe {
                 let next = (*curr).next_owned_segment;
 
+                let dynamic_encrypted = (*curr).free_list_encrypted;
                 let mut total_allocations = 0;
                 for i in 1..PAGES_PER_SEGMENT {
                     let page = &mut (*curr).pages[i];
-                    let reclaimed = page.reclaim_thread_free();
+                    let reclaimed = page.reclaim_thread_free_dynamic(dynamic_encrypted);
                     if reclaimed > 0 {
                         record_cross_thread_reclaimed(reclaimed);
                     }
@@ -799,10 +870,14 @@ impl<B: HasSegmentPool> Drop for ThreadAllocator<B> {
 }
 
 #[cfg(test)]
+pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use core::ptr::NonNull;
     use core::sync::atomic::{AtomicUsize, Ordering};
+    use mnemosyne_core::policy::StandardPolicy;
     use mnemosyne_core::types::Block;
     use mnemosyne_core::MemoryBackend;
 
@@ -814,7 +889,6 @@ mod tests {
         mnemosyne_arena::GlobalSegmentPool::new();
     static MOCK_ORPHAN_POOL: mnemosyne_arena::GlobalSegmentPool =
         mnemosyne_arena::GlobalSegmentPool::new();
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     impl MemoryBackend for MockBackend {
         unsafe fn allocate(size: usize) -> *mut u8 {
@@ -856,7 +930,7 @@ mod tests {
         // Verify that the code compiles with ThreadAllocator parameterized by MockBackend
         let mut alloc = ThreadAllocator::<MockBackend>::new();
         // Safety: alloc is initialized and valid.
-        let ptr = unsafe { alloc.alloc(32) };
+        let ptr = unsafe { alloc.alloc::<StandardPolicy>(32) };
         assert!(!ptr.is_null(), "MockBackend small allocation failed");
         unsafe {
             crate::thread_free::<mnemosyne_core::StandardPolicy, MockBackend>(ptr);
@@ -1006,7 +1080,7 @@ mod tests {
             // Safety: `ptr` is a unique, writable, suitably sized allocation.
             unsafe {
                 Segment::initialize(ptr, core::ptr::null_mut());
-                alloc.push_owned_segment(ptr);
+                alloc.push_owned_segment::<StandardPolicy>(ptr);
             }
             seg[i] = ptr;
         }
@@ -1209,7 +1283,7 @@ mod tests {
 
         // 1. Allocate a block of size class 0 (16 bytes now)
         // Safety: alloc is initialized and valid.
-        let ptr1 = unsafe { alloc.alloc(16) };
+        let ptr1 = unsafe { alloc.alloc::<StandardPolicy>(16) };
         assert!(!ptr1.is_null(), "initial 16-byte allocation failed");
 
         // We should have 1 owned segment now
@@ -1231,7 +1305,7 @@ mod tests {
         // Safety: block ptr is valid and exclusive. We set up page free list.
         unsafe {
             let block = ptr1 as *mut Block;
-            (*block).next = page.free;
+            (*block).set_next::<StandardPolicy>(page.free, 0);
             page.free = Some(NonNull::new_unchecked(block));
             page.alloc_count = 0; // Page is now empty
             let class = page.size_class;
@@ -1246,7 +1320,7 @@ mod tests {
         // unlink it from class 0, re-initialize it for class 1, and reuse it.
         alloc.next_page_index = PAGES_PER_SEGMENT;
         // Safety: alloc is initialized and valid.
-        let ptr2 = unsafe { alloc.alloc(32) };
+        let ptr2 = unsafe { alloc.alloc::<StandardPolicy>(32) };
         assert!(!ptr2.is_null(), "recycled 32-byte allocation failed");
 
         // Assert that allocation stayed within the allocator's bounded owned-segment set.
@@ -1303,7 +1377,7 @@ mod tests {
         // Allocate the first 16-byte block to materialize the page and learn
         // its capacity.
         // Safety: alloc is initialized and valid.
-        let first = unsafe { alloc.alloc(16) };
+        let first = unsafe { alloc.alloc::<StandardPolicy>(16) };
         assert!(!first.is_null(), "initial 16-byte allocation failed");
 
         let first_val = first as usize;
@@ -1325,7 +1399,7 @@ mod tests {
         let mut last = first;
         while count < max_blocks {
             // Safety: alloc is valid.
-            let ptr = unsafe { alloc.alloc(16) };
+            let ptr = unsafe { alloc.alloc::<StandardPolicy>(16) };
             assert!(!ptr.is_null(), "16-byte allocation {count} failed");
             let ptr_val = ptr as usize;
             let ptr_seg = ptr_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
@@ -1359,7 +1433,7 @@ mod tests {
         // One more allocation must succeed by refilling a fresh page rather
         // than returning a wrapped/duplicate pointer.
         // Safety: alloc is valid.
-        let overflow = unsafe { alloc.alloc(16) };
+        let overflow = unsafe { alloc.alloc::<StandardPolicy>(16) };
         assert!(!overflow.is_null(), "post-saturation allocation failed");
         let overflow_val = overflow as usize;
         let overflow_seg = overflow_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
@@ -1420,7 +1494,7 @@ mod tests {
 
         let mut alloc_a = ThreadAllocator::<DefaultBackend>::new();
         // Safety: alloc_a is initialized and valid.
-        let ptr = unsafe { alloc_a.alloc(32) };
+        let ptr = unsafe { alloc_a.alloc::<StandardPolicy>(32) };
         assert!(
             !ptr.is_null(),
             "producer allocation for cross-thread free failed"
@@ -1447,7 +1521,7 @@ mod tests {
         let max_blocks = unsafe { (*segment).pages[page_index].max_blocks };
         for _ in 0..max_blocks {
             // Safety: alloc_a is valid.
-            let ptr2 = unsafe { alloc_a.alloc(32) };
+            let ptr2 = unsafe { alloc_a.alloc::<StandardPolicy>(32) };
             assert!(
                 !ptr2.is_null(),
                 "reclaim probe allocation failed before reclaiming remote free"
@@ -1484,7 +1558,7 @@ mod tests {
         thread::spawn(move || {
             let mut alloc_a = ThreadAllocator::<DefaultBackend>::new();
             // Safety: alloc_a is valid.
-            let ptr = unsafe { alloc_a.alloc(32) };
+            let ptr = unsafe { alloc_a.alloc::<StandardPolicy>(32) };
             assert!(!ptr.is_null(), "orphan producer allocation failed");
             tx.send(ptr as usize)
                 .expect("orphan producer failed to send live allocation pointer");
@@ -1500,7 +1574,7 @@ mod tests {
         // Thread B allocates a block. It should reuse the orphaned segment from A!
         let mut alloc_b = ThreadAllocator::<DefaultBackend>::new();
         // Safety: alloc_b is valid.
-        let ptr_b = unsafe { alloc_b.alloc(64) };
+        let ptr_b = unsafe { alloc_b.alloc::<StandardPolicy>(64) };
         assert!(!ptr_b.is_null(), "orphan consumer allocation failed");
 
         // Assert that B reused the orphaned segment: current owned segments must be 1, not 2!
