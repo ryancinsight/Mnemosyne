@@ -110,6 +110,8 @@
 - [patch] Collapse the per-thread allocation guard and allocator cache into one TLS slot, reducing small allocation/free cycle TLS lookups while preserving the re-entrant fallback contract.
 - [patch] Reject forced cross-crate inlining of `AtomicFreeList` operations after cross-thread handoff improved but saturated threaded cycles regressed.
 - [patch] Reject `thread_local!` const initialization for the allocator slot after it improved non-saturated rows but regressed saturated threaded cycles.
+- [patch] Add all-size-class lower-bound coverage for `usable_size` so small allocations can never under-report class capacity.
+- [patch] Reject separate owner-token TLS routing after cycle latency and cross-thread handoff regressed.
 
 ## Next
 

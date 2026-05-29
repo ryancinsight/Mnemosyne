@@ -241,11 +241,13 @@ Target version: 0.1.0
 - [x] [patch] Regenerate `allocator_comparison.md` and run `benchmark_summary --release -- --enforce-thresholds`.
 - [x] [patch] Reject forced `AtomicFreeList` inlining after it improved cross-thread handoff but regressed saturated threaded cycles.
 - [x] [patch] Reject `thread_local!` const initialization for the allocator slot after it improved non-saturated rows but regressed saturated threaded cycles.
+- [x] [patch] Add all-size-class lower-bound coverage for `usable_size`.
+- [x] [patch] Reject separate owner-token TLS routing after cycle latency, cross-thread handoff, and saturated threaded rows regressed.
 
 ## Next
 
 - [ ] [patch] Continue variance-aware investigation of `realloc latency/within_class_24_to_32`.
-- [ ] [patch] Continue variance-aware investigation of `threaded small allocation cycles`, `cross-thread free handoff/small_32`, and combined usable-size latency without reintroducing rejected local-free, layout-aware deallocation, forced atomic-queue inlining, or const TLS initialization paths.
+- [ ] [patch] Continue variance-aware investigation of `threaded small allocation cycles`, `cross-thread free handoff/small_32`, and combined usable-size latency without reintroducing rejected local-free, layout-aware deallocation, forced atomic-queue inlining, const TLS initialization, or separate owner-token TLS paths.
 - [ ] [patch] Run target-gated jemalloc comparator refresh on a platform where `tikv-jemallocator` links.
 
 - [x] [patch] Add `usable_size_never_under_reports_across_every_size_class` exhaustive lower-bound test covering every small size class at its lower boundary and class max, the analog of the over-report guard.
