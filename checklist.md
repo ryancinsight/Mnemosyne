@@ -253,3 +253,7 @@ Target version: 0.1.0
 - [x] [patch] Add `usable_size_never_under_reports_across_every_size_class` exhaustive lower-bound test covering every small size class at its lower boundary and class max, the analog of the over-report guard.
 
 - [x] [patch] Extract `realloc_copy_grow<A: GlobalAlloc>` shared slow-path helper; route both `Mnemosyne::realloc` and `MnemosyneAllocator::realloc` through it, removing the duplicated allocate/copy/free body.
+- [x] [patch] Reject <=128-byte direct realloc-capacity arithmetic after focused benchmarking failed to beat the accepted within-class realloc point estimate and reported an allocator-cycle regression.
+- [x] [patch] Mark `realloc_copy_grow<A: GlobalAlloc>` as `#[inline(always)]` so cross-class realloc slow paths keep monomorphized `alloc`/`dealloc` calls at the call site.
+- [x] [patch] Refresh realloc and allocator-cycle Criterion rows after the retained realloc helper inlining change.
+- [x] [patch] Regenerate `allocator_comparison.md` and run `benchmark_summary --release -- --enforce-thresholds` after the retained change.

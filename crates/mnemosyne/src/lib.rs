@@ -206,7 +206,7 @@ fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> bool {
 /// `ptr` must be a non-null allocation produced by `allocator` with the
 /// given `layout`, and `new_size` must be nonzero. Same contract as the
 /// default `GlobalAlloc::realloc` after its trivial cases.
-#[inline]
+#[inline(always)]
 unsafe fn realloc_copy_grow<A: GlobalAlloc>(
     allocator: &A,
     ptr: *mut u8,

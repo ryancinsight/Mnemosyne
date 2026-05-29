@@ -113,10 +113,12 @@
 - [patch] Add all-size-class lower-bound coverage for `usable_size` so small allocations can never under-report class capacity.
 - [patch] Reject separate owner-token TLS routing after cycle latency and cross-thread handoff regressed.
 - [patch] Extract shared monomorphized realloc slow path so both allocator implementations use one copy-length contract.
+- [patch] Force inlining of the shared realloc slow-path helper after focused Criterion rows improved both retained realloc latency regressions.
+- [patch] Reject the <=128-byte arithmetic realloc capacity shortcut after its absolute point estimate missed the accepted within-class realloc row and polluted allocator-cycle measurements.
 
 ## Next
 
-- [patch] Use `benchmark_variance.csv` to retest within-class realloc and historical threaded-row optimizations before accepting allocator changes.
+- [patch] Use `benchmark_variance.csv` to retest remaining within-class realloc and historical threaded-row optimizations before accepting allocator changes.
 - [patch] Investigate cross-thread handoff batching or owner-token routing without increasing saturated threaded cycles.
 - [patch] Investigate mimalloc's remaining within-class realloc, historical threaded-row, saturated threaded-row, cross-thread handoff, and usable-size combined-cycle advantages after the unified TLS slot narrowed saturated threaded disparity.
 - [patch] Run the jemalloc comparator leg on a target where `tikv-jemallocator` links and refresh comparison rows.

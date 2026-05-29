@@ -124,3 +124,5 @@
 - Added all-size-class `usable_size` lower-bound coverage and rejected separate owner-token TLS routing after measurement showed regressions in cycle latency, cross-thread handoff, and saturated threaded cycles.
 - Added `usable_size_never_under_reports_across_every_size_class` exhaustive lower-bound test covering every small size class at its lower boundary and class max, bracketing `usable_size` from both sides alongside the existing over-report guard.
 - Extracted `realloc_copy_grow<A: GlobalAlloc>` shared slow-path helper; `Mnemosyne::realloc` and `MnemosyneAllocator<P, B>::realloc` now route their allocate/copy/free round trip through one monomorphized function, consolidating the copy-length contract into a single rustdoc block.
+- Marked the shared realloc slow-path helper `#[inline(always)]` after focused Criterion rows improved Mnemosyne realloc latency to `5.523 ns` for `within_class_24_to_32` and `12.932 ns` for `cross_class_32_to_64`.
+- Rejected a <=128-byte direct realloc-capacity shortcut after it failed to beat the accepted within-class realloc point estimate and reported an allocator-cycle regression.
