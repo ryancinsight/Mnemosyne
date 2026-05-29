@@ -39,11 +39,12 @@ use crate::constants::{MAX_ALLOC_SIZE, SEGMENT_SIZE};
 ///    recovery.
 #[inline(always)]
 pub const fn is_valid_alloc_request(size: usize, align: usize) -> bool {
-    size != 0
-        && size <= MAX_ALLOC_SIZE
-        && align != 0
-        && align.is_power_of_two()
-        && align <= SEGMENT_SIZE
+    // `wrapping_sub`, not `size - 1`: for `size == 0` the latter underflows and
+    // panics under debug overflow checks. Wrapping yields `usize::MAX`, which is
+    // `>= MAX_ALLOC_SIZE`, so the branchless form still rejects zero (and any
+    // `size > MAX_ALLOC_SIZE`) in both debug and release — equivalent to
+    // `size != 0 && size <= MAX_ALLOC_SIZE` with no branch.
+    size.wrapping_sub(1) < MAX_ALLOC_SIZE && align.is_power_of_two() && align <= SEGMENT_SIZE
 }
 
 /// Returns `true` when `(size, align)` is a valid Mnemosyne allocation
@@ -56,7 +57,10 @@ pub const fn is_valid_alloc_request(size: usize, align: usize) -> bool {
 /// at the entry point.
 #[inline(always)]
 pub const fn is_valid_layout_alloc_request(size: usize, align: usize) -> bool {
-    size != 0 && size <= MAX_ALLOC_SIZE && align <= SEGMENT_SIZE
+    // `wrapping_sub` avoids the debug-build underflow panic on `size == 0`; see
+    // `is_valid_alloc_request`. Branchless and equivalent to
+    // `size != 0 && size <= MAX_ALLOC_SIZE`.
+    size.wrapping_sub(1) < MAX_ALLOC_SIZE && align <= SEGMENT_SIZE
 }
 
 #[cfg(test)]
@@ -67,7 +71,9 @@ mod tests {
     fn unsafe_validator_rejects_each_invalid_clause_independently() {
         // Valid baseline.
         assert!(is_valid_alloc_request(16, 8));
-        // Zero size.
+        // Zero size. Also guards against a `size - 1` formulation, which would
+        // underflow and panic here under debug overflow checks; the validator
+        // must use `wrapping_sub`.
         assert!(!is_valid_alloc_request(0, 8));
         // Above payload bound.
         assert!(!is_valid_alloc_request(MAX_ALLOC_SIZE + 1, 8));
@@ -84,6 +90,8 @@ mod tests {
     #[test]
     fn layout_validator_trusts_power_of_two_invariant() {
         assert!(is_valid_layout_alloc_request(16, 8));
+        // Zero size; also guards the debug-build underflow regression (must use
+        // `wrapping_sub`, not `size - 1`).
         assert!(!is_valid_layout_alloc_request(0, 8));
         assert!(!is_valid_layout_alloc_request(MAX_ALLOC_SIZE + 1, 8));
         assert!(!is_valid_layout_alloc_request(16, SEGMENT_SIZE * 2));
