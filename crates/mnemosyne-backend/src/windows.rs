@@ -6,6 +6,10 @@ use core::ffi::c_void;
 const MEM_COMMIT: u32 = 0x00001000;
 const MEM_RESERVE: u32 = 0x00002000;
 const MEM_RELEASE: u32 = 0x00008000;
+/// `MEM_DECOMMIT` releases the physical/pagefile commitment of a page range
+/// while keeping the address reservation, so a later `MEM_RELEASE` of the base
+/// reservation still covers it. Unlike `MEM_RESET`, it drops commit charge.
+const MEM_DECOMMIT: u32 = 0x00004000;
 /// `MEM_RESET` advises the Memory Manager that the addressed pages no
 /// longer need to retain their contents; the OS may discard them and
 /// re-zero on next access, but the mapping itself stays committed.
@@ -94,6 +98,27 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
         // mapping committed and never invalidates the address range.
         let result = unsafe { VirtualAlloc(ptr as *const c_void, size, MEM_RESET, PAGE_READWRITE) };
         !result.is_null()
+    }
+
+    /// Releases the commit charge of a page range via
+    /// `VirtualFree(MEM_DECOMMIT)` while keeping the address reservation, so a
+    /// later `VirtualFree(MEM_RELEASE)` of the base still covers it. Returns
+    /// `true` on success. Used to drop the eagerly-committed alignment slack of
+    /// aligned segment/huge mappings.
+    ///
+    /// # Safety
+    ///
+    /// `ptr`/`size` must describe a page-aligned subrange of an active
+    /// reservation that holds no live data; the range faults on access until
+    /// re-committed or the base reservation is released.
+    unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
+        if ptr.is_null() || size == 0 {
+            return false;
+        }
+        // Safety: ptr/size describe a page-aligned subrange of a live
+        // VirtualAlloc reservation; MEM_DECOMMIT keeps the reservation valid.
+        let res = unsafe { VirtualFree(ptr as *mut c_void, size, MEM_DECOMMIT) };
+        res != 0
     }
 
     /// Installs a `PAGE_NOACCESS` guard region via `VirtualProtect`.

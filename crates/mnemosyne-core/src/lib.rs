@@ -101,4 +101,33 @@ pub trait MemoryBackend: Send + Sync + 'static {
     unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
         false
     }
+
+    /// Releases the commit charge / physical backing of a page-aligned range
+    /// while keeping the surrounding reservation intact, so the range can still
+    /// be covered by the eventual `deallocate` of the base allocation.
+    ///
+    /// This differs from `page_reset`: `page_reset` keeps the range committed
+    /// (Windows `MEM_RESET` only discards contents; the pages still count
+    /// against the commit limit), whereas `decommit` actually releases the
+    /// commitment — Windows `VirtualFree(MEM_DECOMMIT)` drops the commit charge,
+    /// and Unix `madvise(MADV_DONTNEED)` drops the resident pages. It is used to
+    /// return the alignment slack that aligned segment/huge mappings reserve but
+    /// never touch (on Windows that slack is eagerly committed and would
+    /// otherwise hold ~`SEGMENT_ALIGN` of commit charge per mapping).
+    ///
+    /// The default implementation returns `false` so backends without an
+    /// equivalent operation silently opt out.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a system-page-aligned address inside an active mapping from
+    /// this backend, `size` must be a non-zero multiple of the system page size,
+    /// and `[ptr, ptr + size)` must lie entirely within a single allocation
+    /// returned by `allocate` **and** must hold no live allocator data — after a
+    /// successful decommit the range faults on access until re-committed or
+    /// released.
+    #[allow(unused_variables)]
+    unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
+        false
+    }
 }

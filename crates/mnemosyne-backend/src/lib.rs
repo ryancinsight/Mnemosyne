@@ -24,6 +24,8 @@ static PAGE_RESET_CALLS: AtomicUsize = AtomicUsize::new(0);
 static PAGE_RESET_BYTES: AtomicUsize = AtomicUsize::new(0);
 static GUARD_INSTALL_CALLS: AtomicUsize = AtomicUsize::new(0);
 static GUARD_INSTALL_BYTES: AtomicUsize = AtomicUsize::new(0);
+static DECOMMIT_CALLS: AtomicUsize = AtomicUsize::new(0);
+static DECOMMIT_BYTES: AtomicUsize = AtomicUsize::new(0);
 
 /// Snapshot of OS mappings requested by Mnemosyne.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -49,6 +51,16 @@ pub struct BackendMemoryStats {
     pub guard_install_calls: usize,
     /// Cumulative byte count passed to confirmed `make_guard` calls.
     pub guard_install_bytes: usize,
+    /// Number of `decommit` calls the OS confirmed.
+    ///
+    /// A decommit releases the commit charge / resident backing of an addressed
+    /// range while keeping the reservation, so this counter is independent of
+    /// `unmap_calls` and `current_mapped_bytes` is not decremented (the address
+    /// space remains reserved until `deallocate`).
+    pub decommit_calls: usize,
+    /// Cumulative byte count passed to confirmed `decommit` calls (the commit
+    /// charge / resident backing returned to the OS).
+    pub decommit_bytes: usize,
 }
 
 #[inline]
@@ -99,6 +111,17 @@ fn record_guard_install(size: usize) {
     GUARD_INSTALL_BYTES.fetch_add(size, Ordering::Relaxed);
 }
 
+/// Records a confirmed decommit.
+///
+/// Same accounting rationale as `record_page_reset`: the reservation remains,
+/// so `current_mapped_bytes` is intentionally unchanged; only the commit
+/// charge / resident backing was returned to the OS.
+#[inline]
+fn record_decommit(size: usize) {
+    DECOMMIT_CALLS.fetch_add(1, Ordering::Relaxed);
+    DECOMMIT_BYTES.fetch_add(size, Ordering::Relaxed);
+}
+
 /// Returns the current backend memory mapping counters.
 ///
 /// The snapshot uses relaxed atomics because these counters are telemetry only:
@@ -113,6 +136,8 @@ pub fn backend_memory_stats() -> BackendMemoryStats {
         page_reset_bytes: PAGE_RESET_BYTES.load(Ordering::Relaxed),
         guard_install_calls: GUARD_INSTALL_CALLS.load(Ordering::Relaxed),
         guard_install_bytes: GUARD_INSTALL_BYTES.load(Ordering::Relaxed),
+        decommit_calls: DECOMMIT_CALLS.load(Ordering::Relaxed),
+        decommit_bytes: DECOMMIT_BYTES.load(Ordering::Relaxed),
     }
 }
 
@@ -297,6 +322,86 @@ mod tests {
         let zero_reset = unsafe { MemoryBackendWrapper::page_reset(ptr, 0) };
         assert!(!zero_reset, "zero-size reset must not be accepted");
         let _ = unsafe { MemoryBackendWrapper::deallocate(ptr, 4096) };
+    }
+
+    #[test]
+    fn decommit_telemetry_increments_call_and_byte_counters_only() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("backend telemetry test lock was poisoned");
+        // record_decommit must increment both counters without touching
+        // current_mapped_bytes (the reservation persists) or the unmap/reset
+        // counters.
+        let before = backend_memory_stats();
+        let size = 64 * 1024;
+
+        record_decommit(size);
+        let after = backend_memory_stats();
+
+        assert_eq!(
+            after.decommit_calls,
+            before.decommit_calls + 1,
+            "decommit_calls counter did not advance"
+        );
+        assert_eq!(
+            after.decommit_bytes,
+            before.decommit_bytes + size,
+            "decommit_bytes counter did not advance by the decommit size"
+        );
+        assert_eq!(
+            after.current_mapped_bytes, before.current_mapped_bytes,
+            "decommit must not decrement current_mapped_bytes (reservation persists)"
+        );
+        assert_eq!(after.unmap_calls, before.unmap_calls);
+        assert_eq!(after.page_reset_calls, before.page_reset_calls);
+    }
+
+    #[test]
+    fn wrapper_decommit_returns_slack_and_keeps_reservation_releasable() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("backend telemetry test lock was poisoned");
+        use mnemosyne_core::MemoryBackend;
+        // Allocate a multi-page mapping, decommit the trailing half, confirm
+        // telemetry, and prove the base reservation still releases cleanly
+        // (VirtualFree(MEM_RELEASE) / munmap cover decommitted subranges). The
+        // decommitted range is intentionally never touched afterward, since on
+        // Windows it faults until re-committed.
+        let size = 128 * 1024;
+        // Safety: requesting a multiple of the system page size.
+        let ptr = unsafe { MemoryBackendWrapper::allocate(size) };
+        assert!(!ptr.is_null());
+
+        let half = size / 2;
+        // Safety: [ptr + half, ptr + size) is a page-aligned subrange of the
+        // mapping holding no live data.
+        let tail = unsafe { ptr.add(half) };
+
+        let before = backend_memory_stats();
+        // Safety: tail covers `half` bytes inside the live mapping.
+        let decommitted = unsafe { MemoryBackendWrapper::decommit(tail, half) };
+        let after = backend_memory_stats();
+
+        if decommitted {
+            assert_eq!(after.decommit_calls, before.decommit_calls + 1);
+            assert_eq!(after.decommit_bytes, before.decommit_bytes + half);
+        }
+        assert_eq!(
+            after.current_mapped_bytes, before.current_mapped_bytes,
+            "decommit must never alter current_mapped_bytes"
+        );
+
+        // The still-committed first half remains writable.
+        // Safety: [ptr, ptr + half) was not decommitted and stays committed.
+        unsafe {
+            ptr.write_volatile(0x5A);
+            assert_eq!(ptr.read_volatile(), 0x5A);
+        }
+
+        // The base reservation releases cleanly despite the decommitted tail.
+        // Safety: ptr is the exact base of the mapping.
+        let released = unsafe { MemoryBackendWrapper::deallocate(ptr, size) };
+        assert!(released, "release failed after decommitting a subrange");
     }
 
     #[test]
@@ -499,5 +604,24 @@ impl mnemosyne_core::MemoryBackend for MemoryBackendWrapper {
             record_guard_install(size);
         }
         guarded
+    }
+
+    /// Releases the commit charge / resident backing of a page-aligned range
+    /// while keeping the reservation. Telemetry records confirmed decommits
+    /// only (`decommit_calls`, `decommit_bytes`); `current_mapped_bytes` is
+    /// intentionally not decremented because the address space stays reserved
+    /// until `deallocate`.
+    #[inline(always)]
+    unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
+        if ptr.is_null() || size == 0 {
+            return false;
+        }
+        // Safety: caller upholds the per-platform decommit contract.
+        let decommitted =
+            unsafe { <DefaultBackend as mnemosyne_core::MemoryBackend>::decommit(ptr, size) };
+        if decommitted {
+            record_decommit(size);
+        }
+        decommitted
     }
 }

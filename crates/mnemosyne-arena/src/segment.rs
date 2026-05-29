@@ -343,6 +343,28 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
     };
     let aligned_ptr = aligned_addr as *mut Segment;
 
+    // Return the alignment slack preceding the segment header to the OS. The
+    // mapping over-reserves `SEGMENT_MAPPING_SIZE = 2 * SEGMENT_SIZE` so a
+    // `SEGMENT_ALIGN`-aligned base can always be found; the bytes in
+    // `[raw_ptr, aligned_addr)` are never used by the allocator. On Windows
+    // `VirtualAlloc` eagerly commits the whole mapping, so decommitting this
+    // head slack drops up to ~`SEGMENT_ALIGN` (≈ 2 MiB) of commit charge per
+    // segment; on Unix the slack is lazily backed, so this is typically a
+    // no-op. Best-effort: a backend without `decommit` (default `false`)
+    // simply skips. The slack stays inside the reservation and is released by
+    // `deallocate(raw_ptr, SEGMENT_MAPPING_SIZE)`.
+    //
+    // `head_slack` is a multiple of the system page size because both
+    // `raw_ptr` (from `allocate`) and `aligned_addr` (a `SEGMENT_ALIGN`
+    // multiple) are page-aligned.
+    let head_slack = aligned_addr - raw_ptr as usize;
+    if head_slack > 0 {
+        // Safety: `[raw_ptr, aligned_addr)` is a page-aligned subrange of the
+        // live reservation holding no allocator data (it precedes the header)
+        // and remains covered by the base release.
+        let _ = unsafe { B::decommit(raw_ptr, head_slack) };
+    }
+
     // Safety: aligned_ptr is within the allocated region and aligned to segment boundary.
     // We initialize the segment structure inside this newly aligned memory region.
     unsafe {

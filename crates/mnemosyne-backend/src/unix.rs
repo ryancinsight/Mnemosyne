@@ -189,6 +189,44 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
         let res = unsafe { mprotect(ptr as *mut c_void, size, PROT_NONE) };
         res == 0
     }
+
+    /// Releases the resident physical pages of the addressed range while
+    /// keeping the mapping, so the base `munmap` on release still covers it.
+    ///
+    /// On Unix there is no separate commit charge (anonymous mappings are
+    /// lazily backed under overcommit), so decommitting untouched alignment
+    /// slack is largely a no-op; this still drops any resident pages via
+    /// `MADV_DONTNEED` (Linux) / `MADV_FREE` (macOS/FreeBSD), matching the
+    /// `page_reset` mechanism. Other Unix targets fall back to `false`.
+    ///
+    /// # Safety
+    ///
+    /// Same contract as `page_reset`: `ptr` page-aligned inside an active
+    /// mapping, `size` a non-zero multiple of the page size, range holding no
+    /// live data.
+    unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
+        if ptr.is_null() || size == 0 {
+            return false;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // Safety: see `page_reset`; madvise never invalidates the mapping.
+            let res = unsafe { madvise(ptr as *mut c_void, size, MADV_DONTNEED) };
+            return res == 0;
+        }
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        {
+            // Safety: see `page_reset`.
+            let res = unsafe { madvise(ptr as *mut c_void, size, MADV_FREE) };
+            return res == 0;
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+        {
+            let _ = ptr;
+            let _ = size;
+            false
+        }
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
