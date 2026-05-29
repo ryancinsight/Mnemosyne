@@ -118,10 +118,17 @@ pub fn backend_memory_stats() -> BackendMemoryStats {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
+
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn mapping_telemetry_tracks_deltas_and_peak() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("backend telemetry test lock was poisoned");
         let before = backend_memory_stats();
         let size = 4096;
 
@@ -163,6 +170,9 @@ mod tests {
 
     #[test]
     fn failed_release_increments_call_count_without_byte_delta() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("backend telemetry test lock was poisoned");
         let before = backend_memory_stats();
         let size = 4096;
 
@@ -188,6 +198,9 @@ mod tests {
 
     #[test]
     fn page_reset_telemetry_increments_call_and_byte_counters_only() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("backend telemetry test lock was poisoned");
         // record_page_reset must increment both call and byte counters
         // without touching current_mapped_bytes, because a reset releases
         // physical backing while leaving the virtual mapping committed.
@@ -219,6 +232,9 @@ mod tests {
 
     #[test]
     fn wrapper_page_reset_round_trips_on_active_mapping() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("backend telemetry test lock was poisoned");
         use mnemosyne_core::MemoryBackend;
         // Allocate, reset a sub-range, write through the reset region,
         // and release. Demonstrates that the wrapper telemetry tracks
@@ -266,6 +282,9 @@ mod tests {
 
     #[test]
     fn wrapper_page_reset_rejects_null_and_zero() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("backend telemetry test lock was poisoned");
         use mnemosyne_core::MemoryBackend;
         let null_reset = unsafe { MemoryBackendWrapper::page_reset(core::ptr::null_mut(), 4096) };
         assert!(!null_reset, "null pointer must not be accepted for reset");
@@ -282,6 +301,9 @@ mod tests {
 
     #[test]
     fn guard_telemetry_increments_call_and_byte_counters_only() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("backend telemetry test lock was poisoned");
         // record_guard_install must increment both counters without
         // perturbing current_mapped_bytes, page_reset, or unmap counters.
         let before = backend_memory_stats();
@@ -308,6 +330,9 @@ mod tests {
 
     #[test]
     fn wrapper_make_guard_records_confirmed_install_and_keeps_mapping_reserved() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("backend telemetry test lock was poisoned");
         use mnemosyne_core::MemoryBackend;
         // Allocate, guard the whole region, confirm telemetry, then
         // release. The mapping must still be releasable after a guard
@@ -353,6 +378,9 @@ mod tests {
 
     #[test]
     fn wrapper_make_guard_rejects_null_and_zero() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("backend telemetry test lock was poisoned");
         use mnemosyne_core::MemoryBackend;
         let null_guard = unsafe { MemoryBackendWrapper::make_guard(core::ptr::null_mut(), 4096) };
         assert!(!null_guard, "null pointer must not be accepted for guard");

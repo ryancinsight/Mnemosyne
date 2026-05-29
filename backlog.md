@@ -118,6 +118,8 @@
 - [patch] Reject deferred remote-free telemetry accounting after it failed to improve small cross-thread handoff and regressed medium handoff plus historical threaded allocation cycles.
 - [patch] Reject forced inlining of `Page::reclaim_thread_free` after refreshed historical threaded allocation cycles regressed despite one saturated sample improving.
 - [patch] Reject forced inlining of exported `usable_size` after combined usable-size and allocator-cycle rows regressed.
+- [patch] Reject a Layout-proven small-allocation entry split after it improved allocation-only latency but widened the retained small cycle and threaded-small gaps.
+- [patch] Serialize backend telemetry tests that mutate process-wide mapping counters so workspace tests are deterministic.
 
 ## Next
 
