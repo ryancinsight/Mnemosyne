@@ -115,6 +115,8 @@
 - [patch] Extract shared monomorphized realloc slow path so both allocator implementations use one copy-length contract.
 - [patch] Force inlining of the shared realloc slow-path helper after focused Criterion rows improved both retained realloc latency regressions.
 - [patch] Reject the <=128-byte arithmetic realloc capacity shortcut after its absolute point estimate missed the accepted within-class realloc row and polluted allocator-cycle measurements.
+- [patch] Reject deferred remote-free telemetry accounting after it failed to improve small cross-thread handoff and regressed medium handoff plus historical threaded allocation cycles.
+- [patch] Reject forced inlining of `Page::reclaim_thread_free` after refreshed historical threaded allocation cycles regressed despite one saturated sample improving.
 
 ## Next
 

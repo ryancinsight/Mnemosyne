@@ -261,3 +261,5 @@ Target version: 0.1.0
 - [x] [minor] Sprint C: Add `mnemosyne-c-shim` crate exposing `malloc`/`free`/`calloc`/`realloc`/`aligned_alloc`/`posix_memalign`/`malloc_usable_size` as `extern "C"` with `lib` + `cdylib` crate types.
 - [x] [minor] Sprint C: Document the C-vs-Rust realloc copy-length distinction (`min(usable_size, new_size)` for C, since C tracks no requested size) in the shim module docs.
 - [x] [minor] Sprint C: Add 11 shim regression tests covering alignment, zero-size, overflow, realloc grow/null/zero, and posix_memalign validation.
+- [x] [patch] Reject deferred process-wide cross-thread reclaim telemetry after focused Criterion rows showed no stable small-handoff improvement and regressions in medium handoff plus threaded small allocation cycles.
+- [x] [patch] Reject `#[inline(always)]` on `Page::reclaim_thread_free` after a refreshed `Threaded small allocation cycles/Mnemosyne` row regressed to about `16.528 us`.
