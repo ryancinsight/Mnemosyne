@@ -11,6 +11,9 @@
 
 ### Changed
 
+- Added an optional `nightly_tls` feature to `mnemosyne-local` that replaces the portable `std::thread_local!` cache accessor with an ELF/PE `#[thread_local]` static. The fast accessor lowers to a single segment-register-relative load with no `LocalKey::with` call or lazy-initialization guard — the mechanism mimalloc uses for its default heap — targeting the single-threaded small-allocation cycle-latency gap. The default build remains on stable Rust and is byte-identical; the feature requires a nightly compiler.
+- Preserved thread-exit segment reclamation on the `#[thread_local]` fast path via a `std::thread_local!` `Drop` sentinel (`ThreadExitReclaim`), because `#[thread_local]` statics are not dropped on thread teardown. Reclamation logic is shared with the default `Drop` path through `ThreadAllocator::reclaim_owned_segments`, which now clears the owned-segment head to stay idempotent.
+- Added a value-semantic nightly-only test proving the exit sentinel orphans a terminating thread's still-live owned segment.
 - Expanded allocator benchmarks to compare Mnemosyne, mimalloc, and snmalloc across cycle latency, burst retention, and threaded small-allocation cycles.
 - Added cross-thread free handoff benchmarks for Mnemosyne, mimalloc, and snmalloc.
 - Added Mnemosyne memory telemetry for backend mappings and retained arena segments.

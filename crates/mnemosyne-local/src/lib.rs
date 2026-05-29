@@ -1,6 +1,10 @@
 //! Thread-local cache allocation and deallocation routing.
 
 #![no_std]
+// The `nightly_tls` feature swaps the portable `std::thread_local!` accessor for
+// an ELF/PE `#[thread_local]` static, which the unstable `thread_local` language
+// feature provides. The default build never enables this and stays on stable.
+#![cfg_attr(feature = "nightly_tls", feature(thread_local))]
 
 extern crate std;
 
@@ -25,6 +29,12 @@ use mnemosyne_core::policy::AllocPolicy;
 #[doc(hidden)]
 pub struct LocalAllocatorSlot<B: HasSegmentPool> {
     is_allocating: core::cell::Cell<bool>,
+    /// One-shot flag recording whether this thread's exit-reclamation sentinel
+    /// has been registered. Only the `#[thread_local]` fast path needs it: a
+    /// `#[thread_local]` static is not dropped on thread teardown, so the first
+    /// hot-path access arms a `std::thread_local!` `Drop` sentinel exactly once.
+    #[cfg(feature = "nightly_tls")]
+    exit_armed: core::cell::Cell<bool>,
     allocator: core::cell::UnsafeCell<ThreadAllocator<B>>,
 }
 
@@ -33,6 +43,8 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
     pub const fn new() -> Self {
         Self {
             is_allocating: core::cell::Cell::new(false),
+            #[cfg(feature = "nightly_tls")]
+            exit_armed: core::cell::Cell::new(false),
             allocator: core::cell::UnsafeCell::new(ThreadAllocator::new()),
         }
     }
@@ -61,6 +73,94 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
     pub fn allocator_ptr(&self) -> *mut core::ffi::c_void {
         self.allocator.get().cast()
     }
+
+    /// Returns the typed cache pointer for thread-exit reclamation binding.
+    #[cfg(feature = "nightly_tls")]
+    #[inline(always)]
+    fn cache_ptr(&self) -> *mut ThreadAllocator<B> {
+        self.allocator.get()
+    }
+}
+
+/// Thread-exit reclamation sentinel for the `#[thread_local]` fast cache.
+///
+/// A `#[thread_local]` static does not run `Drop` when its owning thread exits,
+/// so the segment-reclamation logic in `ThreadAllocator::reclaim_owned_segments`
+/// would never fire and every terminated worker would leak its owned segments.
+/// This sentinel restores that guarantee: it is a standard `std::thread_local!`
+/// value (which *is* dropped at thread exit) holding a raw pointer to the
+/// thread's `#[thread_local]` allocator cache. The first hot-path access binds
+/// the pointer; thread teardown invokes `Drop`, which reclaims the segments.
+#[cfg(feature = "nightly_tls")]
+#[doc(hidden)]
+pub struct ThreadExitReclaim<B: HasSegmentPool> {
+    cache: core::cell::Cell<*mut ThreadAllocator<B>>,
+}
+
+#[cfg(feature = "nightly_tls")]
+impl<B: HasSegmentPool> ThreadExitReclaim<B> {
+    /// Creates an unbound sentinel.
+    pub const fn new() -> Self {
+        Self {
+            cache: core::cell::Cell::new(core::ptr::null_mut()),
+        }
+    }
+
+    #[inline(always)]
+    fn bind(&self, cache: *mut ThreadAllocator<B>) {
+        self.cache.set(cache);
+    }
+}
+
+#[cfg(feature = "nightly_tls")]
+impl<B: HasSegmentPool> Default for ThreadExitReclaim<B> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "nightly_tls")]
+impl<B: HasSegmentPool> Drop for ThreadExitReclaim<B> {
+    fn drop(&mut self) {
+        let cache = self.cache.get();
+        if !cache.is_null() {
+            // Safety: `cache` was bound to the address of this thread's
+            // `#[thread_local]` allocator slot, whose storage outlives every
+            // standard thread-local destructor on the same thread. The slot is
+            // exclusive to this thread and `reclaim_owned_segments` clears the
+            // owned-segment head, so the operation is single-shot and unaliased.
+            unsafe {
+                (*cache).reclaim_owned_segments();
+            }
+        }
+    }
+}
+
+/// Registers the thread-exit reclamation sentinel on first use (idempotent).
+///
+/// The check reads a flag inside the `#[thread_local]` slot itself (a single
+/// segment-relative load), so the steady-state hot path never touches the
+/// `std::thread_local!` accessor that backs the sentinel.
+#[cfg(feature = "nightly_tls")]
+#[inline(always)]
+pub fn arm_thread_exit<B: HasSegmentPool>(
+    slot: &LocalAllocatorSlot<B>,
+    guard: &'static std::thread::LocalKey<ThreadExitReclaim<B>>,
+) {
+    if !slot.exit_armed.get() {
+        cold_arm_thread_exit(slot, guard);
+    }
+}
+
+#[cfg(feature = "nightly_tls")]
+#[cold]
+#[inline(never)]
+fn cold_arm_thread_exit<B: HasSegmentPool>(
+    slot: &LocalAllocatorSlot<B>,
+    guard: &'static std::thread::LocalKey<ThreadExitReclaim<B>>,
+) {
+    slot.exit_armed.set(true);
+    guard.with(|sentinel| sentinel.bind(slot.cache_ptr()));
 }
 
 /// Applies allocation-time initialization required by `P`.
@@ -120,13 +220,14 @@ pub trait LocalAllocatorSelector<B: HasSegmentPool>: HasSegmentPool {
 #[macro_export]
 macro_rules! impl_local_allocator_selector {
     ($backend:ty) => {
+        // Default portable path: `std::thread_local!` with a `const {}`
+        // initializer (stable since Rust 1.59). Because `LocalAllocatorSlot::new`
+        // is a `const fn`, the compiler emits the fast accessor that skips the
+        // per-access lazy-initialization guard branch, and the slot still
+        // registers its `Drop` destructor for thread-exit segment reclamation.
+        #[cfg(not(feature = "nightly_tls"))]
         const _: () = {
             std::thread_local! {
-                // `const {}` initializer (stable since Rust 1.59): because
-                // `LocalAllocatorSlot::new()` is a `const fn`, this lets the
-                // compiler emit the fast thread-local accessor that skips the
-                // per-access lazy-initialization guard branch. The slot still
-                // registers its destructor for thread-exit segment reclamation.
                 static ALLOCATOR_SLOT: $crate::LocalAllocatorSlot<$backend> = const {
                     $crate::LocalAllocatorSlot::new()
                 };
@@ -150,6 +251,48 @@ macro_rules! impl_local_allocator_selector {
                 #[inline(always)]
                 fn get_allocator_ptr() -> *mut core::ffi::c_void {
                     ALLOCATOR_SLOT.with(|slot| slot.allocator_ptr())
+                }
+            }
+        };
+
+        // Fast path: an ELF/PE `#[thread_local]` static. Accessing it lowers to
+        // a single segment-register-relative load (e.g. `%fs:OFFSET`) with no
+        // `LocalKey::with` call and no lazy-init guard — the same mechanism
+        // mimalloc uses for its default heap. A separate `std::thread_local!`
+        // sentinel (`ALLOCATOR_EXIT_GUARD`) preserves thread-exit segment
+        // reclamation because `#[thread_local]` statics are not auto-dropped.
+        #[cfg(feature = "nightly_tls")]
+        const _: () = {
+            #[thread_local]
+            static ALLOCATOR_SLOT: $crate::LocalAllocatorSlot<$backend> =
+                $crate::LocalAllocatorSlot::new();
+
+            std::thread_local! {
+                static ALLOCATOR_EXIT_GUARD: $crate::ThreadExitReclaim<$backend> = const {
+                    $crate::ThreadExitReclaim::new()
+                };
+            }
+
+            impl $crate::LocalAllocatorSelector<$backend> for $backend {
+                #[inline(always)]
+                fn with_allocator<R>(
+                    f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
+                ) -> Option<R> {
+                    $crate::arm_thread_exit(&ALLOCATOR_SLOT, &ALLOCATOR_EXIT_GUARD);
+                    ALLOCATOR_SLOT.with_allocator(f)
+                }
+
+                #[inline(always)]
+                fn with_allocator_guard<R>(
+                    f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
+                ) -> Option<R> {
+                    $crate::arm_thread_exit(&ALLOCATOR_SLOT, &ALLOCATOR_EXIT_GUARD);
+                    ALLOCATOR_SLOT.with_allocator(f)
+                }
+
+                #[inline(always)]
+                fn get_allocator_ptr() -> *mut core::ffi::c_void {
+                    ALLOCATOR_SLOT.allocator_ptr()
                 }
             }
         };
@@ -441,8 +584,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
                     let class = page.size_class;
                     if alloc.unlink_full_page(page as *mut Page, class) {
                         page.next_page = alloc.active_pages[class];
-                        alloc.active_pages[class] =
-                            Some(NonNull::new_unchecked(page as *mut Page));
+                        alloc.active_pages[class] = Some(NonNull::new_unchecked(page as *mut Page));
                     }
                 }
                 if page.alloc_count == 0 && !alloc.is_current_segment(segment) {

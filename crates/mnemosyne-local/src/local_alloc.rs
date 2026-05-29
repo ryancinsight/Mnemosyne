@@ -308,12 +308,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     if page.block_size > 0 {
                         let class = page.size_class;
                         let occupancy = &mut size_class_occupancy[class];
-                            occupancy.active_pages += 1;
-                            if page.alloc_count == 0 {
-                                occupancy.empty_pages += 1;
-                            }
-                            occupancy.live_allocations += page.alloc_count;
-                            occupancy.total_slots += page.max_blocks;
+                        occupancy.active_pages += 1;
+                        if page.alloc_count == 0 {
+                            occupancy.empty_pages += 1;
+                        }
+                        occupancy.live_allocations += page.alloc_count;
+                        occupancy.total_slots += page.max_blocks;
                     }
                 }
                 segment = (*segment).next_owned_segment;
@@ -719,9 +719,20 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     }
 }
 
-impl<B: HasSegmentPool> Drop for ThreadAllocator<B> {
-    fn drop(&mut self) {
-        // When thread exits, we must reclaim all owned segments.
+impl<B: HasSegmentPool> ThreadAllocator<B> {
+    /// Reclaims every segment owned by this thread cache back to the global
+    /// pools, then clears the owned-segment chain so the operation is
+    /// idempotent.
+    ///
+    /// This is the canonical thread-exit reclamation path. It is invoked by the
+    /// `Drop` implementation for the default `std::thread_local!`-backed cache,
+    /// and by the `#[thread_local]`-backed fast cache's exit sentinel (a
+    /// `#[thread_local]` static does not run `Drop` on thread teardown, so the
+    /// sentinel calls this method explicitly). Clearing the head after the
+    /// sweep guarantees a second invocation is a no-op, which keeps both call
+    /// sites safe even if they ever overlap.
+    pub fn reclaim_owned_segments(&mut self) {
+        // When the thread exits, we must reclaim all owned segments.
         let mut curr = self.owned_segments_head;
         while !curr.is_null() {
             // Safety: curr is a valid pointer in the owned segments chain.
@@ -752,6 +763,13 @@ impl<B: HasSegmentPool> Drop for ThreadAllocator<B> {
                 curr = next;
             }
         }
+        self.owned_segments_head = core::ptr::null_mut();
+    }
+}
+
+impl<B: HasSegmentPool> Drop for ThreadAllocator<B> {
+    fn drop(&mut self) {
+        self.reclaim_owned_segments();
     }
 }
 
@@ -841,6 +859,57 @@ mod tests {
             DEALLOC_COUNT.load(Ordering::SeqCst) >= 1,
             "MockBackend deallocate counter was {}",
             DEALLOC_COUNT.load(Ordering::SeqCst)
+        );
+    }
+
+    /// Proves the `#[thread_local]` fast cache still reclaims a terminating
+    /// thread's owned segments. A `#[thread_local]` static is not dropped on
+    /// thread exit, so reclamation depends entirely on the exit sentinel
+    /// (`ThreadExitReclaim`) armed on first allocation. The spawned thread
+    /// allocates through the TLS path and exits without freeing; the live
+    /// segment must therefore be orphaned into `MOCK_ORPHAN_POOL`. If the
+    /// sentinel failed to fire the segment would leak and the pool would stay
+    /// empty, failing the value-semantic assertion below.
+    #[cfg(feature = "nightly_tls")]
+    #[test]
+    fn thread_exit_sentinel_reclaims_owned_segments_on_fast_tls_path() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
+
+        // Drain any residue so the post-join count reflects only this thread.
+        while let Some(seg) = MOCK_ORPHAN_POOL.pop() {
+            // Safety: pooled segments are valid mappings owned by the pool.
+            unsafe { mnemosyne_arena::deallocate_segment::<MockBackend>(seg) };
+        }
+
+        let handle = std::thread::spawn(|| {
+            // Safety: a 32-byte/16-align request is a valid small allocation;
+            // routing through the TLS path arms the exit sentinel and acquires
+            // a segment owned by this thread. The block is intentionally not
+            // freed so the owning segment is still live at thread exit.
+            let ptr = unsafe {
+                crate::thread_alloc::<mnemosyne_core::StandardPolicy, MockBackend>(32, 16)
+            };
+            assert!(!ptr.is_null(), "fast-TLS small allocation failed");
+            ptr as usize
+        });
+        let block_addr = handle.join().expect("spawned allocator thread panicked");
+        assert_ne!(block_addr, 0, "spawned thread produced a null allocation");
+
+        // The exit sentinel must have orphaned the still-live owning segment.
+        let mut reclaimed = 0usize;
+        while let Some(seg) = MOCK_ORPHAN_POOL.pop() {
+            reclaimed += 1;
+            // Safety: pooled segments are valid mappings; release the mapping
+            // (including the never-freed block) to avoid leaking the test's
+            // owned segment beyond the assertion.
+            unsafe { mnemosyne_arena::deallocate_segment::<MockBackend>(seg) };
+        }
+        assert!(
+            reclaimed >= 1,
+            "thread-exit sentinel did not reclaim the live owned segment; \
+             orphan pool received {reclaimed} segments"
         );
     }
 

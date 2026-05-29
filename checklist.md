@@ -4,6 +4,7 @@ Target version: 0.1.0
 
 ## Verified
 
+- [x] [minor] Add an optional `nightly_tls` `#[thread_local]` fast cache accessor to `mnemosyne-local`, preserving thread-exit reclamation via a `Drop` sentinel; default stable build unchanged. Verified: stable workspace `cargo test` green (no regression); nightly `cargo test -p mnemosyne-local --features nightly_tls` green (18 tests, incl. sentinel reclamation).
 - [x] [patch] Preserve current segment ownership during local free reclamation checks.
 - [x] [patch] Benchmark Mnemosyne against mimalloc and snmalloc for allocation cycles.
 - [x] [patch] Benchmark burst allocation retention without heap-allocated benchmark setup vectors.

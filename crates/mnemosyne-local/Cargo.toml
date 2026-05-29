@@ -3,6 +3,16 @@ name = "mnemosyne-local"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Replaces the portable `std::thread_local!` cache accessor with an ELF/PE
+# `#[thread_local]` static, which lowers to a single segment-register-relative
+# load (the mechanism mimalloc uses for `mi_heap_default`). This eliminates the
+# `LocalKey::with` call and lazy-init guard from the small-allocation hot path.
+# Requires a nightly compiler because `#![feature(thread_local)]` is unstable.
+# Thread-exit segment reclamation is preserved via a `Drop` sentinel because a
+# `#[thread_local]` static is not dropped automatically on thread teardown.
+nightly_tls = []
+
 [dependencies]
 mnemosyne-core = { path = "../mnemosyne-core" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }

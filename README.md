@@ -105,6 +105,23 @@ arbitrating sub-nanosecond deltas — hot-path changes are merged only when
 a clean measurement justifies them, and rejected experiments are logged
 rather than carried.
 
+**Fastest-possible thread-local storage (`nightly_tls`).** The default build
+uses `std::thread_local!` with a `const {}` initializer — the fastest *stable*
+accessor, but one that still lowers to a `LocalKey::with` call. The optimal
+mechanism is the one mimalloc uses for its default heap: an ELF/PE
+`#[thread_local]` variable, which compiles to a single segment-register-relative
+load with no call and no initialization guard. Rust exposes this via the
+unstable `#[thread_local]` attribute, so it ships as the opt-in
+`mnemosyne-local/nightly_tls` feature (requires a nightly compiler). When
+enabled, the per-thread cache slot becomes a `#[thread_local]` static accessed
+directly; thread-exit segment reclamation — which a `#[thread_local]` static
+does not run automatically — is preserved by a `std::thread_local!` `Drop`
+sentinel armed once per thread off the hot path. The default stable build is
+unchanged and byte-identical. The mechanism is verified for correctness
+(including a spawned-thread reclamation test); confirming the predicted
+single-load latency win, and whether to default the feature on nightly build
+targets, is gated on the same quiescent benchmark environment noted above.
+
 ---
 
 ## Multi-Crate Workspace Layout
