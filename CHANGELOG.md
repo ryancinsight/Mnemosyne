@@ -136,3 +136,4 @@
 - Centralized the 16-byte minimum small-block size as `MIN_BLOCK_SIZE` and routed size-class plus alignment-threshold logic through it.
 - Added `smallest_class_page_saturates_without_duplicate_or_early_refill`, a runtime witness that a full 4096-block 16-byte page reaches `alloc_count == max_blocks` with distinct non-null pointers and refills cleanly past saturation.
 - Removed the redundant `layout.size() == 0` guard from `Mnemosyne::alloc` and `MnemosyneAllocator::alloc`; `thread_alloc_layout` already rejects zero-size through `is_valid_layout_alloc_request`, so the GlobalAlloc hot path drops one branch and the zero-size contract lives in a single place.
+- Rejected removing `MAX_ALLOC_SIZE` from the Layout-validated allocation predicate after focused benchmarks improved cycle and combined usable-size rows but regressed allocation-only and historical threaded small-allocation rows.
