@@ -278,3 +278,5 @@ Target version: 0.1.0
 - [x] [patch] Reject removing the `MAX_ALLOC_SIZE` predicate from `is_valid_layout_alloc_request`; the focused run improved `Allocator cycle latency/Mnemosyne/small/32` and `Usable size latency/Mnemosyne/small/32`, but regressed `Allocator allocation latency/Mnemosyne/small/32` and `Threaded small allocation cycles/Mnemosyne`.
 
 - [x] [patch] Adopt `const {}` thread-local initializer for `ALLOCATOR_SLOT` (idiomatic stable form; emits the const-init accessor that omits the per-access lazy-init guard branch). Not benchmark-claimed — see gap_audit note on the contended local measurement environment.
+
+- [x] [patch] Add a README "Research Foundations" section mapping each implemented mechanism (sharded free lists, page-local cross-thread queue, segment/page geometry, orphan adoption, decay-style reset, THP hint, guard regions, policy ZSTs) to its source paper/allocator, plus an honest performance-positioning paragraph and the small-alloc gap localization.

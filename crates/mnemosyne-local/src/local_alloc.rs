@@ -306,15 +306,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     let page = &(*segment).pages[page_index];
                     live_allocations += page.alloc_count;
                     if page.block_size > 0 {
-                        if let Some(class) = size_to_class(page.block_size) {
-                            let occupancy = &mut size_class_occupancy[class];
+                        let class = page.size_class;
+                        let occupancy = &mut size_class_occupancy[class];
                             occupancy.active_pages += 1;
                             if page.alloc_count == 0 {
                                 occupancy.empty_pages += 1;
                             }
                             occupancy.live_allocations += page.alloc_count;
                             occupancy.total_slots += page.max_blocks;
-                        }
                     }
                 }
                 segment = (*segment).next_owned_segment;
@@ -465,18 +464,15 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                 }
 
                                 if page.alloc_count > 0 {
+                                    let pg_class = page.size_class;
                                     if page.alloc_count < page.max_blocks {
-                                        if let Some(pg_class) = size_to_class(page.block_size) {
-                                            page.next_page = self.active_pages[pg_class];
-                                            self.active_pages[pg_class] =
-                                                Some(NonNull::new_unchecked(page_ptr));
-                                        }
+                                        page.next_page = self.active_pages[pg_class];
+                                        self.active_pages[pg_class] =
+                                            Some(NonNull::new_unchecked(page_ptr));
                                     } else {
-                                        if let Some(pg_class) = size_to_class(page.block_size) {
-                                            page.next_page = self.full_pages[pg_class];
-                                            self.full_pages[pg_class] =
-                                                Some(NonNull::new_unchecked(page_ptr));
-                                        }
+                                        page.next_page = self.full_pages[pg_class];
+                                        self.full_pages[pg_class] =
+                                            Some(NonNull::new_unchecked(page_ptr));
                                     }
                                 } else if found_page.is_null() {
                                     found_page = page_ptr;
@@ -490,6 +486,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     if !found_page.is_null() {
                         let page = unsafe { &mut *found_page };
                         page.block_size = block_size;
+                        page.size_class = class;
                         let page_start =
                             unsafe { (seg_ptr as *mut u8).add(page.page_index * PAGE_SIZE) };
                         // Safety: initializing free list for the repurposed page
@@ -539,6 +536,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // Safety: page_ptr points to a valid Page inside the segment.
         let page = unsafe { &mut *page_ptr };
         page.block_size = block_size;
+        page.size_class = class;
 
         let page_start = unsafe { (seg as *mut u8).add(page.page_index * PAGE_SIZE) };
         unsafe {
@@ -582,24 +580,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                     // Recycle the page if it has zero active allocations and is already initialized
                     if pg.alloc_count == 0 && pg.block_size > 0 {
-                        debug_assert!(
-                            size_to_class(pg.block_size).is_some(),
-                            "recyclable page block_size {} has no size class",
-                            pg.block_size
-                        );
-                        // Safety: `pg.block_size` was previously assigned from
-                        // `class_to_size(class)` for `class < NUM_SIZE_CLASSES`,
-                        // so its inverse mapping always resolves.
-                        let old_class = match size_to_class(pg.block_size) {
-                            Some(c) => c,
-                            None => core::hint::unreachable_unchecked(),
-                        };
+                        let old_class = pg.size_class;
                         if pg.block_size != block_size {
                             // Unlink from old size class active list.
                             self.unlink_page(pg as *mut Page, old_class);
 
                             // Re-initialize for new size class.
                             pg.block_size = block_size;
+                            pg.size_class = class;
                             let page_start = (curr_seg as *mut u8).add(pg.page_index * PAGE_SIZE);
                             pg.initialize_free_list(page_start);
 
@@ -656,9 +644,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 for i in 1..PAGES_PER_SEGMENT {
                     let pg = &mut (*segment).pages[i];
                     if pg.block_size > 0 {
-                        if let Some(class) = size_to_class(pg.block_size) {
-                            self.unlink_page(pg as *mut Page, class);
-                        }
+                        let class = pg.size_class;
+                        self.unlink_page(pg as *mut Page, class);
                     }
                 }
 
@@ -916,7 +903,7 @@ mod tests {
         let expected_class = size_to_class(32).expect("32 bytes is a small allocation");
 
         assert_eq!(segment_addr2, segment_addr);
-        assert_eq!(size_to_class(page2.block_size), Some(expected_class));
+        assert_eq!(page2.size_class, expected_class);
         assert_eq!(page2.block_size, class_to_size(expected_class));
         assert!(
             page2.alloc_count > 0,

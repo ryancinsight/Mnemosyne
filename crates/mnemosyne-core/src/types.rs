@@ -39,6 +39,8 @@ pub struct Page {
     pub next_page: Option<NonNull<Page>>,
     /// The page index inside its parent segment.
     pub page_index: usize,
+    /// The size class index of this page.
+    pub size_class: usize,
 }
 
 unsafe impl Send for Page {}
@@ -86,6 +88,7 @@ impl Page {
             max_blocks: 0,
             next_page: None,
             page_index,
+            size_class: 0,
         }
     }
 

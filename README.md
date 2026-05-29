@@ -70,6 +70,43 @@ Its design incorporates core lessons from modern allocator research (specificall
 
 ---
 
+## Research Foundations
+
+Mnemosyne's design is grounded in the modern allocator literature. Each
+implemented technique below names the paper or production allocator it
+derives from, so the codebase can be read against its sources.
+
+| Mnemosyne mechanism | Source | Where in the code |
+| :--- | :--- | :--- |
+| Per-page sharded free lists (`free` + `thread_free`), local frees never touch atomics | mimalloc — *Free List Sharding in Action*, MSR-TR-2019-18 | `mnemosyne-core::types::Page`, `ThreadAllocator::alloc` |
+| Page-local lock-free cross-thread free queue, batch-reclaimed after the local list drains | snmalloc — *snmalloc: A Message Passing Allocator*, ISMM 2019 | `AtomicFreeList`, `Page::reclaim_thread_free` |
+| 2 MiB segments sliced into 64 KiB pages; segment header recovered by address rounding (no side table) | mimalloc segment/page geometry | `mnemosyne-arena::segment`, `thread_free` classifier |
+| Orphaned-segment adoption on thread exit instead of eager OS release | snmalloc abandoned-slab adoption / mimalloc abandoned pages | `GLOBAL_ORPHAN_POOL`, `ThreadAllocator::Drop` |
+| Decay-style RSS reduction without surrendering the address space (`reset()` → `page_reset`) | jemalloc decay purging; mimalloc page reset | `mnemosyne::reset`, `reset_segment_pool`, `MemoryBackend::page_reset` |
+| Transparent Huge Page hint for segment-aligned mappings | jemalloc THP, mimalloc large-page | `UnixBackend::allocate` (`MADV_HUGEPAGE`) |
+| Guard regions (`PROT_NONE` / `PAGE_NOACCESS`) for OOB-write trapping | hardened_malloc, Scudo, PartitionAlloc | `MemoryBackend::make_guard`, segment-tail guard |
+| Compile-time policy ZSTs for zero-cost secure-vs-standard selection | mimalloc-secure build flag, lifted to the Rust type system | `AllocPolicy`, `SecurePolicy`, `StandardPolicy` |
+
+The external gap analysis in [`gap_analysis_external.md`](file:///d:/Mnemosyne/gap_analysis_external.md)
+tracks which further research techniques (free-list pointer encryption,
+NUMA-aware arenas, per-CPU caching via `rseq`, Mesh-style compaction) are
+candidates and which are deliberately out of scope, with each row carrying
+a priority tag and a named test guard.
+
+**Performance positioning (honest standing).** Against the bounded
+Criterion comparison set, Mnemosyne leads snmalloc and the system
+allocator across every group, and matches or beats mimalloc on threaded,
+cross-thread, burst, and large/medium cycle workloads. The one open
+deficit is single-threaded *small* allocation-cycle latency versus
+mimalloc; evidence (recorded in `gap_audit.md`) localizes that gap to the
+thread-local slot accessor rather than the allocation algorithm itself.
+Closing it is gated on a quiescent benchmark environment capable of
+arbitrating sub-nanosecond deltas — hot-path changes are merged only when
+a clean measurement justifies them, and rejected experiments are logged
+rather than carried.
+
+---
+
 ## Multi-Crate Workspace Layout
 
 The project resides in a deep vertical module hierarchy:
