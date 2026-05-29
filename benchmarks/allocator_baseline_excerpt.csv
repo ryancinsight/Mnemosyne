@@ -1,8 +1,8 @@
 benchmark,mean_point_estimate_ns,median_point_estimate_ns
-allocator cycle latency/mnemosyne/small_32,6.848699,6.848699
-allocator cycle latency/mnemosyne/medium_1024,6.922030,6.922030
-allocator cycle latency/mnemosyne/large_8192,7.862204,7.862204
-allocator burst retention/mnemosyne/small_32,2195.262146,2195.262146
-cross-thread free handoff/mnemosyne/small_32,20722.424316,20722.424316
-threaded saturated small allocation cycles/mnemosyne,113315.527344,113315.527344
-segment cache eviction/mnemosyne,65683.398438,65683.398438
+allocator cycle latency/mnemosyne/small_32,5.308244,5.308244
+allocator cycle latency/mnemosyne/medium_1024,5.470347,5.470347
+allocator cycle latency/mnemosyne/large_8192,5.517814,5.517814
+allocator burst retention/mnemosyne/small_32,1490.839005,1490.839005
+cross-thread free handoff/mnemosyne/small_32,9516.612244,9516.612244
+threaded saturated small allocation cycles/mnemosyne,106255.273438,106255.273438
+segment cache eviction/mnemosyne,89803.430176,89803.430176

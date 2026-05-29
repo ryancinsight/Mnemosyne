@@ -10,24 +10,38 @@ use crate::constants::{MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, NUM_SIZE_CLASSES};
 /// and `is_valid_layout_alloc_request` both require `size != 0`), but the
 /// historical mapping is preserved so callers that pass an already-adjusted
 /// minimum size still resolve to the smallest class without an extra branch.
-const SIZE_TO_CLASS_LUT: [u8; MAX_SMALL_ALLOC_SIZE + 1] = {
-    let mut lut = [0u8; MAX_SMALL_ALLOC_SIZE + 1];
-    let mut i = 1;
-    while i <= MAX_SMALL_ALLOC_SIZE {
-        let class = if i <= 128 {
-            (i - 1) / MIN_BLOCK_SIZE
-        } else if i <= 512 {
-            ((i - 129) / 32) + 8
-        } else if i <= 2048 {
-            ((i - 513) / 128) + 20
-        } else {
-            ((i - 2049) / 512) + 32
-        };
-        lut[i] = class as u8;
-        i += 1;
-    }
-    lut
-};
+#[derive(Clone, Copy)]
+struct GroupParam {
+    stride_shift: u8,
+    base_class: u8,
+    base_size: u16,
+}
+
+const GROUP_PARAMS: [GroupParam; 13] = [
+    // b = 0..=3 (sizes up to 16)
+    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
+    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
+    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
+    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
+    // b = 4 (size 17..32)
+    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
+    // b = 5 (size 33..64)
+    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
+    // b = 6 (size 65..128)
+    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
+    // b = 7 (size 129..256)
+    GroupParam { stride_shift: 5, base_class: 8, base_size: 128 },
+    // b = 8 (size 257..512)
+    GroupParam { stride_shift: 5, base_class: 8, base_size: 128 },
+    // b = 9 (size 513..1024)
+    GroupParam { stride_shift: 7, base_class: 20, base_size: 512 },
+    // b = 10 (size 1025..2048)
+    GroupParam { stride_shift: 7, base_class: 20, base_size: 512 },
+    // b = 11 (size 2049..4096)
+    GroupParam { stride_shift: 9, base_class: 32, base_size: 2048 },
+    // b = 12 (size 4097..8192)
+    GroupParam { stride_shift: 9, base_class: 32, base_size: 2048 },
+];
 
 /// Maps an allocation size to its corresponding size class index.
 ///
@@ -45,7 +59,11 @@ pub const fn size_to_class(size: usize) -> Option<usize> {
     if size > MAX_SMALL_ALLOC_SIZE {
         return None;
     }
-    Some(SIZE_TO_CLASS_LUT[size] as usize)
+    let temp = if size - 1 > 1 { size - 1 } else { 1 };
+    let b = (usize::BITS - 1 - temp.leading_zeros()) as usize;
+    let param = GROUP_PARAMS[b];
+    let class = param.base_class as usize + ((size - 1 - param.base_size as usize) >> param.stride_shift);
+    Some(class)
 }
 
 /// Maps a size class index to its maximum block size.
