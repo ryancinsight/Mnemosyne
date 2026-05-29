@@ -235,6 +235,13 @@ pub struct ThreadAllocator<B: HasSegmentPool = DefaultBackend> {
     pub _phantom: PhantomData<B>,
 }
 
+impl<B: HasSegmentPool> Default for ThreadAllocator<B> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// Creates a new, uninitialized `ThreadAllocator`.
     pub const fn new() -> Self {
@@ -315,7 +322,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline(always)]
     pub fn is_current_segment(&self, segment: *mut Segment) -> bool {
         self.current_segment
-            .map_or(false, |current| current.as_ptr() == segment)
+            .is_some_and(|current| current.as_ptr() == segment)
     }
 
     /// Updates the active slicing segment marker.
@@ -639,7 +646,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     pub unsafe fn try_reclaim_segment(&mut self, segment: *mut Segment) -> bool {
         if self
             .current_segment
-            .map_or(false, |current| current.as_ptr() == segment)
+            .is_some_and(|current| current.as_ptr() == segment)
         {
             return false;
         }
@@ -682,7 +689,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
             if self
                 .current_segment
-                .map_or(false, |p| p.as_ptr() == segment)
+                .is_some_and(|p| p.as_ptr() == segment)
             {
                 self.set_current_segment(None);
                 self.next_page_index = 0;

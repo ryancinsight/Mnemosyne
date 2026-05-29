@@ -143,19 +143,19 @@ unsafe extern "system" fn fallback_virtual_alloc_2_from_app(
         // Safety: the imported Win32 functions are called with static nul-terminated
         // symbol names and the returned handles are checked for null before use.
         unsafe {
-            let kernel32 = GetModuleHandleA(b"kernel32.dll\0".as_ptr());
+            let kernel32 = GetModuleHandleA(c"kernel32.dll".as_ptr() as *const u8);
             if !kernel32.is_null() {
-                let func_ptr = GetProcAddress(kernel32, b"VirtualAlloc2FromApp\0".as_ptr());
+                let func_ptr = GetProcAddress(kernel32, c"VirtualAlloc2FromApp".as_ptr() as *const u8);
                 if !func_ptr.is_null() {
                     // Safety: `func_ptr` was resolved for `VirtualAlloc2FromApp`,
                     // whose ABI matches `FuncType`.
-                    return Some(core::mem::transmute(func_ptr));
+                    return Some(core::mem::transmute::<*mut core::ffi::c_void, FuncType>(func_ptr));
                 }
-                let func_ptr2 = GetProcAddress(kernel32, b"VirtualAlloc2\0".as_ptr());
+                let func_ptr2 = GetProcAddress(kernel32, c"VirtualAlloc2".as_ptr() as *const u8);
                 if !func_ptr2.is_null() {
                     // Safety: `func_ptr2` was resolved for `VirtualAlloc2`,
                     // whose ABI matches `FuncType`.
-                    return Some(core::mem::transmute(func_ptr2));
+                    return Some(core::mem::transmute::<*mut core::ffi::c_void, FuncType>(func_ptr2));
                 }
             }
             None

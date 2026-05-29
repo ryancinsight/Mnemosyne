@@ -42,6 +42,10 @@ extern "system" {
 pub struct WindowsBackend;
 
 impl mnemosyne_core::MemoryBackend for WindowsBackend {
+    const SUPPORTS_PAGE_RESET: bool = true;
+    const SUPPORTS_MAKE_GUARD: bool = true;
+    const SUPPORTS_DECOMMIT: bool = true;
+
     /// Reserves and commits virtual memory pages of the given size.
     ///
     /// # Safety

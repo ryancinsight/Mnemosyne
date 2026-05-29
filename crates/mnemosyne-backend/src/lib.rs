@@ -22,6 +22,10 @@ pub use telemetry::{backend_memory_stats, BackendMemoryStats};
 pub struct MemoryBackendWrapper;
 
 impl mnemosyne_core::MemoryBackend for MemoryBackendWrapper {
+    const SUPPORTS_PAGE_RESET: bool = DefaultBackend::SUPPORTS_PAGE_RESET;
+    const SUPPORTS_MAKE_GUARD: bool = DefaultBackend::SUPPORTS_MAKE_GUARD;
+    const SUPPORTS_DECOMMIT: bool = DefaultBackend::SUPPORTS_DECOMMIT;
+
     /// Allocates memory from the OS.
     ///
     /// # Safety

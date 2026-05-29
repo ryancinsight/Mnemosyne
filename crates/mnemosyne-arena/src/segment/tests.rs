@@ -63,6 +63,8 @@ static LAST_GUARD_SIZE: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(feature = "segment-tail-guards")]
 impl MemoryBackend for GuardRecordingBackend {
+    const SUPPORTS_MAKE_GUARD: bool = true;
+
     unsafe fn allocate(size: usize) -> *mut u8 {
         let layout = Layout::from_size_align(size, SEGMENT_ALIGN)
             .expect("segment mapping layout must be valid");
@@ -257,6 +259,8 @@ static DECOMMIT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static DECOMMIT_BYTES: AtomicUsize = AtomicUsize::new(0);
 
 impl MemoryBackend for DecommitRecordingBackend {
+    const SUPPORTS_DECOMMIT: bool = true;
+
     unsafe fn allocate(size: usize) -> *mut u8 {
         let layout = std::alloc::Layout::from_size_align(size, SEGMENT_ALIGN)
             .expect("segment mapping layout must be valid");

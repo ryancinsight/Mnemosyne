@@ -74,7 +74,33 @@ unsafe fn try_return_to_pool<B: HasSegmentPool>(segment: *mut Segment) -> bool {
     unsafe { B::global_segment_pool().try_push_retained(segment) }
 }
 
+#[inline(never)]
+unsafe fn initialize_allocated_segment(raw_ptr: *mut u8) -> Option<(*mut Segment, usize, usize, usize)> {
+    let aligned_addr = checked_align_up(raw_ptr as usize, SEGMENT_ALIGN)?;
+    let aligned_ptr = aligned_addr as *mut Segment;
+
+    // Safety: aligned_ptr is within the allocated region.
+    unsafe {
+        Segment::initialize(aligned_ptr, raw_ptr);
+    }
+
+    let tail_slack_start = if cfg!(feature = "segment-tail-guards") {
+        aligned_addr + SEGMENT_SIZE + SEGMENT_TAIL_GUARD_SIZE
+    } else {
+        aligned_addr + SEGMENT_SIZE
+    };
+    let mapping_end = raw_ptr as usize + SEGMENT_MAPPING_SIZE;
+
+    Some((aligned_ptr, aligned_addr, tail_slack_start, mapping_end))
+}
+
 /// Allocates an aligned segment of memory, either from the pool or from the OS.
+///
+/// # Monomorphization and ZST Static Routing
+///
+/// The backend parameter `B` acts as a Zero-Sized Type (ZST) policy marker. Calls
+/// to this function are fully monomorphized by the compiler into direct machine-code
+/// calls for the target backend, preserving the zero-cost abstraction invariant.
 ///
 /// # Safety
 ///
@@ -98,74 +124,66 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
         return None;
     }
 
-    let aligned_addr = match checked_align_up(raw_ptr as usize, SEGMENT_ALIGN) {
-        Some(addr) => addr,
-        None => {
-            // Safety: Releasing raw memory back to the backend because alignment check overflowed.
-            let _released = unsafe { B::deallocate(raw_ptr, SEGMENT_MAPPING_SIZE) };
-            return None;
+    let (aligned_ptr, aligned_addr, tail_slack_start, mapping_end) =
+        match unsafe { initialize_allocated_segment(raw_ptr) } {
+            Some(val) => val,
+            None => {
+                // Safety: Releasing raw memory back to the backend because alignment check overflowed.
+                let _released = unsafe { B::deallocate(raw_ptr, SEGMENT_MAPPING_SIZE) };
+                return None;
+            }
+        };
+
+    if B::SUPPORTS_DECOMMIT {
+        // Return the alignment slack preceding the segment header to the OS. The
+        // mapping over-reserves `SEGMENT_MAPPING_SIZE = 2 * SEGMENT_SIZE` so a
+        // `SEGMENT_ALIGN`-aligned base can always be found; the bytes in
+        // `[raw_ptr, aligned_addr)` are never used by the allocator. On Windows
+        // `VirtualAlloc` eagerly commits the whole mapping, so decommitting this
+        // head slack drops up to ~`SEGMENT_ALIGN` (≈ 2 MiB) of commit charge per
+        // segment; on Unix the slack is lazily backed, so this is typically a
+        // no-op. Best-effort: a backend without `decommit` (default `false`)
+        // simply skips. The slack stays inside the reservation and is released by
+        // `deallocate(raw_ptr, SEGMENT_MAPPING_SIZE)`.
+        //
+        // `head_slack` is a multiple of the system page size because both
+        // `raw_ptr` (from `allocate`) and `aligned_addr` (a `SEGMENT_ALIGN`
+        // multiple) are page-aligned.
+        let head_slack = aligned_addr - raw_ptr as usize;
+        if head_slack > 0 {
+            // Safety: `[raw_ptr, aligned_addr)` is a page-aligned subrange of the
+            // live reservation holding no allocator data (it precedes the header)
+            // and remains covered by the base release.
+            let _ = unsafe { B::decommit(raw_ptr, head_slack) };
         }
-    };
-    let aligned_ptr = aligned_addr as *mut Segment;
-
-    // Return the alignment slack preceding the segment header to the OS. The
-    // mapping over-reserves `SEGMENT_MAPPING_SIZE = 2 * SEGMENT_SIZE` so a
-    // `SEGMENT_ALIGN`-aligned base can always be found; the bytes in
-    // `[raw_ptr, aligned_addr)` are never used by the allocator. On Windows
-    // `VirtualAlloc` eagerly commits the whole mapping, so decommitting this
-    // head slack drops up to ~`SEGMENT_ALIGN` (≈ 2 MiB) of commit charge per
-    // segment; on Unix the slack is lazily backed, so this is typically a
-    // no-op. Best-effort: a backend without `decommit` (default `false`)
-    // simply skips. The slack stays inside the reservation and is released by
-    // `deallocate(raw_ptr, SEGMENT_MAPPING_SIZE)`.
-    //
-    // `head_slack` is a multiple of the system page size because both
-    // `raw_ptr` (from `allocate`) and `aligned_addr` (a `SEGMENT_ALIGN`
-    // multiple) are page-aligned.
-    let head_slack = aligned_addr - raw_ptr as usize;
-    if head_slack > 0 {
-        // Safety: `[raw_ptr, aligned_addr)` is a page-aligned subrange of the
-        // live reservation holding no allocator data (it precedes the header)
-        // and remains covered by the base release.
-        let _ = unsafe { B::decommit(raw_ptr, head_slack) };
-    }
-
-    // Safety: aligned_ptr is within the allocated region and aligned to segment boundary.
-    // We initialize the segment structure inside this newly aligned memory region.
-    unsafe {
-        Segment::initialize(aligned_ptr, raw_ptr);
     }
 
     #[cfg(feature = "segment-tail-guards")]
     {
-        // Install a tail guard immediately after the segment's user-page
-        // region. Forward OOB writes that walk past Page 31 land in this
-        // guard region instead of an unrelated mapping. The address lives
-        // inside the `SEGMENT_MAPPING_SIZE - SEGMENT_SIZE` slack the arena
-        // reserves to satisfy `SEGMENT_ALIGN` rounding, so it is always
-        // part of the same backend allocation and is released together
-        // with the segment by `B::deallocate(raw_ptr, SEGMENT_MAPPING_SIZE)`.
-        // The install is best-effort: a backend without a `make_guard`
-        // implementation (default `false`) or a kernel that declines the
-        // request (e.g. macOS-arm64 where the OS page size exceeds 4 KiB)
-        // silently skips, leaving the slack accessible. Backend telemetry
-        // (`guard_install_calls`) surfaces the actual install count.
-        //
-        // Safety: aligned_addr + SEGMENT_SIZE is inside the raw mapping
-        // because slack-after >= OS_PAGE_SIZE >= SEGMENT_TAIL_GUARD_SIZE on
-        // supported targets. `make_guard` never invalidates the mapping.
-        let tail_guard_addr = aligned_addr + SEGMENT_SIZE;
-        let _guarded =
-            unsafe { B::make_guard(tail_guard_addr as *mut u8, SEGMENT_TAIL_GUARD_SIZE) };
+        if B::SUPPORTS_MAKE_GUARD {
+            // Install a tail guard immediately after the segment's user-page
+            // region. Forward OOB writes that walk past Page 31 land in this
+            // guard region instead of an unrelated mapping. The address lives
+            // inside the `SEGMENT_MAPPING_SIZE - SEGMENT_SIZE` slack the arena
+            // reserves to satisfy `SEGMENT_ALIGN` rounding, so it is always
+            // part of the same backend allocation and is released together
+            // with the segment by `B::deallocate(raw_ptr, SEGMENT_MAPPING_SIZE)`.
+            // The install is best-effort: a backend without a `make_guard`
+            // implementation (default `false`) or a kernel that declines the
+            // request (e.g. macOS-arm64 where the OS page size exceeds 4 KiB)
+            // silently skips, leaving the slack accessible. Backend telemetry
+            // (`guard_install_calls`) surfaces the actual install count.
+            //
+            // Safety: aligned_addr + SEGMENT_SIZE is inside the raw mapping
+            // because slack-after >= OS_PAGE_SIZE >= SEGMENT_TAIL_GUARD_SIZE on
+            // supported targets. `make_guard` never invalidates the mapping.
+            let tail_guard_addr = aligned_addr + SEGMENT_SIZE;
+            let _guarded =
+                unsafe { B::make_guard(tail_guard_addr as *mut u8, SEGMENT_TAIL_GUARD_SIZE) };
+        }
     }
 
-    let tail_slack_start = if cfg!(feature = "segment-tail-guards") {
-        aligned_addr + SEGMENT_SIZE + SEGMENT_TAIL_GUARD_SIZE
-    } else {
-        aligned_addr + SEGMENT_SIZE
-    };
-    let mapping_end = raw_ptr as usize + SEGMENT_MAPPING_SIZE;
-    if tail_slack_start < mapping_end {
+    if B::SUPPORTS_DECOMMIT && tail_slack_start < mapping_end {
         let tail_slack_size = mapping_end - tail_slack_start;
         // Safety: `[tail_slack_start, mapping_end)` is a page-aligned subrange of the
         // live reservation holding no allocator data (it succeeds the segment pages)
@@ -177,6 +195,12 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
 }
 
 /// Returns a segment to the global pool.
+///
+/// # Monomorphization and ZST Static Routing
+///
+/// The backend parameter `B` acts as a Zero-Sized Type (ZST) policy marker. Calls
+/// to this function are fully monomorphized by the compiler into direct machine-code
+/// calls for the target backend, preserving the zero-cost abstraction invariant.
 ///
 /// # Safety
 ///
@@ -201,6 +225,12 @@ pub unsafe fn deallocate_segment<B: HasSegmentPool>(segment: *mut Segment) {
 }
 
 /// Attempts to release one segment mapping to the backend.
+///
+/// # Monomorphization and ZST Static Routing
+///
+/// The backend parameter `B` acts as a Zero-Sized Type (ZST) policy marker. Calls
+/// to this function are fully monomorphized by the compiler into direct machine-code
+/// calls for the target backend, preserving the zero-cost abstraction invariant.
 ///
 /// # Safety
 ///
@@ -274,6 +304,11 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
 /// initialized mappings, and that no concurrent allocations are attempting to
 /// read/write the pages of the segments while they are being reset.
 pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
+    if !B::SUPPORTS_PAGE_RESET {
+        B::global_segment_pool().record_reset(0);
+        return;
+    }
+
     let pool = B::global_segment_pool();
     // Drain into a fixed-size stack buffer (the pool is bounded to
     // MAX_RETAINED_SEGMENTS, so this never overflows).

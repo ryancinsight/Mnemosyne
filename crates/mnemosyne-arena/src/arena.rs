@@ -20,132 +20,41 @@ use mnemosyne_core::validation::is_valid_alloc_request;
 ///   recover the segment header via segment rounding or the metadata slot).
 /// - The returned pointer must be deallocated using `deallocate_large_or_huge`
 ///   with the same memory backend `B`.
-pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(size: usize, align: usize) -> *mut u8 {
+#[inline(never)]
+fn derive_large_or_huge_layout(size: usize, align: usize) -> Option<(usize, usize)> {
     if !is_valid_alloc_request(size, align) {
-        return core::ptr::null_mut();
+        return None;
     }
-    let alignment = align;
+    let extra = core::cmp::max(align, PAGE_SIZE);
+    let total_alloc_size = size
+        .checked_add(SEGMENT_ALIGN)
+        .and_then(|val| val.checked_add(extra))?;
 
-    // Tight backend mapping size derivation.
-    //
-    // The mapping must satisfy `payload_end <= raw_ptr + total_alloc_size`,
-    // where:
-    //   aligned_addr - raw_ptr   <= SEGMENT_ALIGN - 1  (round-up to SEGMENT_ALIGN)
-    //   reserved prefix          == PAGE_SIZE          (segment header window)
-    //   user_addr - prefix_end   <= alignment - 1      (round-up to alignment)
-    //   payload                  == size
-    //
-    // Summing the upper bounds yields `(SEGMENT_ALIGN - 1) + PAGE_SIZE +
-    // (alignment - 1) + size`, which is strictly less than
-    // `size + alignment + SEGMENT_ALIGN + PAGE_SIZE`. The prior derivation
-    // reserved an entire extra `SEGMENT_SIZE` for the payload-alignment
-    // slack, leaving roughly `SEGMENT_SIZE - PAGE_SIZE` (~2 MiB - 64 KiB) of
-    // memory unused per huge mapping. The tighter formula removes that
-    // slack while preserving the worst-case bound and the upstream
-    // `MAX_ALLOC_SIZE` cap.
-    let total_alloc_size = match size
-        .checked_add(alignment)
-        .and_then(|val| val.checked_add(SEGMENT_ALIGN))
-        .and_then(|val| val.checked_add(PAGE_SIZE))
-    {
-        Some(val) if val <= MAX_ALLOC_SIZE => val,
-        _ => return core::ptr::null_mut(),
-    };
-
-    // Safety: total_alloc_size is non-zero and safe to allocate. We call the backend allocation safely.
-    let raw_ptr = unsafe { B::allocate(total_alloc_size) };
-    if raw_ptr.is_null() {
-        return core::ptr::null_mut();
+    if total_alloc_size <= MAX_ALLOC_SIZE {
+        Some((total_alloc_size, align))
+    } else {
+        None
     }
+}
 
-    let aligned_addr = match checked_align_up(raw_ptr as usize, SEGMENT_ALIGN) {
-        Some(addr) => addr,
-        None => {
-            // Safety: Releasing raw memory back to the backend because alignment check overflowed.
-            let _released = unsafe { B::deallocate(raw_ptr, total_alloc_size) };
-            return core::ptr::null_mut();
-        }
-    };
+#[inline(never)]
+unsafe fn initialize_large_or_huge_segment(
+    raw_ptr: *mut u8,
+    total_alloc_size: usize,
+    alignment: usize,
+    size: usize,
+) -> Option<(*mut u8, usize, usize, usize)> {
+    let aligned_addr = checked_align_up(raw_ptr as usize, SEGMENT_ALIGN)?;
     let aligned_ptr = aligned_addr as *mut Segment;
 
-    // Return the alignment slack before the aligned header to the OS. As in
-    // `allocate_segment`, `[raw_ptr, aligned_addr)` is never touched; on Windows
-    // it is eagerly committed and would otherwise hold commit charge for the
-    // lifetime of the huge allocation. Best-effort and page-aligned (both bounds
-    // are page-aligned); the slack stays inside the reservation and is released
-    // by the `B::deallocate(raw_ptr, total_alloc_size)` on the free path.
-    let head_slack = aligned_addr - raw_ptr as usize;
-    if head_slack > 0 {
-        // Safety: `[raw_ptr, aligned_addr)` is a page-aligned subrange of the
-        // live mapping holding no allocation data (it precedes the header).
-        let _ = unsafe { B::decommit(raw_ptr, head_slack) };
-    }
-
-    let reserved_prefix_end = match aligned_addr.checked_add(PAGE_SIZE) {
-        Some(addr) => addr,
-        None => {
-            // Safety: Releasing raw memory back to the backend because prefix calculation overflowed.
-            let _released = unsafe { B::deallocate(raw_ptr, total_alloc_size) };
-            return core::ptr::null_mut();
-        }
-    };
-
-    // The user block starts after the first page, aligned to the requested alignment.
-    let user_addr = match checked_align_up(reserved_prefix_end, alignment) {
-        Some(addr) => addr,
-        None => {
-            // Safety: Releasing raw memory back to the backend because alignment check overflowed.
-            let _released = unsafe { B::deallocate(raw_ptr, total_alloc_size) };
-            return core::ptr::null_mut();
-        }
-    };
+    let reserved_prefix_end = aligned_addr.checked_add(PAGE_SIZE)?;
+    let user_addr = checked_align_up(reserved_prefix_end, alignment)?;
     let user_ptr = user_addr as *mut u8;
 
     let metadata_addr = user_addr - core::mem::size_of::<*mut Segment>();
-    let payload_end = match user_addr.checked_add(size) {
-        Some(addr) => addr,
-        None => {
-            // Safety: Releasing raw memory back to the backend because payload bound calculation overflowed.
-            let _released = unsafe { B::deallocate(raw_ptr, total_alloc_size) };
-            return core::ptr::null_mut();
-        }
-    };
-    let mapping_end = match (raw_ptr as usize).checked_add(total_alloc_size) {
-        Some(addr) => addr,
-        None => {
-            // Safety: Releasing raw memory back to the backend because mapping bound calculation overflowed.
-            let _released = unsafe { B::deallocate(raw_ptr, total_alloc_size) };
-            return core::ptr::null_mut();
-        }
-    };
+    let payload_end = user_addr.checked_add(size)?;
+    let mapping_end = (raw_ptr as usize).checked_add(total_alloc_size)?;
 
-    // Layout invariants enforced here:
-    //
-    // 1. `user_addr` is a multiple of `core::mem::align_of::<*mut Segment>()`
-    //    (typically 8 on 64-bit targets). Proof: `aligned_addr` is a multiple
-    //    of `SEGMENT_ALIGN >= align_of::<*mut Segment>()`, and
-    //    `aligned_addr + PAGE_SIZE` is therefore also pointer-aligned. The
-    //    `checked_align_up` of that base to `alignment` only adds zero or
-    //    `alignment - 1` bytes; for any `alignment` that is a power of two
-    //    `>= align_of::<*mut Segment>()` the result preserves pointer
-    //    alignment, and for `alignment` smaller than the pointer alignment
-    //    the value is already pointer-aligned and is left unchanged.
-    //
-    // 2. `metadata_slot = user_ptr - size_of::<*mut Segment>()` lies inside
-    //    the reserved prefix before the user payload. For alignments larger
-    //    than `PAGE_SIZE`, that prefix may extend beyond Page 0, so the
-    //    invariant is prefix containment rather than Page-0 containment.
-    //
-    // 3. `alignment <= SEGMENT_SIZE`: free classification may recover the
-    //    segment header by rounding the user pointer down to `SEGMENT_SIZE`
-    //    unless the pointer itself is segment-aligned, in which case it uses
-    //    the metadata slot directly. Rejecting larger alignments keeps that
-    //    zero-copy, no-registry classification valid.
-    //
-    // 4. `payload_end <= mapping_end`: the mapping reserves one full segment
-    //    for segment alignment slack plus `alignment` bytes for payload
-    //    alignment slack, so the aligned payload and requested size remain
-    //    within the raw backend mapping.
     debug_assert_eq!(
         user_addr % core::mem::align_of::<*mut Segment>(),
         0,
@@ -171,20 +80,68 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(size: usize, align: usiz
         metadata_slot.write(aligned_ptr);
     }
 
-    let tail_slack_start = match checked_align_up(payload_end, PAGE_SIZE) {
-        Some(addr) => addr,
-        None => {
-            // Safety: Releasing raw memory back to the backend because alignment check overflowed.
-            let _released = unsafe { B::deallocate(raw_ptr, total_alloc_size) };
-            return core::ptr::null_mut();
-        }
+    let tail_slack_start = checked_align_up(payload_end, PAGE_SIZE)?;
+    Some((user_ptr, aligned_addr, tail_slack_start, mapping_end))
+}
+
+/// Allocates a block of memory of the given size and alignment.
+///
+/// If the size is small (<= 8KB), it should be routed through the thread-local
+/// allocator instead of this global arena.
+///
+/// # Safety
+///
+/// This function is unsafe because it allocates raw virtual memory and performs
+/// low-level pointer arithmetic. Callers must guarantee:
+/// - `size` is non-zero.
+/// - `align` is a non-zero power of two.
+/// - `align <= SEGMENT_SIZE` (to ensure the small-free classifier can safely
+///   recover the segment header via segment rounding or the metadata slot).
+/// - The returned pointer must be deallocated using `deallocate_large_or_huge`
+///   with the same memory backend `B`.
+pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(size: usize, align: usize) -> *mut u8 {
+    let (total_alloc_size, alignment) = match derive_large_or_huge_layout(size, align) {
+        Some(val) => val,
+        None => return core::ptr::null_mut(),
     };
-    if tail_slack_start < mapping_end {
-        let tail_slack_size = mapping_end - tail_slack_start;
-        // Safety: `[tail_slack_start, mapping_end)` is a page-aligned subrange of the
-        // live reservation holding no allocator or user data (it succeeds the user payload)
-        // and remains covered by the base release.
-        let _ = unsafe { B::decommit(tail_slack_start as *mut u8, tail_slack_size) };
+
+    // Safety: total_alloc_size is non-zero and safe to allocate. We call the backend allocation safely.
+    let raw_ptr = unsafe { B::allocate(total_alloc_size) };
+    if raw_ptr.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    let (user_ptr, aligned_addr, tail_slack_start, mapping_end) =
+        match unsafe { initialize_large_or_huge_segment(raw_ptr, total_alloc_size, alignment, size) } {
+            Some(val) => val,
+            None => {
+                // Safety: Releasing raw memory back to the backend because alignment check overflowed.
+                let _released = unsafe { B::deallocate(raw_ptr, total_alloc_size) };
+                return core::ptr::null_mut();
+            }
+        };
+
+    if B::SUPPORTS_DECOMMIT {
+        // Return the alignment slack before the aligned header to the OS. As in
+        // `allocate_segment`, `[raw_ptr, aligned_addr)` is never touched; on Windows
+        // it is eagerly committed and would otherwise hold commit charge for the
+        // lifetime of the huge allocation. Best-effort and page-aligned (both bounds
+        // are page-aligned); the slack stays inside the reservation and is released
+        // by the `B::deallocate(raw_ptr, total_alloc_size)` on the free path.
+        let head_slack = aligned_addr - raw_ptr as usize;
+        if head_slack > 0 {
+            // Safety: `[raw_ptr, aligned_addr)` is a page-aligned subrange of the
+            // live mapping holding no allocation data (it precedes the header).
+            let _ = unsafe { B::decommit(raw_ptr, head_slack) };
+        }
+
+        if tail_slack_start < mapping_end {
+            let tail_slack_size = mapping_end - tail_slack_start;
+            // Safety: `[tail_slack_start, mapping_end)` is a page-aligned subrange of the
+            // live reservation holding no allocator or user data (it succeeds the user payload)
+            // and remains covered by the base release.
+            let _ = unsafe { B::decommit(tail_slack_start as *mut u8, tail_slack_size) };
+        }
     }
 
     user_ptr
@@ -362,12 +319,12 @@ mod tests {
         let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
         use mnemosyne_backend::{backend_memory_stats, MemoryBackendWrapper};
         // The tight mapping formula reserves exactly
-        // `size + alignment + SEGMENT_ALIGN + PAGE_SIZE`. Verify the backend
+        // `size + SEGMENT_ALIGN + max(alignment, PAGE_SIZE)`. Verify the backend
         // counter observed precisely that increment, so future regressions
         // that re-introduce the SEGMENT_SIZE-of-slack would fail loudly.
         let size = 4 * 1024 * 1024;
         let align = 8;
-        let expected = size + align + SEGMENT_ALIGN + PAGE_SIZE;
+        let expected = size + SEGMENT_ALIGN + core::cmp::max(align, PAGE_SIZE);
 
         let before = backend_memory_stats();
         // Safety: power-of-two alignment, non-zero size.
@@ -465,6 +422,8 @@ mod tests {
     static DECOMMIT_HUGE_BYTES: AtomicUsize = AtomicUsize::new(0);
 
     impl MemoryBackend for DecommitRecordingHugeBackend {
+        const SUPPORTS_DECOMMIT: bool = true;
+
         unsafe fn allocate(size: usize) -> *mut u8 {
             let layout = std::alloc::Layout::from_size_align(size, SEGMENT_ALIGN)
                 .expect("huge mapping layout must be valid");

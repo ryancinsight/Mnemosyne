@@ -18,6 +18,15 @@ pub use validation::{is_valid_alloc_request, is_valid_layout_alloc_request};
 
 /// Trait defining the contract for low-level virtual memory mapping backends.
 pub trait MemoryBackend: Send + Sync + 'static {
+    /// Indicates whether the backend supports advisory page resetting.
+    const SUPPORTS_PAGE_RESET: bool = false;
+
+    /// Indicates whether the backend supports page protection guard installation.
+    const SUPPORTS_MAKE_GUARD: bool = false;
+
+    /// Indicates whether the backend supports releasing memory commitment while keeping the reservation.
+    const SUPPORTS_DECOMMIT: bool = false;
+
     /// Allocates page-aligned memory from the OS.
     ///
     /// # Safety

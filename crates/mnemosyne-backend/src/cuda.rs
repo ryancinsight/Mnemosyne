@@ -33,9 +33,13 @@ const CUDA_INITIALIZED: u8 = 2;
 // without heap allocation; overflow frees the CUDA allocation and falls back to
 // the host backend.
 const MAX_TRACKED_CUDA_ALLOCATIONS: usize = 256;
-type CudaAllocationRegistry = [AtomicPtr<u8>; MAX_TRACKED_CUDA_ALLOCATIONS];
+type CudaAllocationRegistry = [core::sync::atomic::AtomicPtr<u8>; MAX_TRACKED_CUDA_ALLOCATIONS];
 static CUDA_ALLOCATIONS: CudaAllocationRegistry =
-    [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_TRACKED_CUDA_ALLOCATIONS];
+    [const { core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()) }; MAX_TRACKED_CUDA_ALLOCATIONS];
+
+/// Exact count of active CUDA allocations inside the registry.
+static CUDA_ALLOCATION_COUNT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
 
 fn register_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool {
     let start_idx = (ptr as usize >> 12) % MAX_TRACKED_CUDA_ALLOCATIONS;
@@ -53,6 +57,7 @@ fn register_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool
                 )
                 .is_ok()
         {
+            CUDA_ALLOCATION_COUNT.fetch_add(1, Ordering::Release);
             return true;
         }
     }
@@ -60,33 +65,59 @@ fn register_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool
 }
 
 fn unregister_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool {
+    let active_count = CUDA_ALLOCATION_COUNT.load(Ordering::Acquire);
+    if active_count == 0 {
+        return false;
+    }
+
+    let mut seen_non_null = 0;
     let start_idx = (ptr as usize >> 12) % MAX_TRACKED_CUDA_ALLOCATIONS;
     for i in 0..MAX_TRACKED_CUDA_ALLOCATIONS {
         let idx = (start_idx + i) % MAX_TRACKED_CUDA_ALLOCATIONS;
         let slot = &registry[idx];
-        // Double-check: cheap relaxed load avoids CAS invalidations on non-matching slots.
-        if slot.load(Ordering::Relaxed) == ptr
-            && slot
-                .compare_exchange(
-                    ptr,
-                    core::ptr::null_mut(),
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
-        {
-            return true;
+        let val = slot.load(Ordering::Relaxed);
+        if !val.is_null() {
+            seen_non_null += 1;
+            if val == ptr
+                && slot
+                    .compare_exchange(
+                        ptr,
+                        core::ptr::null_mut(),
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    )
+                    .is_ok()
+            {
+                CUDA_ALLOCATION_COUNT.fetch_sub(1, Ordering::Release);
+                return true;
+            }
+            if seen_non_null >= active_count {
+                break;
+            }
         }
     }
     false
 }
 
 fn is_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool {
+    let active_count = CUDA_ALLOCATION_COUNT.load(Ordering::Acquire);
+    if active_count == 0 {
+        return false;
+    }
+
+    let mut seen_non_null = 0;
     let start_idx = (ptr as usize >> 12) % MAX_TRACKED_CUDA_ALLOCATIONS;
     for i in 0..MAX_TRACKED_CUDA_ALLOCATIONS {
         let idx = (start_idx + i) % MAX_TRACKED_CUDA_ALLOCATIONS;
-        if registry[idx].load(Ordering::Relaxed) == ptr {
-            return true;
+        let val = registry[idx].load(Ordering::Relaxed);
+        if !val.is_null() {
+            seen_non_null += 1;
+            if val == ptr {
+                return true;
+            }
+            if seen_non_null >= active_count {
+                break;
+            }
         }
     }
     false
@@ -96,6 +127,16 @@ fn is_cuda_ptr(ptr: *mut u8) -> bool {
     is_cuda_ptr_in(&CUDA_ALLOCATIONS, ptr)
 }
 
+/// Initializes the CUDA Unified Memory driver by dynamically resolving driver symbols.
+///
+/// This function is safe to call concurrently from multiple threads because it uses
+/// an atomic state machine (`CUDA_INIT_STATE`) to ensure `init_cuda_once` is executed
+/// exactly once. Other calling threads will spin-wait until the initialization completes.
+///
+/// # Safety
+///
+/// Callers must guarantee that no allocator operations attempt to invoke CUDA backend calls
+/// before or during this initialization phase without proper synchronization.
 unsafe fn init_cuda() {
     if CUDA_INIT_STATE.load(Ordering::Acquire) == CUDA_INITIALIZED {
         return;
@@ -129,6 +170,14 @@ fn unregister_cuda_ptr(ptr: *mut u8) -> bool {
     unregister_cuda_ptr_in(&CUDA_ALLOCATIONS, ptr)
 }
 
+/// Resolves CUDA driver API symbols dynamically from the system's driver libraries.
+///
+/// # Safety
+///
+/// This function is unsafe because it performs OS-specific dynamic library loading and
+/// raw pointer resolution. The caller must guarantee:
+/// - Exclusive access during symbol loading (enforced by the parent `init_cuda` caller).
+/// - The resolved symbols must be valid function pointers and must not be mutated.
 unsafe fn init_cuda_once() {
     let lib = {
         #[cfg(target_family = "windows")]
@@ -195,7 +244,7 @@ unsafe fn init_cuda_once() {
         // Safety: transmute maps the verified dynamic library symbol address
         // to a function pointer with system calling convention.
         type CuInitFn = unsafe extern "system" fn(u32) -> core::ffi::c_int;
-        let cu_init: CuInitFn = unsafe { core::mem::transmute(init_sym) };
+        let cu_init: CuInitFn = unsafe { core::mem::transmute::<*mut c_void, CuInitFn>(init_sym) };
         // Safety: cuInit is initialized with flags = 0 as specified by NVIDIA CUDA Driver API.
         let _ = unsafe { cu_init(0) };
     }
@@ -208,6 +257,10 @@ unsafe fn init_cuda_once() {
 pub struct CudaUnifiedBackend;
 
 impl MemoryBackend for CudaUnifiedBackend {
+    const SUPPORTS_PAGE_RESET: bool = <crate::DefaultBackend as MemoryBackend>::SUPPORTS_PAGE_RESET;
+    const SUPPORTS_MAKE_GUARD: bool = <crate::DefaultBackend as MemoryBackend>::SUPPORTS_MAKE_GUARD;
+    const SUPPORTS_DECOMMIT: bool = <crate::DefaultBackend as MemoryBackend>::SUPPORTS_DECOMMIT;
+
     /// Allocates CUDA unified managed memory, falling back to default host virtual memory on failure.
     ///
     /// # Safety
@@ -225,7 +278,7 @@ impl MemoryBackend for CudaUnifiedBackend {
             type CuMemAllocManagedFn =
                 unsafe extern "system" fn(*mut u64, usize, u32) -> core::ffi::c_int;
             let cu_mem_alloc_managed: CuMemAllocManagedFn =
-                unsafe { core::mem::transmute(alloc_ptr) };
+                unsafe { core::mem::transmute::<*mut c_void, CuMemAllocManagedFn>(alloc_ptr) };
 
             let mut dptr: u64 = 0;
             // CU_MEM_ATTACH_GLOBAL = 0x01
@@ -240,7 +293,8 @@ impl MemoryBackend for CudaUnifiedBackend {
                 // Safety: transmute maps the verified dynamic library symbol address
                 // to a function pointer with system calling convention.
                 type CuMemFreeFn = unsafe extern "system" fn(u64) -> core::ffi::c_int;
-                let cu_mem_free: CuMemFreeFn = unsafe { core::mem::transmute(free_ptr) };
+                let cu_mem_free: CuMemFreeFn =
+                    unsafe { core::mem::transmute::<*mut c_void, CuMemFreeFn>(free_ptr) };
                 // Safety: Releases the allocated managed memory because registration failed.
                 let _ = unsafe { cu_mem_free(dptr) };
             }
@@ -263,7 +317,8 @@ impl MemoryBackend for CudaUnifiedBackend {
                 // Safety: transmute maps the verified dynamic library symbol address
                 // to a function pointer with system calling convention.
                 type CuMemFreeFn = unsafe extern "system" fn(u64) -> core::ffi::c_int;
-                let cu_mem_free: CuMemFreeFn = unsafe { core::mem::transmute(free_ptr) };
+                let cu_mem_free: CuMemFreeFn =
+                    unsafe { core::mem::transmute::<*mut c_void, CuMemFreeFn>(free_ptr) };
                 // Safety: Dynamic call to cuMemFree releases the verified CUDA-allocated memory pointer.
                 let status = unsafe { cu_mem_free(ptr as u64) };
                 return status == 0;

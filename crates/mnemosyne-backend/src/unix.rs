@@ -107,6 +107,10 @@ unsafe fn hint_hugepage(ptr: *mut u8, length: usize) {
 pub struct UnixBackend;
 
 impl mnemosyne_core::MemoryBackend for UnixBackend {
+    const SUPPORTS_PAGE_RESET: bool = cfg!(any(target_os = "linux", target_os = "macos", target_os = "freebsd"));
+    const SUPPORTS_MAKE_GUARD: bool = true;
+    const SUPPORTS_DECOMMIT: bool = cfg!(any(target_os = "linux", target_os = "macos", target_os = "freebsd"));
+
     /// Allocates virtual memory pages of the given size.
     ///
     /// # Safety

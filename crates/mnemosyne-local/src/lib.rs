@@ -43,6 +43,13 @@ pub struct LocalAllocatorSlot<B: HasSegmentPool> {
     allocator: core::cell::UnsafeCell<ThreadAllocator<B>>,
 }
 
+impl<B: HasSegmentPool> Default for LocalAllocatorSlot<B> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
     /// Creates an empty per-thread allocator slot.
     pub const fn new() -> Self {
@@ -712,13 +719,11 @@ unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
             }
         }
     }
-    if becomes_empty && !alloc.is_current_segment(segment) {
-        if !alloc.try_reclaim_segment(segment) {
-            let class = page.size_class;
-            alloc.unlink_page(page as *mut Page, class);
-            page.next_page = alloc.empty_pages;
-            alloc.empty_pages = Some(NonNull::new_unchecked(page as *mut Page));
-        }
+    if becomes_empty && !alloc.is_current_segment(segment) && !alloc.try_reclaim_segment(segment) {
+        let class = page.size_class;
+        alloc.unlink_page(page as *mut Page, class);
+        page.next_page = alloc.empty_pages;
+        alloc.empty_pages = Some(NonNull::new_unchecked(page as *mut Page));
     }
 }
 
