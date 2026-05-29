@@ -1005,6 +1005,68 @@ mod tests {
         // the boxed storage is freed safely when `storage` drops here.
     }
 
+    /// Validates the singly-linked page-list splice helper `unlink_page_from_list`
+    /// across head, middle, tail, and absent-target cases. Page nodes are held
+    /// as fully raw allocations (`Box::into_raw`) so the test never interleaves
+    /// `Box` and raw-pointer access — keeping it clean under Miri's Stacked
+    /// Borrows checker, which has no FFI-backed allocator path to exercise this
+    /// logic otherwise.
+    #[test]
+    fn unlink_page_from_list_splices_and_reports_membership() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
+
+        // Three standalone page nodes owned as raw pointers for the duration.
+        let p0 = std::boxed::Box::into_raw(std::boxed::Box::new(Page::new(1)));
+        let p1 = std::boxed::Box::into_raw(std::boxed::Box::new(Page::new(2)));
+        let p2 = std::boxed::Box::into_raw(std::boxed::Box::new(Page::new(3)));
+        // Safety: p0/p1/p2 are unique live allocations; build head -> p0 -> p1 -> p2.
+        let (n0, n1, n2) = unsafe {
+            let n0 = NonNull::new_unchecked(p0);
+            let n1 = NonNull::new_unchecked(p1);
+            let n2 = NonNull::new_unchecked(p2);
+            (*p0).next_page = Some(n1);
+            (*p1).next_page = Some(n2);
+            (*p2).next_page = None;
+            (n0, n1, n2)
+        };
+        let mut head = Some(n0);
+
+        // Unlink the MIDDLE node: head -> p0 -> p2, p1 detached.
+        // Safety: all nodes live; `p1` is in the list.
+        assert!(unsafe { unlink_page_from_list(&mut head, p1) });
+        assert_eq!(head, Some(n0));
+        // Safety: nodes remain live.
+        unsafe {
+            assert_eq!((*p0).next_page, Some(n2));
+            assert_eq!((*p1).next_page, None);
+        }
+
+        // Unlink the HEAD node: head -> p2.
+        // Safety: `p0` is the head.
+        assert!(unsafe { unlink_page_from_list(&mut head, p0) });
+        assert_eq!(head, Some(n2));
+
+        // Unlink an ABSENT node (p1 again): reports false, list untouched.
+        // Safety: `p1` is no longer in the list.
+        assert!(!unsafe { unlink_page_from_list(&mut head, p1) });
+        assert_eq!(head, Some(n2));
+
+        // Unlink the TAIL/only node: list empties.
+        // Safety: `p2` is the sole node.
+        assert!(unsafe { unlink_page_from_list(&mut head, p2) });
+        assert!(head.is_none());
+
+        // Reclaim the raw allocations.
+        // Safety: each pointer came from `Box::into_raw` and is unaliased now.
+        unsafe {
+            drop(std::boxed::Box::from_raw(p0));
+            drop(std::boxed::Box::from_raw(p1));
+            drop(std::boxed::Box::from_raw(p2));
+        }
+    }
+
     /// Safety regression guard for the guard-free small-allocation fast path.
     ///
     /// The fast path borrows the thread cache without arming the re-entrancy
