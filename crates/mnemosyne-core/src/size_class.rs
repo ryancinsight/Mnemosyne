@@ -1,6 +1,6 @@
 //! Size class calculations and mapping.
 
-use crate::constants::{MAX_SMALL_ALLOC_SIZE, NUM_SIZE_CLASSES};
+use crate::constants::{MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, NUM_SIZE_CLASSES};
 
 /// Maps an allocation size to its corresponding size class index.
 ///
@@ -15,7 +15,7 @@ const SIZE_TO_CLASS_LUT: [u8; MAX_SMALL_ALLOC_SIZE + 1] = {
     let mut i = 1;
     while i <= MAX_SMALL_ALLOC_SIZE {
         let class = if i <= 128 {
-            (i - 1) / 16
+            (i - 1) / MIN_BLOCK_SIZE
         } else if i <= 512 {
             ((i - 129) / 32) + 8
         } else if i <= 2048 {
@@ -54,7 +54,7 @@ pub const fn size_to_class(size: usize) -> Option<usize> {
 #[inline(always)]
 pub const fn class_to_size(class: usize) -> usize {
     if class < 8 {
-        (class + 1) * 16
+        (class + 1) * MIN_BLOCK_SIZE
     } else if class < 20 {
         128 + (class - 7) * 32
     } else if class < 32 {

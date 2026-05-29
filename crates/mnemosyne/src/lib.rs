@@ -3,7 +3,7 @@
 #![no_std]
 
 use core::alloc::{GlobalAlloc, Layout};
-use mnemosyne_core::{class_to_size, size_to_class, NUM_SIZE_CLASSES};
+use mnemosyne_core::{class_to_size, size_to_class, MIN_BLOCK_SIZE, NUM_SIZE_CLASSES};
 use mnemosyne_local::{thread_alloc_layout, thread_free, LocalAllocatorSelector};
 
 pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
@@ -163,7 +163,7 @@ pub fn reset() {
 
 #[inline(always)]
 fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> bool {
-    if layout.align() > 16 {
+    if layout.align() > MIN_BLOCK_SIZE {
         return false;
     }
 

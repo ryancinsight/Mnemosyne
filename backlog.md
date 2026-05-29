@@ -121,6 +121,7 @@
 - [patch] Reject a Layout-proven small-allocation entry split after it improved allocation-only latency but widened the retained small cycle and threaded-small gaps.
 - [patch] Serialize backend telemetry tests that mutate process-wide mapping counters so workspace tests are deterministic.
 - [patch] Reject compact `Page` counter layouts after 48-byte metadata experiments regressed saturated threaded and usable-size rows.
+- [patch] Centralize the 16-byte small-block floor as `MIN_BLOCK_SIZE` and remove stale compact-counter invariants.
 
 ## Next
 

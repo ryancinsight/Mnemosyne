@@ -10,7 +10,7 @@ pub use local_alloc::{SizeClassOccupancy, ThreadAllocator, ThreadAllocatorStats}
 
 use core::ptr::NonNull;
 use mnemosyne_arena::{allocate_large_or_huge, deallocate_large_or_huge, HasSegmentPool};
-use mnemosyne_core::constants::{PAGES_PER_SEGMENT, PAGE_SIZE, SEGMENT_SIZE};
+use mnemosyne_core::constants::{MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SIZE, SEGMENT_SIZE};
 use mnemosyne_core::types::{Block, Page, Segment};
 use mnemosyne_core::validation::{is_valid_alloc_request, is_valid_layout_alloc_request};
 
@@ -271,7 +271,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     size: usize,
     align: usize,
 ) -> *mut u8 {
-    if align > 16 {
+    if align > MIN_BLOCK_SIZE {
         // Fall back to direct arena/huge allocation to break recursion and get high alignment (64KB aligned page-starts).
         // Safety: allocate_large_or_huge handles safety.
         let ptr = unsafe { allocate_large_or_huge::<B>(size, align) };
