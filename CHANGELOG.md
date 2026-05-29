@@ -135,3 +135,4 @@
 - Rejected compact `Page` counter layouts after 48-byte metadata experiments regressed saturated threaded cycles and usable-size latency.
 - Centralized the 16-byte minimum small-block size as `MIN_BLOCK_SIZE` and routed size-class plus alignment-threshold logic through it.
 - Added `MIN_BLOCK_SIZE` and compile-time assertions pinning the compacted `Page` field widths (`PAGE_SIZE / MIN_BLOCK_SIZE <= u16::MAX`, `PAGES_PER_SEGMENT <= u8::MAX + 1`, `PAGE_SIZE % MIN_BLOCK_SIZE == 0`) so a future layout-constant change cannot silently overflow the u16/u8 page counters.
+- Added `smallest_class_page_saturates_u16_counters_without_wrap` runtime witness for the compacted `Page` counters: a full 4096-block 16-byte page reaches `alloc_count == max_blocks` with distinct non-null pointers and refills cleanly past saturation, complementing the compile-time `PAGE_SIZE / MIN_BLOCK_SIZE <= u16::MAX` bound.

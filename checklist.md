@@ -272,3 +272,5 @@ Target version: 0.1.0
 - [x] [patch] Add `crates/mnemosyne-c-shim/include/mnemosyne.h` C declaration header matching the seven exported `extern "C"` symbols, documenting per-function null/zero/overflow/alignment contracts; reference it from README highlight #13.
 
 - [x] [patch] Add `MIN_BLOCK_SIZE = 16` constant and three compile-time assertions guarding the compacted `Page` field widths: `PAGE_SIZE / MIN_BLOCK_SIZE <= u16::MAX`, `PAGES_PER_SEGMENT <= u8::MAX + 1`, and `PAGE_SIZE % MIN_BLOCK_SIZE == 0`.
+
+- [x] [patch] Add `smallest_class_page_saturates_u16_counters_without_wrap` runtime witness: fill a 16-byte page to its 4096-block capacity, assert `alloc_count == max_blocks` with all-distinct non-null pointers, and confirm the next allocation refills a fresh page rather than returning a wrapped pointer.

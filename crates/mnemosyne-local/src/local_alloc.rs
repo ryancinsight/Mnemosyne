@@ -947,6 +947,88 @@ mod tests {
     }
 
     #[test]
+    fn smallest_class_page_saturates_u16_counters_without_wrap() {
+        // Runtime witness for the compile-time `PAGE_SIZE / MIN_BLOCK_SIZE
+        // <= u16::MAX` guard: filling one smallest-class (16-byte) page to
+        // capacity must drive `alloc_count` up to `max_blocks` (4096 for a
+        // 64 KiB page) with every pointer distinct and non-null. A wrap of
+        // the compacted `u16` counter would surface here as a repeated or
+        // null pointer, or as a premature refill.
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
+        let mut alloc = ThreadAllocator::<DefaultBackend>::new();
+
+        // Allocate the first 16-byte block to materialize the page and learn
+        // its capacity.
+        // Safety: alloc is initialized and valid.
+        let first = unsafe { alloc.alloc(16) };
+        assert!(!first.is_null(), "initial 16-byte allocation failed");
+
+        let segment_addr = (first as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+        let segment = segment_addr as *mut Segment;
+        let page_index = (first as usize - segment_addr) / mnemosyne_core::constants::PAGE_SIZE;
+        // Safety: segment points to a valid segment containing pages.
+        let max_blocks = unsafe { (*segment).pages[page_index].max_blocks } as usize;
+        assert_eq!(
+            max_blocks,
+            mnemosyne_core::constants::PAGE_SIZE / mnemosyne_core::constants::MIN_BLOCK_SIZE,
+            "16-byte page capacity should equal PAGE_SIZE / MIN_BLOCK_SIZE"
+        );
+
+        // Drain the remainder of this exact page. We stop as soon as an
+        // allocation leaves the page (a refill), because the goal is to
+        // prove this page's counter reaches max_blocks without wrapping.
+        let mut count = 1usize;
+        let mut last = first;
+        while count < max_blocks {
+            // Safety: alloc is valid.
+            let ptr = unsafe { alloc.alloc(16) };
+            assert!(!ptr.is_null(), "16-byte allocation {count} failed");
+            let ptr_seg = (ptr as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+            let ptr_page = (ptr as usize - ptr_seg) / mnemosyne_core::constants::PAGE_SIZE;
+            if ptr_seg != segment_addr || ptr_page != page_index {
+                // Crossed into a different page before filling this one;
+                // that would only happen on a wrap/early-refill defect.
+                panic!(
+                    "allocation {count} left the page before saturation (max_blocks={max_blocks})"
+                );
+            }
+            assert_ne!(
+                ptr, last,
+                "allocator returned a duplicate pointer at {count}"
+            );
+            last = ptr;
+            count += 1;
+        }
+
+        // The page's u16 alloc_count must now read exactly max_blocks with
+        // no wrap.
+        let saturated = unsafe { (*segment).pages[page_index].alloc_count } as usize;
+        assert_eq!(
+            saturated, max_blocks,
+            "saturated u16 alloc_count {saturated} != max_blocks {max_blocks} (counter wrap?)"
+        );
+        assert!(
+            unsafe { (*segment).pages[page_index].free }.is_none(),
+            "free list should be empty after saturating the page"
+        );
+
+        // One more allocation must succeed by refilling a fresh page rather
+        // than returning a wrapped/duplicate pointer.
+        // Safety: alloc is valid.
+        let overflow = unsafe { alloc.alloc(16) };
+        assert!(!overflow.is_null(), "post-saturation allocation failed");
+        let overflow_seg = (overflow as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+        let overflow_page =
+            (overflow as usize - overflow_seg) / mnemosyne_core::constants::PAGE_SIZE;
+        assert!(
+            overflow_seg != segment_addr || overflow_page != page_index,
+            "post-saturation allocation reused the full page (counter wrap?)"
+        );
+    }
+
+    #[test]
     fn unlink_full_page_reports_found_status_without_mutating_missing_page() {
         let _guard = TEST_LOCK
             .lock()
