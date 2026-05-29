@@ -18,6 +18,11 @@ pub const PAGES_PER_SEGMENT: usize = SEGMENT_SIZE / PAGE_SIZE;
 /// The maximum size of a small allocation class (8KB).
 pub const MAX_SMALL_ALLOC_SIZE: usize = 8 * 1024;
 
+/// The smallest size-class block, in bytes. A page sliced for this class
+/// holds the most blocks, so it bounds the `Page::max_blocks` /
+/// `Page::alloc_count` counter width.
+pub const MIN_BLOCK_SIZE: usize = 16;
+
 /// Maximum single allocation payload size accepted by public allocation entry points.
 ///
 /// This mirrors Rust `Layout`'s pointer-offset safety bound: allocated object
@@ -93,4 +98,30 @@ const _: () = assert!(
 const _: () = assert!(
     NUM_SIZE_CLASSES > 0,
     "NUM_SIZE_CLASSES must be non-zero so per-class allocator arrays hold at least one entry"
+);
+
+/// `Page::max_blocks` and `Page::alloc_count` are `u16`. The densest page
+/// holds `PAGE_SIZE / MIN_BLOCK_SIZE` blocks; that count — and therefore
+/// the live allocation count — must fit in `u16` or the compacted Page
+/// counters would silently wrap. With the current 64 KiB page and 16-byte
+/// minimum block this is 4096, well under `u16::MAX`.
+const _: () = assert!(
+    PAGE_SIZE / MIN_BLOCK_SIZE <= u16::MAX as usize,
+    "PAGE_SIZE / MIN_BLOCK_SIZE must fit in the u16 Page block counters"
+);
+
+/// `Page::page_index` is a `u8`. Every page index lies in
+/// `[0, PAGES_PER_SEGMENT)`, so the segment must hold no more pages than
+/// `u8` can address, or the compacted index field would truncate.
+const _: () = assert!(
+    PAGES_PER_SEGMENT <= u8::MAX as usize + 1,
+    "PAGES_PER_SEGMENT must fit in the u8 Page::page_index field"
+);
+
+/// `MIN_BLOCK_SIZE` must divide `PAGE_SIZE` exactly so the densest page is
+/// fully tiled with no trailing partial block, keeping the block-count
+/// derivation above exact.
+const _: () = assert!(
+    PAGE_SIZE % MIN_BLOCK_SIZE == 0,
+    "MIN_BLOCK_SIZE must divide PAGE_SIZE exactly"
 );

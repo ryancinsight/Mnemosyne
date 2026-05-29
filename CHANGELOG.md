@@ -133,3 +133,4 @@
 - Serialized backend telemetry tests that mutate process-wide mapping counters, making the workspace test gate deterministic without changing production telemetry semantics.
 - Added `crates/mnemosyne-c-shim/include/mnemosyne.h` C declaration header matching the seven exported shim symbols, with per-function contract documentation, so C/C++ consumers have a ready prototype file.
 - Rejected compact `Page` counter layouts after 48-byte metadata experiments regressed saturated threaded cycles and usable-size latency.
+- Added `MIN_BLOCK_SIZE` and compile-time assertions pinning the compacted `Page` field widths (`PAGE_SIZE / MIN_BLOCK_SIZE <= u16::MAX`, `PAGES_PER_SEGMENT <= u8::MAX + 1`, `PAGE_SIZE % MIN_BLOCK_SIZE == 0`) so a future layout-constant change cannot silently overflow the u16/u8 page counters.

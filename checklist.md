@@ -269,3 +269,5 @@ Target version: 0.1.0
 - [x] [patch] Reject compact `Page` counter layouts (`u16/u8` and `u32`) after both preserved a 48-byte metadata budget but regressed saturated threaded cycles (`~101.720 us` and `~114.240 us`) and/or usable-size latency.
 
 - [x] [patch] Add `crates/mnemosyne-c-shim/include/mnemosyne.h` C declaration header matching the seven exported `extern "C"` symbols, documenting per-function null/zero/overflow/alignment contracts; reference it from README highlight #13.
+
+- [x] [patch] Add `MIN_BLOCK_SIZE = 16` constant and three compile-time assertions guarding the compacted `Page` field widths: `PAGE_SIZE / MIN_BLOCK_SIZE <= u16::MAX`, `PAGES_PER_SEGMENT <= u8::MAX + 1`, and `PAGE_SIZE % MIN_BLOCK_SIZE == 0`.
