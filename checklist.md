@@ -251,3 +251,5 @@ Target version: 0.1.0
 - [ ] [patch] Run target-gated jemalloc comparator refresh on a platform where `tikv-jemallocator` links.
 
 - [x] [patch] Add `usable_size_never_under_reports_across_every_size_class` exhaustive lower-bound test covering every small size class at its lower boundary and class max, the analog of the over-report guard.
+
+- [x] [patch] Extract `realloc_copy_grow<A: GlobalAlloc>` shared slow-path helper; route both `Mnemosyne::realloc` and `MnemosyneAllocator::realloc` through it, removing the duplicated allocate/copy/free body.

@@ -180,6 +180,51 @@ fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> bool {
     new_size <= class_to_size(class)
 }
 
+/// Shared `realloc` slow path: allocate `new_size` at `layout.align()`,
+/// copy the preserved prefix, free the old allocation.
+///
+/// Both `Mnemosyne::realloc` and `MnemosyneAllocator::realloc` reach this
+/// after their fast-path checks (null, zero-size, within-class) have been
+/// ruled out, so the helper unconditionally performs the copy round trip.
+/// It is generic over the concrete `GlobalAlloc` so each allocator
+/// monomorphizes its own `alloc`/`dealloc` calls inline; the helper is
+/// `#[inline]` and adds zero indirection over the previous hand-inlined
+/// bodies.
+///
+/// The copy length is `min(layout.size(), new_size)`, NOT
+/// `min(usable_size(ptr), new_size)`. The caller's `GlobalAlloc` contract
+/// guarantees they wrote at most `layout.size()` bytes into the original
+/// allocation; the bytes from `layout.size()` up to `usable_size(ptr)`
+/// are size-class slack the user has never initialized. Copying that
+/// slack would be pointless and unsound — it propagates uninitialized
+/// memory into a fresh allocation the user may then read. For
+/// `SecurePolicy` it would additionally clobber the zero-init that
+/// `alloc` just performed in the slack window.
+///
+/// # Safety
+///
+/// `ptr` must be a non-null allocation produced by `allocator` with the
+/// given `layout`, and `new_size` must be nonzero. Same contract as the
+/// default `GlobalAlloc::realloc` after its trivial cases.
+#[inline]
+unsafe fn realloc_copy_grow<A: GlobalAlloc>(
+    allocator: &A,
+    ptr: *mut u8,
+    layout: Layout,
+    new_size: usize,
+) -> *mut u8 {
+    let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
+    // Safety: same contract as the default GlobalAlloc::realloc.
+    let new_ptr = unsafe { allocator.alloc(new_layout) };
+    if !new_ptr.is_null() {
+        unsafe {
+            core::ptr::copy_nonoverlapping(ptr, new_ptr, core::cmp::min(layout.size(), new_size));
+            allocator.dealloc(ptr, layout);
+        }
+    }
+    new_ptr
+}
+
 /// The Mnemosyne global allocator structure.
 ///
 /// Implements `core::alloc::GlobalAlloc` and routes allocations to the
@@ -261,31 +306,7 @@ unsafe impl GlobalAlloc for Mnemosyne {
             return ptr;
         }
 
-        // Outline the slow path: allocate a new layout, copy the
-        // preserved bytes, free the old allocation.
-        //
-        // The copy length is `min(layout.size(), new_size)`, NOT
-        // `min(usable_size(ptr), new_size)`. The caller's `GlobalAlloc`
-        // contract guarantees they wrote at most `layout.size()` bytes
-        // into the original allocation; the bytes from `layout.size()`
-        // up to `usable_size(ptr)` are size-class slack that the user
-        // has never initialized. Copying from that slack would be
-        // pointless and unsound — it propagates uninitialized memory
-        // into a fresh allocation that the user may then read.
-        let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
-        // Safety: same contract as the default GlobalAlloc::realloc.
-        let new_ptr = unsafe { self.alloc(new_layout) };
-        if !new_ptr.is_null() {
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    ptr,
-                    new_ptr,
-                    core::cmp::min(layout.size(), new_size),
-                );
-                self.dealloc(ptr, layout);
-            }
-        }
-        new_ptr
+        unsafe { realloc_copy_grow(self, ptr, layout, new_size) }
     }
 }
 
@@ -371,25 +392,7 @@ unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
             return ptr;
         }
 
-        // Slow path: allocate, copy, free. Copy length is `min(layout.size(),
-        // new_size)` for the same reason as in `Mnemosyne::realloc` — bytes
-        // beyond `layout.size()` were never written by the caller and must
-        // not be propagated. For `SecurePolicy`, this is doubly important:
-        // `alloc` already zeroed the new region, so the copy must not
-        // overwrite past `layout.size()` and clobber the zero-init.
-        let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
-        let new_ptr = unsafe { self.alloc(new_layout) };
-        if !new_ptr.is_null() {
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    ptr,
-                    new_ptr,
-                    core::cmp::min(layout.size(), new_size),
-                );
-                self.dealloc(ptr, layout);
-            }
-        }
-        new_ptr
+        unsafe { realloc_copy_grow(self, ptr, layout, new_size) }
     }
 }
 

@@ -112,6 +112,7 @@
 - [patch] Reject `thread_local!` const initialization for the allocator slot after it improved non-saturated rows but regressed saturated threaded cycles.
 - [patch] Add all-size-class lower-bound coverage for `usable_size` so small allocations can never under-report class capacity.
 - [patch] Reject separate owner-token TLS routing after cycle latency and cross-thread handoff regressed.
+- [patch] Extract shared monomorphized realloc slow path so both allocator implementations use one copy-length contract.
 
 ## Next
 

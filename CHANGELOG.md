@@ -123,3 +123,4 @@
 - Rejected `thread_local!` const initialization for the allocator slot after measurement showed the same saturated threaded regression pattern despite faster non-saturated rows.
 - Added all-size-class `usable_size` lower-bound coverage and rejected separate owner-token TLS routing after measurement showed regressions in cycle latency, cross-thread handoff, and saturated threaded cycles.
 - Added `usable_size_never_under_reports_across_every_size_class` exhaustive lower-bound test covering every small size class at its lower boundary and class max, bracketing `usable_size` from both sides alongside the existing over-report guard.
+- Extracted `realloc_copy_grow<A: GlobalAlloc>` shared slow-path helper; `Mnemosyne::realloc` and `MnemosyneAllocator<P, B>::realloc` now route their allocate/copy/free round trip through one monomorphized function, consolidating the copy-length contract into a single rustdoc block.
