@@ -670,33 +670,48 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
             return;
         }
 
-        let res = B::with_allocator(|alloc| {
-            // Safety: segment and block are verified to be owned by this thread allocator.
-            // Local free: try to update the page metadata in the thread cache.
-            unsafe {
-                (*block).next = page.free;
-                page.free = Some(NonNull::new_unchecked(block));
-                let was_full = page.alloc_count == page.max_blocks;
-                if page.alloc_count > 0 {
-                    page.alloc_count -= 1;
-                }
-                if was_full {
-                    let class = page.size_class;
-                    if alloc.unlink_full_page(page as *mut Page, class) {
-                        page.next_page = alloc.active_pages[class];
-                        alloc.active_pages[class] = Some(NonNull::new_unchecked(page as *mut Page));
-                    }
-                }
-                if page.alloc_count == 0 && !alloc.is_current_segment(segment) {
-                    if !alloc.try_reclaim_segment(segment) {
-                        let class = page.size_class;
-                        alloc.unlink_page(page as *mut Page, class);
-                        page.next_page = alloc.empty_pages;
-                        alloc.empty_pages = Some(NonNull::new_unchecked(page as *mut Page));
-                    }
+        #[inline(always)]
+        unsafe fn do_local_free<B: HasSegmentPool>(
+            alloc: &mut ThreadAllocator<B>,
+            block: *mut Block,
+            page: &mut Page,
+            segment: *mut Segment,
+        ) {
+            (*block).next = page.free;
+            page.free = Some(NonNull::new_unchecked(block));
+            let was_full = page.alloc_count == page.max_blocks;
+            if page.alloc_count > 0 {
+                page.alloc_count -= 1;
+            }
+            if was_full {
+                let class = page.size_class;
+                if alloc.unlink_full_page(page as *mut Page, class) {
+                    page.next_page = alloc.active_pages[class];
+                    alloc.active_pages[class] = Some(NonNull::new_unchecked(page as *mut Page));
                 }
             }
-        });
+            if page.alloc_count == 0 && !alloc.is_current_segment(segment) {
+                if !alloc.try_reclaim_segment(segment) {
+                    let class = page.size_class;
+                    alloc.unlink_page(page as *mut Page, class);
+                    page.next_page = alloc.empty_pages;
+                    alloc.empty_pages = Some(NonNull::new_unchecked(page as *mut Page));
+                }
+            }
+        }
+
+        // Safety: the closure only touches thread-local page metadata and
+        // unlinks/reclaims owned segments, which involves no nested allocator
+        // entry points, satisfying the unguarded safety contract.
+        let fast_reclaim = unsafe {
+            B::with_allocator_unguarded(|alloc| do_local_free(alloc, block, page, segment))
+        };
+        let res = if fast_reclaim.is_none() {
+            // Reentrant fallback
+            B::with_allocator_guard(|alloc| unsafe { do_local_free(alloc, block, page, segment) })
+        } else {
+            fast_reclaim
+        };
 
         if res.is_none() {
             // Re-entrant/borrowed local free: push onto the owning page's queue.

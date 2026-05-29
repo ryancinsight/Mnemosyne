@@ -1005,6 +1005,48 @@ mod tests {
         // the boxed storage is freed safely when `storage` drops here.
     }
 
+    /// Proves `Page::index_in_segment` (address derivation) equals the stored
+    /// `page_index` field for every page of a real `SEGMENT_ALIGN`-aligned
+    /// segment. This pins the correctness of the derivation that lets a future
+    /// change drop the stored `page_index` field and reclaim its 8 bytes for a
+    /// doubly-linked `prev_page` back-pointer (O(1) page-list unlink) while
+    /// keeping `Page` within one 64-byte cache line. A real segment from the
+    /// backend is used because the derivation rounds the page address down to
+    /// `SEGMENT_ALIGN`, which only holds for genuinely segment-aligned memory.
+    #[test]
+    fn page_index_field_matches_address_derivation() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
+
+        // Safety: allocate a real segment-aligned segment from the backend.
+        let seg = unsafe { allocate_segment::<DefaultBackend>() }
+            .expect("segment allocation failed");
+        assert_eq!(
+            seg as usize % mnemosyne_core::constants::SEGMENT_ALIGN,
+            0,
+            "backend segment is not SEGMENT_ALIGN-aligned"
+        );
+
+        for i in 0..PAGES_PER_SEGMENT {
+            // Safety: `seg` is a live initialized segment; page `i` is in bounds.
+            let page = unsafe { &(*seg).pages[i] };
+            assert_eq!(
+                page.index_in_segment(),
+                i,
+                "address derivation disagrees with array position at page {i}"
+            );
+            assert_eq!(
+                page.index_in_segment(),
+                page.page_index,
+                "address derivation disagrees with stored page_index at page {i}"
+            );
+        }
+
+        // Safety: `seg` was returned by `allocate_segment` and is unaliased.
+        unsafe { deallocate_segment::<DefaultBackend>(seg) };
+    }
+
     /// Validates the singly-linked page-list splice helper `unlink_page_from_list`
     /// across head, middle, tail, and absent-target cases. Page nodes are held
     /// as fully raw allocations (`Box::into_raw`) so the test never interleaves

@@ -92,6 +92,35 @@ impl Page {
         }
     }
 
+    /// Recovers this page's index within its parent segment's `pages` array
+    /// from the page's own metadata address, in O(1).
+    ///
+    /// The page metadata lives at
+    /// `segment_base + offset_of!(Segment, pages) + index * size_of::<Page>()`,
+    /// so the index is `(self_addr - pages_base) / size_of::<Page>()`. The
+    /// segment base is recovered by rounding the page address down to
+    /// `SEGMENT_ALIGN` (`== SEGMENT_SIZE`), the same masking the small-free
+    /// classifier already relies on. `Page` is exactly 64 bytes (a power of
+    /// two), so the division lowers to a shift.
+    ///
+    /// This derivation makes the stored `page_index` field redundant: removing
+    /// it frees an 8-byte slot for a doubly-linked `prev_page` back-pointer
+    /// (enabling O(1) page-list unlink) while keeping `Page` within its single
+    /// 64-byte cache line. `page_index_field_matches_address_derivation` pins
+    /// the equivalence across every page of a real initialized segment.
+    ///
+    /// # Safety
+    ///
+    /// `self` must be a `Page` embedded in the `pages` array of a
+    /// `SEGMENT_ALIGN`-aligned `Segment` (the only context pages are created in).
+    #[inline]
+    pub fn index_in_segment(&self) -> usize {
+        let self_addr = self as *const Page as usize;
+        let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
+        let pages_base = segment_addr + core::mem::offset_of!(Segment, pages);
+        (self_addr - pages_base) / core::mem::size_of::<Page>()
+    }
+
     /// Atomically drains cross-thread frees into the page-local free list.
     ///
     /// Returns the number of reclaimed blocks. The caller owns the surrounding
