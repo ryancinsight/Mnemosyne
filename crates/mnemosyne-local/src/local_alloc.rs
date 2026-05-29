@@ -947,13 +947,12 @@ mod tests {
     }
 
     #[test]
-    fn smallest_class_page_saturates_u16_counters_without_wrap() {
-        // Runtime witness for the compile-time `PAGE_SIZE / MIN_BLOCK_SIZE
-        // <= u16::MAX` guard: filling one smallest-class (16-byte) page to
-        // capacity must drive `alloc_count` up to `max_blocks` (4096 for a
-        // 64 KiB page) with every pointer distinct and non-null. A wrap of
-        // the compacted `u16` counter would surface here as a repeated or
-        // null pointer, or as a premature refill.
+    fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
+        // Filling one smallest-class (16-byte) page to capacity must drive
+        // `alloc_count` up to `max_blocks` (4096 for a 64 KiB page) with
+        // every pointer distinct and non-null. A counter/list defect would
+        // surface here as a repeated pointer, null pointer, or premature
+        // refill.
         let _guard = TEST_LOCK
             .lock()
             .expect("local allocator test lock was poisoned");
@@ -1002,12 +1001,11 @@ mod tests {
             count += 1;
         }
 
-        // The page's u16 alloc_count must now read exactly max_blocks with
-        // no wrap.
+        // The page's allocation count must now read exactly max_blocks.
         let saturated = unsafe { (*segment).pages[page_index].alloc_count } as usize;
         assert_eq!(
             saturated, max_blocks,
-            "saturated u16 alloc_count {saturated} != max_blocks {max_blocks} (counter wrap?)"
+            "saturated alloc_count {saturated} != max_blocks {max_blocks}"
         );
         assert!(
             unsafe { (*segment).pages[page_index].free }.is_none(),
@@ -1024,7 +1022,7 @@ mod tests {
             (overflow as usize - overflow_seg) / mnemosyne_core::constants::PAGE_SIZE;
         assert!(
             overflow_seg != segment_addr || overflow_page != page_index,
-            "post-saturation allocation reused the full page (counter wrap?)"
+            "post-saturation allocation reused the full page"
         );
     }
 

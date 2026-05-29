@@ -236,11 +236,13 @@ unsafe impl GlobalAlloc for Mnemosyne {
     // OS mapping, returning null on failure or a valid memory block pointer on success.
     #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if layout.size() == 0 {
-            return core::ptr::null_mut();
-        }
-        // Safety: thread_alloc is safe because the size and alignment are derived
-        // from a valid Layout, and the returned pointer is verified or null.
+        // `thread_alloc_layout` rejects `size == 0` through
+        // `is_valid_layout_alloc_request`, so an explicit zero guard here
+        // would be a redundant branch on the hottest path. The
+        // single-source validation returns null for size 0, which is a
+        // valid `GlobalAlloc::alloc` result.
+        // Safety: size and alignment are derived from a valid Layout, and
+        // the returned pointer is verified or null.
         unsafe {
             thread_alloc_layout::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
                 layout.size(),
@@ -343,11 +345,11 @@ unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
     // OS mapping, returning null on failure or a valid memory block pointer on success.
     #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if layout.size() == 0 {
-            return core::ptr::null_mut();
-        }
-        // Safety: thread_alloc is safe because size and alignment are derived
-        // from a valid Layout, and the returned pointer is verified or null.
+        // `thread_alloc_layout` rejects `size == 0` via
+        // `is_valid_layout_alloc_request`; the explicit zero guard would be
+        // a redundant hot-path branch (see `Mnemosyne::alloc`).
+        // Safety: size and alignment are derived from a valid Layout, and
+        // the returned pointer is verified or null.
         unsafe { thread_alloc_layout::<P, B>(layout.size(), layout.align()) }
     }
 
