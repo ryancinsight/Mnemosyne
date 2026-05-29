@@ -1,0 +1,15 @@
+[package]
+name = "mnemosyne-c-shim"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+# `lib` keeps the crate usable from Rust tests and downstream Rust code;
+# `cdylib` produces the shared object that can be `LD_PRELOAD`ed (Unix) or
+# loaded as a DLL (Windows) to interpose the C allocator symbols.
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+mnemosyne-local = { path = "../mnemosyne-local" }
+mnemosyne-core = { path = "../mnemosyne-core" }
+mnemosyne-backend = { path = "../mnemosyne-backend" }

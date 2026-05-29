@@ -63,6 +63,10 @@ Its design incorporates core lessons from modern allocator research (specificall
 *   `allocate_large_or_huge` reserves exactly `size + alignment + SEGMENT_ALIGN + PAGE_SIZE` from the backend, derived from a four-step layout walk over the worst-case slacks (segment-alignment round-up, page-zero reserved prefix, payload-alignment round-up, payload). The prior derivation over-reserved by an entire `SEGMENT_SIZE`, wasting ~2 MiB − 64 KiB of mapped memory per huge allocation; the tight formula is pinned by `huge_allocation_consumes_tight_mapping_size` which asserts the exact backend telemetry delta.
 *   Power-of-two alignments above `SEGMENT_ALIGN` are rejected at the entry point so that free classification can always recover the segment header by segment rounding or metadata-slot lookup, without a side registry.
 
+### 13. C ABI Shim (`mnemosyne-c-shim`)
+*   The `mnemosyne-c-shim` crate exposes `malloc`, `free`, `calloc`, `realloc`, `aligned_alloc`, `posix_memalign`, and `malloc_usable_size` as `#[no_mangle] extern "C"` functions. Built as both `lib` (for Rust consumers) and `cdylib` (for `LD_PRELOAD` on Unix / DLL injection on Windows), it lets C/C++ code or whole processes use Mnemosyne without a Rust `#[global_allocator]`.
+*   C `free`/`realloc`/`malloc_usable_size` are pointer-only — no `Layout` is threaded through — which Mnemosyne supports natively because the page/segment owner is recovered by address rounding. The shim's `realloc` copies `min(usable_size, new_size)` to honor C semantics (where the caller may have written the entire usable region), deliberately distinct from the Rust `GlobalAlloc::realloc` path's `layout.size()` bound.
+
 ---
 
 ## Multi-Crate Workspace Layout

@@ -354,6 +354,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mnemosyne-c-shim"
+version = "0.1.0"
+dependencies = [
+ "mnemosyne-backend",
+ "mnemosyne-core",
+ "mnemosyne-local",
+]
+
+[[package]]
 name = "mnemosyne-core"
 version = "0.1.0"
 

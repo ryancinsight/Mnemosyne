@@ -6,6 +6,7 @@ members = [
     "crates/mnemosyne-arena",
     "crates/mnemosyne-local",
     "crates/mnemosyne",
+    "crates/mnemosyne-c-shim",
     "crates/mnemosyne-benchmarks",
 ]
 

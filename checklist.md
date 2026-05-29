@@ -257,3 +257,7 @@ Target version: 0.1.0
 - [x] [patch] Mark `realloc_copy_grow<A: GlobalAlloc>` as `#[inline(always)]` so cross-class realloc slow paths keep monomorphized `alloc`/`dealloc` calls at the call site.
 - [x] [patch] Refresh realloc and allocator-cycle Criterion rows after the retained realloc helper inlining change.
 - [x] [patch] Regenerate `allocator_comparison.md` and run `benchmark_summary --release -- --enforce-thresholds` after the retained change.
+
+- [x] [minor] Sprint C: Add `mnemosyne-c-shim` crate exposing `malloc`/`free`/`calloc`/`realloc`/`aligned_alloc`/`posix_memalign`/`malloc_usable_size` as `extern "C"` with `lib` + `cdylib` crate types.
+- [x] [minor] Sprint C: Document the C-vs-Rust realloc copy-length distinction (`min(usable_size, new_size)` for C, since C tracks no requested size) in the shim module docs.
+- [x] [minor] Sprint C: Add 11 shim regression tests covering alignment, zero-size, overflow, realloc grow/null/zero, and posix_memalign validation.
