@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- Fixed a latent alignment UB in `mnemosyne-core::types::test_page_reclaim_thread_free` (surfaced by Miri): the test backed a page with a 1-byte-aligned `[u8; PAGE_SIZE]` array and wrote 8-byte-aligned `Block` pointers through it. Backed the storage with a `#[repr(align(64))]` wrapper. Production is unaffected (real page starts are `PAGE_SIZE`-aligned). The re-entrancy fix and doubly-linked owned-segment splice tests also pass under Miri with no UB.
 - Closed a latent re-entrancy soundness hole on the guard-free small-allocation fast path: it borrowed the thread cache without checking the `is_allocating` busy bit, so a same-thread re-entrant allocation could create a second aliasing `&mut ThreadAllocator` (undefined behavior). The fast path now pops through the new `with_allocator_unguarded` primitive, which still consults the busy bit (returning `None` on re-entry) while skipping the guard set/clear writes. Pinned by `unguarded_fast_path_rejects_reentrant_borrow`.
 
 ### Changed

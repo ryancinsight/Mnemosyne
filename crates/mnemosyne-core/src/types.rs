@@ -292,10 +292,19 @@ mod tests {
     fn test_page_reclaim_thread_free() {
         let mut page = Page::new(1);
         page.block_size = 16;
-        let mut storage = [0u8; PAGE_SIZE];
+
+        // `initialize_free_list` writes `Block` nodes (which contain an
+        // 8-byte-aligned `Option<NonNull<Block>>`) into the page. In production
+        // the page start is `PAGE_SIZE`-aligned; a bare `[u8; PAGE_SIZE]` stack
+        // array is only 1-byte aligned, so writing pointers through it is
+        // undefined behavior (Miri flags it). Back the test storage with a
+        // cache-line-aligned wrapper so the block writes are well-aligned.
+        #[repr(align(64))]
+        struct PageStorage([u8; PAGE_SIZE]);
+        let mut storage = PageStorage([0u8; PAGE_SIZE]);
 
         unsafe {
-            page.initialize_free_list(storage.as_mut_ptr());
+            page.initialize_free_list(storage.0.as_mut_ptr());
         }
 
         let first = page.free.expect("initialized page has a free block");
