@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_arena::{allocate_segment, deallocate_segment, HasSegmentPool};
 use mnemosyne_backend::DefaultBackend;
-use mnemosyne_core::constants::{NUM_SIZE_CLASSES, PAGES_PER_SEGMENT, PAGE_SIZE, SEGMENT_SIZE};
+use mnemosyne_core::constants::{NUM_SIZE_CLASSES, PAGES_PER_SEGMENT, PAGE_SHIFT, SEGMENT_SIZE};
 use mnemosyne_core::size_class::{class_to_size, size_to_class};
 use mnemosyne_core::types::{Page, Segment, SegmentOwner};
 
@@ -446,7 +446,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 page.next_page = None;
 
                 let segment_addr = (page_ptr.as_ptr() as usize) & !(SEGMENT_SIZE - 1);
-                let page_start = (segment_addr as *mut u8).add(page.page_index * PAGE_SIZE);
+                let page_start = (segment_addr as *mut u8).add(page.page_index << PAGE_SHIFT);
                 page.block_size = block_size;
                 page.size_class = class;
                 page.initialize_free_list(page_start);
@@ -518,7 +518,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         page.block_size = block_size;
                         page.size_class = class;
                         let page_start =
-                            unsafe { (seg_ptr as *mut u8).add(page.page_index * PAGE_SIZE) };
+                            unsafe { (seg_ptr as *mut u8).add(page.page_index << PAGE_SHIFT) };
                         // Safety: initializing free list for the repurposed page
                         unsafe {
                             page.initialize_free_list(page_start);
@@ -566,7 +566,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         page.block_size = block_size;
         page.size_class = class;
 
-        let page_start = unsafe { (seg as *mut u8).add(page.page_index * PAGE_SIZE) };
+        let page_start = unsafe { (seg as *mut u8).add(page.page_index << PAGE_SHIFT) };
         unsafe {
             page.initialize_free_list(page_start);
         }
@@ -1173,9 +1173,10 @@ mod tests {
         assert_eq!(first_stats.page_refills, 1);
 
         // Determine which page this block belongs to
-        let segment_addr = (ptr1 as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+        let ptr1_val = ptr1 as usize;
+        let segment_addr = ptr1_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
         let segment = segment_addr as *mut Segment;
-        let page_index = (ptr1 as usize - segment_addr) / mnemosyne_core::constants::PAGE_SIZE;
+        let page_index = (ptr1_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
 
         // Safety: segment points to a valid segment containing pages.
         let page = unsafe { &mut (*segment).pages[page_index] };
@@ -1211,8 +1212,9 @@ mod tests {
         );
 
         // Verify that allocation reused the owned segment and produced a page for the target class.
-        let segment_addr2 = (ptr2 as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
-        let page_index2 = (ptr2 as usize - segment_addr2) / mnemosyne_core::constants::PAGE_SIZE;
+        let ptr2_val = ptr2 as usize;
+        let segment_addr2 = ptr2_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+        let page_index2 = (ptr2_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
         let page2 = unsafe { &(*segment).pages[page_index2] };
         let expected_class = size_to_class(32).expect("32 bytes is a small allocation");
 
@@ -1259,9 +1261,10 @@ mod tests {
         let first = unsafe { alloc.alloc(16) };
         assert!(!first.is_null(), "initial 16-byte allocation failed");
 
-        let segment_addr = (first as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+        let first_val = first as usize;
+        let segment_addr = first_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
         let segment = segment_addr as *mut Segment;
-        let page_index = (first as usize - segment_addr) / mnemosyne_core::constants::PAGE_SIZE;
+        let page_index = (first_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
         // Safety: segment points to a valid segment containing pages.
         let max_blocks = unsafe { (*segment).pages[page_index].max_blocks } as usize;
         assert_eq!(
@@ -1279,8 +1282,9 @@ mod tests {
             // Safety: alloc is valid.
             let ptr = unsafe { alloc.alloc(16) };
             assert!(!ptr.is_null(), "16-byte allocation {count} failed");
-            let ptr_seg = (ptr as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
-            let ptr_page = (ptr as usize - ptr_seg) / mnemosyne_core::constants::PAGE_SIZE;
+            let ptr_val = ptr as usize;
+            let ptr_seg = ptr_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+            let ptr_page = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
             if ptr_seg != segment_addr || ptr_page != page_index {
                 // Crossed into a different page before filling this one;
                 // that would only happen on a wrap/early-refill defect.
@@ -1312,9 +1316,9 @@ mod tests {
         // Safety: alloc is valid.
         let overflow = unsafe { alloc.alloc(16) };
         assert!(!overflow.is_null(), "post-saturation allocation failed");
-        let overflow_seg = (overflow as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
-        let overflow_page =
-            (overflow as usize - overflow_seg) / mnemosyne_core::constants::PAGE_SIZE;
+        let overflow_val = overflow as usize;
+        let overflow_seg = overflow_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+        let overflow_page = (overflow_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
         assert!(
             overflow_seg != segment_addr || overflow_page != page_index,
             "post-saturation allocation reused the full page"
@@ -1391,9 +1395,10 @@ mod tests {
         handle.join().expect("cross-thread free worker panicked");
 
         let mut reclaimed_remote_free = false;
-        let segment_addr = (ptr as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+        let ptr_val = ptr as usize;
+        let segment_addr = ptr_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
         let segment = segment_addr as *mut Segment;
-        let page_index = (ptr as usize - segment_addr) / mnemosyne_core::constants::PAGE_SIZE;
+        let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
         let max_blocks = unsafe { (*segment).pages[page_index].max_blocks };
         for _ in 0..max_blocks {
             // Safety: alloc_a is valid.

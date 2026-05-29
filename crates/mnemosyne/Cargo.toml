@@ -8,3 +8,6 @@ mnemosyne-local = { path = "../mnemosyne-local" }
 mnemosyne-arena = { path = "../mnemosyne-arena" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-core = { path = "../mnemosyne-core" }
+
+[features]
+nightly_tls = ["mnemosyne-local/nightly_tls"]

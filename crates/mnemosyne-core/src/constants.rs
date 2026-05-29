@@ -9,6 +9,9 @@ pub const SEGMENT_ALIGN: usize = SEGMENT_SIZE;
 /// The size of a page (64KB).
 pub const PAGE_SIZE: usize = 64 * 1024;
 
+/// The shift amount corresponding to PAGE_SIZE (e.g. 16 for 64KB).
+pub const PAGE_SHIFT: usize = PAGE_SIZE.trailing_zeros() as usize;
+
 /// The alignment of a page (64KB).
 pub const PAGE_ALIGN: usize = PAGE_SIZE;
 

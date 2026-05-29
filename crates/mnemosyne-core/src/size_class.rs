@@ -66,6 +66,19 @@ pub const fn size_to_class(size: usize) -> Option<usize> {
     Some(class)
 }
 
+/// Maps a non-zero allocation size to its corresponding size class index.
+#[inline(always)]
+pub const fn size_to_class_nonzero(size: usize) -> Option<usize> {
+    if size > MAX_SMALL_ALLOC_SIZE {
+        return None;
+    }
+    let temp = if size - 1 > 1 { size - 1 } else { 1 };
+    let b = (usize::BITS - 1 - temp.leading_zeros()) as usize;
+    let param = GROUP_PARAMS[b];
+    let class = param.base_class as usize + ((size - 1 - param.base_size as usize) >> param.stride_shift);
+    Some(class)
+}
+
 const CLASS_TO_SIZE: [u16; NUM_SIZE_CLASSES] = [
     16, 32, 48, 64, 80, 96, 112, 128,
     160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512,
