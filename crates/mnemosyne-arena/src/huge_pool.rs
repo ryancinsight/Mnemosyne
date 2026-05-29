@@ -50,23 +50,25 @@ impl HugeMappingPool {
             }
             let size = slot.size.load(Ordering::Acquire);
             if size >= requested_size && size <= requested_size * 2 {
-                // Try to claim the slot.
+                // CAS the pointer to 1 (locked) first, to own the slot during verification.
                 if slot
                     .ptr
                     .compare_exchange(
                         ptr,
-                        core::ptr::null_mut(),
+                        1 as *mut u8,
                         Ordering::AcqRel,
                         Ordering::Acquire,
                     )
                     .is_ok()
                 {
-                    let final_size = slot.size.swap(0, Ordering::Relaxed);
-                    // Double check if size is still correct/valid.
-                    if final_size >= requested_size {
-                        return Some((ptr, final_size));
+                    // Lock acquired. Re-read the size to ensure no ABA occurred.
+                    let current_size = slot.size.load(Ordering::Acquire);
+                    if current_size == size {
+                        // Confirmed. We can now transition to null_mut() and return.
+                        slot.ptr.store(core::ptr::null_mut(), Ordering::Release);
+                        return Some((ptr, size));
                     } else {
-                        // Restore slot if size check failed.
+                        // Size changed under us! Restore original pointer to unlock slot.
                         slot.ptr.store(ptr, Ordering::Release);
                     }
                 }

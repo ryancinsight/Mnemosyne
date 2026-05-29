@@ -1054,7 +1054,8 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                             } else {
                                 0
                             };
-                            if page_free.is_some()
+                            if !mnemosyne_core::types::is_bitmap_class(page_ref.size_class)
+                                && page_free.is_some()
                                 && (page_alloc_count != 1 || (*segment).is_current)
                             {
                                 (*block).set_next::<P>(page_free, cookie);
@@ -1101,7 +1102,10 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                     } else {
                         0
                     };
-                    if page_free.is_some() && (page_alloc_count != 1 || (*segment).is_current) {
+                    if !mnemosyne_core::types::is_bitmap_class(page_ref.size_class)
+                        && page_free.is_some()
+                        && (page_alloc_count != 1 || (*segment).is_current)
+                    {
                         (*block).set_next::<P>(page_free, cookie);
                         page_ref.free = Some(NonNull::new_unchecked(block));
                         page_ref.alloc_count = page_alloc_count - 1;
