@@ -904,6 +904,8 @@ mod tests {
         }
     }
 
+    impl mnemosyne_arena::segment::pool::private::Sealed for MockBackend {}
+
     impl HasSegmentPool for MockBackend {
         #[inline(always)]
         fn global_segment_pool() -> &'static mnemosyne_arena::GlobalSegmentPool {

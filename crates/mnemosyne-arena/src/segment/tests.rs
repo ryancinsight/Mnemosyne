@@ -35,6 +35,8 @@ impl MemoryBackend for FailingReleaseBackend {
     }
 }
 
+impl super::pool::private::Sealed for FailingReleaseBackend {}
+
 impl HasSegmentPool for FailingReleaseBackend {
     fn global_segment_pool() -> &'static GlobalSegmentPool {
         &FAILING_POOL
@@ -83,6 +85,9 @@ impl MemoryBackend for GuardRecordingBackend {
         true
     }
 }
+
+#[cfg(feature = "segment-tail-guards")]
+impl super::pool::private::Sealed for GuardRecordingBackend {}
 
 #[cfg(feature = "segment-tail-guards")]
 impl HasSegmentPool for GuardRecordingBackend {
@@ -274,6 +279,8 @@ impl MemoryBackend for DecommitRecordingBackend {
         true
     }
 }
+
+impl super::pool::private::Sealed for DecommitRecordingBackend {}
 
 impl HasSegmentPool for DecommitRecordingBackend {
     fn global_segment_pool() -> &'static GlobalSegmentPool {

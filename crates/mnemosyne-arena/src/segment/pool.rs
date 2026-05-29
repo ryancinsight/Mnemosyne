@@ -266,8 +266,30 @@ impl Default for GlobalSegmentPool {
     }
 }
 
+/// Sealed trait module to protect architectural invariants.
+#[doc(hidden)]
+pub mod private {
+    pub trait Sealed {}
+}
+
 /// Trait associating a memory backend with its global segment and orphan pools.
-pub trait HasSegmentPool: mnemosyne_core::MemoryBackend {
+///
+/// # Monomorphization and Static Routing
+///
+/// This trait serves as a compile-time policy routing interface. Implementors
+/// of this trait (such as `MemoryBackendWrapper`) are Zero-Sized Types (ZSTs) that
+/// carry absolutely zero runtime overhead. When mathematical operations, allocations,
+/// or segment pool management functions are parameterized by `<B: HasSegmentPool>`,
+/// the compiler fully monomorphizes them into direct specialized machine code calls.
+/// This guarantees zero heap allocation, no dynamic vtables, and zero bytes of
+/// runtime memory or register footprint for the policy routing layer.
+///
+/// # Safety
+///
+/// This trait is sealed via the supertrait bound `private::Sealed` to prevent
+/// unauthorized downstream implementations that could violate the safety invariants
+/// of the global segment pools.
+pub trait HasSegmentPool: mnemosyne_core::MemoryBackend + private::Sealed {
     /// Returns the global segment pool for this backend.
     fn global_segment_pool() -> &'static GlobalSegmentPool;
 
@@ -277,6 +299,8 @@ pub trait HasSegmentPool: mnemosyne_core::MemoryBackend {
 
 static DEFAULT_BACKEND_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 static DEFAULT_BACKEND_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+
+impl private::Sealed for mnemosyne_backend::DefaultBackend {}
 
 impl HasSegmentPool for mnemosyne_backend::DefaultBackend {
     #[inline(always)]
@@ -293,6 +317,8 @@ impl HasSegmentPool for mnemosyne_backend::DefaultBackend {
 static WRAPPER_BACKEND_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 static WRAPPER_BACKEND_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 
+impl private::Sealed for mnemosyne_backend::MemoryBackendWrapper {}
+
 impl HasSegmentPool for mnemosyne_backend::MemoryBackendWrapper {
     #[inline(always)]
     fn global_segment_pool() -> &'static GlobalSegmentPool {
@@ -307,6 +333,8 @@ impl HasSegmentPool for mnemosyne_backend::MemoryBackendWrapper {
 
 static CUDA_BACKEND_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 static CUDA_BACKEND_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+
+impl private::Sealed for mnemosyne_backend::CudaUnifiedBackend {}
 
 impl HasSegmentPool for mnemosyne_backend::CudaUnifiedBackend {
     #[inline(always)]

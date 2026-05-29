@@ -268,6 +268,8 @@ mod tests {
         }
     }
 
+    impl crate::segment::pool::private::Sealed for FailingHugeReleaseBackend {}
+
     impl HasSegmentPool for FailingHugeReleaseBackend {
         fn global_segment_pool() -> &'static GlobalSegmentPool {
             &FAILING_HUGE_POOL
@@ -485,6 +487,8 @@ mod tests {
             true
         }
     }
+
+    impl crate::segment::pool::private::Sealed for DecommitRecordingHugeBackend {}
 
     impl HasSegmentPool for DecommitRecordingHugeBackend {
         fn global_segment_pool() -> &'static GlobalSegmentPool {
