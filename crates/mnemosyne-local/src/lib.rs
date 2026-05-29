@@ -410,7 +410,7 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
     // 0 (segment-aligned huge allocation) or the page's block_size is 0
     // (non-segment-aligned huge allocation), we route to the metadata-slot fallback.
     if page_index > 0 {
-        let page = unsafe { &(*segment).pages[page_index] };
+        let page = unsafe { (*segment).pages.get_unchecked(page_index) };
         let size = page.block_size;
         if size > 0 {
             return size;
@@ -511,7 +511,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     // and routes to the huge fallback.
     //
     let pop_active_free = |alloc: &mut ThreadAllocator<B>| -> Option<*mut u8> {
-        let mut page_ptr = alloc.active_pages[class]?;
+        let mut page_ptr = unsafe { *alloc.active_pages.get_unchecked(class) }?;
         // Safety: `page_ptr` is an active page owned by this thread cache.
         let page = unsafe { page_ptr.as_mut() };
         let block = page.free?;
@@ -620,7 +620,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         "small free ptr must fall within the segment's page array"
     );
     // Safety: page_index is within bounds (1..PAGES_PER_SEGMENT) since ptr is a small alloc.
-    let page = unsafe { &mut (*segment).pages[page_index] };
+    let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
     if page.block_size == 0 {
         if P::ENABLE_POISONING {
             // Safety: see the segment-aligned branch above for the
@@ -686,8 +686,8 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
             if was_full {
                 let class = page.size_class;
                 if alloc.unlink_full_page(page as *mut Page, class) {
-                    page.next_page = alloc.active_pages[class];
-                    alloc.active_pages[class] = Some(NonNull::new_unchecked(page as *mut Page));
+                    page.next_page = unsafe { *alloc.active_pages.get_unchecked(class) };
+                    unsafe { *alloc.active_pages.get_unchecked_mut(class) = Some(NonNull::new_unchecked(page as *mut Page)); }
                 }
             }
             if page.alloc_count == 0 && !alloc.is_current_segment(segment) {

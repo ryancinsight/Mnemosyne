@@ -235,7 +235,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             None => return core::ptr::null_mut(),
         };
 
-        if let Some(mut page_ptr) = self.active_pages[class] {
+        if let Some(mut page_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
             // Safety: page_ptr points to a valid Page structure inside an active segment owned by us.
             let page = unsafe { page_ptr.as_mut() };
 
@@ -343,7 +343,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline(never)]
     pub(crate) unsafe fn alloc_cold(&mut self, class: usize) -> *mut u8 {
         // 1. Move the current active page to full_pages if it is indeed full.
-        if let Some(mut active_ptr) = self.active_pages[class] {
+        if let Some(mut active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
             let active_page = active_ptr.as_mut();
             // Safety: `active_page` is owned by this allocator.
             if let Some(block) = try_reclaim_and_allocate(active_page) {
@@ -351,9 +351,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
             if active_page.free.is_none() {
                 // The page is truly full! Move it to full_pages.
-                self.active_pages[class] = active_page.next_page;
-                active_page.next_page = self.full_pages[class];
-                self.full_pages[class] = Some(active_ptr);
+                unsafe {
+                    *self.active_pages.get_unchecked_mut(class) = active_page.next_page;
+                    active_page.next_page = *self.full_pages.get_unchecked(class);
+                    *self.full_pages.get_unchecked_mut(class) = Some(active_ptr);
+                }
             }
         }
 
@@ -361,7 +363,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // We only check pages that actually have pending cross-thread frees.
         // Also limit loop to 8 pages to bound search latency under threaded saturation.
         let mut prev: Option<NonNull<Page>> = None;
-        let mut curr_opt = self.full_pages[class];
+        let mut curr_opt = unsafe { *self.full_pages.get_unchecked(class) };
         let mut checked = 0;
         while let Some(mut page_ptr) = curr_opt {
             if checked >= 8 {
@@ -378,13 +380,15 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     if page.alloc_count < page.max_blocks {
                         // Page is no longer full! Move it back to active list.
                         // Safety: page_ptr and class are valid.
-                        if let Some(mut p) = prev {
-                            p.as_mut().next_page = page.next_page;
-                        } else {
-                            self.full_pages[class] = page.next_page;
+                        unsafe {
+                            if let Some(mut p) = prev {
+                                p.as_mut().next_page = page.next_page;
+                            } else {
+                                *self.full_pages.get_unchecked_mut(class) = page.next_page;
+                            }
+                            page.next_page = *self.active_pages.get_unchecked(class);
+                            *self.active_pages.get_unchecked_mut(class) = Some(page_ptr);
                         }
-                        page.next_page = self.active_pages[class];
-                        self.active_pages[class] = Some(page_ptr);
                     }
                     return block.as_ptr() as *mut u8;
                 }
@@ -412,9 +416,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // If it becomes full immediately, move to full list
         if page.alloc_count == page.max_blocks {
             // Safety: new_page_ptr and class are valid.
-            self.active_pages[class] = page.next_page;
-            page.next_page = self.full_pages[class];
-            self.full_pages[class] = Some(NonNull::new_unchecked(new_page_ptr));
+            unsafe {
+                *self.active_pages.get_unchecked_mut(class) = page.next_page;
+                page.next_page = *self.full_pages.get_unchecked(class);
+                *self.full_pages.get_unchecked_mut(class) = Some(NonNull::new_unchecked(new_page_ptr));
+            }
         }
         block.as_ptr() as *mut u8
     }
@@ -445,8 +451,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 page.size_class = class;
                 page.initialize_free_list(page_start);
 
-                page.next_page = self.active_pages[class];
-                self.active_pages[class] = Some(page_ptr);
+                page.next_page = *self.active_pages.get_unchecked(class);
+                *self.active_pages.get_unchecked_mut(class) = Some(page_ptr);
                 self.recycled_pages += 1;
                 return page_ptr.as_ptr();
             }
@@ -484,12 +490,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                 if page.alloc_count > 0 {
                                     let pg_class = page.size_class;
                                     if page.alloc_count < page.max_blocks {
-                                        page.next_page = self.active_pages[pg_class];
-                                        self.active_pages[pg_class] =
+                                        page.next_page = *self.active_pages.get_unchecked(pg_class);
+                                        *self.active_pages.get_unchecked_mut(pg_class) =
                                             Some(NonNull::new_unchecked(page_ptr));
                                     } else {
-                                        page.next_page = self.full_pages[pg_class];
-                                        self.full_pages[pg_class] =
+                                        page.next_page = *self.full_pages.get_unchecked(pg_class);
+                                        *self.full_pages.get_unchecked_mut(pg_class) =
                                             Some(NonNull::new_unchecked(page_ptr));
                                     }
                                 } else if found_page.is_null() {
@@ -516,8 +522,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         // Safety: initializing free list for the repurposed page
                         unsafe {
                             page.initialize_free_list(page_start);
-                            page.next_page = self.active_pages[class];
-                            self.active_pages[class] = Some(NonNull::new_unchecked(found_page));
+                            page.next_page = *self.active_pages.get_unchecked(class);
+                            *self.active_pages.get_unchecked_mut(class) = Some(NonNull::new_unchecked(found_page));
                         }
                         return found_page;
                     }
@@ -566,11 +572,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         }
 
         // Prepend to the size class active pages list.
-        page.next_page = self.active_pages[class];
-
-        // Safety: page_ptr is a valid initialized page pointer.
         unsafe {
-            self.active_pages[class] = Some(NonNull::new_unchecked(page_ptr));
+            page.next_page = *self.active_pages.get_unchecked(class);
+            *self.active_pages.get_unchecked_mut(class) = Some(NonNull::new_unchecked(page_ptr));
         }
 
         self.fresh_pages += 1;
@@ -649,25 +653,27 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline]
     #[must_use]
     pub(crate) unsafe fn unlink_full_page(&mut self, page_ptr: *mut Page, class: usize) -> bool {
+        debug_assert!(class < NUM_SIZE_CLASSES);
         // Safety: `full_pages[class]` is the head of a singly-linked page
         // list owned by this allocator, and `page_ptr` is checked against
         // every node before any field write.
-        unsafe { unlink_page_from_list(&mut self.full_pages[class], page_ptr) }
+        unsafe { unlink_page_from_list(self.full_pages.get_unchecked_mut(class), page_ptr) }
     }
 
     /// Helper to unlink a page from the active pages or full pages list of a class.
     #[inline]
     pub(crate) unsafe fn unlink_page(&mut self, page_ptr: *mut Page, class: usize) {
+        debug_assert!(class < NUM_SIZE_CLASSES);
         // Safety: both `active_pages[class]` and `full_pages[class]` are heads of
         // singly-linked page lists owned by this allocator. `page_ptr` is checked
         // against each node before any pointer field is mutated, so a stale
         // pointer cannot corrupt the surrounding nodes.
         let removed_from_active =
-            unsafe { unlink_page_from_list(&mut self.active_pages[class], page_ptr) };
+            unsafe { unlink_page_from_list(self.active_pages.get_unchecked_mut(class), page_ptr) };
         if removed_from_active {
             return;
         }
-        let _ = unsafe { unlink_page_from_list(&mut self.full_pages[class], page_ptr) };
+        let _ = unsafe { unlink_page_from_list(self.full_pages.get_unchecked_mut(class), page_ptr) };
     }
 
     /// Helper to unlink a page from the empty pages list.
