@@ -122,7 +122,14 @@ macro_rules! impl_local_allocator_selector {
     ($backend:ty) => {
         const _: () = {
             std::thread_local! {
-                static ALLOCATOR_SLOT: $crate::LocalAllocatorSlot<$backend> = $crate::LocalAllocatorSlot::new();
+                // `const {}` initializer (stable since Rust 1.59): because
+                // `LocalAllocatorSlot::new()` is a `const fn`, this lets the
+                // compiler emit the fast thread-local accessor that skips the
+                // per-access lazy-initialization guard branch. The slot still
+                // registers its destructor for thread-exit segment reclamation.
+                static ALLOCATOR_SLOT: $crate::LocalAllocatorSlot<$backend> = const {
+                    $crate::LocalAllocatorSlot::new()
+                };
             }
 
             impl $crate::LocalAllocatorSelector<$backend> for $backend {

@@ -276,3 +276,5 @@ Target version: 0.1.0
 - [x] [patch] Remove the redundant `layout.size() == 0` guard from `Mnemosyne::alloc` and `MnemosyneAllocator::alloc`; `thread_alloc_layout`/`is_valid_layout_alloc_request` already rejects zero-size, so the GlobalAlloc hot path now carries one fewer branch and one fewer copy of the zero-size contract.
 
 - [x] [patch] Reject removing the `MAX_ALLOC_SIZE` predicate from `is_valid_layout_alloc_request`; the focused run improved `Allocator cycle latency/Mnemosyne/small/32` and `Usable size latency/Mnemosyne/small/32`, but regressed `Allocator allocation latency/Mnemosyne/small/32` and `Threaded small allocation cycles/Mnemosyne`.
+
+- [x] [patch] Adopt `const {}` thread-local initializer for `ALLOCATOR_SLOT` (idiomatic stable form; emits the const-init accessor that omits the per-access lazy-init guard branch). Not benchmark-claimed — see gap_audit note on the contended local measurement environment.
