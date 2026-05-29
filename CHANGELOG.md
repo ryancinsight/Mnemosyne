@@ -16,6 +16,7 @@
 
 ### Changed
 
+- Added `Page::index_in_segment()`, an O(1) address-derivation of a page's index within its segment, validated against the stored `page_index` field across a real segment (`page_index_field_matches_address_derivation`). This is the verified foundation for replacing the stored `page_index` with a doubly-linked `prev_page` back-pointer (O(1) page-list unlink) while keeping `Page` within its 64-byte cache line.
 - Hardened the `AtomicFreeList` 64-bit pointer-packing deallocation queue: replaced bare integer/pointer casts with explicit `expose_provenance`/`with_exposed_provenance_mut` (provenance-correct for a tagged-pointer list), replaced magic-number masks with named `PACKED_PTR_BITS`/`PTR_MASK`/`COUNT_WRAP_MASK` constants, and documented the 48-bit address and 16-bit counter portability contract. No behavior or codegen change; validated under Miri (no UB).
 - Added a Miri-validated pure-logic test for the singly-linked page-list splice helper (`unlink_page_from_list`), which previously had no Miri-runnable coverage.
 - Reduced `unlink_owned_segment` from O(owned-segments) to O(1) by converting the owned-segments list to an intrusive doubly-linked list (`Segment::prev_owned_segment`), routing both insertion sites through the single authoritative `ThreadAllocator::push_owned_segment`. Removes the owned-segment-count term from `try_reclaim_segment`. Pinned by `owned_segment_list_is_doubly_linked_and_unlinks_in_place`.
