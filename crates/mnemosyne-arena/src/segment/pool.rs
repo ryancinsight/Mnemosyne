@@ -110,7 +110,7 @@ impl GlobalSegmentPool {
     #[cfg(target_pointer_width = "64")]
     #[inline]
     fn push_raw(&self, segment: *mut Segment) {
-        let segment_addr = segment as usize;
+        let segment_addr = segment.expose_provenance();
         debug_assert_eq!(
             segment_addr & !Self::PTR_MASK,
             0,
@@ -119,7 +119,7 @@ impl GlobalSegmentPool {
         let mut current = self.head.load(Ordering::Relaxed);
         loop {
             let current_addr = current & Self::PTR_MASK;
-            let current_ptr = current_addr as *mut Segment;
+            let current_ptr = core::ptr::with_exposed_provenance_mut::<Segment>(current_addr);
             let next_count = ((current >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
 
             // Safety: segment pointer is valid, aligned, and exclusive to this thread.
@@ -173,10 +173,10 @@ impl GlobalSegmentPool {
             if current_addr == 0 {
                 return None;
             }
-            let current_ptr = current_addr as *mut Segment;
+            let current_ptr = core::ptr::with_exposed_provenance_mut::<Segment>(current_addr);
 
             // Safety: current_ptr points to a valid Segment inside the pool.
-            let next = unsafe { (*current_ptr).next_free_segment } as usize;
+            let next = unsafe { (*current_ptr).next_free_segment }.expose_provenance();
             let next_count = ((current >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
             let next_val = (next_count << Self::PACKED_PTR_BITS) | next;
 
@@ -256,6 +256,13 @@ impl GlobalSegmentPool {
     pub(crate) fn record_reset(&self, count: usize) {
         self.reset_calls.fetch_add(1, Ordering::Relaxed);
         self.reset_segments.fetch_add(count, Ordering::Relaxed);
+    }
+}
+
+impl Default for GlobalSegmentPool {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
     }
 }
 

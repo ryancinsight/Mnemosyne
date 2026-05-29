@@ -1286,7 +1286,7 @@ mod tests {
         let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
         let segment = segment_addr as *mut Segment;
         let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-        let page = unsafe { &*(*segment).pages.get_unchecked(page_index) };
+        let page = unsafe { (*segment).pages.get_unchecked(page_index) };
 
         let free_head = page.free.map(|p| p.as_ptr() as usize);
         assert_ne!(

@@ -3,6 +3,7 @@
 pub mod alloc;
 pub mod pool;
 pub mod stats;
+#[cfg(test)]
 pub mod tests;
 pub mod utils;
 

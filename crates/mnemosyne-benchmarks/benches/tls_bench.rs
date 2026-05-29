@@ -1,6 +1,5 @@
 use core::sync::atomic::AtomicU32;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_backend::MemoryBackendWrapper;
 use mnemosyne_local::tls::{
     AsmTls, CachedCellTls, NativeOsTls, StandardTls, TlsProvider, TlsSlotAccess,

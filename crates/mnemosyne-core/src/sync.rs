@@ -196,3 +196,10 @@ impl AtomicFreeList {
         self.head.load(Ordering::Relaxed).is_null()
     }
 }
+
+impl Default for AtomicFreeList {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}

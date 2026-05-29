@@ -101,8 +101,7 @@ fn main() -> io::Result<()> {
     }
 
     if regression_detected && enforce_thresholds && !refresh_baseline {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             "Performance regression detected. Gating threshold exceeded.",
         ));
     }

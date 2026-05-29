@@ -10,15 +10,6 @@ use crate::constants::{MAX_SMALL_ALLOC_SIZE, NUM_SIZE_CLASSES};
 /// and `is_valid_layout_alloc_request` both require `size != 0`), but the
 /// historical mapping is preserved so callers that pass an already-adjusted
 /// minimum size still resolve to the smallest class without an extra branch.
-
-/// Maps an allocation size to its corresponding size class index.
-///
-/// Returns `None` if the size exceeds `MAX_SMALL_ALLOC_SIZE`. A size of `0`
-/// maps to class `0` because the production allocation entry points reject
-/// zero-size requests before reaching this function (`is_valid_alloc_request`
-/// and `is_valid_layout_alloc_request` both require `size != 0`), but the
-/// historical mapping is preserved so callers that pass an already-adjusted
-/// minimum size still resolve to the smallest class without an extra branch.
 #[inline(always)]
 pub const fn size_to_class(size: usize) -> Option<usize> {
     if size == 0 {

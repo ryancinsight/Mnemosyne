@@ -1189,7 +1189,7 @@ mod tests {
         let p1 = std::boxed::Box::into_raw(std::boxed::Box::new(Page::new(2)));
         let p2 = std::boxed::Box::into_raw(std::boxed::Box::new(Page::new(3)));
         // Safety: p0/p1/p2 are unique live allocations; build head -> p0 -> p1 -> p2.
-        let (n0, n1, n2) = unsafe {
+        let (n0, _n1, n2) = unsafe {
             let n0 = NonNull::new_unchecked(p0);
             let n1 = NonNull::new_unchecked(p1);
             let n2 = NonNull::new_unchecked(p2);
@@ -1385,7 +1385,7 @@ mod tests {
         let segment = segment_addr as *mut Segment;
         let page_index = (first_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
         // Safety: segment points to a valid segment containing pages.
-        let max_blocks = unsafe { (*segment).pages[page_index].max_blocks } as usize;
+        let max_blocks = unsafe { (*segment).pages[page_index].max_blocks };
         assert_eq!(
             max_blocks,
             mnemosyne_core::constants::PAGE_SIZE / mnemosyne_core::constants::MIN_BLOCK_SIZE,
@@ -1420,7 +1420,7 @@ mod tests {
         }
 
         // The page's allocation count must now read exactly max_blocks.
-        let saturated = unsafe { (*segment).pages[page_index].alloc_count } as usize;
+        let saturated = unsafe { (*segment).pages[page_index].alloc_count };
         assert_eq!(
             saturated, max_blocks,
             "saturated alloc_count {saturated} != max_blocks {max_blocks}"

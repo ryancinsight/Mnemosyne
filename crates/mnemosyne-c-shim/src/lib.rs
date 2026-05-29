@@ -157,7 +157,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_vo
 /// `extern "C"` entry point; release with [`free`].
 #[no_mangle]
 pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
-    if alignment == 0 || !alignment.is_power_of_two() || size % alignment != 0 {
+    if alignment == 0 || !alignment.is_power_of_two() || !size.is_multiple_of(alignment) {
         return core::ptr::null_mut();
     }
     let request = if size == 0 { alignment } else { size };

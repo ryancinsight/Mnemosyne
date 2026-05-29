@@ -108,6 +108,6 @@ const _: () = assert!(
 /// fully tiled with no trailing partial block, keeping the block-count
 /// derivation above exact.
 const _: () = assert!(
-    PAGE_SIZE % MIN_BLOCK_SIZE == 0,
+    PAGE_SIZE.is_multiple_of(MIN_BLOCK_SIZE),
     "MIN_BLOCK_SIZE must divide PAGE_SIZE exactly"
 );
