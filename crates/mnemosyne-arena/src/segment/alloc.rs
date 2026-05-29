@@ -45,7 +45,8 @@ unsafe fn allocate_segment_from_pools<B: HasSegmentPool>() -> Option<*mut Segmen
         // the segment to erase stale epoch metadata and reset it for new allocations.
         unsafe {
             let raw_ptr = (*segment).raw_alloc_ptr;
-            Segment::initialize(segment, raw_ptr);
+            let node = (*segment).numa_node;
+            Segment::initialize(segment, raw_ptr, node);
         }
         return Some(segment);
     }
@@ -81,7 +82,8 @@ unsafe fn initialize_allocated_segment(raw_ptr: *mut u8) -> Option<(*mut Segment
 
     // Safety: aligned_ptr is within the allocated region.
     unsafe {
-        Segment::initialize(aligned_ptr, raw_ptr);
+        let node = crate::numa::current_numa_node();
+        Segment::initialize(aligned_ptr, raw_ptr, node);
     }
 
     let tail_slack_start = if cfg!(feature = "segment-tail-guards") {

@@ -4,9 +4,9 @@ use super::alloc::MAX_RETAINED_SEGMENTS;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::types::Segment;
 
-/// A lock-free global pool of free segments to avoid OS allocator overhead.
+/// A lock-free segment pool for a single NUMA node.
 #[cfg(target_pointer_width = "64")]
-pub struct GlobalSegmentPool {
+pub struct NodeSegmentPool {
     head: core::sync::atomic::AtomicUsize,
     retained: core::sync::atomic::AtomicUsize,
     purged: core::sync::atomic::AtomicUsize,
@@ -16,7 +16,7 @@ pub struct GlobalSegmentPool {
 }
 
 #[cfg(not(target_pointer_width = "64"))]
-pub struct GlobalSegmentPool {
+pub struct NodeSegmentPool {
     head: core::sync::atomic::AtomicPtr<Segment>,
     retained: core::sync::atomic::AtomicUsize,
     purged: core::sync::atomic::AtomicUsize,
@@ -26,7 +26,7 @@ pub struct GlobalSegmentPool {
 }
 
 #[cfg(target_pointer_width = "64")]
-impl GlobalSegmentPool {
+impl NodeSegmentPool {
     /// Low bits reserved for the packed segment address.
     const PACKED_PTR_BITS: u32 = 48;
     /// Mask selecting the packed address bits.
@@ -35,8 +35,8 @@ impl GlobalSegmentPool {
     const COUNT_WRAP_MASK: usize = (1usize << (usize::BITS - Self::PACKED_PTR_BITS)) - 1;
 }
 
-impl GlobalSegmentPool {
-    /// Creates a new empty `GlobalSegmentPool`.
+impl NodeSegmentPool {
+    /// Creates a new empty `NodeSegmentPool`.
     pub const fn new() -> Self {
         #[cfg(target_pointer_width = "64")]
         {
@@ -63,12 +63,6 @@ impl GlobalSegmentPool {
     }
 
     /// Pushes a segment back to the pool without applying a retention limit.
-    ///
-    /// # Safety
-    ///
-    /// The `segment` pointer must be a valid, initialized, and exclusive pointer to a
-    /// `Segment` structure. The caller must transfer ownership of that segment back to
-    /// the pool.
     #[inline]
     pub unsafe fn push_unbounded(&self, segment: *mut Segment) {
         self.retained.fetch_add(1, Ordering::Relaxed);
@@ -76,15 +70,6 @@ impl GlobalSegmentPool {
     }
 
     /// Pushes a segment back to the bounded reusable segment pool.
-    ///
-    /// Returns `true` if the segment was successfully cached, or `false` if the pool
-    /// is already full.
-    ///
-    /// # Safety
-    ///
-    /// The `segment` pointer must be a valid, initialized, and exclusive pointer to a
-    /// `Segment` structure. The caller must transfer ownership of that segment back to
-    /// the pool.
     #[inline]
     pub unsafe fn try_push_retained(&self, segment: *mut Segment) -> bool {
         let mut retained = self.retained.load(Ordering::Relaxed);
@@ -259,6 +244,117 @@ impl GlobalSegmentPool {
     }
 }
 
+/// A NUMA-aware lock-free global pool of free segments partitioned by socket node.
+pub struct GlobalSegmentPool {
+    nodes: [NodeSegmentPool; 16],
+}
+
+impl GlobalSegmentPool {
+    /// Creates a new empty `GlobalSegmentPool` with 16 NUMA node sub-pools.
+    pub const fn new() -> Self {
+        Self {
+            nodes: [
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+            ],
+        }
+    }
+
+    /// Pushes a segment back to the correct NUMA node pool without applying a retention limit.
+    ///
+    /// # Safety
+    ///
+    /// The `segment` pointer must be a valid, initialized, and exclusive pointer to a
+    /// `Segment` structure.
+    #[inline]
+    pub unsafe fn push_unbounded(&self, segment: *mut Segment) {
+        let node = unsafe { (*segment).numa_node } as usize % 16;
+        self.nodes[node].push_unbounded(segment);
+    }
+
+    /// Pushes a segment back to its originating NUMA node pool if retention limit permits.
+    ///
+    /// # Safety
+    ///
+    /// The `segment` pointer must be a valid, initialized, and exclusive pointer to a
+    /// `Segment` structure.
+    #[inline]
+    pub unsafe fn try_push_retained(&self, segment: *mut Segment) -> bool {
+        let node = unsafe { (*segment).numa_node } as usize % 16;
+        self.nodes[node].try_push_retained(segment)
+    }
+
+    /// Pops a segment from the calling thread's NUMA node pool, stealing from other nodes if empty.
+    #[inline]
+    pub fn pop(&self) -> Option<*mut Segment> {
+        let node = crate::numa::current_numa_node() as usize % 16;
+        // 1. Try local node first
+        if let Some(segment) = self.nodes[node].pop() {
+            return Some(segment);
+        }
+        // 2. Steal from other nodes
+        for i in 1..16 {
+            let other = (node + i) % 16;
+            if let Some(segment) = self.nodes[other].pop() {
+                return Some(segment);
+            }
+        }
+        None
+    }
+
+    #[inline]
+    pub fn retained_count(&self) -> usize {
+        self.nodes.iter().map(|n| n.retained_count()).sum()
+    }
+
+    #[inline]
+    pub fn purged_count(&self) -> usize {
+        self.nodes.iter().map(|n| n.purged_count()).sum()
+    }
+
+    #[inline]
+    pub fn purge_call_count(&self) -> usize {
+        // Since record_purge advances one node's counter, the total is the sum
+        self.nodes.iter().map(|n| n.purge_call_count()).sum()
+    }
+
+    #[inline]
+    pub(crate) fn record_purge(&self, count: usize) {
+        let node = crate::numa::current_numa_node() as usize % 16;
+        self.nodes[node].record_purge(count);
+    }
+
+    #[inline]
+    pub fn reset_segments_count(&self) -> usize {
+        self.nodes.iter().map(|n| n.reset_segments_count()).sum()
+    }
+
+    #[inline]
+    pub fn reset_call_count(&self) -> usize {
+        self.nodes.iter().map(|n| n.reset_call_count()).sum()
+    }
+
+    #[inline]
+    pub(crate) fn record_reset(&self, count: usize) {
+        let node = crate::numa::current_numa_node() as usize % 16;
+        self.nodes[node].record_reset(count);
+    }
+}
+
 impl Default for GlobalSegmentPool {
     #[inline]
     fn default() -> Self {
@@ -273,32 +369,20 @@ pub mod private {
 }
 
 /// Trait associating a memory backend with its global segment and orphan pools.
-///
-/// # Monomorphization and Static Routing
-///
-/// This trait serves as a compile-time policy routing interface. Implementors
-/// of this trait (such as `MemoryBackendWrapper`) are Zero-Sized Types (ZSTs) that
-/// carry absolutely zero runtime overhead. When mathematical operations, allocations,
-/// or segment pool management functions are parameterized by `<B: HasSegmentPool>`,
-/// the compiler fully monomorphizes them into direct specialized machine code calls.
-/// This guarantees zero heap allocation, no dynamic vtables, and zero bytes of
-/// runtime memory or register footprint for the policy routing layer.
-///
-/// # Safety
-///
-/// This trait is sealed via the supertrait bound `private::Sealed` to prevent
-/// unauthorized downstream implementations that could violate the safety invariants
-/// of the global segment pools.
 pub trait HasSegmentPool: mnemosyne_core::MemoryBackend + private::Sealed {
     /// Returns the global segment pool for this backend.
     fn global_segment_pool() -> &'static GlobalSegmentPool;
 
     /// Returns the global orphan pool for this backend.
     fn global_orphan_pool() -> &'static GlobalSegmentPool;
+
+    /// Returns the global huge mapping pool for this backend.
+    fn global_huge_pool() -> &'static crate::huge_pool::HugeMappingPool;
 }
 
 static DEFAULT_BACKEND_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 static DEFAULT_BACKEND_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static DEFAULT_BACKEND_HUGE_POOL: crate::huge_pool::HugeMappingPool = crate::huge_pool::HugeMappingPool::new();
 
 impl private::Sealed for mnemosyne_backend::DefaultBackend {}
 
@@ -312,10 +396,16 @@ impl HasSegmentPool for mnemosyne_backend::DefaultBackend {
     fn global_orphan_pool() -> &'static GlobalSegmentPool {
         &DEFAULT_BACKEND_ORPHAN_POOL
     }
+
+    #[inline(always)]
+    fn global_huge_pool() -> &'static crate::huge_pool::HugeMappingPool {
+        &DEFAULT_BACKEND_HUGE_POOL
+    }
 }
 
 static WRAPPER_BACKEND_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 static WRAPPER_BACKEND_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static WRAPPER_BACKEND_HUGE_POOL: crate::huge_pool::HugeMappingPool = crate::huge_pool::HugeMappingPool::new();
 
 impl private::Sealed for mnemosyne_backend::MemoryBackendWrapper {}
 
@@ -329,10 +419,16 @@ impl HasSegmentPool for mnemosyne_backend::MemoryBackendWrapper {
     fn global_orphan_pool() -> &'static GlobalSegmentPool {
         &WRAPPER_BACKEND_ORPHAN_POOL
     }
+
+    #[inline(always)]
+    fn global_huge_pool() -> &'static crate::huge_pool::HugeMappingPool {
+        &WRAPPER_BACKEND_HUGE_POOL
+    }
 }
 
 static CUDA_BACKEND_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 static CUDA_BACKEND_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static CUDA_BACKEND_HUGE_POOL: crate::huge_pool::HugeMappingPool = crate::huge_pool::HugeMappingPool::new();
 
 impl private::Sealed for mnemosyne_backend::CudaUnifiedBackend {}
 
@@ -345,5 +441,10 @@ impl HasSegmentPool for mnemosyne_backend::CudaUnifiedBackend {
     #[inline(always)]
     fn global_orphan_pool() -> &'static GlobalSegmentPool {
         &CUDA_BACKEND_ORPHAN_POOL
+    }
+
+    #[inline(always)]
+    fn global_huge_pool() -> &'static crate::huge_pool::HugeMappingPool {
+        &CUDA_BACKEND_HUGE_POOL
     }
 }

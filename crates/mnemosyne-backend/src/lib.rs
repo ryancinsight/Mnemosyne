@@ -25,6 +25,8 @@ impl mnemosyne_core::MemoryBackend for MemoryBackendWrapper {
     const SUPPORTS_PAGE_RESET: bool = DefaultBackend::SUPPORTS_PAGE_RESET;
     const SUPPORTS_MAKE_GUARD: bool = DefaultBackend::SUPPORTS_MAKE_GUARD;
     const SUPPORTS_DECOMMIT: bool = DefaultBackend::SUPPORTS_DECOMMIT;
+    const RECYCLE_HUGE_MAPPINGS: bool = DefaultBackend::RECYCLE_HUGE_MAPPINGS;
+    const ENABLE_CPU_CACHE: bool = !cfg!(test) && DefaultBackend::ENABLE_CPU_CACHE;
 
     /// Allocates memory from the OS.
     ///
@@ -147,5 +149,15 @@ impl mnemosyne_core::MemoryBackend for MemoryBackendWrapper {
             telemetry::record_decommit(size);
         }
         decommitted
+    }
+
+    /// Re-commits a page-aligned range.
+    #[inline(always)]
+    unsafe fn commit(ptr: *mut u8, size: usize) -> bool {
+        if ptr.is_null() || size == 0 {
+            return false;
+        }
+        // Safety: caller upholds the per-platform commit contract.
+        unsafe { <DefaultBackend as mnemosyne_core::MemoryBackend>::commit(ptr, size) }
     }
 }

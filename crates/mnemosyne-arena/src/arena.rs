@@ -73,7 +73,7 @@ unsafe fn initialize_large_or_huge_segment(
     // We initialize the segment header fields and set Page 0's block_size to mark huge allocations.
     // We also write the segment pointer right before the user pointer in the unused Page 0 padding space.
     unsafe {
-        Segment::initialize(aligned_ptr, raw_ptr);
+        Segment::initialize(aligned_ptr, raw_ptr, crate::numa::current_numa_node());
         (*aligned_ptr).pages[0].block_size = total_alloc_size;
 
         let metadata_slot = (user_ptr as *mut *mut Segment).sub(1);
@@ -105,18 +105,26 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(size: usize, align: usiz
         None => return core::ptr::null_mut(),
     };
 
-    // Safety: total_alloc_size is non-zero and safe to allocate. We call the backend allocation safely.
-    let raw_ptr = unsafe { B::allocate(total_alloc_size) };
+    let (raw_ptr, actual_size) = if let Some((cached_ptr, cached_size)) = B::global_huge_pool().try_pop(total_alloc_size) {
+        unsafe {
+            B::commit(cached_ptr, cached_size);
+        }
+        (cached_ptr, cached_size)
+    } else {
+        let ptr = unsafe { B::allocate(total_alloc_size) };
+        (ptr, total_alloc_size)
+    };
+
     if raw_ptr.is_null() {
         return core::ptr::null_mut();
     }
 
     let (user_ptr, aligned_addr, tail_slack_start, mapping_end) =
-        match unsafe { initialize_large_or_huge_segment(raw_ptr, total_alloc_size, alignment, size) } {
+        match unsafe { initialize_large_or_huge_segment(raw_ptr, actual_size, alignment, size) } {
             Some(val) => val,
             None => {
                 // Safety: Releasing raw memory back to the backend because alignment check overflowed.
-                let _released = unsafe { B::deallocate(raw_ptr, total_alloc_size) };
+                let _released = unsafe { B::deallocate(raw_ptr, actual_size) };
                 return core::ptr::null_mut();
             }
         };
@@ -127,7 +135,7 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(size: usize, align: usiz
         // it is eagerly committed and would otherwise hold commit charge for the
         // lifetime of the huge allocation. Best-effort and page-aligned (both bounds
         // are page-aligned); the slack stays inside the reservation and is released
-        // by the `B::deallocate(raw_ptr, total_alloc_size)` on the free path.
+        // by the `B::deallocate(raw_ptr, actual_size)` on the free path.
         let head_slack = aligned_addr - raw_ptr as usize;
         if head_slack > 0 {
             // Safety: `[raw_ptr, aligned_addr)` is a page-aligned subrange of the
@@ -186,6 +194,12 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
     if huge_size > 0 {
         // It is a huge allocation. Release the entire OS memory mapping.
         let raw_ptr = segment.raw_alloc_ptr;
+
+        // Try pushing to the huge pool cache first to recycle the mapping if supported.
+        if B::RECYCLE_HUGE_MAPPINGS && unsafe { B::global_huge_pool().try_push::<B>(raw_ptr, huge_size) } {
+            return true;
+        }
+
         // Safety: Releasing raw memory back to custom backend using the recorded size.
         unsafe { B::deallocate(raw_ptr, huge_size) }
     } else {
@@ -211,6 +225,7 @@ mod tests {
 
     static FAILING_HUGE_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
     static FAILING_HUGE_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+    static FAILING_HUGE_HUGE_POOL: crate::huge_pool::HugeMappingPool = crate::huge_pool::HugeMappingPool::new();
     static FAILING_HUGE_DEALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -234,6 +249,10 @@ mod tests {
 
         fn global_orphan_pool() -> &'static GlobalSegmentPool {
             &FAILING_HUGE_ORPHAN_POOL
+        }
+
+        fn global_huge_pool() -> &'static crate::huge_pool::HugeMappingPool {
+            &FAILING_HUGE_HUGE_POOL
         }
     }
 
@@ -402,7 +421,7 @@ mod tests {
         let segment_ptr = segment.as_mut_ptr();
 
         unsafe {
-            Segment::initialize(segment_ptr, 0x1000 as *mut u8);
+            Segment::initialize(segment_ptr, 0x1000 as *mut u8, 0);
             (*segment_ptr).pages[0].block_size = SEGMENT_SIZE * 3;
         }
 
@@ -418,6 +437,7 @@ mod tests {
 
     static DECOMMIT_HUGE_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
     static DECOMMIT_HUGE_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+    static DECOMMIT_HUGE_HUGE_POOL: crate::huge_pool::HugeMappingPool = crate::huge_pool::HugeMappingPool::new();
     static DECOMMIT_HUGE_CALLS: AtomicUsize = AtomicUsize::new(0);
     static DECOMMIT_HUGE_BYTES: AtomicUsize = AtomicUsize::new(0);
 
@@ -456,6 +476,10 @@ mod tests {
 
         fn global_orphan_pool() -> &'static GlobalSegmentPool {
             &DECOMMIT_HUGE_ORPHAN_POOL
+        }
+
+        fn global_huge_pool() -> &'static crate::huge_pool::HugeMappingPool {
+            &DECOMMIT_HUGE_HUGE_POOL
         }
     }
 

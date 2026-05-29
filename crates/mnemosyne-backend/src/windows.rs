@@ -45,6 +45,8 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
     const SUPPORTS_PAGE_RESET: bool = true;
     const SUPPORTS_MAKE_GUARD: bool = true;
     const SUPPORTS_DECOMMIT: bool = true;
+    const RECYCLE_HUGE_MAPPINGS: bool = true;
+    const ENABLE_CPU_CACHE: bool = !cfg!(test);
 
     /// Reserves and commits virtual memory pages of the given size.
     ///
@@ -146,5 +148,22 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
             )
         };
         res != 0
+    }
+
+    /// Re-commits a decommitted range of pages.
+    unsafe fn commit(ptr: *mut u8, size: usize) -> bool {
+        if ptr.is_null() || size == 0 {
+            return false;
+        }
+        // Safety: Raw system call to VirtualAlloc to commit virtual memory.
+        let result = unsafe {
+            VirtualAlloc(
+                ptr as *const c_void,
+                size,
+                MEM_COMMIT,
+                PAGE_READWRITE,
+            )
+        };
+        !result.is_null()
     }
 }

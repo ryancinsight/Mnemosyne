@@ -93,7 +93,7 @@ fn record_cross_thread_reclaimed(count: usize) {
 /// local free list, a successful `Page::reclaim_thread_free`, or
 /// `Page::initialize_free_list`.
 #[inline(always)]
-unsafe fn pop_page_free_block<P: AllocPolicy>(
+pub(crate) unsafe fn pop_page_free_block<P: AllocPolicy>(
     page: &mut Page,
 ) -> NonNull<mnemosyne_core::types::Block> {
     debug_assert!(
@@ -104,6 +104,21 @@ unsafe fn pop_page_free_block<P: AllocPolicy>(
         page.alloc_count,
         page.max_blocks
     );
+
+    if mnemosyne_core::types::is_bitmap_class(page.size_class) {
+        let page_start = (page as *const Page as usize & !(SEGMENT_SIZE - 1))
+            + page.page_index * PAGE_SIZE;
+        let layout = mnemosyne_core::types::BitmapLayout::for_class(page.size_class).unwrap();
+        if let Some(block_idx) = mnemosyne_core::types::alloc_bitmap_block(page_start as *mut u8, &layout) {
+            if page.alloc_count + 1 == page.max_blocks {
+                page.free = None;
+            }
+            return NonNull::new_unchecked((page_start + block_idx * layout.block_size) as *mut mnemosyne_core::types::Block);
+        } else {
+            core::hint::unreachable_unchecked();
+        }
+    }
+
     let block = match page.free {
         Some(block) => block,
         None => unsafe { core::hint::unreachable_unchecked() },
@@ -286,21 +301,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             let page = unsafe { page_ptr.as_mut() };
 
             // 1. Check thread-local free list (hot fast path)
-            if let Some(block) = page.free {
-                // Safety: block points to a valid free Block inside the page.
-                // We update page.free to the next block in the linked list.
-                let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-                    let self_addr = page as *const Page as usize;
-                    let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
-                    let segment = segment_addr as *mut Segment;
-                    let page_index = page.index_in_segment();
-                    unsafe { (*segment).keys[page_index] }
-                } else {
-                    0
-                };
-                unsafe {
-                    page.free = (*block.as_ptr()).get_next::<P>(cookie);
-                }
+            if page.free.is_some() {
+                let block = unsafe { pop_page_free_block::<P>(page) };
                 page.alloc_count += 1;
                 return block.as_ptr() as *mut u8;
             }
@@ -876,6 +878,8 @@ impl<B: HasSegmentPool> Drop for ThreadAllocator<B> {
     }
 }
 
+unsafe impl<B: HasSegmentPool> Send for ThreadAllocator<B> {}
+
 #[cfg(test)]
 pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -896,6 +900,8 @@ mod tests {
         mnemosyne_arena::GlobalSegmentPool::new();
     static MOCK_ORPHAN_POOL: mnemosyne_arena::GlobalSegmentPool =
         mnemosyne_arena::GlobalSegmentPool::new();
+    static MOCK_HUGE_POOL: mnemosyne_arena::huge_pool::HugeMappingPool =
+        mnemosyne_arena::huge_pool::HugeMappingPool::new();
 
     impl MemoryBackend for MockBackend {
         unsafe fn allocate(size: usize) -> *mut u8 {
@@ -922,6 +928,11 @@ mod tests {
         #[inline(always)]
         fn global_orphan_pool() -> &'static mnemosyne_arena::GlobalSegmentPool {
             &MOCK_ORPHAN_POOL
+        }
+
+        #[inline(always)]
+        fn global_huge_pool() -> &'static mnemosyne_arena::huge_pool::HugeMappingPool {
+            &MOCK_HUGE_POOL
         }
     }
 
@@ -1088,7 +1099,7 @@ mod tests {
             let ptr = slot.as_mut_ptr();
             // Safety: `ptr` is a unique, writable, suitably sized allocation.
             unsafe {
-                Segment::initialize(ptr, core::ptr::null_mut());
+                Segment::initialize(ptr, core::ptr::null_mut(), 0);
                 alloc.push_owned_segment::<StandardPolicy>(ptr);
             }
             seg[i] = ptr;
@@ -1397,8 +1408,8 @@ mod tests {
         let max_blocks = unsafe { (*segment).pages[page_index].max_blocks };
         assert_eq!(
             max_blocks,
-            mnemosyne_core::constants::PAGE_SIZE / mnemosyne_core::constants::MIN_BLOCK_SIZE,
-            "16-byte page capacity should equal PAGE_SIZE / MIN_BLOCK_SIZE"
+            mnemosyne_core::constants::PAGE_SIZE / mnemosyne_core::constants::MIN_BLOCK_SIZE - 32,
+            "16-byte page capacity should equal PAGE_SIZE / MIN_BLOCK_SIZE - 32 due to bitmap reservation"
         );
 
         // Drain the remainder of this exact page. We stop as soon as an

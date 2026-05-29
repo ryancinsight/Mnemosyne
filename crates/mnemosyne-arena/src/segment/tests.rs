@@ -22,6 +22,7 @@ struct FailingReleaseBackend;
 
 static FAILING_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 static FAILING_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static FAILING_HUGE_POOL_TEST: crate::huge_pool::HugeMappingPool = crate::huge_pool::HugeMappingPool::new();
 static FAILING_DEALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 impl MemoryBackend for FailingReleaseBackend {
@@ -45,6 +46,10 @@ impl HasSegmentPool for FailingReleaseBackend {
     fn global_orphan_pool() -> &'static GlobalSegmentPool {
         &FAILING_ORPHAN_POOL
     }
+
+    fn global_huge_pool() -> &'static crate::huge_pool::HugeMappingPool {
+        &FAILING_HUGE_POOL_TEST
+    }
 }
 
 #[cfg(feature = "segment-tail-guards")]
@@ -54,6 +59,8 @@ struct GuardRecordingBackend;
 static GUARD_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 #[cfg(feature = "segment-tail-guards")]
 static GUARD_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+#[cfg(feature = "segment-tail-guards")]
+static GUARD_HUGE_POOL_TEST: crate::huge_pool::HugeMappingPool = crate::huge_pool::HugeMappingPool::new();
 #[cfg(feature = "segment-tail-guards")]
 static GUARD_CALLS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(feature = "segment-tail-guards")]
@@ -100,6 +107,10 @@ impl HasSegmentPool for GuardRecordingBackend {
     fn global_orphan_pool() -> &'static GlobalSegmentPool {
         &GUARD_ORPHAN_POOL
     }
+
+    fn global_huge_pool() -> &'static crate::huge_pool::HugeMappingPool {
+        &GUARD_HUGE_POOL_TEST
+    }
 }
 
 #[test]
@@ -108,7 +119,7 @@ fn purge_retains_segment_when_backend_release_fails() {
     let segment_ptr = segment.as_mut_ptr();
 
     unsafe {
-        Segment::initialize(segment_ptr, 0x1000 as *mut u8);
+        Segment::initialize(segment_ptr, 0x1000 as *mut u8, 0);
         FailingReleaseBackend::global_segment_pool().push_unbounded(segment_ptr);
     }
 
@@ -255,6 +266,7 @@ struct DecommitRecordingBackend;
 
 static DECOMMIT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 static DECOMMIT_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static DECOMMIT_HUGE_POOL_TEST: crate::huge_pool::HugeMappingPool = crate::huge_pool::HugeMappingPool::new();
 static DECOMMIT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static DECOMMIT_BYTES: AtomicUsize = AtomicUsize::new(0);
 
@@ -293,6 +305,10 @@ impl HasSegmentPool for DecommitRecordingBackend {
 
     fn global_orphan_pool() -> &'static GlobalSegmentPool {
         &DECOMMIT_ORPHAN_POOL
+    }
+
+    fn global_huge_pool() -> &'static crate::huge_pool::HugeMappingPool {
+        &DECOMMIT_HUGE_POOL_TEST
     }
 }
 
