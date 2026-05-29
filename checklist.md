@@ -264,3 +264,5 @@ Target version: 0.1.0
 - [x] [patch] Reject deferred process-wide cross-thread reclaim telemetry after focused Criterion rows showed no stable small-handoff improvement and regressions in medium handoff plus threaded small allocation cycles.
 - [x] [patch] Reject `#[inline(always)]` on `Page::reclaim_thread_free` after a refreshed `Threaded small allocation cycles/Mnemosyne` row regressed to about `16.528 us`.
 - [x] [patch] Reject `#[inline(always)]` on exported `mnemosyne_local::usable_size` after focused Criterion rows regressed allocator cycle latency, combined usable-size latency, and raw usable-size query latency.
+
+- [x] [patch] Add `crates/mnemosyne-c-shim/include/mnemosyne.h` C declaration header matching the seven exported `extern "C"` symbols, documenting per-function null/zero/overflow/alignment contracts; reference it from README highlight #13.

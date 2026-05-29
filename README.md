@@ -66,6 +66,7 @@ Its design incorporates core lessons from modern allocator research (specificall
 ### 13. C ABI Shim (`mnemosyne-c-shim`)
 *   The `mnemosyne-c-shim` crate exposes `malloc`, `free`, `calloc`, `realloc`, `aligned_alloc`, `posix_memalign`, and `malloc_usable_size` as `#[no_mangle] extern "C"` functions. Built as both `lib` (for Rust consumers) and `cdylib` (for `LD_PRELOAD` on Unix / DLL injection on Windows), it lets C/C++ code or whole processes use Mnemosyne without a Rust `#[global_allocator]`.
 *   C `free`/`realloc`/`malloc_usable_size` are pointer-only — no `Layout` is threaded through — which Mnemosyne supports natively because the page/segment owner is recovered by address rounding. The shim's `realloc` copies `min(usable_size, new_size)` to honor C semantics (where the caller may have written the entire usable region), deliberately distinct from the Rust `GlobalAlloc::realloc` path's `layout.size()` bound.
+*   A matching C declaration header ships at [`crates/mnemosyne-c-shim/include/mnemosyne.h`](file:///d:/Mnemosyne/crates/mnemosyne-c-shim/include/mnemosyne.h) for C/C++ consumers, documenting the per-function null/zero/overflow/alignment contracts.
 
 ---
 
