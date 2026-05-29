@@ -247,3 +247,5 @@ Target version: 0.1.0
 - [ ] [patch] Continue variance-aware investigation of `realloc latency/within_class_24_to_32`.
 - [ ] [patch] Continue variance-aware investigation of `threaded small allocation cycles`, `cross-thread free handoff/small_32`, and combined usable-size latency without reintroducing rejected local-free, layout-aware deallocation, forced atomic-queue inlining, or const TLS initialization paths.
 - [ ] [patch] Run target-gated jemalloc comparator refresh on a platform where `tikv-jemallocator` links.
+
+- [x] [patch] Add `usable_size_never_under_reports_across_every_size_class` exhaustive lower-bound test covering every small size class at its lower boundary and class max, the analog of the over-report guard.

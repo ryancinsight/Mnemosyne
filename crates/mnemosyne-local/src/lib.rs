@@ -509,6 +509,54 @@ mod tests {
     }
 
     #[test]
+    fn usable_size_never_under_reports_across_every_size_class() {
+        // The lower-bound counterpart to
+        // `usable_size_does_not_over_report_past_mapping_end_for_huge_allocations`.
+        // An under-report is the more dangerous direction for small
+        // allocations: a `Vec` that trusts `usable_size` to compute spare
+        // capacity would write past the reported window and corrupt an
+        // adjacent block. Exhaustively prove `usable_size(ptr) >=
+        // requested_size` for at least one representative request in every
+        // small size class, plus the inter-class boundary bytes that the
+        // size-class mapper rounds.
+        use mnemosyne_core::size_class::class_to_size;
+        use mnemosyne_core::NUM_SIZE_CLASSES;
+
+        for class in 0..NUM_SIZE_CLASSES {
+            let class_max = class_to_size(class);
+            // Exercise the smallest request that lands in this class
+            // (one byte past the previous class's max) and the class max
+            // itself. Both must report at least the requested size.
+            let prev_max = if class == 0 {
+                0
+            } else {
+                class_to_size(class - 1)
+            };
+            for &req in &[prev_max + 1, class_max] {
+                let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(req, 8) };
+                assert!(
+                    !ptr.is_null(),
+                    "alloc({req}) returned null for class {class}"
+                );
+
+                let reported = unsafe { usable_size(ptr) };
+                assert!(
+                    reported >= req,
+                    "usable_size under-reported for class {class}: requested {req}, got {reported}"
+                );
+                // The reported value is the class block size, which must
+                // be exactly `class_max` for any request in this class.
+                assert_eq!(
+                    reported, class_max,
+                    "usable_size for request {req} (class {class}) should equal class max {class_max}"
+                );
+
+                unsafe { thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr) };
+            }
+        }
+    }
+
+    #[test]
     fn usable_size_returns_payload_remainder_for_huge_allocations() {
         // Direct large allocation through the arena. The returned
         // pointer carries enough payload to cover the requested size,
