@@ -15,6 +15,7 @@ pub use local_alloc::{SizeClassOccupancy, ThreadAllocator, ThreadAllocatorStats}
 use core::ptr::NonNull;
 use mnemosyne_arena::{allocate_large_or_huge, deallocate_large_or_huge, HasSegmentPool};
 use mnemosyne_core::constants::{MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SIZE, SEGMENT_SIZE};
+use mnemosyne_core::size_class::size_to_class;
 use mnemosyne_core::types::{Block, Page, Segment};
 use mnemosyne_core::validation::{is_valid_alloc_request, is_valid_layout_alloc_request};
 
@@ -433,9 +434,41 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
 
     let adjusted_size = if size < align { align } else { size };
 
+    let class = match size_to_class(adjusted_size) {
+        Some(c) => c,
+        None => {
+            let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align) };
+            if !ptr.is_null() {
+                unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+            }
+            return ptr;
+        }
+    };
+
+    // Fast path: try allocator-guard-free allocation first.
+    // The hot path only reads/writes active_pages and page.free, which has no external calls.
+    // Therefore, bypassing the reentrancy guard is safe here.
+    let alloc_ptr = B::get_allocator_ptr() as *mut ThreadAllocator<B>;
+    if !alloc_ptr.is_null() {
+        let alloc = unsafe { &mut *alloc_ptr };
+        if let Some(mut page_ptr) = alloc.active_pages[class] {
+            let page = unsafe { page_ptr.as_mut() };
+            if let Some(block) = page.free {
+                unsafe {
+                    page.free = (*block.as_ptr()).next;
+                }
+                page.alloc_count += 1;
+                let ptr = block.as_ptr() as *mut u8;
+                unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+                return ptr;
+            }
+        }
+    }
+
+    // Fallback: enter allocator guard for cold allocations.
     let Some(ptr) = B::with_allocator_guard(|alloc| {
-        // Safety: alloc is exclusively borrowed and valid. alloc.alloc handles safety.
-        unsafe { alloc.alloc(adjusted_size) }
+        // Safety: alloc is exclusively borrowed and valid.
+        unsafe { alloc.alloc_cold(class) }
     }) else {
         // Fall back to direct arena/huge allocation to break recursion.
         // Safety: size and align are forwarded. allocate_large_or_huge handles safety.

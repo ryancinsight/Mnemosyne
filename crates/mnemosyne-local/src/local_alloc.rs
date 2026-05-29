@@ -341,7 +341,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// Marked as `#[inline(never)]` to prevent pollution of instruction cache.
     #[inline(never)]
-    unsafe fn alloc_cold(&mut self, class: usize) -> *mut u8 {
+    pub(crate) unsafe fn alloc_cold(&mut self, class: usize) -> *mut u8 {
         // 1. Move the current active page to full_pages if it is indeed full.
         if let Some(mut active_ptr) = self.active_pages[class] {
             let active_page = active_ptr.as_mut();
@@ -465,9 +465,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     let mut found_page: *mut Page = core::ptr::null_mut();
                     // Safety: We claim ownership of this orphaned segment. We scan and register pages.
                     unsafe {
-                        (*seg_ptr).owner = SegmentOwner::from_ptr(self as *mut ThreadAllocator<B>);
-                        (*seg_ptr).next_owned_segment = self.owned_segments_head;
-                        self.owned_segments_head = seg_ptr;
+                        self.push_owned_segment(seg_ptr);
 
                         self.set_current_segment(Some(NonNull::new_unchecked(seg_ptr)));
                         self.next_page_index = PAGES_PER_SEGMENT;
@@ -532,9 +530,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     // Safety: seg_ptr is valid, exclusive to this thread, and initialized.
                     // We set owner and insert it at the head of our owned segment list.
                     unsafe {
-                        (*seg_ptr).owner = SegmentOwner::from_ptr(self as *mut ThreadAllocator<B>);
-                        (*seg_ptr).next_owned_segment = self.owned_segments_head;
-                        self.owned_segments_head = seg_ptr;
+                        self.push_owned_segment(seg_ptr);
                         self.set_current_segment(Some(NonNull::new_unchecked(seg_ptr)));
                     }
                     self.next_page_index = 1; // page 0 is segment header
@@ -680,27 +676,59 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         unsafe { unlink_page_from_list(&mut self.empty_pages, page_ptr) }
     }
 
-    /// Helper to unlink a segment from the owned segments list.
+    /// Prepends `segment` to this thread's intrusive doubly-linked
+    /// owned-segments list and stamps the ownership token.
+    ///
+    /// This is the single authoritative insertion point for the owned-segments
+    /// list; both the fresh-segment and orphan-adoption paths route through it
+    /// so the `prev`/`next` invariant is maintained in exactly one place.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must be a live segment owned exclusively by this allocator and
+    /// must not already be linked into any owned-segments list.
+    #[inline]
+    unsafe fn push_owned_segment(&mut self, segment: *mut Segment) {
+        // Safety: `segment` is exclusive to this allocator; the caller
+        // guarantees it is unlinked, so overwriting its link fields and
+        // relinking the current head is sound.
+        unsafe {
+            (*segment).owner = SegmentOwner::from_ptr(self as *mut ThreadAllocator<B>);
+            (*segment).prev_owned_segment = core::ptr::null_mut();
+            (*segment).next_owned_segment = self.owned_segments_head;
+            if !self.owned_segments_head.is_null() {
+                (*self.owned_segments_head).prev_owned_segment = segment;
+            }
+            self.owned_segments_head = segment;
+        }
+    }
+
+    /// Unlinks a segment from the owned segments list in O(1).
+    ///
+    /// The list is intrusive and doubly linked, so the segment's own
+    /// `prev_owned_segment`/`next_owned_segment` pointers locate both
+    /// neighbours directly; no linear search for the predecessor is required.
+    /// Both link fields are cleared so the detached segment carries no stale
+    /// pointers into the list.
     #[inline]
     unsafe fn unlink_owned_segment(&mut self, segment: *mut Segment) {
-        let mut prev: *mut Segment = core::ptr::null_mut();
-        let mut curr = self.owned_segments_head;
-        while !curr.is_null() {
-            if curr == segment {
-                // Safety: segment points to a valid Segment node. We adjust owned segments list pointers.
-                unsafe {
-                    if !prev.is_null() {
-                        (*prev).next_owned_segment = (*segment).next_owned_segment;
-                    } else {
-                        self.owned_segments_head = (*segment).next_owned_segment;
-                    }
-                    (*segment).next_owned_segment = core::ptr::null_mut();
-                }
-                break;
+        // Safety: `segment` is a node owned by this allocator's list; its
+        // neighbour pointers are maintained by `push_owned_segment` and this
+        // method, so splicing through them mutates only live list nodes.
+        unsafe {
+            let prev = (*segment).prev_owned_segment;
+            let next = (*segment).next_owned_segment;
+            if prev.is_null() {
+                // `segment` was the head.
+                self.owned_segments_head = next;
+            } else {
+                (*prev).next_owned_segment = next;
             }
-            prev = curr;
-            // Safety: curr is a valid pointer in the owned segments chain.
-            curr = unsafe { (*curr).next_owned_segment };
+            if !next.is_null() {
+                (*next).prev_owned_segment = prev;
+            }
+            (*segment).prev_owned_segment = core::ptr::null_mut();
+            (*segment).next_owned_segment = core::ptr::null_mut();
         }
     }
 }
@@ -739,6 +767,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 (*curr).owner = SegmentOwner::NONE;
                 (*curr).is_current = false;
                 (*curr).next_owned_segment = core::ptr::null_mut();
+                (*curr).prev_owned_segment = core::ptr::null_mut();
 
                 if total_allocations == 0 {
                     deallocate_segment::<B>(curr);
@@ -898,6 +927,82 @@ mod tests {
             "thread-exit sentinel did not reclaim the live owned segment; \
              orphan pool received {reclaimed} segments"
         );
+    }
+
+    /// Verifies the intrusive doubly-linked owned-segments list splices any
+    /// node out in place and in O(1) — without searching for a predecessor —
+    /// while preserving the `prev`/`next` invariant across head, middle, and
+    /// tail removals. This pins the correctness of `push_owned_segment` and the
+    /// O(1) `unlink_owned_segment` that replaced the prior linear search.
+    #[test]
+    fn owned_segment_list_is_doubly_linked_and_unlinks_in_place() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
+        let mut alloc = ThreadAllocator::<DefaultBackend>::new();
+
+        // Three standalone segment headers. Alignment is irrelevant here: the
+        // list helpers only touch the `prev`/`next` link fields, never the page
+        // data, so heap-boxed storage is sufficient and avoids real OS mappings.
+        let mut storage: [std::boxed::Box<core::mem::MaybeUninit<Segment>>; 3] = [
+            std::boxed::Box::new(core::mem::MaybeUninit::uninit()),
+            std::boxed::Box::new(core::mem::MaybeUninit::uninit()),
+            std::boxed::Box::new(core::mem::MaybeUninit::uninit()),
+        ];
+        let mut seg = [core::ptr::null_mut::<Segment>(); 3];
+        for (i, slot) in storage.iter_mut().enumerate() {
+            let ptr = slot.as_mut_ptr();
+            // Safety: `ptr` is a unique, writable, suitably sized allocation.
+            unsafe {
+                Segment::initialize(ptr, core::ptr::null_mut());
+                alloc.push_owned_segment(ptr);
+            }
+            seg[i] = ptr;
+        }
+
+        // Pushing seg0, seg1, seg2 yields head: seg2 -> seg1 -> seg0.
+        assert_eq!(
+            alloc.owned_segments_head, seg[2],
+            "head must be last pushed"
+        );
+        // Safety: all three pointers are live boxed segments linked above.
+        unsafe {
+            assert!((*seg[2]).prev_owned_segment.is_null());
+            assert_eq!((*seg[2]).next_owned_segment, seg[1]);
+            assert_eq!((*seg[1]).prev_owned_segment, seg[2]);
+            assert_eq!((*seg[1]).next_owned_segment, seg[0]);
+            assert_eq!((*seg[0]).prev_owned_segment, seg[1]);
+            assert!((*seg[0]).next_owned_segment.is_null());
+        }
+
+        // Unlink the MIDDLE node (seg1): list becomes seg2 -> seg0 with no
+        // predecessor search.
+        // Safety: seg1 is a live node in this list.
+        unsafe { alloc.unlink_owned_segment(seg[1]) };
+        assert_eq!(alloc.owned_segments_head, seg[2]);
+        // Safety: pointers remain live (storage outlives this scope).
+        unsafe {
+            assert_eq!((*seg[2]).next_owned_segment, seg[0]);
+            assert_eq!((*seg[0]).prev_owned_segment, seg[2]);
+            // The detached node carries no stale list pointers.
+            assert!((*seg[1]).prev_owned_segment.is_null());
+            assert!((*seg[1]).next_owned_segment.is_null());
+        }
+
+        // Unlink the HEAD node (seg2): list becomes seg0.
+        // Safety: seg2 is the live head node.
+        unsafe { alloc.unlink_owned_segment(seg[2]) };
+        assert_eq!(alloc.owned_segments_head, seg[0]);
+        // Safety: seg0 is the sole remaining live node.
+        unsafe { assert!((*seg[0]).prev_owned_segment.is_null()) };
+
+        // Unlink the TAIL/only node (seg0): list becomes empty.
+        // Safety: seg0 is the live sole node.
+        unsafe { alloc.unlink_owned_segment(seg[0]) };
+        assert!(alloc.owned_segments_head.is_null(), "list must be empty");
+
+        // `alloc` now owns no segments; its `Drop` reclamation is a no-op, so
+        // the boxed storage is freed safely when `storage` drops here.
     }
 
     #[test]

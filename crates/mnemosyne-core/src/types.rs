@@ -175,6 +175,15 @@ pub struct Segment {
     pub is_current: bool,
     /// Pointer to the next segment owned by the same ThreadAllocator.
     pub next_owned_segment: *mut Segment,
+    /// Pointer to the previous segment owned by the same ThreadAllocator.
+    ///
+    /// The owned-segments list is intrusive and doubly linked so a thread can
+    /// splice any owned segment out in O(1) during `try_reclaim_segment`
+    /// without searching for its predecessor. `Segment` metadata is multiple
+    /// kilobytes (it embeds the `[Page; PAGES_PER_SEGMENT]` array), so the
+    /// extra back-pointer carries no cache-line cost on the allocation hot
+    /// path, which never touches this field.
+    pub prev_owned_segment: *mut Segment,
     /// Pointer to the next free segment in the global pool.
     pub next_free_segment: *mut Segment,
     /// The pages metadata array. Page 0 is reserved for segment metadata.
@@ -199,6 +208,7 @@ impl Segment {
             segment.owner = SegmentOwner::NONE;
             segment.is_current = false;
             segment.next_owned_segment = core::ptr::null_mut();
+            segment.prev_owned_segment = core::ptr::null_mut();
             segment.next_free_segment = core::ptr::null_mut();
 
             // Page 0 holds segment metadata and is never allocated from;
