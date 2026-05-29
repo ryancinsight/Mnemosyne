@@ -1005,6 +1005,46 @@ mod tests {
         // the boxed storage is freed safely when `storage` drops here.
     }
 
+    /// Safety regression guard for the guard-free small-allocation fast path.
+    ///
+    /// The fast path borrows the thread cache without arming the re-entrancy
+    /// guard, so it MUST still observe the busy bit set by an outer guarded
+    /// borrow and decline — otherwise a same-thread re-entrant allocation
+    /// (a custom/telemetry backend, or production tracing) would create a
+    /// second `&mut ThreadAllocator` aliasing the live guarded borrow, which is
+    /// undefined behavior. This test enters a guarded borrow and asserts that a
+    /// nested `with_allocator_unguarded` returns `None`, and that the same call
+    /// succeeds when no guard is held.
+    #[test]
+    fn unguarded_fast_path_rejects_reentrant_borrow() {
+        use crate::LocalAllocatorSelector;
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
+
+        let outer_saw_reentrant_none = MockBackend::with_allocator(|_outer| {
+            // Inside the guarded borrow: is_allocating is set.
+            // Safety: the probe closure performs no allocator re-entry.
+            let reentrant =
+                unsafe { MockBackend::with_allocator_unguarded(|_inner| 0xC0FFEE_usize) };
+            reentrant.is_none()
+        });
+        assert_eq!(
+            outer_saw_reentrant_none,
+            Some(true),
+            "unguarded fast path aliased a live guarded borrow instead of rejecting re-entry"
+        );
+
+        // With no guard held, the unguarded path is permitted and runs `f`.
+        // Safety: the closure does not re-enter the allocator.
+        let allowed = unsafe { MockBackend::with_allocator_unguarded(|_alloc| 7_usize) };
+        assert_eq!(
+            allowed,
+            Some(7),
+            "unguarded path must run the closure when no guard is held"
+        );
+    }
+
     #[test]
     fn test_page_recycling_different_classes() {
         let _guard = TEST_LOCK

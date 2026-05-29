@@ -4,6 +4,9 @@ Target version: 0.1.0
 
 ## Verified
 
+- [x] [patch] Close re-entrancy soundness hole on the guard-free fast path via `with_allocator_unguarded` (busy-bit checked, guard-write-free). Verified: stable + `nightly_tls` green; `unguarded_fast_path_rejects_reentrant_borrow` pins re-entry rejection.
+- [x] [patch] Reduce `unlink_owned_segment` to O(1) via an intrusive doubly-linked owned-segments list (`Segment::prev_owned_segment`, SSOT `push_owned_segment`). Verified: `owned_segment_list_is_doubly_linked_and_unlinks_in_place`.
+- [x] [arch] Add `complexity_audit.md` per-component complexity review with O(1) reduction plan for the remaining cold-path unlink operations.
 - [x] [minor] Add an optional `nightly_tls` `#[thread_local]` fast cache accessor to `mnemosyne-local`, preserving thread-exit reclamation via a `Drop` sentinel; default stable build unchanged. Verified: stable workspace `cargo test` green (no regression); nightly `cargo test -p mnemosyne-local --features nightly_tls` green (18 tests, incl. sentinel reclamation).
 - [x] [patch] Preserve current segment ownership during local free reclamation checks.
 - [x] [patch] Benchmark Mnemosyne against mimalloc and snmalloc for allocation cycles.

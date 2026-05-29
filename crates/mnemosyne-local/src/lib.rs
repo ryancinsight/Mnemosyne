@@ -69,6 +69,40 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
         Some(result)
     }
 
+    /// Runs `f` with `&mut` access to the cache **without** arming the
+    /// re-entrancy guard, returning `None` when a guarded operation is already
+    /// in progress on this thread.
+    ///
+    /// This is the sound primitive behind the guard-free small-allocation fast
+    /// path. It still reads `is_allocating`, so it can never hand out a second
+    /// `&mut ThreadAllocator` while a guarded borrow is live — it simply skips
+    /// the `set(true)`/`set(false)` writes that bracket [`with_allocator`].
+    /// Because it does not arm the guard, the borrow it creates is only sound
+    /// if `f` performs no operation that can re-enter the allocator (no segment
+    /// acquisition, no backend call, no foreign callback). Callers use it for
+    /// the active-page free-list pop, which touches only thread-local page
+    /// metadata and never allocates.
+    ///
+    /// # Safety
+    ///
+    /// `f` must not, directly or transitively, invoke any allocator entry point
+    /// on the current thread (which would create an aliasing `&mut` to this
+    /// same cache).
+    #[inline(always)]
+    pub unsafe fn with_allocator_unguarded<R>(
+        &self,
+        f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
+    ) -> Option<R> {
+        if self.is_allocating.get() {
+            return None;
+        }
+        // Safety: `is_allocating` is false, so no guarded `&mut` to this cache
+        // is live on this thread; the slot is thread-local, so no other thread
+        // aliases it; and the caller's `f` contract forbids re-entry, so no
+        // nested `&mut` can be created while this borrow is held.
+        Some(unsafe { f(&mut *self.allocator.get()) })
+    }
+
     /// Returns the raw allocator-cache pointer used as the segment owner token.
     #[inline(always)]
     pub fn allocator_ptr(&self) -> *mut core::ffi::c_void {
@@ -213,6 +247,21 @@ pub trait LocalAllocatorSelector<B: HasSegmentPool>: HasSegmentPool {
     /// Returns `None` when allocation is already in progress on this thread.
     fn with_allocator_guard<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R>;
 
+    /// Runs `f` with the thread-local allocator cache **without** arming the
+    /// re-entrancy guard, returning `None` on same-thread re-entry.
+    ///
+    /// This backs the guard-free small-allocation fast path: it still consults
+    /// the re-entrancy busy bit (so it never produces a second `&mut` while a
+    /// guarded borrow is live) but skips the guard set/clear writes.
+    ///
+    /// # Safety
+    ///
+    /// `f` must not, directly or transitively, invoke any allocator entry point
+    /// on the current thread.
+    unsafe fn with_allocator_unguarded<R>(
+        f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
+    ) -> Option<R>;
+
     /// Returns the raw pointer to the thread-local allocator cache.
     fn get_allocator_ptr() -> *mut core::ffi::c_void;
 }
@@ -247,6 +296,15 @@ macro_rules! impl_local_allocator_selector {
                     f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
                 ) -> Option<R> {
                     ALLOCATOR_SLOT.with(|slot| slot.with_allocator(f))
+                }
+
+                #[inline(always)]
+                unsafe fn with_allocator_unguarded<R>(
+                    f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
+                ) -> Option<R> {
+                    // Safety: the caller upholds the no-re-entry contract; the
+                    // slot method checks the busy bit before borrowing.
+                    ALLOCATOR_SLOT.with(|slot| unsafe { slot.with_allocator_unguarded(f) })
                 }
 
                 #[inline(always)]
@@ -289,6 +347,18 @@ macro_rules! impl_local_allocator_selector {
                 ) -> Option<R> {
                     $crate::arm_thread_exit(&ALLOCATOR_SLOT, &ALLOCATOR_EXIT_GUARD);
                     ALLOCATOR_SLOT.with_allocator(f)
+                }
+
+                #[inline(always)]
+                unsafe fn with_allocator_unguarded<R>(
+                    f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
+                ) -> Option<R> {
+                    // Safety: the caller upholds the no-re-entry contract. The
+                    // exit sentinel is already armed: the first allocation on a
+                    // thread has no active page and necessarily takes the
+                    // guarded path, which arms the sentinel before any segment
+                    // is owned, so the unguarded fast path need not re-arm.
+                    unsafe { ALLOCATOR_SLOT.with_allocator_unguarded(f) }
                 }
 
                 #[inline(always)]
@@ -445,24 +515,35 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
         }
     };
 
-    // Fast path: try allocator-guard-free allocation first.
-    // The hot path only reads/writes active_pages and page.free, which has no external calls.
-    // Therefore, bypassing the reentrancy guard is safe here.
-    let alloc_ptr = B::get_allocator_ptr() as *mut ThreadAllocator<B>;
-    if !alloc_ptr.is_null() {
-        let alloc = unsafe { &mut *alloc_ptr };
-        if let Some(mut page_ptr) = alloc.active_pages[class] {
-            let page = unsafe { page_ptr.as_mut() };
-            if let Some(block) = page.free {
-                unsafe {
-                    page.free = (*block.as_ptr()).next;
-                }
-                page.alloc_count += 1;
-                let ptr = block.as_ptr() as *mut u8;
-                unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-                return ptr;
-            }
+    // Guard-free small-allocation fast path. `with_allocator_unguarded` still
+    // consults the re-entrancy busy bit — returning `None` on same-thread
+    // re-entry so a second `&mut ThreadAllocator` can never alias a live
+    // guarded borrow — but skips the guard set/clear writes. The closure only
+    // pops a thread-local free-list block and performs no allocator re-entry,
+    // satisfying the unguarded-borrow contract. A re-entrant call (busy bit
+    // set) falls through to `with_allocator_guard`, which also returns `None`
+    // and routes to the huge fallback.
+    //
+    let pop_active_free = |alloc: &mut ThreadAllocator<B>| -> Option<*mut u8> {
+        let mut page_ptr = alloc.active_pages[class]?;
+        // Safety: `page_ptr` is an active page owned by this thread cache.
+        let page = unsafe { page_ptr.as_mut() };
+        let block = page.free?;
+        // Safety: `block` is the head of the page-local free list; advance the
+        // list and account the allocation.
+        unsafe {
+            page.free = (*block.as_ptr()).next;
         }
+        page.alloc_count += 1;
+        Some(block.as_ptr() as *mut u8)
+    };
+    // Safety: `pop_active_free` touches only thread-local page metadata and
+    // never invokes an allocator entry point, upholding the no-re-entry
+    // contract of `with_allocator_unguarded`.
+    let fast = unsafe { B::with_allocator_unguarded(pop_active_free) };
+    if let Some(Some(ptr)) = fast {
+        unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+        return ptr;
     }
 
     // Fallback: enter allocator guard for cold allocations.

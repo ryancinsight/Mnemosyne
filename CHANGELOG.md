@@ -9,8 +9,14 @@
 - Bounded the global free segment cache and released excess empty segment mappings to the OS.
 - Avoided segment-reclaim calls on hot local frees for the current thread-local segment.
 
+### Fixed
+
+- Closed a latent re-entrancy soundness hole on the guard-free small-allocation fast path: it borrowed the thread cache without checking the `is_allocating` busy bit, so a same-thread re-entrant allocation could create a second aliasing `&mut ThreadAllocator` (undefined behavior). The fast path now pops through the new `with_allocator_unguarded` primitive, which still consults the busy bit (returning `None` on re-entry) while skipping the guard set/clear writes. Pinned by `unguarded_fast_path_rejects_reentrant_borrow`.
+
 ### Changed
 
+- Reduced `unlink_owned_segment` from O(owned-segments) to O(1) by converting the owned-segments list to an intrusive doubly-linked list (`Segment::prev_owned_segment`), routing both insertion sites through the single authoritative `ThreadAllocator::push_owned_segment`. Removes the owned-segment-count term from `try_reclaim_segment`. Pinned by `owned_segment_list_is_doubly_linked_and_unlinks_in_place`.
+- Added `complexity_audit.md`, a per-component asymptotic-complexity review confirming all per-allocation/per-free hot paths are O(1) and cataloguing the remaining cold-path super-constant operations with a reduction plan.
 - Added an optional `nightly_tls` feature to `mnemosyne-local` that replaces the portable `std::thread_local!` cache accessor with an ELF/PE `#[thread_local]` static. The fast accessor lowers to a single segment-register-relative load with no `LocalKey::with` call or lazy-initialization guard — the mechanism mimalloc uses for its default heap — targeting the single-threaded small-allocation cycle-latency gap. The default build remains on stable Rust and is byte-identical; the feature requires a nightly compiler.
 - Preserved thread-exit segment reclamation on the `#[thread_local]` fast path via a `std::thread_local!` `Drop` sentinel (`ThreadExitReclaim`), because `#[thread_local]` statics are not dropped on thread teardown. Reclamation logic is shared with the default `Drop` path through `ThreadAllocator::reclaim_owned_segments`, which now clears the owned-segment head to stay idempotent.
 - Added a value-semantic nightly-only test proving the exit sentinel orphans a terminating thread's still-live owned segment.
