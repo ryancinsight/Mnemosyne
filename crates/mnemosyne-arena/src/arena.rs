@@ -61,6 +61,19 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(size: usize, align: usiz
     };
     let aligned_ptr = aligned_addr as *mut Segment;
 
+    // Return the alignment slack before the aligned header to the OS. As in
+    // `allocate_segment`, `[raw_ptr, aligned_addr)` is never touched; on Windows
+    // it is eagerly committed and would otherwise hold commit charge for the
+    // lifetime of the huge allocation. Best-effort and page-aligned (both bounds
+    // are page-aligned); the slack stays inside the reservation and is released
+    // by the `B::deallocate(raw_ptr, total_alloc_size)` on the free path.
+    let head_slack = aligned_addr - raw_ptr as usize;
+    if head_slack > 0 {
+        // Safety: `[raw_ptr, aligned_addr)` is a page-aligned subrange of the
+        // live mapping holding no allocation data (it precedes the header).
+        let _ = unsafe { B::decommit(raw_ptr, head_slack) };
+    }
+
     let reserved_prefix_end = match aligned_addr.checked_add(PAGE_SIZE) {
         Some(addr) => addr,
         None => {
