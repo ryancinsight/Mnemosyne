@@ -239,9 +239,11 @@ Target version: 0.1.0
 - [x] [patch] Collapse the allocator guard and cache into one `LocalAllocatorSlot<B>` TLS key.
 - [x] [patch] Run focused Criterion rows for allocator cycle latency, threaded small cycles, and saturated threaded small cycles after the TLS-slot change.
 - [x] [patch] Regenerate `allocator_comparison.md` and run `benchmark_summary --release -- --enforce-thresholds`.
+- [x] [patch] Reject forced `AtomicFreeList` inlining after it improved cross-thread handoff but regressed saturated threaded cycles.
+- [x] [patch] Reject `thread_local!` const initialization for the allocator slot after it improved non-saturated rows but regressed saturated threaded cycles.
 
 ## Next
 
 - [ ] [patch] Continue variance-aware investigation of `realloc latency/within_class_24_to_32`.
-- [ ] [patch] Continue variance-aware investigation of `threaded small allocation cycles`, `cross-thread free handoff/small_32`, and combined usable-size latency without reintroducing rejected local-free or layout-aware deallocation paths.
+- [ ] [patch] Continue variance-aware investigation of `threaded small allocation cycles`, `cross-thread free handoff/small_32`, and combined usable-size latency without reintroducing rejected local-free, layout-aware deallocation, forced atomic-queue inlining, or const TLS initialization paths.
 - [ ] [patch] Run target-gated jemalloc comparator refresh on a platform where `tikv-jemallocator` links.
