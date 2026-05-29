@@ -144,8 +144,8 @@ impl GlobalSegmentPool {
             match self.head.compare_exchange_weak(
                 current,
                 next,
-                Ordering::Release,
-                Ordering::Relaxed,
+                Ordering::AcqRel,
+                Ordering::Acquire,
             ) {
                 Ok(_) => {
                     self.retained.fetch_sub(1, Ordering::Relaxed);

@@ -419,7 +419,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             unsafe {
                 *self.active_pages.get_unchecked_mut(class) = page.next_page;
                 page.next_page = *self.full_pages.get_unchecked(class);
-                *self.full_pages.get_unchecked_mut(class) = Some(NonNull::new_unchecked(new_page_ptr));
+                *self.full_pages.get_unchecked_mut(class) =
+                    Some(NonNull::new_unchecked(new_page_ptr));
             }
         }
         block.as_ptr() as *mut u8
@@ -523,7 +524,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         unsafe {
                             page.initialize_free_list(page_start);
                             page.next_page = *self.active_pages.get_unchecked(class);
-                            *self.active_pages.get_unchecked_mut(class) = Some(NonNull::new_unchecked(found_page));
+                            *self.active_pages.get_unchecked_mut(class) =
+                                Some(NonNull::new_unchecked(found_page));
                         }
                         return found_page;
                     }
@@ -673,7 +675,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         if removed_from_active {
             return;
         }
-        let _ = unsafe { unlink_page_from_list(self.full_pages.get_unchecked_mut(class), page_ptr) };
+        let _ =
+            unsafe { unlink_page_from_list(self.full_pages.get_unchecked_mut(class), page_ptr) };
     }
 
     /// Helper to unlink a page from the empty pages list.
@@ -1026,8 +1029,8 @@ mod tests {
             .expect("local allocator test lock was poisoned");
 
         // Safety: allocate a real segment-aligned segment from the backend.
-        let seg = unsafe { allocate_segment::<DefaultBackend>() }
-            .expect("segment allocation failed");
+        let seg =
+            unsafe { allocate_segment::<DefaultBackend>() }.expect("segment allocation failed");
         assert_eq!(
             seg as usize % mnemosyne_core::constants::SEGMENT_ALIGN,
             0,

@@ -18,7 +18,7 @@ use mnemosyne_arena::{allocate_large_or_huge, deallocate_large_or_huge, HasSegme
 use mnemosyne_core::constants::{
     MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT, PAGE_SIZE, SEGMENT_SIZE,
 };
-use mnemosyne_core::size_class::{class_to_size, size_to_class, size_to_class_nonzero};
+use mnemosyne_core::size_class::{round_up_size, size_to_class_nonzero};
 use mnemosyne_core::types::{Block, Page, Segment};
 use mnemosyne_core::validation::{is_valid_alloc_request, is_valid_layout_alloc_request};
 
@@ -593,57 +593,29 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         return;
     }
 
-    if (ptr as usize) & (SEGMENT_SIZE - 1) == 0 {
-        if P::ENABLE_POISONING {
-            // Safety: ptr is a valid large/huge allocation, so the segment header pointer
-            // is stored in the metadata slot immediately preceding the user pointer.
-            // The poison region runs from `ptr` to the end of the OS-side
-            // mapping (`raw_alloc_ptr + huge_size`), not to
-            // `segment + huge_size` — the latter sits up to SEGMENT_ALIGN-1
-            // bytes past the mapping end and would write across the OS
-            // boundary.
-            let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-            let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
-            unsafe { poison_freed_bytes::<P>(ptr, size) };
-        }
-        // Safety: ptr was returned by a large/huge allocation, so the segment header pointer
-        // is stored in the metadata slot immediately preceding the user pointer.
-        let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-        let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
-        return;
-    }
-
     let ptr_val = ptr as usize;
     let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
     let segment = segment_addr as *mut Segment;
 
     let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-    debug_assert!(
-        page_index > 0,
-        "small allocations never live in metadata page 0"
-    );
-    debug_assert!(
-        page_index < PAGES_PER_SEGMENT,
-        "small free ptr must fall within the segment's page array"
-    );
-    // Safety: page_index is within bounds (1..PAGES_PER_SEGMENT) since ptr is a small alloc.
+
+    // Safety: segment header is initialized. For a huge allocation, either the pointer is
+    // segment-aligned (page_index == 0) or page.block_size is 0. In either case, we route
+    // to the huge deallocation path.
     let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
-    if page.block_size == 0 {
+    if page_index == 0 || page.block_size == 0 {
         if P::ENABLE_POISONING {
-            // Safety: see the segment-aligned branch above for the
-            // raw_alloc_ptr derivation; using segment_ptr here would
-            // write `aligned_addr - raw_alloc_ptr` bytes past the OS
-            // mapping boundary.
+            // Safety: large/huge allocations store the segment pointer in the metadata
+            // slot immediately preceding the user pointer.
             let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
             let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
             unsafe { poison_freed_bytes::<P>(ptr, size) };
         }
-        // Safety: non-small allocations keep the owning segment in the
-        // metadata slot immediately preceding the user pointer.
         let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
         let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
         return;
     }
+
     debug_assert_eq!(
         (ptr_val & (PAGE_SIZE - 1)) % page.block_size,
         0,
@@ -655,9 +627,6 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
     }
 
     let block = ptr as *mut Block;
-
-    // Determine whether the current thread holds the segment owner token.
-    // Safety: segment header is initialized and owner field is valid.
     let owner = unsafe { (*segment).owner };
     let current_allocator = B::get_allocator_ptr();
 
@@ -665,9 +634,6 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         debug_assert!(page.alloc_count > 0, "local free observed zero alloc_count");
         let page_free = page.free;
         let page_alloc_count = page.alloc_count;
-        // Safety: the owner token matched this thread's allocator. If the page
-        // is not full and the free cannot trigger non-current segment reclaim,
-        // the page-local metadata update does not need access to allocator lists.
         if page_free.is_some() && (page_alloc_count != 1 || unsafe { (*segment).is_current }) {
             unsafe {
                 (*block).next = page_free;
@@ -677,31 +643,18 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
             return;
         }
 
-        // Safety: the closure only touches thread-local page metadata and
-        // unlinks/reclaims owned segments, which involves no nested allocator
-        // entry points, satisfying the unguarded safety contract.
-        let fast_reclaim = unsafe {
-            B::with_allocator_unguarded(|alloc| do_local_free_internal(alloc, block, page, segment))
-        };
-        let res = if fast_reclaim.is_none() {
-            // Reentrant fallback
-            B::with_allocator_guard(|alloc| unsafe { do_local_free_internal(alloc, block, page, segment) })
-        } else {
-            fast_reclaim
-        };
-
-        if res.is_none() {
-            // Re-entrant/borrowed local free: push onto the owning page's queue.
-            // The owner batch-reclaims this block after local page lists are exhausted.
-            unsafe {
-                page.thread_free.push(NonNull::new_unchecked(block));
-            }
+        let mut done = false;
+        unsafe {
+            B::with_allocator_unguarded(|alloc| {
+                do_local_free_internal(alloc, block, page, segment);
+                done = true;
+            });
         }
-        return;
+        if done {
+            return;
+        }
     }
 
-    // Cross-thread or orphan free: push onto the owning page's queue. The owner
-    // batch-reclaims this block after local page lists are exhausted.
     unsafe {
         page.thread_free.push(NonNull::new_unchecked(block));
     }
@@ -717,7 +670,7 @@ unsafe fn do_local_free_internal<B: HasSegmentPool>(
     let was_full = page.free.is_none();
     (*block).next = page.free;
     page.free = Some(NonNull::new_unchecked(block));
-    
+
     page.alloc_count -= 1;
     let becomes_empty = page.alloc_count == 0;
 
@@ -725,7 +678,10 @@ unsafe fn do_local_free_internal<B: HasSegmentPool>(
         let class = page.size_class;
         if alloc.unlink_full_page(page as *mut Page, class) {
             page.next_page = unsafe { *alloc.active_pages.get_unchecked(class) };
-            unsafe { *alloc.active_pages.get_unchecked_mut(class) = Some(NonNull::new_unchecked(page as *mut Page)); }
+            unsafe {
+                *alloc.active_pages.get_unchecked_mut(class) =
+                    Some(NonNull::new_unchecked(page as *mut Page));
+            }
         }
     }
     if becomes_empty && !alloc.is_current_segment(segment) {
@@ -745,12 +701,11 @@ fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> bool {
     }
 
     let old_adjusted_size = core::cmp::max(layout.size(), layout.align());
-
-    let Some(class) = size_to_class(old_adjusted_size) else {
-        return false;
-    };
-
-    new_size <= class_to_size(class)
+    if let Some(limit) = round_up_size(old_adjusted_size) {
+        new_size <= limit
+    } else {
+        false
+    }
 }
 
 /// Reallocates a memory block, optimizing performance and memory footprint by avoiding redundant
@@ -801,13 +756,8 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     let segment = segment_addr as *mut Segment;
     let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
 
-    let page = if page_index > 0 {
-        unsafe { (*segment).pages.get_unchecked_mut(page_index) }
-    } else {
-        core::ptr::null_mut()
-    };
-
-    let is_old_small = !page.is_null() && unsafe { (*page).block_size } > 0;
+    let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
+    let is_old_small = page_index > 0 && page.block_size > 0;
 
     let mut new_ptr = core::ptr::null_mut();
     let mut local_free_done = false;
@@ -819,7 +769,8 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                 let is_owner = unsafe { (*segment).owner.matches(current_ptr) };
                 if is_owner {
                     let mut allocated = core::ptr::null_mut();
-                    if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
+                    if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) }
+                    {
                         let active_page = unsafe { page_ptr.as_mut() };
                         if let Some(block) = active_page.free {
                             unsafe {
@@ -835,10 +786,24 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                     new_ptr = allocated;
                     if !new_ptr.is_null() {
                         unsafe {
+                            initialize_allocated_bytes::<P>(new_ptr, new_adjusted);
                             core::ptr::copy_nonoverlapping(ptr, new_ptr, layout.size());
                             let page_ref = &mut *page;
+                            if P::ENABLE_POISONING {
+                                poison_freed_bytes::<P>(ptr, page_ref.block_size);
+                            }
                             let block = ptr as *mut Block;
-                            do_local_free_internal(alloc, block, page_ref, segment);
+                            let page_free = page_ref.free;
+                            let page_alloc_count = page_ref.alloc_count;
+                            if page_free.is_some()
+                                && (page_alloc_count != 1 || (*segment).is_current)
+                            {
+                                (*block).next = page_free;
+                                page_ref.free = Some(NonNull::new_unchecked(block));
+                                page_ref.alloc_count = page_alloc_count - 1;
+                            } else {
+                                do_local_free_internal(alloc, block, page_ref, segment);
+                            }
                         }
                         local_free_done = true;
                     }
@@ -865,20 +830,30 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                 let current_ptr = alloc as *mut ThreadAllocator<B> as *mut core::ffi::c_void;
                 let is_owner = unsafe { (*segment).owner.matches(current_ptr) };
                 if is_owner {
-                    let page_ref = unsafe { &mut *page };
+                    let page_ref = &mut *page;
+                    if P::ENABLE_POISONING {
+                        unsafe { poison_freed_bytes::<P>(ptr, page_ref.block_size) };
+                    }
                     let block = ptr as *mut Block;
-                    unsafe {
+                    let page_free = page_ref.free;
+                    let page_alloc_count = page_ref.alloc_count;
+                    if page_free.is_some() && (page_alloc_count != 1 || (*segment).is_current) {
+                        (*block).next = page_free;
+                        page_ref.free = Some(NonNull::new_unchecked(block));
+                        page_ref.alloc_count = page_alloc_count - 1;
+                    } else {
                         do_local_free_internal(alloc, block, page_ref, segment);
                     }
                     freed_locally = true;
                 }
             });
             if !freed_locally {
-                let page_ref = unsafe { &mut *page };
-                let block = ptr as *mut Block;
-                unsafe {
-                    page_ref.thread_free.push(NonNull::new_unchecked(block));
+                let page_ref = &mut *page;
+                if P::ENABLE_POISONING {
+                    unsafe { poison_freed_bytes::<P>(ptr, page_ref.block_size) };
                 }
+                let block = ptr as *mut Block;
+                page_ref.thread_free.push(NonNull::new_unchecked(block));
             }
         } else {
             if P::ENABLE_POISONING {

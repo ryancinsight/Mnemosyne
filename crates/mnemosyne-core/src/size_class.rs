@@ -10,38 +10,7 @@ use crate::constants::{MAX_SMALL_ALLOC_SIZE, NUM_SIZE_CLASSES};
 /// and `is_valid_layout_alloc_request` both require `size != 0`), but the
 /// historical mapping is preserved so callers that pass an already-adjusted
 /// minimum size still resolve to the smallest class without an extra branch.
-#[derive(Clone, Copy)]
-struct GroupParam {
-    stride_shift: u8,
-    base_class: u8,
-    base_size: u16,
-}
 
-const GROUP_PARAMS: [GroupParam; 13] = [
-    // b = 0..=3 (sizes up to 16)
-    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
-    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
-    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
-    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
-    // b = 4 (size 17..32)
-    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
-    // b = 5 (size 33..64)
-    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
-    // b = 6 (size 65..128)
-    GroupParam { stride_shift: 4, base_class: 0, base_size: 0 },
-    // b = 7 (size 129..256)
-    GroupParam { stride_shift: 5, base_class: 8, base_size: 128 },
-    // b = 8 (size 257..512)
-    GroupParam { stride_shift: 5, base_class: 8, base_size: 128 },
-    // b = 9 (size 513..1024)
-    GroupParam { stride_shift: 7, base_class: 20, base_size: 512 },
-    // b = 10 (size 1025..2048)
-    GroupParam { stride_shift: 7, base_class: 20, base_size: 512 },
-    // b = 11 (size 2049..4096)
-    GroupParam { stride_shift: 9, base_class: 32, base_size: 2048 },
-    // b = 12 (size 4097..8192)
-    GroupParam { stride_shift: 9, base_class: 32, base_size: 2048 },
-];
 
 /// Maps an allocation size to its corresponding size class index.
 ///
@@ -56,27 +25,39 @@ pub const fn size_to_class(size: usize) -> Option<usize> {
     if size == 0 {
         return Some(0);
     }
-    if size > MAX_SMALL_ALLOC_SIZE {
-        return None;
-    }
-    let temp = if size - 1 > 1 { size - 1 } else { 1 };
-    let b = (usize::BITS - 1 - temp.leading_zeros()) as usize;
-    let param = GROUP_PARAMS[b];
-    let class = param.base_class as usize + ((size - 1 - param.base_size as usize) >> param.stride_shift);
-    Some(class)
+    size_to_class_nonzero(size)
 }
 
 /// Maps a non-zero allocation size to its corresponding size class index.
 #[inline(always)]
 pub const fn size_to_class_nonzero(size: usize) -> Option<usize> {
-    if size > MAX_SMALL_ALLOC_SIZE {
-        return None;
+    if size <= 128 {
+        Some((size - 1) >> 4)
+    } else if size <= 512 {
+        Some(8 + ((size - 129) >> 5))
+    } else if size <= 2048 {
+        Some(20 + ((size - 513) >> 7))
+    } else if size <= 8192 {
+        Some(32 + ((size - 2049) >> 9))
+    } else {
+        None
     }
-    let temp = if size - 1 > 1 { size - 1 } else { 1 };
-    let b = (usize::BITS - 1 - temp.leading_zeros()) as usize;
-    let param = GROUP_PARAMS[b];
-    let class = param.base_class as usize + ((size - 1 - param.base_size as usize) >> param.stride_shift);
-    Some(class)
+}
+
+/// Returns the rounded size-class block size for a given allocation size.
+#[inline(always)]
+pub const fn round_up_size(size: usize) -> Option<usize> {
+    if size <= 128 {
+        Some((size + 15) & !15)
+    } else if size <= 512 {
+        Some((size + 31) & !31)
+    } else if size <= 2048 {
+        Some((size + 127) & !127)
+    } else if size <= 8192 {
+        Some((size + 511) & !511)
+    } else {
+        None
+    }
 }
 
 const CLASS_TO_SIZE: [u16; NUM_SIZE_CLASSES] = [
