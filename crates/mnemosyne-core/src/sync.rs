@@ -58,10 +58,13 @@ impl AtomicFreeList {
     #[inline]
     pub fn push(&self, block: NonNull<Block>) {
         let block_ptr = block.as_ptr();
-        // Expose provenance so the address can round-trip through `usize` and
-        // back to a usable pointer under strict-provenance rules (the bare
-        // `as usize` / `as *mut` casts this replaced are not strict-provenance
-        // clean and make Miri warn that it may miss pointer bugs).
+        // A tagged-pointer free list inherently materializes pointers from
+        // integers, so it uses *exposed* provenance (it cannot be
+        // strict-provenance clean — Miri flags exposed provenance the same as a
+        // bare cast). Using the explicit `expose_provenance` /
+        // `with_exposed_provenance_mut` APIs rather than bare `as` casts states
+        // that intent precisely and keeps the round-trip well-defined under the
+        // exposed-provenance model.
         let block_addr = block_ptr.expose_provenance();
         debug_assert_eq!(
             block_addr & !Self::PTR_MASK,
@@ -76,8 +79,7 @@ impl AtomicFreeList {
         loop {
             let current_addr = current & Self::PTR_MASK;
             let current_ptr = core::ptr::with_exposed_provenance_mut::<Block>(current_addr);
-            let next_count =
-                ((current >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
+            let next_count = ((current >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
 
             // Safety: block_ptr is valid, writeable, aligned memory, exclusive
             // to the pushing thread until the CAS publishes it.
