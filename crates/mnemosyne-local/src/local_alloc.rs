@@ -876,6 +876,8 @@ impl<B: HasSegmentPool> Drop for ThreadAllocator<B> {
     }
 }
 
+unsafe impl<B: HasSegmentPool> Send for ThreadAllocator<B> {}
+
 #[cfg(test)]
 pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -1088,7 +1090,7 @@ mod tests {
             let ptr = slot.as_mut_ptr();
             // Safety: `ptr` is a unique, writable, suitably sized allocation.
             unsafe {
-                Segment::initialize(ptr, core::ptr::null_mut());
+                Segment::initialize(ptr, core::ptr::null_mut(), 0);
                 alloc.push_owned_segment::<StandardPolicy>(ptr);
             }
             seg[i] = ptr;

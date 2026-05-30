@@ -27,6 +27,9 @@ pub trait MemoryBackend: Send + Sync + 'static {
     /// Indicates whether the backend supports releasing memory commitment while keeping the reservation.
     const SUPPORTS_DECOMMIT: bool = false;
 
+    /// Indicates whether the backend enables the lock-free per-CPU block cache.
+    const ENABLE_CPU_CACHE: bool = false;
+
     /// Allocates page-aligned memory from the OS.
     ///
     /// # Safety

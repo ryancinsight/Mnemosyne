@@ -73,7 +73,8 @@ unsafe fn initialize_large_or_huge_segment(
     // We initialize the segment header fields and set Page 0's block_size to mark huge allocations.
     // We also write the segment pointer right before the user pointer in the unused Page 0 padding space.
     unsafe {
-        Segment::initialize(aligned_ptr, raw_ptr);
+        let node = crate::current_numa_node();
+        Segment::initialize(aligned_ptr, raw_ptr, node);
         (*aligned_ptr).pages[0].block_size = total_alloc_size;
 
         let metadata_slot = (user_ptr as *mut *mut Segment).sub(1);
@@ -402,7 +403,7 @@ mod tests {
         let segment_ptr = segment.as_mut_ptr();
 
         unsafe {
-            Segment::initialize(segment_ptr, 0x1000 as *mut u8);
+            Segment::initialize(segment_ptr, 0x1000 as *mut u8, 0);
             (*segment_ptr).pages[0].block_size = SEGMENT_SIZE * 3;
         }
 

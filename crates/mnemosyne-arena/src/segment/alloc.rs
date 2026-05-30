@@ -3,6 +3,7 @@
 use super::pool::HasSegmentPool;
 use super::stats::SegmentRelease;
 use super::utils::checked_align_up;
+use crate::numa::current_numa_node;
 use mnemosyne_core::constants::{SEGMENT_ALIGN, SEGMENT_SIZE};
 use mnemosyne_core::types::Segment;
 
@@ -45,7 +46,8 @@ unsafe fn allocate_segment_from_pools<B: HasSegmentPool>() -> Option<*mut Segmen
         // the segment to erase stale epoch metadata and reset it for new allocations.
         unsafe {
             let raw_ptr = (*segment).raw_alloc_ptr;
-            Segment::initialize(segment, raw_ptr);
+            let node = (*segment).numa_node;
+            Segment::initialize(segment, raw_ptr, node);
         }
         return Some(segment);
     }
@@ -74,14 +76,21 @@ unsafe fn try_return_to_pool<B: HasSegmentPool>(segment: *mut Segment) -> bool {
     unsafe { B::global_segment_pool().try_push_retained(segment) }
 }
 
+/// Non-generic helper to initialize an allocated segment header and establish alignment bounds.
+///
+/// # Safety
+///
+/// The caller must guarantee:
+/// - `raw_ptr` must point to a valid, exclusive, and page-aligned allocation of size `SEGMENT_MAPPING_SIZE`.
+/// - The memory range must be writable to initialize the `Segment` structure.
 #[inline(never)]
-unsafe fn initialize_allocated_segment(raw_ptr: *mut u8) -> Option<(*mut Segment, usize, usize, usize)> {
+unsafe fn initialize_allocated_segment(raw_ptr: *mut u8, numa_node: u32) -> Option<(*mut Segment, usize, usize, usize)> {
     let aligned_addr = checked_align_up(raw_ptr as usize, SEGMENT_ALIGN)?;
     let aligned_ptr = aligned_addr as *mut Segment;
 
     // Safety: aligned_ptr is within the allocated region.
     unsafe {
-        Segment::initialize(aligned_ptr, raw_ptr);
+        Segment::initialize(aligned_ptr, raw_ptr, numa_node);
     }
 
     let tail_slack_start = if cfg!(feature = "segment-tail-guards") {
@@ -124,8 +133,9 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
         return None;
     }
 
+    let numa_node = current_numa_node();
     let (aligned_ptr, aligned_addr, tail_slack_start, mapping_end) =
-        match unsafe { initialize_allocated_segment(raw_ptr) } {
+        match unsafe { initialize_allocated_segment(raw_ptr, numa_node) } {
             Some(val) => val,
             None => {
                 // Safety: Releasing raw memory back to the backend because alignment check overflowed.
@@ -334,11 +344,12 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
         let segment = *slot;
         // Safety: segment was popped from the retained pool above and is
         // an initialized mapping owned by this allocator until we push it
-        // back below.
-        let raw_ptr = unsafe { (*segment).raw_alloc_ptr };
-        // Safety: raw_ptr covers SEGMENT_MAPPING_SIZE bytes per the
-        // arena allocation contract.
-        if unsafe { B::page_reset(raw_ptr, SEGMENT_MAPPING_SIZE) } {
+        // back below. We reset only the active committed segment range [segment, segment + SEGMENT_SIZE)
+        // to avoid calling page_reset on the decommitted head/tail slack pages,
+        // which would cause the system call to fail on Windows. The segment pointer
+        // is page-aligned and SEGMENT_SIZE is a multiple of the system page size,
+        // which matches the page_reset alignment invariants.
+        if unsafe { B::page_reset(segment as *mut u8, SEGMENT_SIZE) } {
             reset_count += 1;
         }
         unsafe { pool.push_unbounded(segment) };

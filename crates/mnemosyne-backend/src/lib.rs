@@ -25,6 +25,7 @@ impl mnemosyne_core::MemoryBackend for MemoryBackendWrapper {
     const SUPPORTS_PAGE_RESET: bool = DefaultBackend::SUPPORTS_PAGE_RESET;
     const SUPPORTS_MAKE_GUARD: bool = DefaultBackend::SUPPORTS_MAKE_GUARD;
     const SUPPORTS_DECOMMIT: bool = DefaultBackend::SUPPORTS_DECOMMIT;
+    const ENABLE_CPU_CACHE: bool = DefaultBackend::ENABLE_CPU_CACHE;
 
     /// Allocates memory from the OS.
     ///

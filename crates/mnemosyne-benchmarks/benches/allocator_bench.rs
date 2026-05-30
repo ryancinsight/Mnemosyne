@@ -196,6 +196,7 @@ const SMALL_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(32, 8) }
 const SMALL_WITHIN_CLASS_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(24, 8) };
 const MEDIUM_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(1024, 8) };
 const LARGE_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(8192, 8) };
+const HUGE_REALLOC_SRC_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(4 * 1024 * 1024, 8) };
 const BATCH_ALLOCS: usize = 256;
 const THREADS: usize = 4;
 const THREAD_ALLOCS: usize = 1_000;
@@ -825,6 +826,7 @@ fn bench_realloc(c: &mut Criterion) {
     for (name, layout, new_size) in [
         ("within_class_24_to_32", SMALL_WITHIN_CLASS_LAYOUT, 32usize),
         ("cross_class_32_to_64", SMALL_LAYOUT, 64usize),
+        ("huge_shrink_4m_to_2m", HUGE_REALLOC_SRC_LAYOUT, 2 * 1024 * 1024usize),
     ] {
         group.throughput(Throughput::Elements(1));
         group.bench_with_input(

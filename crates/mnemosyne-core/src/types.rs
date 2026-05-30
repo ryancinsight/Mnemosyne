@@ -337,6 +337,8 @@ pub struct Segment {
     pub next_free_segment: *mut Segment,
     /// If true, free list pointers in this segment are XOR-encrypted.
     pub free_list_encrypted: bool,
+    /// NUMA node ID where this segment was allocated.
+    pub numa_node: u32,
     /// Per-page keys for free-list pointer encryption.
     pub keys: [usize; PAGES_PER_SEGMENT],
     /// The pages metadata array. Page 0 is reserved for segment metadata.
@@ -352,7 +354,7 @@ impl Segment {
     /// # Safety
     ///
     /// `aligned_ptr` must be aligned to `SEGMENT_ALIGN` and valid for write.
-    pub unsafe fn initialize(aligned_ptr: *mut Segment, raw_alloc_ptr: *mut u8) {
+    pub unsafe fn initialize(aligned_ptr: *mut Segment, raw_alloc_ptr: *mut u8, numa_node: u32) {
         // Safety: aligned_ptr must point to a valid, exclusive, aligned memory segment.
         // We initialize the segment fields and establish parent/child pointers safely.
         unsafe {
@@ -364,6 +366,7 @@ impl Segment {
             segment.prev_owned_segment = core::ptr::null_mut();
             segment.next_free_segment = core::ptr::null_mut();
             segment.free_list_encrypted = false;
+            segment.numa_node = numa_node;
             for i in 0..PAGES_PER_SEGMENT {
                 segment.keys[i] =
                     (aligned_ptr as usize).wrapping_add(i * PAGE_SIZE) ^ 0x5555555555555555;
@@ -540,7 +543,7 @@ mod tests {
         let segment = segment_storage.as_mut_ptr();
         let raw = 0x1000usize as *mut u8;
         unsafe {
-            Segment::initialize(segment, raw);
+            Segment::initialize(segment, raw, 0);
             (*segment).pages[0].block_size = 0x4000;
         }
 

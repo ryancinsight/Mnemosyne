@@ -1,14 +1,45 @@
 //! Global segment pool management.
 
 use super::alloc::MAX_RETAINED_SEGMENTS;
+use crate::numa::current_numa_node;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::types::Segment;
 
-/// A lock-free global pool of free segments to avoid OS allocator overhead.
+#[repr(align(64))]
+struct CacheAlignedAtomicUsize {
+    value: core::sync::atomic::AtomicUsize,
+}
+
+impl CacheAlignedAtomicUsize {
+    #[inline(always)]
+    const fn new(val: usize) -> Self {
+        Self {
+            value: core::sync::atomic::AtomicUsize::new(val),
+        }
+    }
+}
+
+#[cfg(not(target_pointer_width = "64"))]
+#[repr(align(64))]
+struct CacheAlignedAtomicPtr<T> {
+    value: core::sync::atomic::AtomicPtr<T>,
+}
+
+#[cfg(not(target_pointer_width = "64"))]
+impl<T> CacheAlignedAtomicPtr<T> {
+    #[inline(always)]
+    const fn new(val: *mut T) -> Self {
+        Self {
+            value: core::sync::atomic::AtomicPtr::new(val),
+        }
+    }
+}
+
+/// A lock-free segment pool for a single NUMA node.
 #[cfg(target_pointer_width = "64")]
-pub struct GlobalSegmentPool {
-    head: core::sync::atomic::AtomicUsize,
-    retained: core::sync::atomic::AtomicUsize,
+pub struct NodeSegmentPool {
+    head: CacheAlignedAtomicUsize,
+    retained: CacheAlignedAtomicUsize,
     purged: core::sync::atomic::AtomicUsize,
     purge_calls: core::sync::atomic::AtomicUsize,
     reset_segments: core::sync::atomic::AtomicUsize,
@@ -16,9 +47,9 @@ pub struct GlobalSegmentPool {
 }
 
 #[cfg(not(target_pointer_width = "64"))]
-pub struct GlobalSegmentPool {
-    head: core::sync::atomic::AtomicPtr<Segment>,
-    retained: core::sync::atomic::AtomicUsize,
+pub struct NodeSegmentPool {
+    head: CacheAlignedAtomicPtr<Segment>,
+    retained: CacheAlignedAtomicUsize,
     purged: core::sync::atomic::AtomicUsize,
     purge_calls: core::sync::atomic::AtomicUsize,
     reset_segments: core::sync::atomic::AtomicUsize,
@@ -26,7 +57,7 @@ pub struct GlobalSegmentPool {
 }
 
 #[cfg(target_pointer_width = "64")]
-impl GlobalSegmentPool {
+impl NodeSegmentPool {
     /// Low bits reserved for the packed segment address.
     const PACKED_PTR_BITS: u32 = 48;
     /// Mask selecting the packed address bits.
@@ -35,14 +66,14 @@ impl GlobalSegmentPool {
     const COUNT_WRAP_MASK: usize = (1usize << (usize::BITS - Self::PACKED_PTR_BITS)) - 1;
 }
 
-impl GlobalSegmentPool {
-    /// Creates a new empty `GlobalSegmentPool`.
+impl NodeSegmentPool {
+    /// Creates a new empty `NodeSegmentPool`.
     pub const fn new() -> Self {
         #[cfg(target_pointer_width = "64")]
         {
             Self {
-                head: core::sync::atomic::AtomicUsize::new(0),
-                retained: AtomicUsize::new(0),
+                head: CacheAlignedAtomicUsize::new(0),
+                retained: CacheAlignedAtomicUsize::new(0),
                 purged: AtomicUsize::new(0),
                 purge_calls: AtomicUsize::new(0),
                 reset_segments: AtomicUsize::new(0),
@@ -52,8 +83,8 @@ impl GlobalSegmentPool {
         #[cfg(not(target_pointer_width = "64"))]
         {
             Self {
-                head: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
-                retained: AtomicUsize::new(0),
+                head: CacheAlignedAtomicPtr::new(core::ptr::null_mut()),
+                retained: CacheAlignedAtomicUsize::new(0),
                 purged: AtomicUsize::new(0),
                 purge_calls: AtomicUsize::new(0),
                 reset_segments: AtomicUsize::new(0),
@@ -71,7 +102,7 @@ impl GlobalSegmentPool {
     /// the pool.
     #[inline]
     pub unsafe fn push_unbounded(&self, segment: *mut Segment) {
-        self.retained.fetch_add(1, Ordering::Relaxed);
+        self.retained.value.fetch_add(1, Ordering::Relaxed);
         self.push_raw(segment);
     }
 
@@ -87,12 +118,12 @@ impl GlobalSegmentPool {
     /// the pool.
     #[inline]
     pub unsafe fn try_push_retained(&self, segment: *mut Segment) -> bool {
-        let mut retained = self.retained.load(Ordering::Relaxed);
+        let mut retained = self.retained.value.load(Ordering::Relaxed);
         loop {
             if retained >= MAX_RETAINED_SEGMENTS {
                 return false;
             }
-            match self.retained.compare_exchange_weak(
+            match self.retained.value.compare_exchange_weak(
                 retained,
                 retained + 1,
                 Ordering::Relaxed,
@@ -116,7 +147,7 @@ impl GlobalSegmentPool {
             0,
             "segment address does not fit in 48 bits"
         );
-        let mut current = self.head.load(Ordering::Relaxed);
+        let mut current = self.head.value.load(Ordering::Relaxed);
         loop {
             let current_addr = current & Self::PTR_MASK;
             let current_ptr = core::ptr::with_exposed_provenance_mut::<Segment>(current_addr);
@@ -129,7 +160,7 @@ impl GlobalSegmentPool {
 
             let next_val = (next_count << Self::PACKED_PTR_BITS) | segment_addr;
 
-            match self.head.compare_exchange_weak(
+            match self.head.value.compare_exchange_weak(
                 current,
                 next_val,
                 Ordering::Release,
@@ -144,14 +175,14 @@ impl GlobalSegmentPool {
     #[cfg(not(target_pointer_width = "64"))]
     #[inline]
     fn push_raw(&self, segment: *mut Segment) {
-        let mut current = self.head.load(Ordering::Relaxed);
+        let mut current = self.head.value.load(Ordering::Relaxed);
         loop {
             let next_ptr = current;
             // Safety: segment pointer is valid, aligned, and exclusive to this thread.
             unsafe {
                 (*segment).next_free_segment = next_ptr;
             }
-            match self.head.compare_exchange_weak(
+            match self.head.value.compare_exchange_weak(
                 current,
                 segment,
                 Ordering::Release,
@@ -167,7 +198,7 @@ impl GlobalSegmentPool {
     #[cfg(target_pointer_width = "64")]
     #[inline]
     pub fn pop(&self) -> Option<*mut Segment> {
-        let mut current = self.head.load(Ordering::Acquire);
+        let mut current = self.head.value.load(Ordering::Acquire);
         loop {
             let current_addr = current & Self::PTR_MASK;
             if current_addr == 0 {
@@ -180,14 +211,14 @@ impl GlobalSegmentPool {
             let next_count = ((current >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
             let next_val = (next_count << Self::PACKED_PTR_BITS) | next;
 
-            match self.head.compare_exchange_weak(
+            match self.head.value.compare_exchange_weak(
                 current,
                 next_val,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    self.retained.fetch_sub(1, Ordering::Relaxed);
+                    self.retained.value.fetch_sub(1, Ordering::Relaxed);
                     return Some(current_ptr);
                 }
                 Err(actual) => current = actual,
@@ -198,7 +229,7 @@ impl GlobalSegmentPool {
     #[cfg(not(target_pointer_width = "64"))]
     #[inline]
     pub fn pop(&self) -> Option<*mut Segment> {
-        let mut current = self.head.load(Ordering::Acquire);
+        let mut current = self.head.value.load(Ordering::Acquire);
         loop {
             if current.is_null() {
                 return None;
@@ -206,14 +237,14 @@ impl GlobalSegmentPool {
             // Safety: current points to a valid Segment inside the pool. We load the next
             // pointer in the chain atomically.
             let next = unsafe { (*current).next_free_segment };
-            match self.head.compare_exchange_weak(
+            match self.head.value.compare_exchange_weak(
                 current,
                 next,
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    self.retained.fetch_sub(1, Ordering::Relaxed);
+                    self.retained.value.fetch_sub(1, Ordering::Relaxed);
                     return Some(current);
                 }
                 Err(actual) => current = actual,
@@ -223,7 +254,7 @@ impl GlobalSegmentPool {
 
     #[inline]
     pub fn retained_count(&self) -> usize {
-        self.retained.load(Ordering::Relaxed)
+        self.retained.value.load(Ordering::Relaxed)
     }
 
     #[inline]
@@ -259,6 +290,116 @@ impl GlobalSegmentPool {
     }
 }
 
+/// A NUMA-aware lock-free global pool of free segments partitioned by socket node.
+pub struct GlobalSegmentPool {
+    nodes: [NodeSegmentPool; 16],
+}
+
+impl GlobalSegmentPool {
+    /// Creates a new empty `GlobalSegmentPool` with 16 NUMA node sub-pools.
+    pub const fn new() -> Self {
+        Self {
+            nodes: [
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+                NodeSegmentPool::new(),
+            ],
+        }
+    }
+
+    /// Pushes a segment back to the correct NUMA node pool without applying a retention limit.
+    ///
+    /// # Safety
+    ///
+    /// The `segment` pointer must be a valid, initialized, and exclusive pointer to a
+    /// `Segment` structure.
+    #[inline]
+    pub unsafe fn push_unbounded(&self, segment: *mut Segment) {
+        let node = unsafe { (*segment).numa_node } as usize % 16;
+        self.nodes[node].push_unbounded(segment);
+    }
+
+    /// Pushes a segment back to its originating NUMA node pool if retention limit permits.
+    ///
+    /// # Safety
+    ///
+    /// The `segment` pointer must be a valid, initialized, and exclusive pointer to a
+    /// `Segment` structure.
+    #[inline]
+    pub unsafe fn try_push_retained(&self, segment: *mut Segment) -> bool {
+        let node = unsafe { (*segment).numa_node } as usize % 16;
+        self.nodes[node].try_push_retained(segment)
+    }
+
+    /// Pops a segment from the calling thread's NUMA node pool, stealing from other nodes if empty.
+    #[inline]
+    pub fn pop(&self) -> Option<*mut Segment> {
+        let node = current_numa_node() as usize % 16;
+        // 1. Try local node first
+        if let Some(segment) = self.nodes[node].pop() {
+            return Some(segment);
+        }
+        // 2. Steal from other nodes
+        for i in 1..16 {
+            let other = (node + i) % 16;
+            if let Some(segment) = self.nodes[other].pop() {
+                return Some(segment);
+            }
+        }
+        None
+    }
+
+    #[inline]
+    pub fn retained_count(&self) -> usize {
+        self.nodes.iter().map(|n| n.retained_count()).sum()
+    }
+
+    #[inline]
+    pub fn purged_count(&self) -> usize {
+        self.nodes.iter().map(|n| n.purged_count()).sum()
+    }
+
+    #[inline]
+    pub fn purge_call_count(&self) -> usize {
+        self.nodes.iter().map(|n| n.purge_call_count()).sum()
+    }
+
+    #[inline]
+    pub(crate) fn record_purge(&self, count: usize) {
+        let node = current_numa_node() as usize % 16;
+        self.nodes[node].record_purge(count);
+    }
+
+    #[inline]
+    pub fn reset_segments_count(&self) -> usize {
+        self.nodes.iter().map(|n| n.reset_segments_count()).sum()
+    }
+
+    #[inline]
+    pub fn reset_call_count(&self) -> usize {
+        self.nodes.iter().map(|n| n.reset_call_count()).sum()
+    }
+
+    #[inline]
+    pub(crate) fn record_reset(&self, count: usize) {
+        let node = current_numa_node() as usize % 16;
+        self.nodes[node].record_reset(count);
+    }
+}
+
 impl Default for GlobalSegmentPool {
     #[inline]
     fn default() -> Self {
@@ -273,22 +414,6 @@ pub mod private {
 }
 
 /// Trait associating a memory backend with its global segment and orphan pools.
-///
-/// # Monomorphization and Static Routing
-///
-/// This trait serves as a compile-time policy routing interface. Implementors
-/// of this trait (such as `MemoryBackendWrapper`) are Zero-Sized Types (ZSTs) that
-/// carry absolutely zero runtime overhead. When mathematical operations, allocations,
-/// or segment pool management functions are parameterized by `<B: HasSegmentPool>`,
-/// the compiler fully monomorphizes them into direct specialized machine code calls.
-/// This guarantees zero heap allocation, no dynamic vtables, and zero bytes of
-/// runtime memory or register footprint for the policy routing layer.
-///
-/// # Safety
-///
-/// This trait is sealed via the supertrait bound `private::Sealed` to prevent
-/// unauthorized downstream implementations that could violate the safety invariants
-/// of the global segment pools.
 pub trait HasSegmentPool: mnemosyne_core::MemoryBackend + private::Sealed {
     /// Returns the global segment pool for this backend.
     fn global_segment_pool() -> &'static GlobalSegmentPool;

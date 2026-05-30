@@ -5,7 +5,7 @@ extern crate std;
 #[allow(unused_imports)]
 use super::alloc::{
     allocate_segment, deallocate_segment, purge_segment_pool, release_segment_mapping,
-    SEGMENT_MAPPING_SIZE, SEGMENT_TAIL_GUARD_SIZE,
+    reset_segment_pool, SEGMENT_MAPPING_SIZE, SEGMENT_TAIL_GUARD_SIZE,
 };
 use super::pool::{GlobalSegmentPool, HasSegmentPool};
 use super::stats::{arena_memory_stats, SegmentRelease};
@@ -108,7 +108,7 @@ fn purge_retains_segment_when_backend_release_fails() {
     let segment_ptr = segment.as_mut_ptr();
 
     unsafe {
-        Segment::initialize(segment_ptr, 0x1000 as *mut u8);
+        Segment::initialize(segment_ptr, 0x1000 as *mut u8, 0);
         FailingReleaseBackend::global_segment_pool().push_unbounded(segment_ptr);
     }
 
@@ -321,5 +321,85 @@ fn test_segment_tail_slack_decommit() {
     );
 
     let released = unsafe { release_segment_mapping::<DecommitRecordingBackend>(segment) };
+    assert_eq!(released, SegmentRelease::Released);
+}
+
+struct ResetRecordingBackend;
+
+static RESET_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static RESET_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static RESET_CALLS: AtomicUsize = AtomicUsize::new(0);
+static LAST_RESET_PTR: AtomicUsize = AtomicUsize::new(0);
+static LAST_RESET_SIZE: AtomicUsize = AtomicUsize::new(0);
+
+impl MemoryBackend for ResetRecordingBackend {
+    const SUPPORTS_PAGE_RESET: bool = true;
+
+    unsafe fn allocate(size: usize) -> *mut u8 {
+        let layout = std::alloc::Layout::from_size_align(size, SEGMENT_ALIGN)
+            .expect("segment mapping layout must be valid");
+        unsafe { std::alloc::alloc(layout) }
+    }
+
+    unsafe fn deallocate(ptr: *mut u8, size: usize) -> bool {
+        let layout = std::alloc::Layout::from_size_align(size, SEGMENT_ALIGN)
+            .expect("segment mapping layout must be valid");
+        unsafe {
+            std::alloc::dealloc(ptr, layout);
+        }
+        true
+    }
+
+    unsafe fn page_reset(ptr: *mut u8, size: usize) -> bool {
+        RESET_CALLS.fetch_add(1, Ordering::Relaxed);
+        LAST_RESET_PTR.store(ptr as usize, Ordering::Relaxed);
+        LAST_RESET_SIZE.store(size, Ordering::Relaxed);
+        true
+    }
+}
+
+impl super::pool::private::Sealed for ResetRecordingBackend {}
+
+impl HasSegmentPool for ResetRecordingBackend {
+    fn global_segment_pool() -> &'static GlobalSegmentPool {
+        &RESET_POOL
+    }
+
+    fn global_orphan_pool() -> &'static GlobalSegmentPool {
+        &RESET_ORPHAN_POOL
+    }
+}
+
+#[test]
+fn test_reset_segment_pool_propagates_correct_bounds() {
+    while RESET_POOL.pop().is_some() {}
+    while RESET_ORPHAN_POOL.pop().is_some() {}
+    RESET_CALLS.store(0, Ordering::Relaxed);
+    LAST_RESET_PTR.store(0, Ordering::Relaxed);
+    LAST_RESET_SIZE.store(0, Ordering::Relaxed);
+
+    let segment =
+        unsafe { allocate_segment::<ResetRecordingBackend>() }.expect("segment allocation");
+
+    // Push it back to the pool to make it eligible for reset
+    unsafe {
+        deallocate_segment::<ResetRecordingBackend>(segment);
+    }
+
+    unsafe {
+        reset_segment_pool::<ResetRecordingBackend>();
+    }
+
+    let calls = RESET_CALLS.load(Ordering::Relaxed);
+    let last_ptr = LAST_RESET_PTR.load(Ordering::Relaxed);
+    let last_size = LAST_RESET_SIZE.load(Ordering::Relaxed);
+
+    assert_eq!(calls, 1, "expected exactly 1 page_reset call");
+    assert_eq!(last_ptr, segment as usize, "expected page_reset pointer to match segment pointer");
+    assert_eq!(last_size, SEGMENT_SIZE, "expected page_reset size to match SEGMENT_SIZE");
+
+    // Clean up
+    let popped = RESET_POOL.pop().expect("segment must be in the pool");
+    let released = unsafe { release_segment_mapping::<ResetRecordingBackend>(popped) };
     assert_eq!(released, SegmentRelease::Released);
 }
