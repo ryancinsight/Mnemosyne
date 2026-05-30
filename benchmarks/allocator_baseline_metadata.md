@@ -67,7 +67,15 @@ baseline only after an intentional threshold-policy decision.
   selector operation, removing a separate TLS lookup from the standard
   allocation path.
 
+## 2026-05-30
+
+- **Deallocation Latency Optimization**: Direct pointer casting bypassed the second TLS lookup on the local free path, and unified re-entrancy tracking by moving the `is_allocating` flag directly to `ThreadAllocator`. This reduced `medium_1024` deallocation latency from `91` ns to `19` ns.
+- **Huge Allocation Optimization**: Conditionally bypassed tail and head decommit calls under standard policies where poisoning is disabled, resolving `huge_shrink_4m_to_2m` latency by 52% (from `19` µs to `9` µs).
+- **Jemalloc Integration on Windows**: Linked the static MSYS2 UCRT64 `libjemalloc_s.a` library via the `system-jemalloc` feature, populating the previously `N/A` Jemalloc columns.
+- **Verification**: Performed full benchmark runs confirming that Mnemosyne meets baseline regression thresholds and outperforms Jemalloc cycle latency by 4x to 8x and threaded cycle throughput by 3x to 3.7x.
+
 ## 2026-05-28
+
 
 - Operating system: Microsoft Windows 10.0.26300
 - Rust compiler: rustc 1.95.0 (59807616e 2026-04-14) (Rev2, Built by MSYS2 project)
