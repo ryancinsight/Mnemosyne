@@ -123,6 +123,9 @@
 - [patch] Reject compact `Page` counter layouts after 48-byte metadata experiments regressed saturated threaded and usable-size rows.
 - [patch] Centralize the 16-byte small-block floor as `MIN_BLOCK_SIZE` and remove stale compact-counter invariants.
 - [patch] Reject removing the `MAX_ALLOC_SIZE` check from the Layout-validated allocation predicate after focused Criterion rows improved cycle/usable means but regressed allocation-only and historical threaded small rows.
+- [patch] Reject Bitmap Free Lists for classes 0, 1, and 2 after Criterion small allocation cycles, realloc, and threaded allocation benchmarks regressed.
+- [patch] Reject Bounded Retention of Huge Mappings and per-CPU cache optimizations after allocator burst retention and threaded cycles regressed.
+
 
 ## Next
 
