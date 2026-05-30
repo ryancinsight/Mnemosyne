@@ -164,13 +164,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
 
     #[inline(always)]
     fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
-        let ptr = S::get_cached_cell(|cell| cell.get());
-        if !ptr.is_null() {
-            let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-            slot.allocator_ptr()
-        } else {
-            core::ptr::null_mut()
-        }
+        S::get_cached_cell(|cell| cell.get())
     }
 }
 
@@ -252,13 +246,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
     #[inline(always)]
     fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
         let key = get_os_tls_key(S::get_os_tls_key());
-        let ptr = get_os_tls_value(key);
-        if !ptr.is_null() {
-            let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-            slot.allocator_ptr()
-        } else {
-            core::ptr::null_mut()
-        }
+        get_os_tls_value(key)
     }
 }
 
@@ -371,13 +359,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
         #[cfg(all(windows, target_arch = "x86_64"))]
         {
             let key = get_os_tls_key(S::get_os_tls_key());
-            let ptr = unsafe { get_teb_tls_slot(key) };
-            if !ptr.is_null() {
-                let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-                slot.allocator_ptr()
-            } else {
-                core::ptr::null_mut()
-            }
+            unsafe { get_teb_tls_slot(key) }
         }
         #[cfg(not(all(windows, target_arch = "x86_64")))]
         {

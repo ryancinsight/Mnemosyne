@@ -639,60 +639,62 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             return false;
         }
 
-        let mut total_allocations = 0;
+        let is_only_segment = self.owned_segments_head == segment
+            && unsafe { (*segment).next_owned_segment.is_null() };
+        if is_only_segment {
+            return false;
+        }
+
         // Safety: segment is a valid pointer to a segment owned by us.
         unsafe {
             let dynamic_encrypted = (*segment).free_list_encrypted;
             for i in 1..PAGES_PER_SEGMENT {
                 let pg = &mut (*segment).pages[i];
 
-                // Reclaim any cross-thread deallocations to get accurate alloc_count.
-                let reclaimed = pg.reclaim_thread_free_dynamic(dynamic_encrypted);
-                if reclaimed > 0 {
-                    record_cross_thread_reclaimed(reclaimed);
-                }
-                total_allocations += pg.alloc_count;
-            }
-        }
-
-        // If the segment is completely empty, and it is not the only segment owned by this thread,
-        // reclaim it immediately back to the pool.
-        // Safety: segment is valid and owner field dereference is safe.
-        let is_only_segment = self.owned_segments_head == segment
-            && unsafe { (*segment).next_owned_segment.is_null() };
-        if total_allocations == 0 && !is_only_segment {
-            // Safety: segment is valid. We unlink all its pages from their size class lists.
-            unsafe {
-                for i in 1..PAGES_PER_SEGMENT {
-                    let pg = &mut (*segment).pages[i];
-                    if pg.block_size > 0 {
-                        let class = pg.size_class as usize;
-                        self.unlink_page(pg as *mut Page, class);
+                if pg.alloc_count > 0 {
+                    if pg.thread_free.is_empty() {
+                        return false;
                     }
-                    self.unlink_empty_page(pg as *mut Page);
+                    let reclaimed = pg.reclaim_thread_free_dynamic(dynamic_encrypted);
+                    if reclaimed > 0 {
+                        record_cross_thread_reclaimed(reclaimed);
+                    }
+                    if pg.alloc_count > 0 {
+                        return false;
+                    }
                 }
-
-                self.unlink_owned_segment(segment);
             }
-
-            if self
-                .current_segment
-                .is_some_and(|p| p.as_ptr() == segment)
-            {
-                self.set_current_segment(None);
-                self.next_page_index = 0;
-            }
-
-            // Safety: segment is unlinked and exclusive to us. We clear fields and deallocate.
-            unsafe {
-                (*segment).owner = SegmentOwner::NONE;
-                (*segment).next_owned_segment = core::ptr::null_mut();
-                deallocate_segment::<B>(segment);
-            }
-            true
-        } else {
-            false
         }
+
+        // Safety: segment is valid. We unlink all its pages from their size class lists.
+        unsafe {
+            for i in 1..PAGES_PER_SEGMENT {
+                let pg = &mut (*segment).pages[i];
+                if pg.block_size > 0 {
+                    let class = pg.size_class as usize;
+                    self.unlink_page(pg as *mut Page, class);
+                }
+                self.unlink_empty_page(pg as *mut Page);
+            }
+
+            self.unlink_owned_segment(segment);
+        }
+
+        if self
+            .current_segment
+            .is_some_and(|p| p.as_ptr() == segment)
+        {
+            self.set_current_segment(None);
+            self.next_page_index = 0;
+        }
+
+        // Safety: segment is unlinked and exclusive to us. We clear fields and deallocate.
+        unsafe {
+            (*segment).owner = SegmentOwner::NONE;
+            (*segment).next_owned_segment = core::ptr::null_mut();
+            deallocate_segment::<B>(segment);
+        }
+        true
     }
 
     /// Helper to unlink a page specifically from the full pages list of a class.

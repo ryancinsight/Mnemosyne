@@ -765,12 +765,10 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
     // and the target page records the size-class block size. If page_index is
     // 0 (segment-aligned huge allocation) or the page's block_size is 0
     // (non-segment-aligned huge allocation), we route to the metadata-slot fallback.
-    if page_index > 0 {
-        let page = unsafe { (*segment).pages.get_unchecked(page_index) };
-        let size = page.block_size;
-        if size > 0 {
-            return size;
-        }
+    let page = unsafe { (*segment).pages.get_unchecked(page_index) };
+    let size = page.block_size;
+    if size > 0 {
+        return size;
     }
 
     // Safety: large/huge allocations store the segment pointer in the metadata
@@ -962,7 +960,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
     // segment-aligned (page_index == 0) or page.block_size is 0. In either case, we route
     // to the huge deallocation path.
     let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
-    if page_index == 0 || page.block_size == 0 {
+    if page.block_size == 0 {
         if P::ENABLE_POISONING {
             // Safety: large/huge allocations store the segment pointer in the metadata
             // slot immediately preceding the user pointer.
@@ -1641,5 +1639,12 @@ mod tests {
             Some(ptr1 as usize),
             "HardenedPolicy failed to obscure/randomize the tampered pointer"
         );
+    }
+
+    #[test]
+    fn test_dealloc_path() {
+        let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(1024, 8) };
+        assert!(!ptr.is_null());
+        unsafe { thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr) };
     }
 }

@@ -632,7 +632,7 @@ fn bench_allocator_dealloc(c: &mut Criterion) {
                 },
                 |ptr| unsafe { dealloc_only(&mnemosyne::Mnemosyne, ptr, *layout) },
                 BatchSize::SmallInput,
-            )
+            );
         });
         group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
             b.iter_batched(
