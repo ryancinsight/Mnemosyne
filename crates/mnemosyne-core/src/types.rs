@@ -123,8 +123,8 @@ pub struct Page {
     pub block_size: usize,
     /// Number of active allocations.
     pub alloc_count: usize,
-    /// Maximum number of blocks in this page.
-    pub max_blocks: usize,
+    /// Number of blocks initialized so far (for lazy/bump-allocated fresh pages).
+    pub initialized_blocks: usize,
     /// Pointer to the next page in the thread-local size class list.
     pub next_page: Option<NonNull<Page>>,
     /// Pointer to the previous page in the thread-local size class list.
@@ -177,7 +177,7 @@ impl Page {
             thread_free: AtomicFreeList::new(),
             block_size: 0,
             alloc_count: 0,
-            max_blocks: 0,
+            initialized_blocks: 0,
             next_page: None,
             prev_page: None,
             size_class: 0,
@@ -212,6 +212,51 @@ impl Page {
         let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
         let pages_base = segment_addr + core::mem::offset_of!(Segment, pages);
         (self_addr - pages_base) / core::mem::size_of::<Page>()
+    }
+
+    /// Returns the physical start address of this page in memory.
+    #[inline(always)]
+    pub fn page_start(&self) -> *mut u8 {
+        let self_addr = self as *const Page as usize;
+        let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
+        let page_index = self.index_in_segment();
+        unsafe { (segment_addr as *mut u8).add(page_index << crate::constants::PAGE_SHIFT) }
+    }
+
+    /// Returns the maximum number of blocks that can fit in this page.
+    #[inline(always)]
+    pub fn max_blocks(&self) -> usize {
+        crate::size_class::class_to_max_blocks(self.size_class as usize)
+    }
+
+    /// Pops a block from the page's local free list, using lazy/bump allocation if necessary.
+    ///
+    /// # Safety
+    ///
+    /// The page must have free blocks or uninitialized blocks remaining.
+    #[inline(always)]
+    pub unsafe fn pop_block<P: crate::policy::AllocPolicy>(&mut self) -> NonNull<Block> {
+        if let Some(block) = self.free {
+            let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+                let self_addr = self as *const Page as usize;
+                let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
+                let segment = segment_addr as *mut Segment;
+                let page_index = self.index_in_segment();
+                unsafe { (*segment).keys[page_index] }
+            } else {
+                0
+            };
+            self.free = unsafe { (*block.as_ptr()).get_next::<P>(cookie) };
+            block
+        } else if self.initialized_blocks < self.max_blocks() {
+            let idx = self.initialized_blocks;
+            self.initialized_blocks += 1;
+            let page_start = self.page_start();
+            let block_ptr = unsafe { page_start.add(idx * self.block_size) } as *mut Block;
+            unsafe { NonNull::new_unchecked(block_ptr) }
+        } else {
+            unsafe { core::hint::unreachable_unchecked() }
+        }
     }
 
     /// Atomically drains cross-thread frees into the page-local free list dynamically.
@@ -278,37 +323,11 @@ impl Page {
     /// and must be valid for reads and writes of size `PAGE_SIZE`.
     pub unsafe fn initialize_free_list<P: crate::policy::AllocPolicy>(
         &mut self,
-        page_start: *mut u8,
+        _page_start: *mut u8,
     ) {
-        let block_size = self.block_size;
-        let num_blocks = PAGE_SIZE / block_size;
-        self.max_blocks = num_blocks;
+        self.initialized_blocks = 0;
         self.alloc_count = 0;
-
-        let self_addr = self as *const Page as usize;
-        let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
-        let segment = segment_addr as *mut Segment;
-        let page_index = self.index_in_segment();
-        let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-            unsafe { (*segment).keys[page_index] }
-        } else {
-            0
-        };
-
-        let mut prev: Option<NonNull<Block>> = None;
-        for i in (0..num_blocks).rev() {
-            let offset = i * block_size;
-            // Safety: page_start is a valid pointer to the start of the 64KB page,
-            // offset is within the bounds of this page, and block_ptr is aligned.
-            // We write the next node to form the linked list.
-            unsafe {
-                let block_ptr = page_start.add(offset) as *mut Block;
-                (*block_ptr).set_next::<P>(prev, cookie);
-                prev = Some(NonNull::new_unchecked(block_ptr));
-            }
-        }
-
-        self.free = prev;
+        self.free = None;
     }
 }
 
@@ -435,6 +454,7 @@ impl Segment {
 
 #[cfg(test)]
 mod tests {
+    use ::std::alloc::{alloc_zeroed, dealloc, Layout};
     use super::*;
     use crate::constants::PAGE_SIZE;
 
@@ -454,27 +474,22 @@ mod tests {
 
     #[test]
     fn test_page_reclaim_thread_free() {
-        let mut page = Page::new();
+        let layout = Layout::from_size_align(
+            crate::constants::SEGMENT_SIZE,
+            crate::constants::SEGMENT_SIZE,
+        )
+        .unwrap();
+        let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+        assert!(!segment_ptr.is_null(), "alloc_zeroed failed to allocate segment");
+        let page = unsafe { &mut (*segment_ptr).pages[1] };
         page.block_size = 16;
 
-        // `initialize_free_list` writes `Block` nodes (which contain an
-        // 8-byte-aligned `Option<NonNull<Block>>`) into the page. In production
-        // the page start is `PAGE_SIZE`-aligned; a bare `[u8; PAGE_SIZE]` stack
-        // array is only 1-byte aligned, so writing pointers through it is
-        // undefined behavior (Miri flags it). Back the test storage with a
-        // cache-line-aligned wrapper so the block writes are well-aligned.
-        #[repr(align(64))]
-        struct PageStorage([u8; PAGE_SIZE]);
-        let mut storage = PageStorage([0u8; PAGE_SIZE]);
-
         unsafe {
-            page.initialize_free_list::<crate::policy::StandardPolicy>(storage.0.as_mut_ptr());
+            let page_start = page.page_start();
+            page.initialize_free_list::<crate::policy::StandardPolicy>(page_start);
         }
 
-        let first = page.free.expect("initialized page has a free block");
-        unsafe {
-            page.free = (*first.as_ptr()).get_next::<crate::policy::StandardPolicy>(0);
-        }
+        let first = unsafe { page.pop_block::<crate::policy::StandardPolicy>() };
         page.alloc_count = 1;
         page.thread_free
             .push::<crate::policy::StandardPolicy>(first);
@@ -488,29 +503,31 @@ mod tests {
             page.thread_free.is_empty(),
             "thread_free list was not empty after reclaim"
         );
+
+        unsafe {
+            dealloc(segment_ptr as *mut u8, layout);
+        }
     }
 
     #[test]
     fn test_page_reclaim_thread_free_hot_path() {
-        let mut page = Page::new();
+        let layout = Layout::from_size_align(
+            crate::constants::SEGMENT_SIZE,
+            crate::constants::SEGMENT_SIZE,
+        )
+        .unwrap();
+        let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+        assert!(!segment_ptr.is_null(), "alloc_zeroed failed to allocate segment");
+        let page = unsafe { &mut (*segment_ptr).pages[1] };
         page.block_size = 16;
 
-        #[repr(align(64))]
-        struct PageStorage([u8; PAGE_SIZE]);
-        let mut storage = PageStorage([0u8; PAGE_SIZE]);
-
         unsafe {
-            page.initialize_free_list::<crate::policy::StandardPolicy>(storage.0.as_mut_ptr());
+            let page_start = page.page_start();
+            page.initialize_free_list::<crate::policy::StandardPolicy>(page_start);
         }
 
-        let b1 = page.free.expect("has b1");
-        unsafe {
-            page.free = (*b1.as_ptr()).get_next::<crate::policy::StandardPolicy>(0);
-        }
-        let b2 = page.free.expect("has b2");
-        unsafe {
-            page.free = (*b2.as_ptr()).get_next::<crate::policy::StandardPolicy>(0);
-        }
+        let b1 = unsafe { page.pop_block::<crate::policy::StandardPolicy>() };
+        let b2 = unsafe { page.pop_block::<crate::policy::StandardPolicy>() };
 
         // Simulate all other blocks allocated / empty free list
         page.free = None;
@@ -538,6 +555,10 @@ mod tests {
             page.thread_free.is_empty(),
             "thread_free list was not empty after reclaim"
         );
+
+        unsafe {
+            dealloc(segment_ptr as *mut u8, layout);
+        }
     }
 
     #[test]

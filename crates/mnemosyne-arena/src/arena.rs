@@ -110,23 +110,36 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(
         None => return core::ptr::null_mut(),
     };
 
-    // Safety: total_alloc_size is non-zero and safe to allocate. We call the backend allocation safely.
-    let raw_ptr = unsafe { B::allocate(total_alloc_size) };
-    if raw_ptr.is_null() {
-        return core::ptr::null_mut();
-    }
+    let numa_node = crate::numa::current_numa_node() as usize;
+    let cached = unsafe { B::global_huge_pool().pop::<B>(total_alloc_size, numa_node) };
+    let is_cache_hit = cached.is_some();
+
+    let (raw_ptr, block_size) = match cached {
+        Some(segment) => {
+            let r = unsafe { (*segment).raw_alloc_ptr };
+            let s = unsafe { (*segment).pages[0].block_size };
+            (r, s)
+        }
+        None => {
+            let ptr = unsafe { B::allocate(total_alloc_size) };
+            if ptr.is_null() {
+                return core::ptr::null_mut();
+            }
+            (ptr, total_alloc_size)
+        }
+    };
 
     let (user_ptr, aligned_addr, tail_slack_start, mapping_end) =
-        match unsafe { initialize_large_or_huge_segment(raw_ptr, total_alloc_size, alignment, size) } {
+        match unsafe { initialize_large_or_huge_segment(raw_ptr, block_size, alignment, size) } {
             Some(val) => val,
             None => {
-                // Safety: Releasing raw memory back to the backend because alignment check overflowed.
-                let _released = unsafe { B::deallocate(raw_ptr, total_alloc_size) };
+                let _released = unsafe { B::deallocate(raw_ptr, block_size) };
                 return core::ptr::null_mut();
             }
         };
 
-    if B::SUPPORTS_DECOMMIT && decommit_slack {
+    // Only decommit slack on newly allocated blocks from the OS to save syscalls
+    if !is_cache_hit && B::SUPPORTS_DECOMMIT && decommit_slack {
         // Return the alignment slack before the aligned header to the OS. As in
         // `allocate_segment`, `[raw_ptr, aligned_addr)` is never touched; on Windows
         // it is eagerly committed and would otherwise hold commit charge for the
@@ -189,9 +202,13 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
     let huge_size = segment.pages[0].block_size;
 
     if huge_size > 0 {
-        // It is a huge allocation. Release the entire OS memory mapping.
-        let raw_ptr = segment.raw_alloc_ptr;
+        // It is a huge allocation. Try to cache it first.
+        let node = segment.numa_node as usize;
+        if unsafe { B::global_huge_pool().try_push(resolved_segment_ptr, node) } {
+            return true;
+        }
         // Safety: Releasing raw memory back to custom backend using the recorded size.
+        let raw_ptr = segment.raw_alloc_ptr;
         unsafe { B::deallocate(raw_ptr, huge_size) }
     } else {
         // It is a standard segment containing page allocations.
@@ -207,7 +224,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use crate::segment::GlobalSegmentPool;
+    use crate::segment::{GlobalSegmentPool, GlobalHugePool};
     use core::sync::atomic::{AtomicUsize, Ordering};
     use mnemosyne_core::constants::SEGMENT_SIZE;
     use mnemosyne_core::MemoryBackend;
@@ -216,6 +233,7 @@ mod tests {
 
     static FAILING_HUGE_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
     static FAILING_HUGE_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+    static FAILING_HUGE_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
     static FAILING_HUGE_DEALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -239,6 +257,10 @@ mod tests {
 
         fn global_orphan_pool() -> &'static GlobalSegmentPool {
             &FAILING_HUGE_ORPHAN_POOL
+        }
+
+        fn global_huge_pool() -> &'static GlobalHugePool {
+            &FAILING_HUGE_HUGE_POOL
         }
     }
 
@@ -323,6 +345,9 @@ mod tests {
     fn huge_allocation_consumes_tight_mapping_size() {
         let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
         use mnemosyne_backend::{backend_memory_stats, MemoryBackendWrapper};
+        unsafe {
+            crate::segment::purge_segment_pool::<MemoryBackendWrapper>();
+        }
         // The tight mapping formula reserves exactly
         // `size + SEGMENT_ALIGN + max(alignment, PAGE_SIZE)`. Verify the backend
         // counter observed precisely that increment, so future regressions
@@ -408,7 +433,7 @@ mod tests {
 
         unsafe {
             Segment::initialize(segment_ptr, 0x1000 as *mut u8, 0);
-            (*segment_ptr).pages[0].block_size = SEGMENT_SIZE * 3;
+            (*segment_ptr).pages[0].block_size = SEGMENT_SIZE * 10;
         }
 
         let released = unsafe {
@@ -423,6 +448,7 @@ mod tests {
 
     static DECOMMIT_HUGE_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
     static DECOMMIT_HUGE_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+    static DECOMMIT_HUGE_HUGE_POOL: crate::segment::GlobalHugePool = crate::segment::GlobalHugePool::new();
     static DECOMMIT_HUGE_CALLS: AtomicUsize = AtomicUsize::new(0);
     static DECOMMIT_HUGE_BYTES: AtomicUsize = AtomicUsize::new(0);
 
@@ -462,6 +488,10 @@ mod tests {
         fn global_orphan_pool() -> &'static GlobalSegmentPool {
             &DECOMMIT_HUGE_ORPHAN_POOL
         }
+
+        fn global_huge_pool() -> &'static crate::segment::GlobalHugePool {
+            &DECOMMIT_HUGE_HUGE_POOL
+        }
     }
 
     #[test]
@@ -496,5 +526,75 @@ mod tests {
             deallocate_large_or_huge::<DecommitRecordingHugeBackend>(user_ptr, recovered)
         };
         assert!(released);
+    }
+
+    #[test]
+    fn test_huge_allocation_caching_and_purging() {
+        let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
+        use mnemosyne_backend::{backend_memory_stats, MemoryBackendWrapper};
+
+        // Clear any existing cached blocks in the pool
+        unsafe {
+            crate::segment::purge_segment_pool::<MemoryBackendWrapper>();
+        }
+
+        let size = 4 * 1024 * 1024;
+        let align = 8;
+
+        let stats_start = backend_memory_stats();
+
+        // 1. First allocation: OS-backed
+        let ptr1 = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align, false) };
+        assert!(!ptr1.is_null());
+
+        let stats_alloc1 = backend_memory_stats();
+        assert!(stats_alloc1.current_mapped_bytes > stats_start.current_mapped_bytes);
+
+        let segment1 = unsafe { *((ptr1 as *mut *mut Segment).sub(1)) };
+        let raw_ptr1 = unsafe { (*segment1).raw_alloc_ptr };
+
+        // Deallocate: pushes to cache (mapped bytes should NOT decrease)
+        let released1 = unsafe { deallocate_large_or_huge::<MemoryBackendWrapper>(ptr1, segment1) };
+        assert!(released1);
+
+        let stats_dealloc1 = backend_memory_stats();
+        assert_eq!(stats_dealloc1.current_mapped_bytes, stats_alloc1.current_mapped_bytes);
+
+        // 2. Second allocation: should reuse the cached block (mapped bytes should NOT increase)
+        let ptr2 = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align, false) };
+        assert!(!ptr2.is_null());
+
+        let stats_alloc2 = backend_memory_stats();
+        assert_eq!(stats_alloc2.current_mapped_bytes, stats_alloc1.current_mapped_bytes);
+
+        let segment2 = unsafe { *((ptr2 as *mut *mut Segment).sub(1)) };
+        let raw_ptr2 = unsafe { (*segment2).raw_alloc_ptr };
+
+        assert_eq!(raw_ptr2, raw_ptr1, "Second allocation did not reuse the cached block");
+
+        // Deallocate again
+        let released2 = unsafe { deallocate_large_or_huge::<MemoryBackendWrapper>(ptr2, segment2) };
+        assert!(released2);
+
+        // 3. Purge: must free the cached block back to the OS (mapped bytes should decrease)
+        unsafe {
+            crate::segment::purge_segment_pool::<MemoryBackendWrapper>();
+        }
+
+        let stats_purged = backend_memory_stats();
+        assert_eq!(stats_purged.current_mapped_bytes, stats_start.current_mapped_bytes);
+
+        // 4. Third allocation: should be a fresh OS allocation
+        let ptr3 = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align, false) };
+        assert!(!ptr3.is_null());
+
+        let segment3 = unsafe { *((ptr3 as *mut *mut Segment).sub(1)) };
+
+        // Clean up
+        let released3 = unsafe { deallocate_large_or_huge::<MemoryBackendWrapper>(ptr3, segment3) };
+        assert!(released3);
+        unsafe {
+            crate::segment::purge_segment_pool::<MemoryBackendWrapper>();
+        }
     }
 }

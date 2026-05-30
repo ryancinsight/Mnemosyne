@@ -89,9 +89,11 @@ unsafe fn hint_hugepage(ptr: *mut u8, length: usize) {
     #[cfg(target_os = "linux")]
     {
         if length >= SEGMENT_SIZE && length % SEGMENT_SIZE == 0 {
-            // Safety: caller guarantees the mapping covers `length` bytes; madvise
-            // is advisory and never invalidates the mapping on failure.
-            let _ = unsafe { madvise(ptr as *mut c_void, length, MADV_HUGEPAGE) };
+            if mnemosyne_core::options::ENABLE_HUGEPAGE_HINT.load(core::sync::atomic::Ordering::Relaxed) {
+                // Safety: caller guarantees the mapping covers `length` bytes; madvise
+                // is advisory and never invalidates the mapping on failure.
+                let _ = unsafe { madvise(ptr as *mut c_void, length, MADV_HUGEPAGE) };
+            }
         }
     }
     #[cfg(not(target_os = "linux"))]

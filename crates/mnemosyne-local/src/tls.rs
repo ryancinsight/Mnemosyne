@@ -45,6 +45,9 @@ pub trait TlsProvider<B: HasSegmentPool>: 'static {
 
     /// Returns the raw pointer to the thread-local allocator cache.
     fn get_allocator_ptr() -> *mut core::ffi::c_void;
+
+    /// Returns the raw pointer to the thread-local allocator cache without triggering lazy initialization.
+    fn get_allocator_ptr_raw() -> *mut core::ffi::c_void;
 }
 
 /// Portable TLS provider using direct standard `std::thread_local!` lookups.
@@ -78,6 +81,11 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for StandardTls<B, S
 
     #[inline(always)]
     fn get_allocator_ptr() -> *mut core::ffi::c_void {
+        S::get_slot_standard(|slot| slot.allocator_ptr())
+    }
+
+    #[inline(always)]
+    fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
         S::get_slot_standard(|slot| slot.allocator_ptr())
     }
 }
@@ -151,6 +159,17 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
                 S::get_cached_cell(|cell| cell.set(raw));
                 slot.allocator_ptr()
             })
+        }
+    }
+
+    #[inline(always)]
+    fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
+        let ptr = S::get_cached_cell(|cell| cell.get());
+        if !ptr.is_null() {
+            let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
+            slot.allocator_ptr()
+        } else {
+            core::ptr::null_mut()
         }
     }
 }
@@ -227,6 +246,18 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
                 set_os_tls_value(key, raw);
                 slot.allocator_ptr()
             })
+        }
+    }
+
+    #[inline(always)]
+    fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
+        let key = get_os_tls_key(S::get_os_tls_key());
+        let ptr = get_os_tls_value(key);
+        if !ptr.is_null() {
+            let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
+            slot.allocator_ptr()
+        } else {
+            core::ptr::null_mut()
         }
     }
 }
@@ -334,6 +365,25 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
             <NativeOsTls<B, S> as TlsProvider<B>>::get_allocator_ptr()
         }
     }
+
+    #[inline(always)]
+    fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        {
+            let key = get_os_tls_key(S::get_os_tls_key());
+            let ptr = unsafe { get_teb_tls_slot(key) };
+            if !ptr.is_null() {
+                let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
+                slot.allocator_ptr()
+            } else {
+                core::ptr::null_mut()
+            }
+        }
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        {
+            <NativeOsTls<B, S> as TlsProvider<B>>::get_allocator_ptr_raw()
+        }
+    }
 }
 
 /// Unifies the nightly `#[thread_local]` compiler-backed TLS path.
@@ -391,6 +441,18 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
 
     #[inline(always)]
     fn get_allocator_ptr() -> *mut core::ffi::c_void {
+        #[cfg(feature = "nightly_tls")]
+        {
+            S::get_slot_nightly(|slot| slot.allocator_ptr())
+        }
+        #[cfg(not(feature = "nightly_tls"))]
+        {
+            unreachable!("NightlyTls is only available under nightly_tls feature gate");
+        }
+    }
+
+    #[inline(always)]
+    fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
         #[cfg(feature = "nightly_tls")]
         {
             S::get_slot_nightly(|slot| slot.allocator_ptr())

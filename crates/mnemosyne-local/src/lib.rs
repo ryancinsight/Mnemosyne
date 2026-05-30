@@ -26,6 +26,129 @@ use mnemosyne_core::validation::{is_valid_alloc_request, is_valid_layout_alloc_r
 
 use mnemosyne_core::policy::AllocPolicy;
 
+static OPTIONS_INIT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+#[cfg(windows)]
+fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
+    extern "system" {
+        fn GetEnvironmentVariableA(
+            lpName: *const u8,
+            lpBuffer: *mut u8,
+            nSize: u32,
+        ) -> u32;
+    }
+    
+    let mut name_buf = [0u8; 64];
+    if name.len() >= name_buf.len() {
+        return None;
+    }
+    name_buf[..name.len()].copy_from_slice(name.as_bytes());
+    name_buf[name.len()] = 0;
+    
+    let res = unsafe {
+        GetEnvironmentVariableA(
+            name_buf.as_ptr(),
+            buf.as_mut_ptr(),
+            buf.len() as u32,
+        )
+    };
+    
+    if res == 0 || res >= buf.len() as u32 {
+        None
+    } else {
+        Some(res as usize)
+    }
+}
+
+#[cfg(not(windows))]
+fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
+    extern "C" {
+        fn getenv(name: *const u8) -> *mut u8;
+    }
+    
+    let mut name_buf = [0u8; 64];
+    if name.len() >= name_buf.len() {
+        return None;
+    }
+    name_buf[..name.len()].copy_from_slice(name.as_bytes());
+    name_buf[name.len()] = 0;
+    
+    let ptr = unsafe { getenv(name_buf.as_ptr()) };
+    if ptr.is_null() {
+        return None;
+    }
+    
+    let mut len = 0;
+    unsafe {
+        while *ptr.add(len) != 0 && len < buf.len() {
+            buf[len] = *ptr.add(len);
+            len += 1;
+        }
+    }
+    if len == buf.len() {
+        None
+    } else {
+        Some(len)
+    }
+}
+
+fn parse_env_usize(name: &str) -> Option<usize> {
+    let mut buf = [0u8; 32];
+    let len = get_env_var_stack(name, &mut buf)?;
+    let s = core::str::from_utf8(&buf[..len]).ok()?;
+    s.trim().parse::<usize>().ok()
+}
+
+fn parse_env_bool(name: &str) -> Option<bool> {
+    let mut buf = [0u8; 32];
+    let len = get_env_var_stack(name, &mut buf)?;
+    let s = core::str::from_utf8(&buf[..len]).ok()?.trim();
+    if s.eq_ignore_ascii_case("true") || s == "1" {
+        Some(true)
+    } else if s.eq_ignore_ascii_case("false") || s == "0" {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+#[inline(always)]
+pub(crate) fn ensure_options_initialized() {
+    if !OPTIONS_INIT.load(core::sync::atomic::Ordering::Acquire) {
+        init_options_from_env();
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn init_options_from_env() {
+    if OPTIONS_INIT.swap(true, core::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+
+    if let Some(parsed) = parse_env_usize("MNEMOSYNE_MAX_RETAINED_SEGMENTS") {
+        let clamped = core::cmp::min(parsed, 32);
+        mnemosyne_core::options::MAX_RETAINED_SEGMENTS.store(clamped, core::sync::atomic::Ordering::Release);
+    }
+
+    if let Some(parsed) = parse_env_bool("MNEMOSYNE_ENABLE_HUGEPAGE_HINT") {
+        mnemosyne_core::options::ENABLE_HUGEPAGE_HINT.store(parsed, core::sync::atomic::Ordering::Release);
+    }
+
+    if let Some(parsed) = parse_env_usize("MNEMOSYNE_PURGE_CADENCE_MS") {
+        mnemosyne_core::options::PURGE_CADENCE_MS.store(parsed, core::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Reset options state and atomic option values to their defaults. Intended for testing.
+#[doc(hidden)]
+pub fn reset_options_for_testing() {
+    OPTIONS_INIT.store(false, core::sync::atomic::Ordering::Release);
+    mnemosyne_core::options::MAX_RETAINED_SEGMENTS.store(32, core::sync::atomic::Ordering::Release);
+    mnemosyne_core::options::ENABLE_HUGEPAGE_HINT.store(true, core::sync::atomic::Ordering::Release);
+    mnemosyne_core::options::PURGE_CADENCE_MS.store(0, core::sync::atomic::Ordering::Release);
+}
+
 /// Per-thread allocator cache plus reentrancy guard.
 ///
 /// Keeping the guard and cache in a single TLS object makes the allocation
@@ -33,14 +156,15 @@ use mnemosyne_core::policy::AllocPolicy;
 /// and then the allocator cache. The guard still enforces the same exclusive
 /// borrowing contract as the former split TLS keys.
 #[doc(hidden)]
+#[repr(C)]
 pub struct LocalAllocatorSlot<B: HasSegmentPool> {
+    allocator: core::cell::UnsafeCell<ThreadAllocator<B>>,
     /// One-shot flag recording whether this thread's exit-reclamation sentinel
     /// has been registered. Only the `#[thread_local]` fast path needs it: a
     /// `#[thread_local]` static is not dropped on thread teardown, so the first
     /// hot-path access arms a `std::thread_local!` `Drop` sentinel exactly once.
     #[cfg(feature = "nightly_tls")]
     exit_armed: core::cell::Cell<bool>,
-    allocator: core::cell::UnsafeCell<ThreadAllocator<B>>,
 }
 
 impl<B: HasSegmentPool> Default for LocalAllocatorSlot<B> {
@@ -54,9 +178,9 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
     /// Creates an empty per-thread allocator slot.
     pub const fn new() -> Self {
         Self {
+            allocator: core::cell::UnsafeCell::new(ThreadAllocator::new()),
             #[cfg(feature = "nightly_tls")]
             exit_armed: core::cell::Cell::new(false),
-            allocator: core::cell::UnsafeCell::new(ThreadAllocator::new()),
         }
     }
 
@@ -160,6 +284,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
     ///
     /// Returns null if allocation fails.
     pub fn alloc(&self, layout: Layout) -> *mut u8 {
+        ensure_options_initialized();
         if !is_valid_layout_alloc_request(layout.size(), layout.align()) {
             return core::ptr::null_mut();
         }
@@ -223,6 +348,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
 
     /// Frees a block of memory back to its originating heap/allocator.
     pub fn free(&self, ptr: *mut u8) {
+        ensure_options_initialized();
         if ptr.is_null() {
             return;
         }
@@ -282,6 +408,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
 
     /// Reallocates a memory block from this heap.
     pub fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        ensure_options_initialized();
         if new_size == 0 {
             if !ptr.is_null() {
                 self.free(ptr);
@@ -468,6 +595,9 @@ pub trait LocalAllocatorSelector<B: HasSegmentPool>: HasSegmentPool {
 
     /// Returns the raw pointer to the thread-local allocator cache.
     fn get_allocator_ptr() -> *mut core::ffi::c_void;
+
+    /// Returns the raw pointer to the thread-local allocator cache without triggering lazy initialization.
+    fn get_allocator_ptr_raw() -> *mut core::ffi::c_void;
 }
 
 /// Helper macro to generate zero-cost backend-specific thread-local cache pools.
@@ -582,7 +712,13 @@ macro_rules! impl_local_allocator_selector {
 
                 #[inline(always)]
                 fn get_allocator_ptr() -> *mut core::ffi::c_void {
+                    $crate::ensure_options_initialized();
                     <SelectedTls as $crate::tls::TlsProvider<$backend>>::get_allocator_ptr()
+                }
+
+                #[inline(always)]
+                fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
+                    <SelectedTls as $crate::tls::TlsProvider<$backend>>::get_allocator_ptr_raw()
                 }
             }
         };
@@ -721,7 +857,72 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
         }
     };
 
-    // Try L1 per-CPU cache first
+    let mut slot_ptr = B::get_allocator_ptr_raw();
+    if slot_ptr.is_null() {
+        slot_ptr = B::get_allocator_ptr();
+    }
+    if !slot_ptr.is_null() {
+        let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
+        if !alloc.is_allocating {
+            // Try fast path active page pop first (L1 thread-local)
+            if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
+                let page = unsafe { page_ptr.as_mut() };
+                if let Some(block) = page.free {
+                    let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+                        let self_addr = page as *const Page as usize;
+                        let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
+                        let segment = segment_addr as *mut Segment;
+                        let page_index = page.index_in_segment();
+                        unsafe { (*segment).keys[page_index] }
+                    } else {
+                        0
+                    };
+                    unsafe {
+                        page.free = (*block.as_ptr()).get_next::<P>(cookie);
+                    }
+                    page.alloc_count += 1;
+                    let ptr = block.as_ptr() as *mut u8;
+                    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+                    return ptr;
+                } else if page.initialized_blocks < page.max_blocks() {
+                    let idx = page.initialized_blocks;
+                    page.initialized_blocks += 1;
+                    page.alloc_count += 1;
+                    let page_start = page.page_start();
+                    let ptr = unsafe { page_start.add(idx * page.block_size) };
+                    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+                    return ptr;
+                }
+            }
+
+            // Try L1 per-CPU cache second (L2)
+            if B::ENABLE_CPU_CACHE {
+                let cpu_ptr = per_cpu::try_alloc_cpu::<P>(class);
+                if !cpu_ptr.is_null() {
+                    unsafe { initialize_allocated_bytes::<P>(cpu_ptr, adjusted_size) };
+                    return cpu_ptr;
+                }
+            }
+
+            // Fallback: enter allocator guard for cold allocations (L3)
+            alloc.is_allocating = true;
+            let ptr = unsafe { alloc.alloc_cold::<P>(class) };
+            alloc.is_allocating = false;
+
+            let final_ptr = if ptr.is_null() {
+                unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) }
+            } else {
+                ptr
+            };
+
+            if !final_ptr.is_null() {
+                unsafe { initialize_allocated_bytes::<P>(final_ptr, adjusted_size) };
+            }
+            return final_ptr;
+        }
+    }
+
+    // Try L1 per-CPU cache if slot is null or is_allocating is true
     if B::ENABLE_CPU_CACHE {
         let cpu_ptr = per_cpu::try_alloc_cpu::<P>(class);
         if !cpu_ptr.is_null() {
@@ -730,78 +931,12 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
         }
     }
 
-    // Guard-free small-allocation fast path. `with_allocator_unguarded` still
-    // consults the re-entrancy busy bit — returning `None` on same-thread
-    // re-entry so a second `&mut ThreadAllocator` can never alias a live
-    // guarded borrow — but skips the guard set/clear writes. The closure only
-    // pops a thread-local free-list block and performs no allocator re-entry,
-    // satisfying the unguarded-borrow contract. A re-entrant call (busy bit
-    // set) falls through to `with_allocator_guard`, which also returns `None`
-    // and routes to the huge fallback.
-    //
-    let pop_active_free = |alloc: &mut ThreadAllocator<B>| -> *mut u8 {
-        if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
-            // Safety: `page_ptr` is an active page owned by this thread cache.
-            let page = unsafe { page_ptr.as_mut() };
-            if let Some(block) = page.free {
-                // Safety: `block` is the head of the page-local free list; advance the
-                // list and account the allocation.
-                let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-                    let self_addr = page as *const Page as usize;
-                    let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
-                    let segment = segment_addr as *mut Segment;
-                    let page_index = page.index_in_segment();
-                    unsafe { (*segment).keys[page_index] }
-                } else {
-                    0
-                };
-                unsafe {
-                    page.free = (*block.as_ptr()).get_next::<P>(cookie);
-                }
-                page.alloc_count += 1;
-                return block.as_ptr() as *mut u8;
-            }
-        }
-        core::ptr::null_mut()
-    };
-    // Safety: `pop_active_free` touches only thread-local page metadata and
-    // never invokes an allocator entry point, upholding the no-re-entry
-    // contract of `with_allocator_unguarded`.
-    let fast = unsafe { B::with_allocator_unguarded(pop_active_free) };
-    if let Some(ptr) = fast {
-        if !ptr.is_null() {
-            unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-            return ptr;
-        }
+    // Fallback: slot is null or is_allocating is true.
+    let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
+    if !ptr.is_null() {
+        unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
     }
-
-    // Fallback: enter allocator guard for cold allocations.
-    let Some(ptr) = B::with_allocator_guard(|alloc| {
-        // Safety: alloc is exclusively borrowed and valid.
-        unsafe { alloc.alloc_cold::<P>(class) }
-    }) else {
-        // Fall back to direct arena/huge allocation to break recursion.
-        // Safety: size and align are forwarded. allocate_large_or_huge handles safety.
-        let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
-        if !ptr.is_null() {
-            unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-        }
-        return ptr;
-    };
-
-    let final_ptr = if ptr.is_null() {
-        // Fallback for large allocations or failed cache allocations.
-        // Safety: Fallback route using backend B.
-        unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) }
-    } else {
-        ptr
-    };
-
-    if !final_ptr.is_null() {
-        unsafe { initialize_allocated_bytes::<P>(final_ptr, adjusted_size) };
-    }
-
-    final_ptr
+    ptr
 }
 
 /// Frees a memory block.
@@ -850,15 +985,11 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         unsafe { poison_freed_bytes::<P>(ptr, page.block_size) };
     }
 
-    // Try L1 per-CPU cache
-    if B::ENABLE_CPU_CACHE && per_cpu::try_free_cpu::<P>(ptr, page.size_class as usize) {
-        return;
-    }
-
     let block = ptr as *mut Block;
     let owner = unsafe { (*segment).owner };
-    let current_allocator = B::get_allocator_ptr();
+    let current_allocator = B::get_allocator_ptr_raw();
 
+    // 1. Try fast thread-local free first
     if owner.matches(current_allocator) {
         debug_assert!(page.alloc_count > 0, "local free observed zero alloc_count");
         let page_free = page.free;
@@ -868,7 +999,8 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         } else {
             0
         };
-        if page_free.is_some() && (page_alloc_count != 1 || unsafe { (*segment).is_current }) {
+        let is_not_full = page.list_state != 2;
+        if is_not_full && (page_alloc_count != 1 || unsafe { (*segment).is_current }) {
             unsafe {
                 (*block).set_next::<P>(page_free, cookie);
                 page.free = Some(NonNull::new_unchecked(block));
@@ -888,6 +1020,11 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         }
     }
 
+    // 2. Try L1 per-CPU cache second
+    if B::ENABLE_CPU_CACHE && per_cpu::try_free_cpu::<P>(ptr, page.size_class as usize) {
+        return;
+    }
+
     unsafe {
         page.thread_free.push::<P>(NonNull::new_unchecked(block));
     }
@@ -900,7 +1037,7 @@ unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     page: &mut Page,
     segment: *mut Segment,
 ) {
-    let was_full = page.free.is_none();
+    let was_full = page.list_state == 2;
     let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
         let page_index = page.index_in_segment();
         unsafe { (*segment).keys[page_index] }

@@ -268,14 +268,6 @@ pub unsafe fn release_segment_mapping<B: HasSegmentPool>(segment: *mut Segment) 
     }
 }
 
-/// Purges the global segment pool and releases all segments back to the OS.
-///
-/// # Safety
-///
-/// This function is unsafe because it deallocates raw memory from the OS/backend.
-/// The caller must guarantee that all threads have finished using the segments
-/// in the pool and that the pool is not concurrently mutated by other operations
-/// that could violate ownership guarantees.
 pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
     let mut purged = 0;
     let pool = B::global_segment_pool();
@@ -292,6 +284,9 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
         }
     }
     pool.record_purge(purged);
+
+    // Safety: Releases all cached huge blocks back to the OS.
+    unsafe { B::global_huge_pool().purge::<B>() };
 }
 
 /// Drops the physical backing of every retained free segment without

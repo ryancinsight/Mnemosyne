@@ -7,7 +7,7 @@ use super::alloc::{
     allocate_segment, deallocate_segment, purge_segment_pool, release_segment_mapping,
     reset_segment_pool, SEGMENT_MAPPING_SIZE, SEGMENT_TAIL_GUARD_SIZE,
 };
-use super::pool::{GlobalSegmentPool, HasSegmentPool};
+use super::pool::{GlobalSegmentPool, GlobalHugePool, HasSegmentPool};
 use super::stats::{arena_memory_stats, SegmentRelease};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::constants::{SEGMENT_ALIGN, SEGMENT_SIZE};
@@ -22,6 +22,7 @@ struct FailingReleaseBackend;
 
 static FAILING_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 static FAILING_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static FAILING_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
 static FAILING_DEALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 impl MemoryBackend for FailingReleaseBackend {
@@ -45,6 +46,10 @@ impl HasSegmentPool for FailingReleaseBackend {
     fn global_orphan_pool() -> &'static GlobalSegmentPool {
         &FAILING_ORPHAN_POOL
     }
+
+    fn global_huge_pool() -> &'static GlobalHugePool {
+        &FAILING_HUGE_POOL
+    }
 }
 
 #[cfg(feature = "segment-tail-guards")]
@@ -54,6 +59,8 @@ struct GuardRecordingBackend;
 static GUARD_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 #[cfg(feature = "segment-tail-guards")]
 static GUARD_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+#[cfg(feature = "segment-tail-guards")]
+static GUARD_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
 #[cfg(feature = "segment-tail-guards")]
 static GUARD_CALLS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(feature = "segment-tail-guards")]
@@ -99,6 +106,10 @@ impl HasSegmentPool for GuardRecordingBackend {
 
     fn global_orphan_pool() -> &'static GlobalSegmentPool {
         &GUARD_ORPHAN_POOL
+    }
+
+    fn global_huge_pool() -> &'static GlobalHugePool {
+        &GUARD_HUGE_POOL
     }
 }
 
@@ -255,6 +266,7 @@ struct DecommitRecordingBackend;
 
 static DECOMMIT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 static DECOMMIT_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static DECOMMIT_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
 static DECOMMIT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static DECOMMIT_BYTES: AtomicUsize = AtomicUsize::new(0);
 
@@ -294,6 +306,10 @@ impl HasSegmentPool for DecommitRecordingBackend {
     fn global_orphan_pool() -> &'static GlobalSegmentPool {
         &DECOMMIT_ORPHAN_POOL
     }
+
+    fn global_huge_pool() -> &'static GlobalHugePool {
+        &DECOMMIT_HUGE_POOL
+    }
 }
 
 #[test]
@@ -328,6 +344,7 @@ struct ResetRecordingBackend;
 
 static RESET_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
 static RESET_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static RESET_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
 static RESET_CALLS: AtomicUsize = AtomicUsize::new(0);
 static LAST_RESET_PTR: AtomicUsize = AtomicUsize::new(0);
 static LAST_RESET_SIZE: AtomicUsize = AtomicUsize::new(0);
@@ -367,6 +384,10 @@ impl HasSegmentPool for ResetRecordingBackend {
 
     fn global_orphan_pool() -> &'static GlobalSegmentPool {
         &RESET_ORPHAN_POOL
+    }
+
+    fn global_huge_pool() -> &'static GlobalHugePool {
+        &RESET_HUGE_POOL
     }
 }
 

@@ -96,31 +96,7 @@ fn record_cross_thread_reclaimed(count: usize) {
 unsafe fn pop_page_free_block<P: AllocPolicy>(
     page: &mut Page,
 ) -> NonNull<mnemosyne_core::types::Block> {
-    debug_assert!(
-        page.free.is_some(),
-        "page {} free list empty before pop; block_size={}, alloc_count={}, max_blocks={}",
-        page.index_in_segment(),
-        page.block_size,
-        page.alloc_count,
-        page.max_blocks
-    );
-    let block = match page.free {
-        Some(block) => block,
-        None => unsafe { core::hint::unreachable_unchecked() },
-    };
-    let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-        let self_addr = page as *const Page as usize;
-        let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
-        let segment = segment_addr as *mut Segment;
-        let page_index = page.index_in_segment();
-        unsafe { (*segment).keys[page_index] }
-    } else {
-        0
-    };
-    unsafe {
-        page.free = (*block.as_ptr()).get_next::<P>(cookie);
-    }
-    block
+    unsafe { page.pop_block::<P>() }
 }
 
 /// Unlinks the page identified by `page_ptr` from the doubly-linked list
@@ -326,6 +302,16 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 return block.as_ptr() as *mut u8;
             }
 
+            // Check lazy bump allocation
+            if page.initialized_blocks < page.max_blocks() {
+                let idx = page.initialized_blocks;
+                page.initialized_blocks += 1;
+                page.alloc_count += 1;
+                let page_start = page.page_start();
+                let block_ptr = unsafe { page_start.add(idx * page.block_size) };
+                return block_ptr;
+            }
+
             // 2. Reclaim batched cross-thread frees only after the local list is empty.
             // Safety: `page` is owned by this allocator and `try_reclaim_and_allocate`
             // upholds the `Page::reclaim_thread_free` contract on its behalf.
@@ -392,7 +378,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                             occupancy.empty_pages += 1;
                         }
                         occupancy.live_allocations += page.alloc_count;
-                        occupancy.total_slots += page.max_blocks;
+                        occupancy.total_slots += page.max_blocks();
                     }
                 }
                 segment = (*segment).next_owned_segment;
@@ -425,7 +411,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             if let Some(block) = try_reclaim_and_allocate::<P>(active_page) {
                 return block.as_ptr() as *mut u8;
             }
-            if active_page.free.is_none() {
+            if active_page.free.is_none() && active_page.initialized_blocks == active_page.max_blocks() {
                 // The page is truly full! Move it to full_pages.
                 unsafe {
                     unlink_page_from_list(self.active_pages.get_unchecked_mut(class), active_ptr);
@@ -451,7 +437,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             if !page.thread_free.is_empty() {
                 // Safety: `page` is owned by this allocator.
                 if let Some(block) = try_reclaim_and_allocate::<P>(page) {
-                    if page.alloc_count < page.max_blocks {
+                    if page.alloc_count < page.max_blocks() {
                         // Page is no longer full! Move it back to active list.
                         // Safety: page_ptr and class are valid.
                         unsafe {
@@ -482,7 +468,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         page.alloc_count += 1;
 
         // If it becomes full immediately, move to full list
-        if page.alloc_count == page.max_blocks {
+        if page.alloc_count == page.max_blocks() {
             // Safety: new_page_ptr and class are valid.
             unsafe {
                 let ptr = NonNull::new_unchecked(new_page_ptr);
@@ -556,7 +542,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                 if page.alloc_count > 0 {
                                     let pg_class = page.size_class as usize;
                                     let ptr = NonNull::new_unchecked(page_ptr);
-                                    if page.alloc_count < page.max_blocks {
+                                    if page.alloc_count < page.max_blocks() {
                                         self.push_active_page(ptr, pg_class);
                                     } else {
                                         self.push_full_page(ptr, pg_class);
@@ -912,6 +898,8 @@ mod tests {
         mnemosyne_arena::GlobalSegmentPool::new();
     static MOCK_ORPHAN_POOL: mnemosyne_arena::GlobalSegmentPool =
         mnemosyne_arena::GlobalSegmentPool::new();
+    static MOCK_HUGE_POOL: mnemosyne_arena::GlobalHugePool =
+        mnemosyne_arena::GlobalHugePool::new();
 
     impl MemoryBackend for MockBackend {
         unsafe fn allocate(size: usize) -> *mut u8 {
@@ -938,6 +926,11 @@ mod tests {
         #[inline(always)]
         fn global_orphan_pool() -> &'static mnemosyne_arena::GlobalSegmentPool {
             &MOCK_ORPHAN_POOL
+        }
+
+        #[inline(always)]
+        fn global_huge_pool() -> &'static mnemosyne_arena::GlobalHugePool {
+            &MOCK_HUGE_POOL
         }
     }
 
@@ -978,6 +971,7 @@ mod tests {
                 as *mut Segment;
             let _released =
                 mnemosyne_arena::deallocate_large_or_huge::<MockBackend>(large_ptr, seg);
+            mnemosyne_arena::segment::purge_segment_pool::<MockBackend>();
         }
         assert!(
             DEALLOC_COUNT.load(Ordering::SeqCst) >= 1,
@@ -1418,7 +1412,7 @@ mod tests {
         let segment = segment_addr as *mut Segment;
         let page_index = (first_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
         // Safety: segment points to a valid segment containing pages.
-        let max_blocks = unsafe { (*segment).pages[page_index].max_blocks };
+        let max_blocks = unsafe { (*segment).pages[page_index].max_blocks() };
         assert_eq!(
             max_blocks,
             mnemosyne_core::constants::PAGE_SIZE / mnemosyne_core::constants::MIN_BLOCK_SIZE,
@@ -1552,7 +1546,7 @@ mod tests {
         let segment_addr = ptr_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
         let segment = segment_addr as *mut Segment;
         let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-        let max_blocks = unsafe { (*segment).pages[page_index].max_blocks };
+        let max_blocks = unsafe { (*segment).pages[page_index].max_blocks() };
         for _ in 0..max_blocks {
             // Safety: alloc_a is valid.
             let ptr2 = unsafe { alloc_a.alloc::<StandardPolicy>(32) };

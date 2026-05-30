@@ -1,6 +1,6 @@
 //! Size class calculations and mapping.
 
-use crate::constants::{MAX_SMALL_ALLOC_SIZE, NUM_SIZE_CLASSES};
+use crate::constants::{MAX_SMALL_ALLOC_SIZE, NUM_SIZE_CLASSES, PAGE_SIZE};
 
 /// Maps an allocation size to its corresponding size class index.
 ///
@@ -56,6 +56,16 @@ const CLASS_TO_SIZE: [u16; NUM_SIZE_CLASSES] = [
     4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192,
 ];
 
+const CLASS_TO_MAX_BLOCKS: [u16; NUM_SIZE_CLASSES] = {
+    let mut arr = [0u16; NUM_SIZE_CLASSES];
+    let mut i = 0;
+    while i < NUM_SIZE_CLASSES {
+        arr[i] = (PAGE_SIZE / CLASS_TO_SIZE[i] as usize) as u16;
+        i += 1;
+    }
+    arr
+};
+
 /// Maps a size class index to its maximum block size.
 ///
 /// Returns `0` if the class index is out of bounds (>= `NUM_SIZE_CLASSES`).
@@ -63,6 +73,18 @@ const CLASS_TO_SIZE: [u16; NUM_SIZE_CLASSES] = [
 pub const fn class_to_size(class: usize) -> usize {
     if class < NUM_SIZE_CLASSES {
         CLASS_TO_SIZE[class] as usize
+    } else {
+        0
+    }
+}
+
+/// Maps a size class index to its maximum number of blocks in a page.
+///
+/// Returns `0` if the class index is out of bounds (>= `NUM_SIZE_CLASSES`).
+#[inline(always)]
+pub const fn class_to_max_blocks(class: usize) -> usize {
+    if class < NUM_SIZE_CLASSES {
+        CLASS_TO_MAX_BLOCKS[class] as usize
     } else {
         0
     }
