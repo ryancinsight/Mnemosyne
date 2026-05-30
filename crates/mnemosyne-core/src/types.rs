@@ -127,10 +127,12 @@ pub struct Page {
     pub max_blocks: usize,
     /// Pointer to the next page in the thread-local size class list.
     pub next_page: Option<NonNull<Page>>,
-    /// The page index inside its parent segment.
-    pub page_index: usize,
+    /// Pointer to the previous page in the thread-local size class list.
+    pub prev_page: Option<NonNull<Page>>,
     /// The size class index of this page.
-    pub size_class: usize,
+    pub size_class: u32,
+    /// Current list state of this page (0=None, 1=Active, 2=Full, 3=Empty).
+    pub list_state: u32,
 }
 
 unsafe impl Send for Page {}
@@ -169,7 +171,7 @@ unsafe impl Sync for SegmentOwner {}
 
 impl Page {
     /// Creates a new uninitialized `Page`.
-    pub const fn new(page_index: usize) -> Self {
+    pub const fn new() -> Self {
         Self {
             free: None,
             thread_free: AtomicFreeList::new(),
@@ -177,8 +179,9 @@ impl Page {
             alloc_count: 0,
             max_blocks: 0,
             next_page: None,
-            page_index,
+            prev_page: None,
             size_class: 0,
+            list_state: 0,
         }
     }
 
@@ -374,13 +377,13 @@ impl Segment {
 
             // Page 0 holds segment metadata and is never allocated from;
             // only pages 1..PAGES_PER_SEGMENT need explicit free-list state.
-            // We still initialize page 0 with `Page::new(0)` so debugging and
+            // We still initialize page 0 with `Page::new()` so debugging and
             // memory-tracing tools observe uniform metadata across the
             // whole array. No page stores a back-pointer to the segment
             // because every caller recovers it by rounding the page address
             // down to `SEGMENT_ALIGN`.
             for i in 0..PAGES_PER_SEGMENT {
-                segment.pages[i] = Page::new(i);
+                segment.pages[i] = Page::new();
             }
         }
     }
@@ -451,7 +454,7 @@ mod tests {
 
     #[test]
     fn test_page_reclaim_thread_free() {
-        let mut page = Page::new(1);
+        let mut page = Page::new();
         page.block_size = 16;
 
         // `initialize_free_list` writes `Block` nodes (which contain an
@@ -489,7 +492,7 @@ mod tests {
 
     #[test]
     fn test_page_reclaim_thread_free_hot_path() {
-        let mut page = Page::new(1);
+        let mut page = Page::new();
         page.block_size = 16;
 
         #[repr(align(64))]

@@ -44,7 +44,7 @@ fn test_hardened_policy_round_trip() {
     const ALIGN: usize = 8;
     unsafe {
         let mut ptrs = [core::ptr::null_mut::<u8>(); 16];
-        for (i, slot) in ptrs.iter_mut().enumerate() {
+        for slot in ptrs.iter_mut() {
             let p = thread_alloc::<HardenedPolicy, Backend>(SIZE, ALIGN);
             assert!(!p.is_null());
             
@@ -88,7 +88,6 @@ fn test_realloc_under_policies() {
         for i in 16..64 {
             assert_eq!(*ptr1_re.add(i), 0);
         }
-        let new_layout = Layout::from_size_align(new_size, ALIGN).unwrap();
         thread_free::<SecurePolicy, Backend>(ptr1_re);
 
         // 2. HardenedPolicy: check byte preservation and expanded zeroing

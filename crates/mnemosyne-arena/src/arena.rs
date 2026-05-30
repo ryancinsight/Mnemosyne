@@ -100,7 +100,11 @@ unsafe fn initialize_large_or_huge_segment(
 ///   recover the segment header via segment rounding or the metadata slot).
 /// - The returned pointer must be deallocated using `deallocate_large_or_huge`
 ///   with the same memory backend `B`.
-pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(size: usize, align: usize) -> *mut u8 {
+pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(
+    size: usize,
+    align: usize,
+    decommit_slack: bool,
+) -> *mut u8 {
     let (total_alloc_size, alignment) = match derive_large_or_huge_layout(size, align) {
         Some(val) => val,
         None => return core::ptr::null_mut(),
@@ -122,7 +126,7 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(size: usize, align: usiz
             }
         };
 
-    if B::SUPPORTS_DECOMMIT {
+    if B::SUPPORTS_DECOMMIT && decommit_slack {
         // Return the alignment slack before the aligned header to the OS. As in
         // `allocate_segment`, `[raw_ptr, aligned_addr)` is never touched; on Windows
         // it is eagerly committed and would otherwise hold commit charge for the
@@ -250,7 +254,7 @@ mod tests {
         for &align in &[1usize, 2, 4, 8, 16, 64, 4096, 64 * 1024, 1024 * 1024] {
             let size = 4 * 1024 * 1024;
             // Safety: size is non-zero and align is a power of two.
-            let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align) };
+            let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align, true) };
             assert!(!user_ptr.is_null(), "allocation failed for align {align}");
             assert_eq!(
                 (user_ptr as usize) % align,
@@ -307,7 +311,7 @@ mod tests {
         for &align in &[0usize, 3, 6, 12, 24, 48, 96] {
             // Safety: this verifies local validation rejects invalid alignments
             // before any backend allocation can be observed by callers.
-            let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(4096, align) };
+            let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(4096, align, true) };
             assert!(
                 user_ptr.is_null(),
                 "invalid alignment {align} should be rejected"
@@ -329,7 +333,7 @@ mod tests {
 
         let before = backend_memory_stats();
         // Safety: power-of-two alignment, non-zero size.
-        let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align) };
+        let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align, true) };
         assert!(
             !user_ptr.is_null(),
             "tight-mapping huge allocation returned null"
@@ -360,7 +364,7 @@ mod tests {
         // Safety: this verifies local validation rejects alignments that would
         // break segment-rounding free classification.
         let user_ptr =
-            unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(4096, SEGMENT_SIZE * 2) };
+            unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(4096, SEGMENT_SIZE * 2, true) };
         assert!(
             user_ptr.is_null(),
             "above-segment alignment was accepted: {user_ptr:?}"
@@ -374,7 +378,7 @@ mod tests {
 
         // Safety: this verifies local validation rejects zero-size direct
         // arena requests before backend allocation.
-        let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(0, 8) };
+        let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(0, 8, true) };
         assert!(
             user_ptr.is_null(),
             "zero-size huge allocation returned {user_ptr:?}"
@@ -389,7 +393,7 @@ mod tests {
         // Safety: this verifies local validation rejects payloads whose
         // required mapping would exceed the pointer-offset-safe allocation
         // bound before any backend allocation attempt.
-        let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(MAX_ALLOC_SIZE, 8) };
+        let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(MAX_ALLOC_SIZE, 8, true) };
         assert!(
             user_ptr.is_null(),
             "MAX_ALLOC_SIZE huge allocation reached backend and returned {user_ptr:?}"
@@ -469,7 +473,7 @@ mod tests {
         let size = 4 * 1024 * 1024;
         let align = 8;
         let user_ptr =
-            unsafe { allocate_large_or_huge::<DecommitRecordingHugeBackend>(size, align) };
+            unsafe { allocate_large_or_huge::<DecommitRecordingHugeBackend>(size, align, true) };
         assert!(!user_ptr.is_null());
 
         let calls = DECOMMIT_HUGE_CALLS.load(Ordering::Relaxed);

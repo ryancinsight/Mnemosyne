@@ -34,7 +34,6 @@ use mnemosyne_core::policy::AllocPolicy;
 /// borrowing contract as the former split TLS keys.
 #[doc(hidden)]
 pub struct LocalAllocatorSlot<B: HasSegmentPool> {
-    is_allocating: core::cell::Cell<bool>,
     /// One-shot flag recording whether this thread's exit-reclamation sentinel
     /// has been registered. Only the `#[thread_local]` fast path needs it: a
     /// `#[thread_local]` static is not dropped on thread teardown, so the first
@@ -55,7 +54,6 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
     /// Creates an empty per-thread allocator slot.
     pub const fn new() -> Self {
         Self {
-            is_allocating: core::cell::Cell::new(false),
             #[cfg(feature = "nightly_tls")]
             exit_armed: core::cell::Cell::new(false),
             allocator: core::cell::UnsafeCell::new(ThreadAllocator::new()),
@@ -69,15 +67,16 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
     /// internal `UnsafeCell` to macro expansion sites.
     #[inline(always)]
     pub fn with_allocator<R>(&self, f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
-        if self.is_allocating.get() {
+        let alloc = unsafe { &mut *self.allocator.get() };
+        if alloc.is_allocating {
             return None;
         }
-        self.is_allocating.set(true);
+        alloc.is_allocating = true;
         // Safety: this slot is stored in thread-local storage, so no other
         // thread can access the cell. `is_allocating` rejects nested access on
         // the same thread before a second mutable reference can be created.
-        let result = unsafe { f(&mut *self.allocator.get()) };
-        self.is_allocating.set(false);
+        let result = f(alloc);
+        alloc.is_allocating = false;
         Some(result)
     }
 
@@ -105,14 +104,15 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
         &self,
         f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
     ) -> Option<R> {
-        if self.is_allocating.get() {
+        let alloc = unsafe { &mut *self.allocator.get() };
+        if alloc.is_allocating {
             return None;
         }
         // Safety: `is_allocating` is false, so no guarded `&mut` to this cache
         // is live on this thread; the slot is thread-local, so no other thread
         // aliases it; and the caller's `f` contract forbids re-entry, so no
         // nested `&mut` can be created while this borrow is held.
-        Some(unsafe { f(&mut *self.allocator.get()) })
+        Some(f(alloc))
     }
 
     /// Returns the raw allocator-cache pointer used as the segment owner token.
@@ -135,7 +135,6 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
 /// When the heap is dropped, all segments owned by it are automatically reclaimed or orphaned.
 pub struct MnemosyneHeap<P: AllocPolicy, B: HasSegmentPool = mnemosyne_backend::DefaultBackend> {
     allocator: core::cell::UnsafeCell<ThreadAllocator<B>>,
-    is_allocating: core::cell::Cell<bool>,
     _phantom: core::marker::PhantomData<P>,
 }
 
@@ -153,7 +152,6 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
     pub const fn new() -> Self {
         Self {
             allocator: core::cell::UnsafeCell::new(ThreadAllocator::new()),
-            is_allocating: core::cell::Cell::new(false),
             _phantom: core::marker::PhantomData,
         }
     }
@@ -165,17 +163,16 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
         if !is_valid_layout_alloc_request(layout.size(), layout.align()) {
             return core::ptr::null_mut();
         }
-        if self.is_allocating.get() {
-            // Re-entrancy protection fallback.
-            return unsafe { allocate_large_or_huge::<B>(layout.size(), layout.align()) };
-        }
-        self.is_allocating.set(true);
-
-        // Safety: we have exclusive access since MnemosyneHeap is not Sync.
         let alloc = unsafe { &mut *self.allocator.get() };
+        if alloc.is_allocating {
+            // Re-entrancy protection fallback.
+            return unsafe { allocate_large_or_huge::<B>(layout.size(), layout.align(), P::ENABLE_POISONING) };
+        }
+        alloc.is_allocating = true;
+
         let ptr = unsafe { Self::alloc_inner(alloc, layout) };
 
-        self.is_allocating.set(false);
+        alloc.is_allocating = false;
         ptr
     }
 
@@ -183,7 +180,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
         let size = layout.size();
         let align = layout.align();
         if align > MIN_BLOCK_SIZE {
-            let ptr = unsafe { allocate_large_or_huge::<B>(size, align) };
+            let ptr = unsafe { allocate_large_or_huge::<B>(size, align, P::ENABLE_POISONING) };
             if !ptr.is_null() {
                 unsafe { initialize_allocated_bytes::<P>(ptr, size) };
             }
@@ -194,7 +191,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
         let class = match size_to_class_nonzero(adjusted_size) {
             Some(c) => c,
             None => {
-                let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align) };
+                let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
                 if !ptr.is_null() {
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
                 }
@@ -211,10 +208,9 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
             }
         }
 
-        // Safety: alloc is unique and borrows are valid.
         let ptr = unsafe { alloc.alloc::<P>(adjusted_size) };
         let final_ptr = if ptr.is_null() {
-            unsafe { allocate_large_or_huge::<B>(adjusted_size, align) }
+            unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) }
         } else {
             ptr
         };
@@ -254,7 +250,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
         }
 
         // Try L1 per-CPU cache
-        if B::ENABLE_CPU_CACHE && per_cpu::try_free_cpu::<P>(ptr, page.size_class) {
+        if B::ENABLE_CPU_CACHE && per_cpu::try_free_cpu::<P>(ptr, page.size_class as usize) {
             return;
         }
 
@@ -263,19 +259,19 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
         let heap_ptr = self.allocator.get() as *mut ThreadAllocator<B> as *mut core::ffi::c_void;
 
         if owner.matches(heap_ptr) {
-            if self.is_allocating.get() {
+            let alloc = unsafe { &mut *self.allocator.get() };
+            if alloc.is_allocating {
                 // Re-entrancy fallback.
                 unsafe {
                     page.thread_free.push::<P>(NonNull::new_unchecked(block));
                 }
                 return;
             }
-            self.is_allocating.set(true);
-            let alloc = unsafe { &mut *self.allocator.get() };
+            alloc.is_allocating = true;
             unsafe {
                 do_local_free_internal::<P, B>(alloc, block, page, segment);
             }
-            self.is_allocating.set(false);
+            alloc.is_allocating = false;
         } else {
             // It belongs to a different heap or thread allocator. Push to thread_free atomically.
             unsafe {
@@ -705,7 +701,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     if align > MIN_BLOCK_SIZE {
         // Fall back to direct arena/huge allocation to break recursion and get high alignment (64KB aligned page-starts).
         // Safety: allocate_large_or_huge handles safety.
-        let ptr = unsafe { allocate_large_or_huge::<B>(size, align) };
+        let ptr = unsafe { allocate_large_or_huge::<B>(size, align, P::ENABLE_POISONING) };
         if !ptr.is_null() {
             unsafe { initialize_allocated_bytes::<P>(ptr, size) };
         }
@@ -717,7 +713,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     let class = match size_to_class_nonzero(adjusted_size) {
         Some(c) => c,
         None => {
-            let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align) };
+            let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
             if !ptr.is_null() {
                 unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
             }
@@ -786,7 +782,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     }) else {
         // Fall back to direct arena/huge allocation to break recursion.
         // Safety: size and align are forwarded. allocate_large_or_huge handles safety.
-        let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align) };
+        let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
         if !ptr.is_null() {
             unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
         }
@@ -796,7 +792,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     let final_ptr = if ptr.is_null() {
         // Fallback for large allocations or failed cache allocations.
         // Safety: Fallback route using backend B.
-        unsafe { allocate_large_or_huge::<B>(adjusted_size, align) }
+        unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) }
     } else {
         ptr
     };
@@ -855,7 +851,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
     }
 
     // Try L1 per-CPU cache
-    if B::ENABLE_CPU_CACHE && per_cpu::try_free_cpu::<P>(ptr, page.size_class) {
+    if B::ENABLE_CPU_CACHE && per_cpu::try_free_cpu::<P>(ptr, page.size_class as usize) {
         return;
     }
 
@@ -881,15 +877,14 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
             return;
         }
 
-        let mut done = false;
         unsafe {
-            B::with_allocator_unguarded(|alloc| {
+            let alloc = &mut *(current_allocator as *mut ThreadAllocator<B>);
+            if !alloc.is_allocating {
+                alloc.is_allocating = true;
                 do_local_free_internal::<P, B>(alloc, block, page, segment);
-                done = true;
-            });
-        }
-        if done {
-            return;
+                alloc.is_allocating = false;
+                return;
+            }
         }
     }
 
@@ -921,20 +916,19 @@ unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     let becomes_empty = page.alloc_count == 0;
 
     if was_full {
-        let class = page.size_class;
+        let class = page.size_class as usize;
         if alloc.unlink_full_page(page as *mut Page, class) {
-            page.next_page = unsafe { *alloc.active_pages.get_unchecked(class) };
             unsafe {
-                *alloc.active_pages.get_unchecked_mut(class) =
-                    Some(NonNull::new_unchecked(page as *mut Page));
+                alloc.push_active_page(NonNull::new_unchecked(page as *mut Page), class);
             }
         }
     }
     if becomes_empty && !alloc.is_current_segment(segment) && !alloc.try_reclaim_segment(segment) {
-        let class = page.size_class;
+        let class = page.size_class as usize;
         alloc.unlink_page(page as *mut Page, class);
-        page.next_page = alloc.empty_pages;
-        alloc.empty_pages = Some(NonNull::new_unchecked(page as *mut Page));
+        unsafe {
+            alloc.push_empty_page(NonNull::new_unchecked(page as *mut Page));
+        }
     }
 }
 
@@ -1237,7 +1231,7 @@ mod tests {
         for &align in &[8usize, 64 * 1024, 1024 * 1024, SEGMENT_SIZE] {
             // Safety: power-of-two alignment, non-zero size.
             let ptr = unsafe {
-                mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(request, align)
+                mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(request, align, true)
             };
             assert!(!ptr.is_null(), "huge allocation failed for align {align}");
 
@@ -1265,7 +1259,7 @@ mod tests {
         for &align in &[8usize, 64 * 1024, 1024 * 1024, SEGMENT_SIZE] {
             // Safety: power-of-two alignment, non-zero size.
             let ptr = unsafe {
-                mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(request, align)
+                mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(request, align, true)
             };
             assert!(!ptr.is_null(), "huge allocation failed for align {align}");
 

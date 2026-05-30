@@ -99,7 +99,7 @@ unsafe fn pop_page_free_block<P: AllocPolicy>(
     debug_assert!(
         page.free.is_some(),
         "page {} free list empty before pop; block_size={}, alloc_count={}, max_blocks={}",
-        page.page_index,
+        page.index_in_segment(),
         page.block_size,
         page.alloc_count,
         page.max_blocks
@@ -123,52 +123,34 @@ unsafe fn pop_page_free_block<P: AllocPolicy>(
     block
 }
 
-/// Unlinks the page identified by `target` from the singly-linked list
+/// Unlinks the page identified by `page_ptr` from the doubly-linked list
 /// whose head is stored in `head_slot`.
 ///
-/// Returns `true` when the target was found and removed (and its
-/// `next_page` cleared), or `false` when the target is not in this list.
-/// Callers that maintain pages in two parallel lists (active and full) use
-/// the boolean result to short-circuit the second walk.
-///
-/// The function walks the list linearly and mutates exactly three
-/// pointers in the success path: the previous node's `next_page` (or the
-/// list head if the target is the first node), and the target's
-/// `next_page` (cleared so the unlinked node is detached). No pointer is
-/// touched on the not-found path.
+/// This operation is O(1) and mutates at most three pointer fields.
 ///
 /// # Safety
 ///
-/// Every node reachable from `*head_slot` must be a live `Page` owned by
-/// the caller's allocator, and `target` must either be inside this list
-/// or be a pointer that the caller still owns (so the `next_page` clear
-/// on a found node is well-defined). The list is traversed by raw
-/// pointer; the caller must not concurrently mutate the list.
-#[inline]
-unsafe fn unlink_page_from_list(head_slot: &mut Option<NonNull<Page>>, target: *mut Page) -> bool {
-    let mut prev: Option<NonNull<Page>> = None;
-    let mut curr = *head_slot;
-    while let Some(curr_ptr) = curr {
-        if curr_ptr.as_ptr() == target {
-            // Safety: `target` is a live page node and the caller owns its
-            // next_page field; the relink writes a single pointer slot
-            // (either the previous node's next_page or the head).
-            unsafe {
-                let next = (*target).next_page;
-                if let Some(mut prev_ptr) = prev {
-                    prev_ptr.as_mut().next_page = next;
-                } else {
-                    *head_slot = next;
-                }
-                (*target).next_page = None;
-            }
-            return true;
-        }
-        prev = Some(curr_ptr);
-        // Safety: `curr_ptr` is a live page node held by this list.
-        curr = unsafe { curr_ptr.as_ref().next_page };
+/// `page_ptr` must be a valid, live page pointer owned by the current thread
+/// and must be currently linked in the list starting at `head_slot`.
+#[inline(always)]
+unsafe fn unlink_page_from_list(head_slot: &mut Option<NonNull<Page>>, mut page_ptr: NonNull<Page>) {
+    let page = page_ptr.as_mut();
+    let next = page.next_page;
+    let prev = page.prev_page;
+
+    if let Some(mut prev_ptr) = prev {
+        prev_ptr.as_mut().next_page = next;
+    } else {
+        *head_slot = next;
     }
-    false
+
+    if let Some(mut next_ptr) = next {
+        next_ptr.as_mut().prev_page = prev;
+    }
+
+    page.next_page = None;
+    page.prev_page = None;
+    page.list_state = 0;
 }
 
 /// Reclaims any pending cross-thread frees on `page` and, if reclamation
@@ -231,6 +213,8 @@ pub struct ThreadAllocator<B: HasSegmentPool = DefaultBackend> {
     pub orphan_segments_adopted: usize,
     /// Number of owned-segment sweeps made while searching for recyclable pages.
     pub recycle_sweeps: usize,
+    /// Indicates whether an allocation or deallocation operation is currently active on this thread-local cache.
+    pub is_allocating: bool,
     /// Marker to bind the generic MemoryBackend parameter.
     pub _phantom: PhantomData<B>,
 }
@@ -258,8 +242,45 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             fresh_segments: 0,
             orphan_segments_adopted: 0,
             recycle_sweeps: 0,
+            is_allocating: false,
             _phantom: PhantomData,
         }
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn push_active_page(&mut self, page_ptr: NonNull<Page>, class: usize) {
+        let page = &mut *page_ptr.as_ptr();
+        page.next_page = *self.active_pages.get_unchecked(class);
+        page.prev_page = None;
+        if let Some(mut head) = *self.active_pages.get_unchecked(class) {
+            head.as_mut().prev_page = Some(page_ptr);
+        }
+        *self.active_pages.get_unchecked_mut(class) = Some(page_ptr);
+        page.list_state = 1;
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn push_full_page(&mut self, page_ptr: NonNull<Page>, class: usize) {
+        let page = &mut *page_ptr.as_ptr();
+        page.next_page = *self.full_pages.get_unchecked(class);
+        page.prev_page = None;
+        if let Some(mut head) = *self.full_pages.get_unchecked(class) {
+            head.as_mut().prev_page = Some(page_ptr);
+        }
+        *self.full_pages.get_unchecked_mut(class) = Some(page_ptr);
+        page.list_state = 2;
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn push_empty_page(&mut self, page_ptr: NonNull<Page>) {
+        let page = &mut *page_ptr.as_ptr();
+        page.next_page = self.empty_pages;
+        page.prev_page = None;
+        if let Some(mut head) = self.empty_pages {
+            head.as_mut().prev_page = Some(page_ptr);
+        }
+        self.empty_pages = Some(page_ptr);
+        page.list_state = 3;
     }
 
     /// Returns the process-wide number of blocks reclaimed from cross-thread free lists.
@@ -364,7 +385,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     let page = &(*segment).pages[page_index];
                     live_allocations += page.alloc_count;
                     if page.block_size > 0 {
-                        let class = page.size_class;
+                        let class = page.size_class as usize;
                         let occupancy = &mut size_class_occupancy[class];
                         occupancy.active_pages += 1;
                         if page.alloc_count == 0 {
@@ -407,9 +428,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             if active_page.free.is_none() {
                 // The page is truly full! Move it to full_pages.
                 unsafe {
-                    *self.active_pages.get_unchecked_mut(class) = active_page.next_page;
-                    active_page.next_page = *self.full_pages.get_unchecked(class);
-                    *self.full_pages.get_unchecked_mut(class) = Some(active_ptr);
+                    unlink_page_from_list(self.active_pages.get_unchecked_mut(class), active_ptr);
+                    self.push_full_page(active_ptr, class);
                 }
             }
         }
@@ -417,7 +437,6 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // 2. Check if any page in full_pages has reclaimed cross-thread frees!
         // We only check pages that actually have pending cross-thread frees.
         // Also limit loop to 8 pages to bound search latency under threaded saturation.
-        let mut prev: Option<NonNull<Page>> = None;
         let mut curr_opt = unsafe { *self.full_pages.get_unchecked(class) };
         let mut checked = 0;
         while let Some(mut page_ptr) = curr_opt {
@@ -436,19 +455,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         // Page is no longer full! Move it back to active list.
                         // Safety: page_ptr and class are valid.
                         unsafe {
-                            if let Some(mut p) = prev {
-                                p.as_mut().next_page = page.next_page;
-                            } else {
-                                *self.full_pages.get_unchecked_mut(class) = page.next_page;
-                            }
-                            page.next_page = *self.active_pages.get_unchecked(class);
-                            *self.active_pages.get_unchecked_mut(class) = Some(page_ptr);
+                            unlink_page_from_list(self.full_pages.get_unchecked_mut(class), page_ptr);
+                            self.push_active_page(page_ptr, class);
                         }
                     }
                     return block.as_ptr() as *mut u8;
                 }
             }
-            prev = Some(page_ptr);
             curr_opt = page.next_page;
         }
 
@@ -472,10 +485,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         if page.alloc_count == page.max_blocks {
             // Safety: new_page_ptr and class are valid.
             unsafe {
-                *self.active_pages.get_unchecked_mut(class) = page.next_page;
-                page.next_page = *self.full_pages.get_unchecked(class);
-                *self.full_pages.get_unchecked_mut(class) =
-                    Some(NonNull::new_unchecked(new_page_ptr));
+                let ptr = NonNull::new_unchecked(new_page_ptr);
+                unlink_page_from_list(self.active_pages.get_unchecked_mut(class), ptr);
+                self.push_full_page(ptr, class);
             }
         }
         block.as_ptr() as *mut u8
@@ -497,18 +509,16 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // Check if there is an empty page in the defragmentation list first.
         if let Some(mut page_ptr) = self.empty_pages {
             unsafe {
-                self.empty_pages = page_ptr.as_ref().next_page;
+                unlink_page_from_list(&mut self.empty_pages, page_ptr);
                 let page = page_ptr.as_mut();
-                page.next_page = None;
 
                 let segment_addr = (page_ptr.as_ptr() as usize) & !(SEGMENT_SIZE - 1);
-                let page_start = (segment_addr as *mut u8).add(page.page_index << PAGE_SHIFT);
+                let page_start = (segment_addr as *mut u8).add(page.index_in_segment() << PAGE_SHIFT);
                 page.block_size = block_size;
-                page.size_class = class;
+                page.size_class = class as u32;
                 page.initialize_free_list::<P>(page_start);
 
-                page.next_page = *self.active_pages.get_unchecked(class);
-                *self.active_pages.get_unchecked_mut(class) = Some(page_ptr);
+                self.push_active_page(page_ptr, class);
                 self.recycled_pages += 1;
                 return page_ptr.as_ptr();
             }
@@ -544,27 +554,22 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                 }
 
                                 if page.alloc_count > 0 {
-                                    let pg_class = page.size_class;
+                                    let pg_class = page.size_class as usize;
+                                    let ptr = NonNull::new_unchecked(page_ptr);
                                     if page.alloc_count < page.max_blocks {
-                                        page.next_page = *self.active_pages.get_unchecked(pg_class);
-                                        *self.active_pages.get_unchecked_mut(pg_class) =
-                                            Some(NonNull::new_unchecked(page_ptr));
+                                        self.push_active_page(ptr, pg_class);
                                     } else {
-                                        page.next_page = *self.full_pages.get_unchecked(pg_class);
-                                        *self.full_pages.get_unchecked_mut(pg_class) =
-                                            Some(NonNull::new_unchecked(page_ptr));
+                                        self.push_full_page(ptr, pg_class);
                                     }
                                 } else if found_page.is_null() {
                                     found_page = page_ptr;
                                 } else {
-                                    page.next_page = self.empty_pages;
-                                    self.empty_pages = Some(NonNull::new_unchecked(page_ptr));
+                                    self.push_empty_page(NonNull::new_unchecked(page_ptr));
                                 }
                             } else if found_page.is_null() {
                                 found_page = page_ptr;
                             } else {
-                                page.next_page = self.empty_pages;
-                                self.empty_pages = Some(NonNull::new_unchecked(page_ptr));
+                                self.push_empty_page(NonNull::new_unchecked(page_ptr));
                             }
                         }
                     }
@@ -572,15 +577,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     if !found_page.is_null() {
                         let page = unsafe { &mut *found_page };
                         page.block_size = block_size;
-                        page.size_class = class;
+                        page.size_class = class as u32;
                         let page_start =
-                            unsafe { (seg_ptr as *mut u8).add(page.page_index << PAGE_SHIFT) };
+                            unsafe { (seg_ptr as *mut u8).add(page.index_in_segment() << PAGE_SHIFT) };
                         // Safety: initializing free list for the repurposed page
                         unsafe {
                             page.initialize_free_list::<P>(page_start);
-                            page.next_page = *self.active_pages.get_unchecked(class);
-                            *self.active_pages.get_unchecked_mut(class) =
-                                Some(NonNull::new_unchecked(found_page));
+                            self.push_active_page(NonNull::new_unchecked(found_page), class);
                         }
                         return found_page;
                     }
@@ -621,17 +624,16 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // Safety: page_ptr points to a valid Page inside the segment.
         let page = unsafe { &mut *page_ptr };
         page.block_size = block_size;
-        page.size_class = class;
+        page.size_class = class as u32;
 
-        let page_start = unsafe { (seg as *mut u8).add(page.page_index << PAGE_SHIFT) };
+        let page_start = unsafe { (seg as *mut u8).add(page.index_in_segment() << PAGE_SHIFT) };
         unsafe {
             page.initialize_free_list::<P>(page_start);
         }
 
         // Prepend to the size class active pages list.
         unsafe {
-            page.next_page = *self.active_pages.get_unchecked(class);
-            *self.active_pages.get_unchecked_mut(class) = Some(NonNull::new_unchecked(page_ptr));
+            self.push_active_page(NonNull::new_unchecked(page_ptr), class);
         }
 
         self.fresh_pages += 1;
@@ -678,7 +680,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 for i in 1..PAGES_PER_SEGMENT {
                     let pg = &mut (*segment).pages[i];
                     if pg.block_size > 0 {
-                        let class = pg.size_class;
+                        let class = pg.size_class as usize;
                         self.unlink_page(pg as *mut Page, class);
                     }
                     self.unlink_empty_page(pg as *mut Page);
@@ -712,33 +714,45 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[must_use]
     pub(crate) unsafe fn unlink_full_page(&mut self, page_ptr: *mut Page, class: usize) -> bool {
         debug_assert!(class < NUM_SIZE_CLASSES);
-        // Safety: `full_pages[class]` is the head of a singly-linked page
-        // list owned by this allocator, and `page_ptr` is checked against
-        // every node before any field write.
-        unsafe { unlink_page_from_list(self.full_pages.get_unchecked_mut(class), page_ptr) }
+        let Some(target) = NonNull::new(page_ptr) else {
+            return false;
+        };
+        if target.as_ref().list_state == 2 {
+            unlink_page_from_list(self.full_pages.get_unchecked_mut(class), target);
+            true
+        } else {
+            false
+        }
     }
 
     /// Helper to unlink a page from the active pages or full pages list of a class.
     #[inline]
     pub(crate) unsafe fn unlink_page(&mut self, page_ptr: *mut Page, class: usize) {
         debug_assert!(class < NUM_SIZE_CLASSES);
-        // Safety: both `active_pages[class]` and `full_pages[class]` are heads of
-        // singly-linked page lists owned by this allocator. `page_ptr` is checked
-        // against each node before any pointer field is mutated, so a stale
-        // pointer cannot corrupt the surrounding nodes.
-        let removed_from_active =
-            unsafe { unlink_page_from_list(self.active_pages.get_unchecked_mut(class), page_ptr) };
-        if removed_from_active {
+        let Some(target) = NonNull::new(page_ptr) else {
             return;
+        };
+        let page = target.as_ref();
+        debug_assert_eq!(page.size_class as usize, class);
+        if page.list_state == 1 {
+            unlink_page_from_list(self.active_pages.get_unchecked_mut(class), target);
+        } else if page.list_state == 2 {
+            unlink_page_from_list(self.full_pages.get_unchecked_mut(class), target);
         }
-        let _ =
-            unsafe { unlink_page_from_list(self.full_pages.get_unchecked_mut(class), page_ptr) };
     }
 
     /// Helper to unlink a page from the empty pages list.
     #[inline]
     pub(crate) unsafe fn unlink_empty_page(&mut self, page_ptr: *mut Page) -> bool {
-        unsafe { unlink_page_from_list(&mut self.empty_pages, page_ptr) }
+        let Some(target) = NonNull::new(page_ptr) else {
+            return false;
+        };
+        if target.as_ref().list_state == 3 {
+            unlink_page_from_list(&mut self.empty_pages, target);
+            true
+        } else {
+            false
+        }
     }
 
     /// Prepends `segment` to this thread's intrusive doubly-linked
@@ -950,7 +964,7 @@ mod tests {
         // Verify large allocation directly calls MockBackend
         // Safety: size and align are valid.
         let large_ptr =
-            unsafe { mnemosyne_arena::allocate_large_or_huge::<MockBackend>(1024 * 1024, 8) };
+            unsafe { mnemosyne_arena::allocate_large_or_huge::<MockBackend>(1024 * 1024, 8, true) };
         assert!(!large_ptr.is_null(), "MockBackend large allocation failed");
         assert!(
             ALLOC_COUNT.load(Ordering::SeqCst) >= 1,
@@ -1150,7 +1164,7 @@ mod tests {
     /// backend is used because the derivation rounds the page address down to
     /// `SEGMENT_ALIGN`, which only holds for genuinely segment-aligned memory.
     #[test]
-    fn page_index_field_matches_address_derivation() {
+    fn page_address_derivation_index_in_segment() {
         let _guard = TEST_LOCK
             .lock()
             .expect("local allocator test lock was poisoned");
@@ -1172,11 +1186,6 @@ mod tests {
                 i,
                 "address derivation disagrees with array position at page {i}"
             );
-            assert_eq!(
-                page.index_in_segment(),
-                page.page_index,
-                "address derivation disagrees with stored page_index at page {i}"
-            );
         }
 
         // Safety: `seg` was returned by `allocate_segment` and is unaliased.
@@ -1196,44 +1205,58 @@ mod tests {
             .expect("local allocator test lock was poisoned");
 
         // Three standalone page nodes owned as raw pointers for the duration.
-        let p0 = std::boxed::Box::into_raw(std::boxed::Box::new(Page::new(1)));
-        let p1 = std::boxed::Box::into_raw(std::boxed::Box::new(Page::new(2)));
-        let p2 = std::boxed::Box::into_raw(std::boxed::Box::new(Page::new(3)));
+        let p0 = std::boxed::Box::into_raw(std::boxed::Box::new(Page::new()));
+        let p1 = std::boxed::Box::into_raw(std::boxed::Box::new(Page::new()));
+        let p2 = std::boxed::Box::into_raw(std::boxed::Box::new(Page::new()));
         // Safety: p0/p1/p2 are unique live allocations; build head -> p0 -> p1 -> p2.
-        let (n0, _n1, n2) = unsafe {
+        let (n0, n1, n2) = unsafe {
             let n0 = NonNull::new_unchecked(p0);
             let n1 = NonNull::new_unchecked(p1);
             let n2 = NonNull::new_unchecked(p2);
             (*p0).next_page = Some(n1);
+            (*p0).prev_page = None;
             (*p1).next_page = Some(n2);
+            (*p1).prev_page = Some(n0);
             (*p2).next_page = None;
+            (*p2).prev_page = Some(n1);
             (n0, n1, n2)
         };
         let mut head = Some(n0);
 
         // Unlink the MIDDLE node: head -> p0 -> p2, p1 detached.
         // Safety: all nodes live; `p1` is in the list.
-        assert!(unsafe { unlink_page_from_list(&mut head, p1) });
+        unsafe {
+            unlink_page_from_list(&mut head, n1);
+        }
         assert_eq!(head, Some(n0));
         // Safety: nodes remain live.
         unsafe {
             assert_eq!((*p0).next_page, Some(n2));
+            assert_eq!((*p0).prev_page, None);
+            assert_eq!((*p2).prev_page, Some(n0));
+            assert_eq!((*p2).next_page, None);
             assert_eq!((*p1).next_page, None);
+            assert_eq!((*p1).prev_page, None);
         }
 
         // Unlink the HEAD node: head -> p2.
         // Safety: `p0` is the head.
-        assert!(unsafe { unlink_page_from_list(&mut head, p0) });
+        unsafe {
+            unlink_page_from_list(&mut head, n0);
+        }
         assert_eq!(head, Some(n2));
-
-        // Unlink an ABSENT node (p1 again): reports false, list untouched.
-        // Safety: `p1` is no longer in the list.
-        assert!(!unsafe { unlink_page_from_list(&mut head, p1) });
-        assert_eq!(head, Some(n2));
+        unsafe {
+            assert_eq!((*p2).prev_page, None);
+            assert_eq!((*p2).next_page, None);
+            assert_eq!((*p0).next_page, None);
+            assert_eq!((*p0).prev_page, None);
+        }
 
         // Unlink the TAIL/only node: list empties.
         // Safety: `p2` is the sole node.
-        assert!(unsafe { unlink_page_from_list(&mut head, p2) });
+        unsafe {
+            unlink_page_from_list(&mut head, n2);
+        }
         assert!(head.is_none());
 
         // Reclaim the raw allocations.
@@ -1319,10 +1342,9 @@ mod tests {
             (*block).set_next::<StandardPolicy>(page.free, 0);
             page.free = Some(NonNull::new_unchecked(block));
             page.alloc_count = 0; // Page is now empty
-            let class = page.size_class;
+            let class = page.size_class as usize;
             alloc.unlink_page(page as *mut Page, class);
-            page.next_page = alloc.empty_pages;
-            alloc.empty_pages = Some(NonNull::new_unchecked(page as *mut Page));
+            alloc.push_empty_page(NonNull::new_unchecked(page as *mut Page));
         }
 
         // 3. Now allocate a block of a DIFFERENT size class, say class 1 (32 bytes).
@@ -1349,7 +1371,7 @@ mod tests {
         let expected_class = size_to_class(32).expect("32 bytes is a small allocation");
 
         assert_eq!(segment_addr2, segment_addr);
-        assert_eq!(page2.size_class, expected_class);
+        assert_eq!(page2.size_class as usize, expected_class);
         assert_eq!(page2.block_size, class_to_size(expected_class));
         assert!(
             page2.alloc_count > 0,
@@ -1462,8 +1484,9 @@ mod tests {
             .expect("local allocator test lock was poisoned");
         let mut alloc = ThreadAllocator::<DefaultBackend>::new();
         let class = size_to_class(16).expect("16 bytes is a small allocation");
-        let mut listed = Page::new(1);
-        let mut missing = Page::new(2);
+        let mut listed = Page::new();
+        let mut missing = Page::new();
+        listed.list_state = 2; // Simulate being in full_pages
         let listed_ptr = NonNull::from(&mut listed);
         let missing_ptr = NonNull::from(&mut missing);
         alloc.full_pages[class] = Some(listed_ptr);
