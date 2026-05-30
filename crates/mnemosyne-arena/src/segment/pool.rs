@@ -347,10 +347,18 @@ impl GlobalSegmentPool {
     /// Pops a segment from the calling thread's NUMA node pool, stealing from other nodes if empty.
     #[inline]
     pub fn pop(&self) -> Option<*mut Segment> {
-        let node = current_numa_node() as usize % 16;
+        let mut node = current_numa_node() as usize % 16;
         // 1. Try local node first
         if let Some(segment) = self.nodes[node].pop() {
             return Some(segment);
+        }
+        // Local node cache miss: refresh our TLS cached NUMA node ID in case we migrated.
+        let new_node = crate::numa::refresh_numa_node() as usize % 16;
+        if new_node != node {
+            node = new_node;
+            if let Some(segment) = self.nodes[node].pop() {
+                return Some(segment);
+            }
         }
         // 2. Steal from other nodes
         for i in 1..16 {
