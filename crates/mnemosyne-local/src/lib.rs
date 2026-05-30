@@ -10,10 +10,8 @@ extern crate std;
 
 pub mod local_alloc;
 pub mod tls;
-pub mod per_cpu;
 
 pub use local_alloc::{SizeClassOccupancy, ThreadAllocator, ThreadAllocatorStats};
-pub use per_cpu::{disable_cpu_cache, enable_cpu_cache};
 
 use core::alloc::Layout;
 use core::ptr::NonNull;
@@ -127,202 +125,6 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
     #[inline(always)]
     fn cache_ptr(&self) -> *mut ThreadAllocator<B> {
         self.allocator.get()
-    }
-}
-
-/// An explicit custom memory heap.
-///
-/// Threads can instantiate a `MnemosyneHeap` to manage their own isolated allocation stream.
-/// When the heap is dropped, all segments owned by it are automatically reclaimed or orphaned.
-pub struct MnemosyneHeap<P: AllocPolicy, B: HasSegmentPool = mnemosyne_backend::DefaultBackend> {
-    allocator: core::cell::UnsafeCell<ThreadAllocator<B>>,
-    is_allocating: core::cell::Cell<bool>,
-    _phantom: core::marker::PhantomData<P>,
-}
-
-unsafe impl<P: AllocPolicy, B: HasSegmentPool> Send for MnemosyneHeap<P, B> {}
-
-impl<P: AllocPolicy, B: HasSegmentPool> Default for MnemosyneHeap<P, B> {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
-    /// Creates a new empty `MnemosyneHeap`.
-    pub const fn new() -> Self {
-        Self {
-            allocator: core::cell::UnsafeCell::new(ThreadAllocator::new()),
-            is_allocating: core::cell::Cell::new(false),
-            _phantom: core::marker::PhantomData,
-        }
-    }
-
-    /// Allocates a block of memory from this heap.
-    ///
-    /// Returns null if allocation fails.
-    pub fn alloc(&self, layout: Layout) -> *mut u8 {
-        if !is_valid_layout_alloc_request(layout.size(), layout.align()) {
-            return core::ptr::null_mut();
-        }
-        if self.is_allocating.get() {
-            // Re-entrancy protection fallback.
-            return unsafe { allocate_large_or_huge::<B>(layout.size(), layout.align()) };
-        }
-        self.is_allocating.set(true);
-
-        // Safety: we have exclusive access since MnemosyneHeap is not Sync.
-        let alloc = unsafe { &mut *self.allocator.get() };
-        let ptr = unsafe { Self::alloc_inner(alloc, layout) };
-
-        self.is_allocating.set(false);
-        ptr
-    }
-
-    unsafe fn alloc_inner(alloc: &mut ThreadAllocator<B>, layout: Layout) -> *mut u8 {
-        let size = layout.size();
-        let align = layout.align();
-        if align > MIN_BLOCK_SIZE {
-            let ptr = unsafe { allocate_large_or_huge::<B>(size, align) };
-            if !ptr.is_null() {
-                unsafe { initialize_allocated_bytes::<P>(ptr, size) };
-            }
-            return ptr;
-        }
-
-        let adjusted_size = core::cmp::max(size, align);
-        let class = match size_to_class_nonzero(adjusted_size) {
-            Some(c) => c,
-            None => {
-                let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align) };
-                if !ptr.is_null() {
-                    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-                }
-                return ptr;
-            }
-        };
-
-        // Try L1 per-CPU cache first
-        if B::ENABLE_CPU_CACHE {
-            let cpu_ptr = per_cpu::try_alloc_cpu::<P>(class);
-            if !cpu_ptr.is_null() {
-                unsafe { initialize_allocated_bytes::<P>(cpu_ptr, adjusted_size) };
-                return cpu_ptr;
-            }
-        }
-
-        // Safety: alloc is unique and borrows are valid.
-        let ptr = unsafe { alloc.alloc::<P>(adjusted_size) };
-        let final_ptr = if ptr.is_null() {
-            unsafe { allocate_large_or_huge::<B>(adjusted_size, align) }
-        } else {
-            ptr
-        };
-
-        if !final_ptr.is_null() {
-            unsafe { initialize_allocated_bytes::<P>(final_ptr, adjusted_size) };
-        }
-        final_ptr
-    }
-
-    /// Frees a block of memory back to its originating heap/allocator.
-    pub fn free(&self, ptr: *mut u8) {
-        if ptr.is_null() {
-            return;
-        }
-
-        let ptr_val = ptr as usize;
-        let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
-        let segment = segment_addr as *mut Segment;
-        let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-
-        // Safety: ptr is non-null and comes from Mnemosyne.
-        let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
-        if page_index == 0 || page.block_size == 0 {
-            if P::ENABLE_POISONING {
-                let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-                let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
-                unsafe { poison_freed_bytes::<P>(ptr, size) };
-            }
-            let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-            let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
-            return;
-        }
-
-        if P::ENABLE_POISONING {
-            unsafe { poison_freed_bytes::<P>(ptr, page.block_size) };
-        }
-
-        // Try L1 per-CPU cache
-        if B::ENABLE_CPU_CACHE && per_cpu::try_free_cpu::<P>(ptr, page.size_class) {
-            return;
-        }
-
-        let block = ptr as *mut Block;
-        let owner = unsafe { (*segment).owner };
-        let heap_ptr = self.allocator.get() as *mut ThreadAllocator<B> as *mut core::ffi::c_void;
-
-        if owner.matches(heap_ptr) {
-            if self.is_allocating.get() {
-                // Re-entrancy fallback.
-                unsafe {
-                    page.thread_free.push::<P>(NonNull::new_unchecked(block));
-                }
-                return;
-            }
-            self.is_allocating.set(true);
-            let alloc = unsafe { &mut *self.allocator.get() };
-            unsafe {
-                do_local_free_internal::<P, B>(alloc, block, page, segment);
-            }
-            self.is_allocating.set(false);
-        } else {
-            // It belongs to a different heap or thread allocator. Push to thread_free atomically.
-            unsafe {
-                page.thread_free.push::<P>(NonNull::new_unchecked(block));
-            }
-        }
-    }
-
-    /// Reallocates a memory block from this heap.
-    pub fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if new_size == 0 {
-            if !ptr.is_null() {
-                self.free(ptr);
-            }
-            return core::ptr::null_mut();
-        }
-        if ptr.is_null() {
-            return self.alloc(Layout::from_size_align(new_size, layout.align()).unwrap_or(layout));
-        }
-
-        if !P::ZERO_INITIALIZE && !P::ENABLE_POISONING {
-            if new_size <= layout.size() {
-                return ptr;
-            }
-            if layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
-                if small_realloc_fits_existing_class(layout, new_size) {
-                    return ptr;
-                }
-            } else {
-                let current_usable = unsafe { usable_size(ptr) };
-                if new_size <= current_usable {
-                    return ptr;
-                }
-            }
-        }
-
-        let new_ptr = self.alloc(Layout::from_size_align(new_size, layout.align()).unwrap_or(layout));
-        if new_ptr.is_null() {
-            return core::ptr::null_mut();
-        }
-
-        unsafe {
-            core::ptr::copy_nonoverlapping(ptr, new_ptr, core::cmp::min(layout.size(), new_size));
-        }
-        self.free(ptr);
-        new_ptr
     }
 }
 
@@ -726,15 +528,6 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
         }
     };
 
-    // Try L1 per-CPU cache first
-    if B::ENABLE_CPU_CACHE {
-        let cpu_ptr = per_cpu::try_alloc_cpu::<P>(class);
-        if !cpu_ptr.is_null() {
-            unsafe { initialize_allocated_bytes::<P>(cpu_ptr, adjusted_size) };
-            return cpu_ptr;
-        }
-    }
-
     // Guard-free small-allocation fast path. `with_allocator_unguarded` still
     // consults the re-entrancy busy bit — returning `None` on same-thread
     // re-entry so a second `&mut ThreadAllocator` can never alias a live
@@ -748,8 +541,21 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
         if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
             // Safety: `page_ptr` is an active page owned by this thread cache.
             let page = unsafe { page_ptr.as_mut() };
-            if page.free.is_some() {
-                let block = unsafe { crate::local_alloc::pop_page_free_block::<P>(page) };
+            if let Some(block) = page.free {
+                // Safety: `block` is the head of the page-local free list; advance the
+                // list and account the allocation.
+                let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+                    let self_addr = page as *const Page as usize;
+                    let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
+                    let segment = segment_addr as *mut Segment;
+                    let page_index = page.index_in_segment();
+                    unsafe { (*segment).keys[page_index] }
+                } else {
+                    0
+                };
+                unsafe {
+                    page.free = (*block.as_ptr()).get_next::<P>(cookie);
+                }
                 page.alloc_count += 1;
                 return block.as_ptr() as *mut u8;
             }
@@ -842,11 +648,6 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         unsafe { poison_freed_bytes::<P>(ptr, page.block_size) };
     }
 
-    // Try L1 per-CPU cache
-    if B::ENABLE_CPU_CACHE && per_cpu::try_free_cpu::<P>(ptr, page.size_class) {
-        return;
-    }
-
     let block = ptr as *mut Block;
     let owner = unsafe { (*segment).owner };
     let current_allocator = B::get_allocator_ptr();
@@ -860,10 +661,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         } else {
             0
         };
-        if !mnemosyne_core::types::is_bitmap_class(page.size_class)
-            && page_free.is_some()
-            && (page_alloc_count != 1 || unsafe { (*segment).is_current })
-        {
+        if page_free.is_some() && (page_alloc_count != 1 || unsafe { (*segment).is_current }) {
             unsafe {
                 (*block).set_next::<P>(page_free, cookie);
                 page.free = Some(NonNull::new_unchecked(block));
@@ -897,37 +695,16 @@ unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     segment: *mut Segment,
 ) {
     let was_full = page.free.is_none();
-    if mnemosyne_core::types::is_bitmap_class(page.size_class) {
-        let page_start = (page as *const Page as usize & !(SEGMENT_SIZE - 1))
-            + page.page_index * PAGE_SIZE;
-        let layout = mnemosyne_core::types::BitmapLayout::for_class(page.size_class).unwrap();
-        let block_idx = (block as usize - page_start) / layout.block_size;
-        let bitmap_ptr = page_start as *mut u64;
-        let u64_idx = block_idx / 64;
-        let bit_idx = block_idx % 64;
-        let bit_mask = 1u64 << bit_idx;
-        let old_val = unsafe { bitmap_ptr.add(u64_idx).read() };
-        if (old_val & bit_mask) != 0 {
-            panic!("Double free detected in bitmap for class {} at block index {}", page.size_class, block_idx);
-        }
-        unsafe {
-            bitmap_ptr.add(u64_idx).write(old_val | bit_mask);
-        }
-        if was_full {
-            page.free = Some(NonNull::dangling());
-        }
+    let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+        let page_index = page.index_in_segment();
+        unsafe { (*segment).keys[page_index] }
     } else {
-        let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-            let page_index = page.index_in_segment();
-            unsafe { (*segment).keys[page_index] }
-        } else {
-            0
-        };
-        unsafe {
-            (*block).set_next::<P>(page.free, cookie);
-        }
-        page.free = Some(NonNull::new_unchecked(block));
+        0
+    };
+    unsafe {
+        (*block).set_next::<P>(page.free, cookie);
     }
+    page.free = Some(NonNull::new_unchecked(block));
 
     page.alloc_count -= 1;
     let becomes_empty = page.alloc_count == 0;
@@ -1028,8 +805,19 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                     if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) }
                     {
                         let active_page = unsafe { page_ptr.as_mut() };
-                        if active_page.free.is_some() {
-                            let block = unsafe { crate::local_alloc::pop_page_free_block::<P>(active_page) };
+                        if let Some(block) = active_page.free {
+                            let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+                                let self_addr = active_page as *const Page as usize;
+                                let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
+                                let segment = segment_addr as *mut Segment;
+                                let page_index = active_page.index_in_segment();
+                                unsafe { (*segment).keys[page_index] }
+                            } else {
+                                0
+                            };
+                            unsafe {
+                                active_page.free = (*block.as_ptr()).get_next::<P>(cookie);
+                            }
                             active_page.alloc_count += 1;
                             allocated = block.as_ptr() as *mut u8;
                         }
@@ -1054,8 +842,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                             } else {
                                 0
                             };
-                            if !mnemosyne_core::types::is_bitmap_class(page_ref.size_class)
-                                && page_free.is_some()
+                            if page_free.is_some()
                                 && (page_alloc_count != 1 || (*segment).is_current)
                             {
                                 (*block).set_next::<P>(page_free, cookie);
@@ -1102,10 +889,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                     } else {
                         0
                     };
-                    if !mnemosyne_core::types::is_bitmap_class(page_ref.size_class)
-                        && page_free.is_some()
-                        && (page_alloc_count != 1 || (*segment).is_current)
-                    {
+                    if page_free.is_some() && (page_alloc_count != 1 || (*segment).is_current) {
                         (*block).set_next::<P>(page_free, cookie);
                         page_ref.free = Some(NonNull::new_unchecked(block));
                         page_ref.alloc_count = page_alloc_count - 1;
@@ -1356,7 +1140,7 @@ mod tests {
 
     #[test]
     fn reentrant_current_segment_local_free_uses_metadata_fast_path() {
-        let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(64, 8) };
+        let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(32, 8) };
         assert!(
             !ptr.is_null(),
             "reentrant local-free setup allocation failed"
@@ -1473,10 +1257,10 @@ mod tests {
             .expect("local allocator test lock was poisoned");
 
         // We want to verify that tamper detection works under HardenedPolicy.
-        // Let's allocate two blocks on a fresh page of class 3 (64 bytes).
+        // Let's allocate two blocks on a fresh page of class 0 (16 bytes).
         // Since we want them on the same page, we can allocate them in sequence.
-        let ptr1 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(64, 8) };
-        let ptr2 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(64, 8) };
+        let ptr1 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(16, 8) };
+        let ptr2 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(16, 8) };
         assert!(!ptr1.is_null());
         assert!(!ptr2.is_null());
 
@@ -1497,7 +1281,7 @@ mod tests {
         }
 
         // Now, try to allocate. The first allocation gets `ptr2` (which is successful).
-        let ptr3 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(64, 8) };
+        let ptr3 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(16, 8) };
         assert_eq!(ptr3, ptr2);
 
         // The second allocation would follow the tampered pointer to `ptr1`.

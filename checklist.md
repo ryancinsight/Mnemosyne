@@ -250,8 +250,6 @@ Target version: 0.1.0
 - [x] [patch] Reject `thread_local!` const initialization for the allocator slot after it improved non-saturated rows but regressed saturated threaded cycles.
 - [x] [patch] Add all-size-class lower-bound coverage for `usable_size`.
 - [x] [patch] Reject separate owner-token TLS routing after cycle latency, cross-thread handoff, and saturated threaded rows regressed.
-- [x] [minor] Algorithmic Optimizations: Implement Bitmap Free Lists for the smallest size classes (classes 0, 1, and 2 supporting sizes 16 B, 32 B, and 48 B) to minimize metadata space and cache line pressure. Verified: all workspace tests and Criterion benchmarks pass.
-- [x] [minor] Algorithmic Optimizations: Implement Bounded Retention of Huge Mappings using a thread-safe, lock-free global cache with ABA protection to recycle large/huge allocations and bypass OS allocation syscalls. Verified: all workspace tests and Criterion benchmarks pass.
 
 ## Next
 

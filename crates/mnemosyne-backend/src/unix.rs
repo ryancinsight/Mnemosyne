@@ -110,8 +110,6 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
     const SUPPORTS_PAGE_RESET: bool = cfg!(any(target_os = "linux", target_os = "macos", target_os = "freebsd"));
     const SUPPORTS_MAKE_GUARD: bool = true;
     const SUPPORTS_DECOMMIT: bool = cfg!(any(target_os = "linux", target_os = "macos", target_os = "freebsd"));
-    const RECYCLE_HUGE_MAPPINGS: bool = true;
-    const ENABLE_CPU_CACHE: bool = !cfg!(test);
 
     /// Allocates virtual memory pages of the given size.
     ///

@@ -27,12 +27,6 @@ pub trait MemoryBackend: Send + Sync + 'static {
     /// Indicates whether the backend supports releasing memory commitment while keeping the reservation.
     const SUPPORTS_DECOMMIT: bool = false;
 
-    /// Indicates whether the backend supports recycling huge allocations via a global pool.
-    const RECYCLE_HUGE_MAPPINGS: bool = false;
-
-    /// Indicates whether the allocator should use the lock-free per-CPU cache.
-    const ENABLE_CPU_CACHE: bool = false;
-
     /// Allocates page-aligned memory from the OS.
     ///
     /// # Safety
@@ -144,19 +138,5 @@ pub trait MemoryBackend: Send + Sync + 'static {
     #[allow(unused_variables)]
     unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
         false
-    }
-
-    /// Re-commits a range of virtual memory that was previously decommitted.
-    ///
-    /// The default implementation returns `true` (valid for Unix/madvise and generic
-    /// backends where access automatically commits on write).
-    ///
-    /// # Safety
-    ///
-    /// `ptr`/`size` must describe a valid page-aligned range of virtual memory
-    /// previously allocated from this backend.
-    #[allow(unused_variables)]
-    unsafe fn commit(ptr: *mut u8, size: usize) -> bool {
-        true
     }
 }

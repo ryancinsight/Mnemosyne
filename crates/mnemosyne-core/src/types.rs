@@ -107,71 +107,6 @@ impl Block {
 unsafe impl Send for Block {}
 unsafe impl Sync for Block {}
 
-/// Returns true if the size class index uses a bitmap-based free list.
-#[inline(always)]
-pub const fn is_bitmap_class(class: usize) -> bool {
-    class < 3
-}
-
-/// Metadata representing the layout of a bitmap page.
-#[derive(Clone, Copy, Debug)]
-pub struct BitmapLayout {
-    /// Total number of blocks in the page.
-    pub num_blocks: usize,
-    /// Number of u64 words required for the bitmap prefix.
-    pub num_u64s: usize,
-    /// Number of blocks reserved for the bitmap prefix.
-    pub reserved_blocks: usize,
-    /// Size of each block in bytes.
-    pub block_size: usize,
-}
-
-impl BitmapLayout {
-    /// Returns the bitmap layout for a given size class, or None if it is not a bitmap class.
-    #[inline(always)]
-    pub const fn for_class(class: usize) -> Option<Self> {
-        match class {
-            0 => Some(Self {
-                num_blocks: 4096,
-                num_u64s: 64,
-                reserved_blocks: 32, // 64 * 8 = 512 bytes, 512 / 16 = 32 blocks
-                block_size: 16,
-            }),
-            1 => Some(Self {
-                num_blocks: 2048,
-                num_u64s: 32,
-                reserved_blocks: 8,  // 32 * 8 = 256 bytes, 256 / 32 = 8 blocks
-                block_size: 32,
-            }),
-            2 => Some(Self {
-                num_blocks: 1365,
-                num_u64s: 24, // 24 * 8 = 192 bytes, 192 / 48 = 4 blocks (multiple of 48-byte blocks)
-                reserved_blocks: 4,
-                block_size: 48,
-            }),
-            _ => None,
-        }
-    }
-}
-
-/// Finds the first free block in a bitmap page, clears its bit, and returns the block index.
-#[inline(always)]
-pub unsafe fn alloc_bitmap_block(page_start: *mut u8, layout: &BitmapLayout) -> Option<usize> {
-    let bitmap_ptr = page_start as *mut u64;
-    for i in 0..layout.num_u64s {
-        let val = unsafe { *bitmap_ptr.add(i) };
-        if val != 0 {
-            let bit_idx = val.trailing_zeros() as usize;
-            let block_idx = i * 64 + bit_idx;
-            unsafe {
-                bitmap_ptr.add(i).write(val & !(1u64 << bit_idx));
-            }
-            return Some(block_idx);
-        }
-    }
-    None
-}
-
 /// Metadata representing a page of memory.
 ///
 /// Each page manages blocks of a single size class. The field layout keeps
@@ -306,44 +241,17 @@ impl Page {
         );
         self.alloc_count -= count;
 
-        if is_bitmap_class(self.size_class) {
-            let page_start = (self as *const Page as usize & !(crate::constants::SEGMENT_SIZE - 1))
-                + self.page_index * crate::constants::PAGE_SIZE;
-            let layout = BitmapLayout::for_class(self.size_class).unwrap();
-            let bitmap_ptr = page_start as *mut u64;
-
-            let mut curr = Some(block);
-            while let Some(node) = curr {
-                let block_ptr = node.as_ptr();
-                let block_idx = (block_ptr as usize - page_start) / layout.block_size;
-                let u64_idx = block_idx / 64;
-                let bit_idx = block_idx % 64;
-                let bit_mask = 1u64 << bit_idx;
-                let old_val = unsafe { bitmap_ptr.add(u64_idx).read() };
-                if (old_val & bit_mask) != 0 {
-                    panic!("Double free detected in bitmap during cross-thread reclaim for class {} at block index {}", self.size_class, block_idx);
-                }
-                unsafe {
-                    bitmap_ptr.add(u64_idx).write(old_val | bit_mask);
-                }
-                curr = unsafe { (*block_ptr).get_next_dynamic(encrypted, cookie) };
-            }
-            if self.free.is_none() {
-                self.free = Some(NonNull::dangling());
-            }
+        if self.free.is_none() {
+            self.free = Some(block);
         } else {
-            if self.free.is_none() {
-                self.free = Some(block);
-            } else {
-                let mut last = block;
-                while let Some(node) = unsafe { (*last.as_ptr()).get_next_dynamic(encrypted, cookie) } {
-                    last = node;
-                }
-                unsafe {
-                    (*last.as_ptr()).set_next_dynamic(self.free, encrypted, cookie);
-                }
-                self.free = Some(block);
+            let mut last = block;
+            while let Some(node) = unsafe { (*last.as_ptr()).get_next_dynamic(encrypted, cookie) } {
+                last = node;
             }
+            unsafe {
+                (*last.as_ptr()).set_next_dynamic(self.free, encrypted, cookie);
+            }
+            self.free = Some(block);
         }
         count
     }
@@ -369,57 +277,35 @@ impl Page {
         &mut self,
         page_start: *mut u8,
     ) {
+        let block_size = self.block_size;
+        let num_blocks = PAGE_SIZE / block_size;
+        self.max_blocks = num_blocks;
         self.alloc_count = 0;
-        if let Some(layout) = BitmapLayout::for_class(self.size_class) {
-            self.max_blocks = layout.num_blocks - layout.reserved_blocks;
-            let bitmap_ptr = page_start as *mut u64;
-            let first_mask = !((1u64 << layout.reserved_blocks) - 1);
-            unsafe {
-                bitmap_ptr.write(first_mask);
-            }
-            for i in 1..layout.num_u64s {
-                let val = if i * 64 < layout.num_blocks {
-                    if (i + 1) * 64 <= layout.num_blocks {
-                        u64::MAX
-                    } else {
-                        let valid_bits = layout.num_blocks - i * 64;
-                        (1u64 << valid_bits) - 1
-                    }
-                } else {
-                    0
-                };
-                unsafe {
-                    bitmap_ptr.add(i).write(val);
-                }
-            }
-            self.free = Some(NonNull::dangling());
+
+        let self_addr = self as *const Page as usize;
+        let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
+        let segment = segment_addr as *mut Segment;
+        let page_index = self.index_in_segment();
+        let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+            unsafe { (*segment).keys[page_index] }
         } else {
-            let block_size = self.block_size;
-            let num_blocks = PAGE_SIZE / block_size;
-            self.max_blocks = num_blocks;
+            0
+        };
 
-            let self_addr = self as *const Page as usize;
-            let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
-            let segment = segment_addr as *mut Segment;
-            let page_index = self.index_in_segment();
-            let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-                unsafe { (*segment).keys[page_index] }
-            } else {
-                0
-            };
-
-            let mut prev: Option<NonNull<Block>> = None;
-            for i in (0..num_blocks).rev() {
-                let offset = i * block_size;
-                unsafe {
-                    let block_ptr = page_start.add(offset) as *mut Block;
-                    (*block_ptr).set_next::<P>(prev, cookie);
-                    prev = Some(NonNull::new_unchecked(block_ptr));
-                }
+        let mut prev: Option<NonNull<Block>> = None;
+        for i in (0..num_blocks).rev() {
+            let offset = i * block_size;
+            // Safety: page_start is a valid pointer to the start of the 64KB page,
+            // offset is within the bounds of this page, and block_ptr is aligned.
+            // We write the next node to form the linked list.
+            unsafe {
+                let block_ptr = page_start.add(offset) as *mut Block;
+                (*block_ptr).set_next::<P>(prev, cookie);
+                prev = Some(NonNull::new_unchecked(block_ptr));
             }
-
-            self.free = prev;
         }
+
+        self.free = prev;
     }
 }
 
@@ -451,8 +337,6 @@ pub struct Segment {
     pub next_free_segment: *mut Segment,
     /// If true, free list pointers in this segment are XOR-encrypted.
     pub free_list_encrypted: bool,
-    /// NUMA node ID where this segment was allocated.
-    pub numa_node: u32,
     /// Per-page keys for free-list pointer encryption.
     pub keys: [usize; PAGES_PER_SEGMENT],
     /// The pages metadata array. Page 0 is reserved for segment metadata.
@@ -468,7 +352,7 @@ impl Segment {
     /// # Safety
     ///
     /// `aligned_ptr` must be aligned to `SEGMENT_ALIGN` and valid for write.
-    pub unsafe fn initialize(aligned_ptr: *mut Segment, raw_alloc_ptr: *mut u8, numa_node: u32) {
+    pub unsafe fn initialize(aligned_ptr: *mut Segment, raw_alloc_ptr: *mut u8) {
         // Safety: aligned_ptr must point to a valid, exclusive, aligned memory segment.
         // We initialize the segment fields and establish parent/child pointers safely.
         unsafe {
@@ -480,7 +364,6 @@ impl Segment {
             segment.prev_owned_segment = core::ptr::null_mut();
             segment.next_free_segment = core::ptr::null_mut();
             segment.free_list_encrypted = false;
-            segment.numa_node = numa_node;
             for i in 0..PAGES_PER_SEGMENT {
                 segment.keys[i] =
                     (aligned_ptr as usize).wrapping_add(i * PAGE_SIZE) ^ 0x5555555555555555;
@@ -566,8 +449,7 @@ mod tests {
     #[test]
     fn test_page_reclaim_thread_free() {
         let mut page = Page::new(1);
-        page.size_class = 3;
-        page.block_size = 64;
+        page.block_size = 16;
 
         // `initialize_free_list` writes `Block` nodes (which contain an
         // 8-byte-aligned `Option<NonNull<Block>>`) into the page. In production
@@ -605,8 +487,7 @@ mod tests {
     #[test]
     fn test_page_reclaim_thread_free_hot_path() {
         let mut page = Page::new(1);
-        page.size_class = 3;
-        page.block_size = 64;
+        page.block_size = 16;
 
         #[repr(align(64))]
         struct PageStorage([u8; PAGE_SIZE]);
@@ -659,7 +540,7 @@ mod tests {
         let segment = segment_storage.as_mut_ptr();
         let raw = 0x1000usize as *mut u8;
         unsafe {
-            Segment::initialize(segment, raw, 0);
+            Segment::initialize(segment, raw);
             (*segment).pages[0].block_size = 0x4000;
         }
 
