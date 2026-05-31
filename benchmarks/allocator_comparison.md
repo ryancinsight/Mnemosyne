@@ -9,10 +9,10 @@
 | allocator burst retention/large_8192 | 2667.430 | 8739.237 | 395296.629 | 19625.598 | 26336.016 | 0.31x | 0.01x | 0.14x | 0.10x |
 | allocator burst retention/medium_1024 | 1028.259 | 6917.562 | 76759.380 | 7906.421 | 8737.742 | 0.15x | 0.01x | 0.13x | 0.12x |
 | allocator burst retention/small_32 | 605.698 | 6419.038 | 839.679 | 4227.527 | 2615.959 | 0.09x | 0.72x | 0.14x | 0.23x |
-| allocator cycle latency/huge_2m | 21.875 | 7466.463 | 8483.326 | N/A | 115.016 | 0.00x | 0.00x | N/A | 0.19x |
-| allocator cycle latency/large_8192 | 2.236 | 20.367 | 16.336 | 17.396 | 15.418 | 0.11x | 0.14x | 0.13x | 0.15x |
-| allocator cycle latency/medium_1024 | 2.209 | 20.510 | 5.643 | 16.590 | 7.242 | 0.11x | 0.39x | 0.13x | 0.30x |
-| allocator cycle latency/small_32 | 2.218 | 20.949 | 2.766 | 16.298 | 6.815 | 0.11x | 0.80x | 0.14x | 0.33x |
+| allocator cycle latency/huge_2m | 20.637 | 7466.463 | 8483.326 | N/A | 115.016 | 0.00x | 0.00x | N/A | 0.18x |
+| allocator cycle latency/large_8192 | 2.261 | 20.367 | 16.336 | 17.396 | 15.418 | 0.11x | 0.14x | 0.13x | 0.15x |
+| allocator cycle latency/medium_1024 | 2.221 | 20.510 | 5.643 | 16.590 | 7.242 | 0.11x | 0.39x | 0.13x | 0.31x |
+| allocator cycle latency/small_32 | 2.212 | 20.949 | 2.766 | 16.298 | 6.815 | 0.11x | 0.80x | 0.14x | 0.32x |
 | allocator deallocation latency/huge_2m | 1238.985 | 3980.252 | 4305.280 | N/A | 3030.860 | 0.31x | 0.29x | N/A | 0.41x |
 | allocator deallocation latency/large_8192 | 15.937 | 72.217 | 460.866 | 162.409 | 46.348 | 0.22x | 0.03x | 0.10x | 0.34x |
 | allocator deallocation latency/medium_1024 | 8.746 | 19.717 | 69.441 | 36.942 | 16.857 | 0.44x | 0.13x | 0.24x | 0.52x |
@@ -23,7 +23,7 @@
 | cross-thread free handoff/small_32 | 16837.003 | 30427.169 | 18237.876 | 21126.545 | 27554.410 | 0.55x | 0.92x | 0.80x | 0.61x |
 | realloc latency/cross_class_32_to_64 | 6.871 | 42.829 | 7.542 | 32.801 | 16.928 | 0.16x | 0.91x | 0.21x | 0.41x |
 | realloc latency/cross_class_8k_to_16k | 48.145 | 128.782 | 67.077 | 130.010 | 57.544 | 0.37x | 0.72x | 0.37x | 0.84x |
-| realloc latency/huge_shrink_4m_to_2m | 22.405 | 953597.633 | 9032.371 | 1023116.143 | 248.343 | 0.00x | 0.00x | 0.00x | 0.09x |
+| realloc latency/huge_shrink_4m_to_2m | 22.440 | 953597.633 | 9032.371 | 1023116.143 | 248.343 | 0.00x | 0.00x | 0.00x | 0.09x |
 | realloc latency/within_class_24_to_32 | 3.460 | 43.028 | 4.429 | 17.264 | 15.253 | 0.08x | 0.78x | 0.20x | 0.23x |
 | realloc latency/within_class_6k_to_8k | 25.080 | 102.278 | 56.062 | 96.022 | 52.248 | 0.25x | 0.45x | 0.26x | 0.48x |
 | segment cache eviction | 205531.743 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
