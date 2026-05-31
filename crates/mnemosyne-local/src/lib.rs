@@ -113,7 +113,7 @@ fn parse_env_bool(name: &str) -> Option<bool> {
 }
 
 #[inline(always)]
-pub(crate) fn ensure_options_initialized() {
+pub fn ensure_options_initialized() {
     if !OPTIONS_INIT.load(core::sync::atomic::Ordering::Acquire) {
         init_options_from_env();
     }
@@ -253,199 +253,22 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
     }
 }
 
-/// An explicit custom memory heap.
-///
-/// Threads can instantiate a `MnemosyneHeap` to manage their own isolated allocation stream.
-/// When the heap is dropped, all segments owned by it are automatically reclaimed or orphaned.
-pub struct MnemosyneHeap<P: AllocPolicy, B: HasSegmentPool = mnemosyne_backend::DefaultBackend> {
-    allocator: core::cell::UnsafeCell<ThreadAllocator<B>>,
-    _phantom: core::marker::PhantomData<P>,
-}
-
-unsafe impl<P: AllocPolicy, B: HasSegmentPool> Send for MnemosyneHeap<P, B> {}
-
-impl<P: AllocPolicy, B: HasSegmentPool> Default for MnemosyneHeap<P, B> {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
-    /// Creates a new empty `MnemosyneHeap`.
-    pub const fn new() -> Self {
-        Self {
-            allocator: core::cell::UnsafeCell::new(ThreadAllocator::new()),
-            _phantom: core::marker::PhantomData,
-        }
-    }
-
-    /// Allocates a block of memory from this heap.
-    ///
-    /// Returns null if allocation fails.
-    pub fn alloc(&self, layout: Layout) -> *mut u8 {
-        ensure_options_initialized();
-        if !is_valid_layout_alloc_request(layout.size(), layout.align()) {
-            return core::ptr::null_mut();
-        }
-        let alloc = unsafe { &mut *self.allocator.get() };
-        if alloc.is_allocating {
-            // Re-entrancy protection fallback.
-            return unsafe { allocate_large_or_huge::<B>(layout.size(), layout.align(), P::ENABLE_POISONING) };
-        }
-        alloc.is_allocating = true;
-
-        let ptr = unsafe { Self::alloc_inner(alloc, layout) };
-
-        alloc.is_allocating = false;
-        ptr
-    }
-
-    unsafe fn alloc_inner(alloc: &mut ThreadAllocator<B>, layout: Layout) -> *mut u8 {
-        let size = layout.size();
-        let align = layout.align();
-        if align > MIN_BLOCK_SIZE {
-            let ptr = unsafe { allocate_large_or_huge::<B>(size, align, P::ENABLE_POISONING) };
-            if !ptr.is_null() {
-                unsafe { initialize_allocated_bytes::<P>(ptr, size) };
-            }
-            return ptr;
-        }
-
-        let adjusted_size = core::cmp::max(size, align);
-        let class = match size_to_class_nonzero(adjusted_size) {
-            Some(c) => c,
-            None => {
-                let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
-                if !ptr.is_null() {
-                    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-                }
-                return ptr;
-            }
-        };
-
-        // Try L1 per-CPU cache first
-        if B::ENABLE_CPU_CACHE {
-            let cpu_ptr = per_cpu::try_alloc_cpu::<P>(class);
-            if !cpu_ptr.is_null() {
-                unsafe { initialize_allocated_bytes::<P>(cpu_ptr, adjusted_size) };
-                return cpu_ptr;
-            }
-        }
-
-        let ptr = unsafe { alloc.alloc::<P>(adjusted_size) };
-        let final_ptr = if ptr.is_null() {
-            unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) }
-        } else {
-            ptr
-        };
-
-        if !final_ptr.is_null() {
-            unsafe { initialize_allocated_bytes::<P>(final_ptr, adjusted_size) };
-        }
-        final_ptr
-    }
-
-    /// Frees a block of memory back to its originating heap/allocator.
-    pub fn free(&self, ptr: *mut u8) {
-        ensure_options_initialized();
-        if ptr.is_null() {
-            return;
-        }
-
-        let ptr_val = ptr as usize;
-        let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
-        let segment = segment_addr as *mut Segment;
-        let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-
-        // Safety: ptr is non-null and comes from Mnemosyne.
-        let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
-        if page_index == 0 || page.block_size == 0 {
-            if P::ENABLE_POISONING {
-                let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-                let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
-                unsafe { poison_freed_bytes::<P>(ptr, size) };
-            }
-            let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-            let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
-            return;
-        }
-
-        if P::ENABLE_POISONING {
-            unsafe { poison_freed_bytes::<P>(ptr, page.block_size) };
-        }
-
-        // Try L1 per-CPU cache
-        if B::ENABLE_CPU_CACHE && per_cpu::try_free_cpu::<P>(ptr, page.size_class as usize) {
-            return;
-        }
-
-        let block = ptr as *mut Block;
-        let owner = unsafe { (*segment).owner };
-        let heap_ptr = self.allocator.get() as *mut ThreadAllocator<B> as *mut core::ffi::c_void;
-
-        if owner.matches(heap_ptr) {
-            let alloc = unsafe { &mut *self.allocator.get() };
-            if alloc.is_allocating {
-                // Re-entrancy fallback.
-                unsafe {
-                    page.thread_free.push::<P>(NonNull::new_unchecked(block));
-                }
-                return;
-            }
-            alloc.is_allocating = true;
-            unsafe {
-                do_local_free_internal::<P, B>(alloc, block, page, segment);
-            }
-            alloc.is_allocating = false;
-        } else {
-            // It belongs to a different heap or thread allocator. Push to thread_free atomically.
-            unsafe {
-                page.thread_free.push::<P>(NonNull::new_unchecked(block));
-            }
-        }
-    }
-
-    /// Reallocates a memory block from this heap.
-    pub fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ensure_options_initialized();
-        if new_size == 0 {
-            if !ptr.is_null() {
-                self.free(ptr);
-            }
-            return core::ptr::null_mut();
-        }
-        if ptr.is_null() {
-            return self.alloc(Layout::from_size_align(new_size, layout.align()).unwrap_or(layout));
-        }
-
-        if !P::ZERO_INITIALIZE && !P::ENABLE_POISONING {
-            if new_size <= layout.size() {
-                return ptr;
-            }
-            if layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
-                if small_realloc_fits_existing_class(layout, new_size) {
-                    return ptr;
-                }
-            } else {
-                let current_usable = unsafe { usable_size(ptr) };
-                if new_size <= current_usable {
-                    return ptr;
-                }
-            }
-        }
-
-        let new_ptr = self.alloc(Layout::from_size_align(new_size, layout.align()).unwrap_or(layout));
-        if new_ptr.is_null() {
-            return core::ptr::null_mut();
-        }
-
-        unsafe {
-            core::ptr::copy_nonoverlapping(ptr, new_ptr, core::cmp::min(layout.size(), new_size));
-        }
-        self.free(ptr);
-        new_ptr
-    }
+#[doc(hidden)]
+pub mod internal {
+    pub use crate::ensure_options_initialized;
+    pub use mnemosyne_core::validation::is_valid_layout_alloc_request;
+    pub use mnemosyne_arena::{allocate_large_or_huge, deallocate_large_or_huge};
+    pub use crate::{
+        initialize_allocated_bytes, poison_freed_bytes,
+        do_local_free_internal, small_realloc_fits_existing_class,
+    };
+    pub use crate::ThreadAllocator;
+    pub use mnemosyne_core::constants::{MIN_BLOCK_SIZE, MAX_SMALL_ALLOC_SIZE, SEGMENT_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT};
+    pub use mnemosyne_core::size_class::size_to_class_nonzero;
+    pub use mnemosyne_core::types::{Segment, Block, Page};
+    pub use mnemosyne_arena::HasSegmentPool;
+    pub use core::alloc::Layout;
+    pub use core::ptr::NonNull;
 }
 
 /// Thread-exit reclamation sentinel for the `#[thread_local]` fast cache.
@@ -536,7 +359,7 @@ fn cold_arm_thread_exit<B: HasSegmentPool>(
 /// `ptr` must be valid for writes of `size` bytes and must refer to memory
 /// owned by the current allocation operation.
 #[inline(always)]
-unsafe fn initialize_allocated_bytes<P: AllocPolicy>(ptr: *mut u8, size: usize) {
+pub unsafe fn initialize_allocated_bytes<P: AllocPolicy>(ptr: *mut u8, size: usize) {
     if P::ZERO_INITIALIZE {
         // Safety: the caller guarantees ptr is valid and writable for size bytes.
         unsafe {
@@ -557,7 +380,7 @@ unsafe fn initialize_allocated_bytes<P: AllocPolicy>(ptr: *mut u8, size: usize) 
 /// `ptr` must be valid for writes of `size` bytes until the surrounding free
 /// operation completes.
 #[inline(always)]
-unsafe fn poison_freed_bytes<P: AllocPolicy>(ptr: *mut u8, size: usize) {
+pub unsafe fn poison_freed_bytes<P: AllocPolicy>(ptr: *mut u8, size: usize) {
     if P::ENABLE_POISONING {
         // Safety: the caller guarantees ptr is valid and writable for size bytes.
         unsafe {
@@ -1048,7 +871,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
 }
 
 #[inline(always)]
-unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
+pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     alloc: &mut ThreadAllocator<B>,
     block: *mut Block,
     page: &mut Page,
@@ -1093,7 +916,7 @@ unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
 }
 
 #[inline(always)]
-fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> bool {
+pub fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> bool {
     if layout.align() > MIN_BLOCK_SIZE {
         return false;
     }

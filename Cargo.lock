@@ -320,6 +320,7 @@ dependencies = [
  "mnemosyne-arena",
  "mnemosyne-backend",
  "mnemosyne-core",
+ "mnemosyne-heap",
  "mnemosyne-local",
 ]
 
@@ -348,6 +349,7 @@ dependencies = [
  "mnemosyne-arena",
  "mnemosyne-backend",
  "mnemosyne-core",
+ "mnemosyne-heap",
  "mnemosyne-local",
  "serde_json",
  "snmalloc-rs",
@@ -368,12 +370,23 @@ name = "mnemosyne-core"
 version = "0.1.0"
 
 [[package]]
+name = "mnemosyne-heap"
+version = "0.1.0"
+dependencies = [
+ "mnemosyne-arena",
+ "mnemosyne-backend",
+ "mnemosyne-core",
+ "mnemosyne-local",
+]
+
+[[package]]
 name = "mnemosyne-local"
 version = "0.1.0"
 dependencies = [
  "mnemosyne-arena",
  "mnemosyne-backend",
  "mnemosyne-core",
+ "mnemosyne-heap",
 ]
 
 [[package]]

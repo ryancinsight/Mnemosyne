@@ -37,12 +37,13 @@ fn derive_large_or_huge_layout(size: usize, align: usize) -> Option<(usize, usiz
     }
 }
 
-#[inline(never)]
+#[inline(always)]
 unsafe fn initialize_large_or_huge_segment(
     raw_ptr: *mut u8,
     total_alloc_size: usize,
     alignment: usize,
     size: usize,
+    is_cache_hit: bool,
 ) -> Option<(*mut u8, usize, usize, usize)> {
     let aligned_addr = checked_align_up(raw_ptr as usize, SEGMENT_ALIGN)?;
     let aligned_ptr = aligned_addr as *mut Segment;
@@ -73,9 +74,11 @@ unsafe fn initialize_large_or_huge_segment(
     // We initialize the segment header fields and set Page 0's block_size to mark huge allocations.
     // We also write the segment pointer right before the user pointer in the unused Page 0 padding space.
     unsafe {
-        let node = crate::current_numa_node();
-        Segment::initialize(aligned_ptr, raw_ptr, node);
-        (*aligned_ptr).pages[0].block_size = total_alloc_size;
+        if !is_cache_hit {
+            let node = crate::current_numa_node();
+            Segment::initialize(aligned_ptr, raw_ptr, node);
+            (*aligned_ptr).pages[0].block_size = total_alloc_size;
+        }
 
         let metadata_slot = (user_ptr as *mut *mut Segment).sub(1);
         metadata_slot.write(aligned_ptr);
@@ -130,7 +133,7 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(
     };
 
     let (user_ptr, aligned_addr, tail_slack_start, mapping_end) =
-        match unsafe { initialize_large_or_huge_segment(raw_ptr, block_size, alignment, size) } {
+        match unsafe { initialize_large_or_huge_segment(raw_ptr, block_size, alignment, size, is_cache_hit) } {
             Some(val) => val,
             None => {
                 let _released = unsafe { B::deallocate(raw_ptr, block_size) };

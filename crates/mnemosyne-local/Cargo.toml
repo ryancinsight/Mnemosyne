@@ -17,3 +17,6 @@ nightly_tls = []
 mnemosyne-core = { path = "../mnemosyne-core" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-arena = { path = "../mnemosyne-arena" }
+
+[dev-dependencies]
+mnemosyne-heap = { path = "../mnemosyne-heap" }

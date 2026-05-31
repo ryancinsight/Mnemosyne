@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 mnemosyne-local = { path = "../mnemosyne-local" }
+mnemosyne-heap = { path = "../mnemosyne-heap" }
 mnemosyne-arena = { path = "../mnemosyne-arena" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-core = { path = "../mnemosyne-core" }

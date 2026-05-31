@@ -1,4 +1,5 @@
 use core::alloc::{GlobalAlloc, Layout};
+use mnemosyne_heap::MnemosyneHeap;
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
@@ -554,6 +555,17 @@ fn bench_allocator_cycles(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { alloc_dealloc(&mnemosyne::Mnemosyne, *layout) })
+        });
+        group.bench_with_input(BenchmarkId::new("MnemosyneHeap", name), &layout, |b, layout| {
+            let heap = MnemosyneHeap::<mnemosyne::StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>::new();
+            b.iter(|| {
+                let ptr = heap.alloc(*layout);
+                if ptr.is_null() {
+                    benchmark_failure("MnemosyneHeap cycle", "heap returned null");
+                }
+                black_box(ptr);
+                heap.free(ptr);
+            })
         });
         group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
             // Safety: `layout` comes from the static valid benchmark layout table.
