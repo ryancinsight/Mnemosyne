@@ -196,7 +196,9 @@ const SMALL_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(32, 8) }
 const SMALL_WITHIN_CLASS_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(24, 8) };
 const MEDIUM_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(1024, 8) };
 const LARGE_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(8192, 8) };
-const HUGE_REALLOC_SRC_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(4 * 1024 * 1024, 8) };
+const LARGE_WITHIN_CLASS_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(6144, 8) };
+const HUGE_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(2 * 1024 * 1024, 4096) };
+const HUGE_REALLOC_SRC_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(4 * 1024 * 1024, 4096) };
 const BATCH_ALLOCS: usize = 256;
 const THREADS: usize = 4;
 const THREAD_ALLOCS: usize = 1_000;
@@ -357,7 +359,7 @@ unsafe fn alloc_realloc_dealloc<A: GlobalAlloc>(
 }
 
 struct HandoffBatch {
-    ptrs: [usize; CROSS_THREAD_ALLOCS],
+    ptrs: Vec<usize>,
     layout: Layout,
 }
 
@@ -395,13 +397,13 @@ impl<A: GlobalAlloc + Send + Sync + 'static> HandoffWorker<A> {
         }
     }
 
-    fn alloc_then_handoff(&self, layout: Layout) {
-        let mut ptrs = [0usize; CROSS_THREAD_ALLOCS];
-        for ptr in &mut ptrs {
+    fn alloc_then_handoff(&self, layout: Layout, count: usize) {
+        let mut ptrs = Vec::with_capacity(count);
+        for _ in 0..count {
             // Safety: `layout` is one of the static benchmark layouts.
             let allocated = unsafe { self.allocator.alloc(black_box(layout)) };
             require_allocated(allocated, "cross-thread handoff allocation");
-            *ptr = allocated as usize;
+            ptrs.push(allocated as usize);
         }
         black_box(&ptrs);
         if self
@@ -434,11 +436,12 @@ struct ThreadCycleWorkers<A: GlobalAlloc + Send + Sync + 'static> {
     senders: Vec<SyncSender<Option<usize>>>,
     done: Receiver<()>,
     handles: Vec<thread::JoinHandle<()>>,
+    layout: Layout,
     _allocator: &'static A,
 }
 
 impl<A: GlobalAlloc + Send + Sync + 'static> ThreadCycleWorkers<A> {
-    fn new(allocator: &'static A) -> Self {
+    fn new(allocator: &'static A, layout: Layout) -> Self {
         let (done_sender, done) = sync_channel::<()>(THREAD_WORK_QUEUE_BOUND);
         let mut senders = Vec::with_capacity(THREADS);
         let mut handles = Vec::with_capacity(THREADS);
@@ -449,10 +452,10 @@ impl<A: GlobalAlloc + Send + Sync + 'static> ThreadCycleWorkers<A> {
             let handle = thread::spawn(move || {
                 while let Ok(Some(iterations)) = receiver.recv() {
                     for _ in 0..iterations {
-                        // Safety: `SMALL_LAYOUT` is a valid static layout and
+                        // Safety: `layout` is a valid static layout and
                         // `alloc_dealloc` validates non-null allocations.
                         unsafe {
-                            alloc_dealloc(handle_allocator, SMALL_LAYOUT);
+                            alloc_dealloc(handle_allocator, layout);
                         }
                     }
                     if worker_done.send(()).is_err() {
@@ -468,6 +471,7 @@ impl<A: GlobalAlloc + Send + Sync + 'static> ThreadCycleWorkers<A> {
             senders,
             done,
             handles,
+            layout,
             _allocator: allocator,
         }
     }
@@ -544,6 +548,7 @@ fn bench_allocator_cycles(c: &mut Criterion) {
         ("small/32", SMALL_LAYOUT),
         ("medium/1024", MEDIUM_LAYOUT),
         ("large/8192", LARGE_LAYOUT),
+        ("huge/2m", HUGE_LAYOUT),
     ] {
         group.throughput(Throughput::Bytes(layout.size() as u64));
         group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
@@ -558,10 +563,12 @@ fn bench_allocator_cycles(c: &mut Criterion) {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { alloc_dealloc(&mimalloc::MiMalloc, *layout) })
         });
-        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
-            b.iter(|| unsafe { alloc_dealloc(&snmalloc_rs::SnMalloc, *layout) })
-        });
+        if name != "huge/2m" {
+            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+                // Safety: `layout` comes from the static valid benchmark layout table.
+                b.iter(|| unsafe { alloc_dealloc(&snmalloc_rs::SnMalloc, *layout) })
+            });
+        }
         #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
@@ -575,7 +582,12 @@ fn bench_allocator_cycles(c: &mut Criterion) {
 
 fn bench_allocator_alloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("Allocator allocation latency");
-    for (name, layout) in [("small/32", SMALL_LAYOUT), ("medium/1024", MEDIUM_LAYOUT)] {
+    for (name, layout) in [
+        ("small/32", SMALL_LAYOUT),
+        ("medium/1024", MEDIUM_LAYOUT),
+        ("large/8192", LARGE_LAYOUT),
+        ("huge/2m", HUGE_LAYOUT),
+    ] {
         group.throughput(Throughput::Bytes(layout.size() as u64));
         group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
             b.iter_batched(
@@ -598,13 +610,15 @@ fn bench_allocator_alloc(c: &mut Criterion) {
                 BatchSize::SmallInput,
             )
         });
-        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-            b.iter_batched(
-                || (),
-                |_| unsafe { AllocatedBlock::new(&snmalloc_rs::SnMalloc, *layout, "alloc_only") },
-                BatchSize::SmallInput,
-            )
-        });
+        if name != "huge/2m" {
+            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+                b.iter_batched(
+                    || (),
+                    |_| unsafe { AllocatedBlock::new(&snmalloc_rs::SnMalloc, *layout, "alloc_only") },
+                    BatchSize::SmallInput,
+                )
+            });
+        }
         #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
@@ -623,7 +637,12 @@ fn bench_allocator_alloc(c: &mut Criterion) {
 
 fn bench_allocator_dealloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("Allocator deallocation latency");
-    for (name, layout) in [("small/32", SMALL_LAYOUT), ("medium/1024", MEDIUM_LAYOUT)] {
+    for (name, layout) in [
+        ("small/32", SMALL_LAYOUT),
+        ("medium/1024", MEDIUM_LAYOUT),
+        ("large/8192", LARGE_LAYOUT),
+        ("huge/2m", HUGE_LAYOUT),
+    ] {
         group.throughput(Throughput::Bytes(layout.size() as u64));
         group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
             b.iter_batched(
@@ -648,15 +667,17 @@ fn bench_allocator_dealloc(c: &mut Criterion) {
                 BatchSize::SmallInput,
             )
         });
-        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-            b.iter_batched(
-                || unsafe {
-                    require_allocated(snmalloc_rs::SnMalloc.alloc(*layout), "dealloc_only")
-                },
-                |ptr| unsafe { dealloc_only(&snmalloc_rs::SnMalloc, ptr, *layout) },
-                BatchSize::SmallInput,
-            )
-        });
+        if name != "huge/2m" {
+            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+                b.iter_batched(
+                    || unsafe {
+                        require_allocated(snmalloc_rs::SnMalloc.alloc(*layout), "dealloc_only")
+                    },
+                    |ptr| unsafe { dealloc_only(&snmalloc_rs::SnMalloc, ptr, *layout) },
+                    BatchSize::SmallInput,
+                )
+            });
+        }
         #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
@@ -710,7 +731,12 @@ fn bench_allocator_bursts(c: &mut Criterion) {
 
 fn bench_usable_size(c: &mut Criterion) {
     let mut group = c.benchmark_group("Usable size latency");
-    for (name, layout) in [("small/32", SMALL_LAYOUT), ("medium/1024", MEDIUM_LAYOUT)] {
+    for (name, layout) in [
+        ("small/32", SMALL_LAYOUT),
+        ("medium/1024", MEDIUM_LAYOUT),
+        ("large/8192", LARGE_LAYOUT),
+        ("huge/2m", HUGE_LAYOUT),
+    ] {
         group.throughput(Throughput::Elements(1));
         group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
             // Safety: `layout` comes from the static valid benchmark layout table.
@@ -730,17 +756,19 @@ fn bench_usable_size(c: &mut Criterion) {
                 })
             })
         });
-        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
-            b.iter(|| unsafe {
-                alloc_usable_dealloc(&snmalloc_rs::SnMalloc, *layout, |ptr| {
-                    match snmalloc_rs::SnMalloc.usable_size(ptr) {
-                        Some(size) => size,
-                        None => benchmark_failure("alloc_usable_dealloc", "snmalloc returned None"),
-                    }
+        if name != "huge/2m" {
+            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+                // Safety: `layout` comes from the static valid benchmark layout table.
+                b.iter(|| unsafe {
+                    alloc_usable_dealloc(&snmalloc_rs::SnMalloc, *layout, |ptr| {
+                        match snmalloc_rs::SnMalloc.usable_size(ptr) {
+                            Some(size) => size,
+                            None => benchmark_failure("alloc_usable_dealloc", "snmalloc returned None"),
+                        }
+                    })
                 })
-            })
-        });
+            });
+        }
         #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
@@ -760,7 +788,12 @@ fn bench_usable_size(c: &mut Criterion) {
 
 fn bench_usable_size_query(c: &mut Criterion) {
     let mut group = c.benchmark_group("Usable size query latency");
-    for (name, layout) in [("small/32", SMALL_LAYOUT), ("medium/1024", MEDIUM_LAYOUT)] {
+    for (name, layout) in [
+        ("small/32", SMALL_LAYOUT),
+        ("medium/1024", MEDIUM_LAYOUT),
+        ("large/8192", LARGE_LAYOUT),
+        ("huge/2m", HUGE_LAYOUT),
+    ] {
         group.throughput(Throughput::Elements(1));
 
         // Safety: `layout` comes from the static valid benchmark layout table.
@@ -785,23 +818,25 @@ fn bench_usable_size_query(c: &mut Criterion) {
         // Safety: pointer was allocated by MiMalloc for `layout` above.
         unsafe { mimalloc::MiMalloc.dealloc(mimalloc_ptr, layout) };
 
-        // Safety: `layout` comes from the static valid benchmark layout table.
-        let snmalloc_ptr =
-            unsafe { require_allocated(snmalloc_rs::SnMalloc.alloc(layout), "usable_size_query") };
-        group.bench_with_input(
-            BenchmarkId::new("SnMalloc", name),
-            &snmalloc_ptr,
-            |b, ptr| {
-                b.iter(
-                    || match snmalloc_rs::SnMalloc.usable_size(black_box(*ptr)) {
-                        Some(size) => size,
-                        None => benchmark_failure("usable_size_query", "snmalloc returned None"),
-                    },
-                )
-            },
-        );
-        // Safety: pointer was allocated by SnMalloc for `layout` above.
-        unsafe { snmalloc_rs::SnMalloc.dealloc(snmalloc_ptr, layout) };
+        if name != "huge/2m" {
+            // Safety: `layout` comes from the static valid benchmark layout table.
+            let snmalloc_ptr =
+                unsafe { require_allocated(snmalloc_rs::SnMalloc.alloc(layout), "usable_size_query") };
+            group.bench_with_input(
+                BenchmarkId::new("SnMalloc", name),
+                &snmalloc_ptr,
+                |b, ptr| {
+                    b.iter(
+                        || match snmalloc_rs::SnMalloc.usable_size(black_box(*ptr)) {
+                            Some(size) => size,
+                            None => benchmark_failure("usable_size_query", "snmalloc returned None"),
+                        },
+                    )
+                },
+            );
+            // Safety: pointer was allocated by SnMalloc for `layout` above.
+            unsafe { snmalloc_rs::SnMalloc.dealloc(snmalloc_ptr, layout) };
+        }
 
         #[cfg(jemalloc_available)]
         {
@@ -826,6 +861,8 @@ fn bench_realloc(c: &mut Criterion) {
     for (name, layout, new_size) in [
         ("within_class_24_to_32", SMALL_WITHIN_CLASS_LAYOUT, 32usize),
         ("cross_class_32_to_64", SMALL_LAYOUT, 64usize),
+        ("within_class_6k_to_8k", LARGE_WITHIN_CLASS_LAYOUT, 8192usize),
+        ("cross_class_8k_to_16k", LARGE_LAYOUT, 16384usize),
         ("huge_shrink_4m_to_2m", HUGE_REALLOC_SRC_LAYOUT, 2 * 1024 * 1024usize),
     ] {
         group.throughput(Throughput::Elements(1));
@@ -891,37 +928,49 @@ fn bench_cross_thread_free(c: &mut Criterion) {
     static JEMALLOC: bench_jemalloc::Jemalloc = bench_jemalloc::Jemalloc;
 
     let mut group = c.benchmark_group("Cross-thread free handoff");
-    for (name, layout) in [("small/32", SMALL_LAYOUT), ("medium/1024", MEDIUM_LAYOUT)] {
-        group.throughput(Throughput::Elements(CROSS_THREAD_ALLOCS as u64));
+    for (name, layout) in [
+        ("small/32", SMALL_LAYOUT),
+        ("medium/1024", MEDIUM_LAYOUT),
+        ("large/8192", LARGE_LAYOUT),
+        ("huge/2m", HUGE_LAYOUT),
+    ] {
+        let count = if layout.size() > 64 * 1024 {
+            8 // Avoid high memory pressure for huge allocations
+        } else {
+            CROSS_THREAD_ALLOCS
+        };
+        group.throughput(Throughput::Elements(count as u64));
         let mnemosyne_worker = HandoffWorker::new(&MNEMOSYNE);
         group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
-            b.iter(|| mnemosyne_worker.alloc_then_handoff(*layout))
+            b.iter(|| mnemosyne_worker.alloc_then_handoff(*layout, count))
         });
         drop(mnemosyne_worker);
 
         let system_worker = HandoffWorker::new(&SYSTEM);
         group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
-            b.iter(|| system_worker.alloc_then_handoff(*layout))
+            b.iter(|| system_worker.alloc_then_handoff(*layout, count))
         });
         drop(system_worker);
 
         let mimalloc_worker = HandoffWorker::new(&MIMALLOC);
         group.bench_with_input(BenchmarkId::new("MiMalloc", name), &layout, |b, layout| {
-            b.iter(|| mimalloc_worker.alloc_then_handoff(*layout))
+            b.iter(|| mimalloc_worker.alloc_then_handoff(*layout, count))
         });
         drop(mimalloc_worker);
 
-        let snmalloc_worker = HandoffWorker::new(&SNMALLOC);
-        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-            b.iter(|| snmalloc_worker.alloc_then_handoff(*layout))
-        });
-        drop(snmalloc_worker);
+        if name != "huge/2m" {
+            let snmalloc_worker = HandoffWorker::new(&SNMALLOC);
+            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+                b.iter(|| snmalloc_worker.alloc_then_handoff(*layout, count))
+            });
+            drop(snmalloc_worker);
+        }
 
         #[cfg(jemalloc_available)]
         {
             let jemalloc_worker = HandoffWorker::new(&JEMALLOC);
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
-                b.iter(|| jemalloc_worker.alloc_then_handoff(*layout))
+                b.iter(|| jemalloc_worker.alloc_then_handoff(*layout, count))
             });
             drop(jemalloc_worker);
         }
@@ -946,33 +995,63 @@ fn bench_multithreaded_alloc(c: &mut Criterion) {
     #[cfg(jemalloc_available)]
     static JEMALLOC: bench_jemalloc::Jemalloc = bench_jemalloc::Jemalloc;
 
-    let mut group = c.benchmark_group("Threaded small allocation cycles");
-    group.throughput(Throughput::Elements((THREADS * THREAD_ALLOCS) as u64));
-
-    let mnemosyne_workers = ThreadCycleWorkers::new(&MNEMOSYNE);
-    group.bench_function("Mnemosyne", |b| b.iter(|| mnemosyne_workers.run()));
-    drop(mnemosyne_workers);
-
-    let system_workers = ThreadCycleWorkers::new(&SYSTEM);
-    group.bench_function("System", |b| b.iter(|| system_workers.run()));
-    drop(system_workers);
-
-    let mimalloc_workers = ThreadCycleWorkers::new(&MIMALLOC);
-    group.bench_function("MiMalloc", |b| b.iter(|| mimalloc_workers.run()));
-    drop(mimalloc_workers);
-
-    let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC);
-    group.bench_function("SnMalloc", |b| b.iter(|| snmalloc_workers.run()));
-    drop(snmalloc_workers);
-
-    #[cfg(jemalloc_available)]
     {
-        let jemalloc_workers = ThreadCycleWorkers::new(&JEMALLOC);
-        group.bench_function("Jemalloc", |b| b.iter(|| jemalloc_workers.run()));
-        drop(jemalloc_workers);
+        let mut group = c.benchmark_group("Threaded small allocation cycles");
+        group.throughput(Throughput::Elements((THREADS * THREAD_ALLOCS) as u64));
+
+        let mnemosyne_workers = ThreadCycleWorkers::new(&MNEMOSYNE, SMALL_LAYOUT);
+        group.bench_function("Mnemosyne", |b| b.iter(|| mnemosyne_workers.run()));
+        drop(mnemosyne_workers);
+
+        let system_workers = ThreadCycleWorkers::new(&SYSTEM, SMALL_LAYOUT);
+        group.bench_function("System", |b| b.iter(|| system_workers.run()));
+        drop(system_workers);
+
+        let mimalloc_workers = ThreadCycleWorkers::new(&MIMALLOC, SMALL_LAYOUT);
+        group.bench_function("MiMalloc", |b| b.iter(|| mimalloc_workers.run()));
+        drop(mimalloc_workers);
+
+        let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, SMALL_LAYOUT);
+        group.bench_function("SnMalloc", |b| b.iter(|| snmalloc_workers.run()));
+        drop(snmalloc_workers);
+
+        #[cfg(jemalloc_available)]
+        {
+            let jemalloc_workers = ThreadCycleWorkers::new(&JEMALLOC, SMALL_LAYOUT);
+            group.bench_function("Jemalloc", |b| b.iter(|| jemalloc_workers.run()));
+            drop(jemalloc_workers);
+        }
+        group.finish();
     }
 
-    group.finish();
+    {
+        let mut group = c.benchmark_group("Threaded medium allocation cycles");
+        group.throughput(Throughput::Elements((THREADS * THREAD_ALLOCS) as u64));
+
+        let mnemosyne_workers = ThreadCycleWorkers::new(&MNEMOSYNE, MEDIUM_LAYOUT);
+        group.bench_function("Mnemosyne", |b| b.iter(|| mnemosyne_workers.run()));
+        drop(mnemosyne_workers);
+
+        let system_workers = ThreadCycleWorkers::new(&SYSTEM, MEDIUM_LAYOUT);
+        group.bench_function("System", |b| b.iter(|| system_workers.run()));
+        drop(system_workers);
+
+        let mimalloc_workers = ThreadCycleWorkers::new(&MIMALLOC, MEDIUM_LAYOUT);
+        group.bench_function("MiMalloc", |b| b.iter(|| mimalloc_workers.run()));
+        drop(mimalloc_workers);
+
+        let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, MEDIUM_LAYOUT);
+        group.bench_function("SnMalloc", |b| b.iter(|| snmalloc_workers.run()));
+        drop(snmalloc_workers);
+
+        #[cfg(jemalloc_available)]
+        {
+            let jemalloc_workers = ThreadCycleWorkers::new(&JEMALLOC, MEDIUM_LAYOUT);
+            group.bench_function("Jemalloc", |b| b.iter(|| jemalloc_workers.run()));
+            drop(jemalloc_workers);
+        }
+        group.finish();
+    }
 }
 
 fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
@@ -988,25 +1067,25 @@ fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
         (THREADS * SATURATED_THREAD_ALLOCS) as u64,
     ));
 
-    let mnemosyne_workers = ThreadCycleWorkers::new(&MNEMOSYNE);
+    let mnemosyne_workers = ThreadCycleWorkers::new(&MNEMOSYNE, SMALL_LAYOUT);
     group.bench_function("Mnemosyne", |b| {
         b.iter(|| mnemosyne_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
     });
     drop(mnemosyne_workers);
 
-    let system_workers = ThreadCycleWorkers::new(&SYSTEM);
+    let system_workers = ThreadCycleWorkers::new(&SYSTEM, SMALL_LAYOUT);
     group.bench_function("System", |b| {
         b.iter(|| system_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
     });
     drop(system_workers);
 
-    let mimalloc_workers = ThreadCycleWorkers::new(&MIMALLOC);
+    let mimalloc_workers = ThreadCycleWorkers::new(&MIMALLOC, SMALL_LAYOUT);
     group.bench_function("MiMalloc", |b| {
         b.iter(|| mimalloc_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
     });
     drop(mimalloc_workers);
 
-    let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC);
+    let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, SMALL_LAYOUT);
     group.bench_function("SnMalloc", |b| {
         b.iter(|| snmalloc_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
     });
@@ -1014,7 +1093,7 @@ fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
 
     #[cfg(jemalloc_available)]
     {
-        let jemalloc_workers = ThreadCycleWorkers::new(&JEMALLOC);
+        let jemalloc_workers = ThreadCycleWorkers::new(&JEMALLOC, SMALL_LAYOUT);
         group.bench_function("Jemalloc", |b| {
             b.iter(|| jemalloc_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
         });

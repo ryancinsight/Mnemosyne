@@ -219,8 +219,14 @@ impl Page {
     pub fn page_start(&self) -> *mut u8 {
         let self_addr = self as *const Page as usize;
         let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
-        let page_index = self.index_in_segment();
-        unsafe { (segment_addr as *mut u8).add(page_index << crate::constants::PAGE_SHIFT) }
+        let offset = self_addr - segment_addr - core::mem::offset_of!(Segment, pages);
+        // Since Page is 64 bytes (2^6) and PAGE_SIZE is 65536 bytes (2^16),
+        // the page start offset is page_index * PAGE_SIZE = (offset / 64) * 65536
+        // = (offset >> 6) << 16 = offset << 10.
+        // The low 6 bits of offset are 0 because Page is 64-byte aligned,
+        // so shift left by 10 is perfectly precise and avoids an intermediate right-shift.
+        let page_offset = offset << (crate::constants::PAGE_SHIFT - core::mem::size_of::<Page>().trailing_zeros() as usize);
+        unsafe { (segment_addr as *mut u8).add(page_offset) }
     }
 
     /// Returns the maximum number of blocks that can fit in this page.
@@ -456,7 +462,6 @@ impl Segment {
 mod tests {
     use ::std::alloc::{alloc_zeroed, dealloc, Layout};
     use super::*;
-    use crate::constants::PAGE_SIZE;
 
     #[test]
     fn page_struct_size_stays_within_one_cache_line() {

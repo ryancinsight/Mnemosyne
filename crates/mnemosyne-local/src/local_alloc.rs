@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_arena::{allocate_segment, deallocate_segment, HasSegmentPool};
 use mnemosyne_backend::DefaultBackend;
 use mnemosyne_core::constants::{
-    NUM_SIZE_CLASSES, PAGES_PER_SEGMENT, PAGE_SHIFT, PAGE_SIZE, SEGMENT_SIZE,
+    NUM_SIZE_CLASSES, PAGES_PER_SEGMENT, PAGE_SIZE, SEGMENT_SIZE,
 };
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::{class_to_size, size_to_class};
@@ -498,8 +498,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 unlink_page_from_list(&mut self.empty_pages, page_ptr);
                 let page = page_ptr.as_mut();
 
-                let segment_addr = (page_ptr.as_ptr() as usize) & !(SEGMENT_SIZE - 1);
-                let page_start = (segment_addr as *mut u8).add(page.index_in_segment() << PAGE_SHIFT);
+                let page_start = page.page_start();
                 page.block_size = block_size;
                 page.size_class = class as u32;
                 page.initialize_free_list::<P>(page_start);
@@ -564,8 +563,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         let page = unsafe { &mut *found_page };
                         page.block_size = block_size;
                         page.size_class = class as u32;
-                        let page_start =
-                            unsafe { (seg_ptr as *mut u8).add(page.index_in_segment() << PAGE_SHIFT) };
+                        let page_start = page.page_start();
                         // Safety: initializing free list for the repurposed page
                         unsafe {
                             page.initialize_free_list::<P>(page_start);
@@ -612,7 +610,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         page.block_size = block_size;
         page.size_class = class as u32;
 
-        let page_start = unsafe { (seg as *mut u8).add(page.index_in_segment() << PAGE_SHIFT) };
+        let page_start = page.page_start();
         unsafe {
             page.initialize_free_list::<P>(page_start);
         }
@@ -888,6 +886,7 @@ mod tests {
     use super::*;
     use core::ptr::NonNull;
     use core::sync::atomic::{AtomicUsize, Ordering};
+    use mnemosyne_core::constants::PAGE_SHIFT;
     use mnemosyne_core::policy::StandardPolicy;
     use mnemosyne_core::types::Block;
     use mnemosyne_core::MemoryBackend;

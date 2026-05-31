@@ -56,4 +56,5 @@ fn main() {
     }
     let elapsed = start.elapsed();
     println!("Batch medium (1,000 * 100): {:?}", elapsed);
+    println!("{:#?}", mnemosyne::memory_stats());
 }
