@@ -45,6 +45,15 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
     /// Returns null if allocation fails.
     #[inline(always)]
     pub fn alloc(&self, layout: Layout) -> *mut u8 {
+        let ptr = unsafe { self.alloc_inner(layout) };
+        if !ptr.is_null() {
+            mnemosyne_prof::on_alloc(ptr, layout.size());
+        }
+        ptr
+    }
+
+    #[inline(always)]
+    unsafe fn alloc_inner(&self, layout: Layout) -> *mut u8 {
         ensure_options_initialized();
         if !is_valid_layout_alloc_request(layout.size(), layout.align()) {
             return core::ptr::null_mut();
@@ -137,6 +146,14 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
 
         // Safety: ptr is non-null and comes from Mnemosyne.
         let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
+        let size = if page_index == 0 || page.block_size == 0 {
+            let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+            unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+        } else {
+            page.block_size
+        };
+        mnemosyne_prof::on_free(ptr, size);
+
         if page_index == 0 || page.block_size == 0 {
             if P::ENABLE_POISONING {
                 let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };

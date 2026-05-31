@@ -1,0 +1,14 @@
+[package]
+name = "mnemosyne-prof"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mnemosyne-core = { path = "../mnemosyne-core" }
+backtrace = "0.3"
+
+[dev-dependencies]
+mnemosyne = { path = "../mnemosyne" }
+mnemosyne-local = { path = "../mnemosyne-local" }
+mnemosyne-heap = { path = "../mnemosyne-heap" }
+mnemosyne-backend = { path = "../mnemosyne-backend" }

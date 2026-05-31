@@ -10,6 +10,10 @@ pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
 pub use mnemosyne_core::{AllocPolicy, HardenedPolicy, SecurePolicy, StandardPolicy};
 pub use mnemosyne_local::{usable_size, SizeClassOccupancy};
 pub use mnemosyne_heap::MnemosyneHeap;
+pub use mnemosyne_prof::{
+    register_alloc_hook, register_free_hook, enable_profiling, disable_profiling,
+    is_profiling_enabled, dump_profile,
+};
 
 /// Snapshot of Mnemosyne memory mapping and segment cache state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -160,6 +164,11 @@ pub fn reset_generic<B: mnemosyne_arena::HasSegmentPool>() {
 /// segment without removing them from the cache.
 pub fn reset() {
     reset_generic::<mnemosyne_backend::MemoryBackendWrapper>();
+}
+
+/// Triggers a manual background decay and defragmentation cycle across all active memory backends.
+pub fn decay() {
+    mnemosyne_decay::decay_step();
 }
 
 /// The Mnemosyne global allocator structure.

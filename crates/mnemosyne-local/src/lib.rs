@@ -20,7 +20,7 @@ use mnemosyne_arena::{allocate_large_or_huge, deallocate_large_or_huge, HasSegme
 use mnemosyne_core::constants::{
     MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT, PAGE_SIZE, SEGMENT_SIZE,
 };
-use mnemosyne_core::size_class::{round_up_size, size_to_class_nonzero};
+use mnemosyne_core::size_class::size_to_class_nonzero;
 use mnemosyne_core::types::{Block, Page, Segment};
 use mnemosyne_core::validation::{is_valid_alloc_request, is_valid_layout_alloc_request};
 
@@ -137,6 +137,16 @@ fn init_options_from_env() {
 
     if let Some(parsed) = parse_env_usize("MNEMOSYNE_PURGE_CADENCE_MS") {
         mnemosyne_core::options::PURGE_CADENCE_MS.store(parsed, core::sync::atomic::Ordering::Release);
+        if parsed > 0 {
+            mnemosyne_decay::init_decay_engine();
+        }
+    }
+
+    if let Some(parsed) = parse_env_bool("MNEMOSYNE_PROF") {
+        if parsed {
+            let interval = parse_env_usize("MNEMOSYNE_PROF_SAMPLE_INTERVAL").unwrap_or(512 * 1024);
+            mnemosyne_prof::enable_profiling(interval);
+        }
     }
 }
 
@@ -147,6 +157,7 @@ pub fn reset_options_for_testing() {
     mnemosyne_core::options::MAX_RETAINED_SEGMENTS.store(1024, core::sync::atomic::Ordering::Release);
     mnemosyne_core::options::ENABLE_HUGEPAGE_HINT.store(true, core::sync::atomic::Ordering::Release);
     mnemosyne_core::options::PURGE_CADENCE_MS.store(0, core::sync::atomic::Ordering::Release);
+    mnemosyne_prof::reset_profiler_for_testing();
 }
 
 /// Per-thread allocator cache plus reentrancy guard.
@@ -614,6 +625,7 @@ pub fn thread_allocator_stats<B: HasSegmentPool + LocalAllocatorSelector<B>>(
 /// # Safety
 ///
 /// This function is unsafe because it handles raw pointers and manual layouts.
+#[inline(always)]
 pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
     size: usize,
     align: usize,
@@ -622,7 +634,11 @@ pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
         return core::ptr::null_mut();
     }
 
-    unsafe { thread_alloc_checked::<P, B>(size, align) }
+    let ptr = unsafe { thread_alloc_checked::<P, B>(size, align) };
+    if !ptr.is_null() {
+        mnemosyne_prof::on_alloc(ptr, size);
+    }
+    ptr
 }
 
 /// Allocates from a Rust `Layout`-validated request.
@@ -647,7 +663,11 @@ pub unsafe fn thread_alloc_layout<P: AllocPolicy, B: HasSegmentPool + LocalAlloc
         align != 0 && align.is_power_of_two(),
         "Layout-validated allocation received invalid alignment {align}"
     );
-    unsafe { thread_alloc_checked::<P, B>(size, align) }
+    let ptr = unsafe { thread_alloc_checked::<P, B>(size, align) };
+    if !ptr.is_null() {
+        mnemosyne_prof::on_alloc(ptr, size);
+    }
+    ptr
 }
 
 #[inline(always)]
@@ -783,6 +803,14 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
     // segment-aligned (page_index == 0) or page.block_size is 0. In either case, we route
     // to the huge deallocation path.
     let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
+    let size = if page_index == 0 || page.block_size == 0 {
+        let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+        unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+    } else {
+        page.block_size
+    };
+    mnemosyne_prof::on_free(ptr, size);
+
     if page.block_size == 0 {
         if P::ENABLE_POISONING {
             // Safety: large/huge allocations store the segment pointer in the metadata
@@ -922,8 +950,14 @@ pub fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> boo
     }
 
     let old_adjusted_size = core::cmp::max(layout.size(), layout.align());
-    if let Some(limit) = round_up_size(old_adjusted_size) {
-        new_size <= limit
+    if old_adjusted_size <= 128 {
+        new_size <= (old_adjusted_size + 15) & !15
+    } else if old_adjusted_size <= 512 {
+        new_size <= (old_adjusted_size + 31) & !31
+    } else if old_adjusted_size <= 2048 {
+        new_size <= (old_adjusted_size + 127) & !127
+    } else if old_adjusted_size <= MAX_SMALL_ALLOC_SIZE {
+        new_size <= (old_adjusted_size + 511) & !511
     } else {
         false
     }
@@ -942,31 +976,33 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     layout: Layout,
     new_size: usize,
 ) -> *mut u8 {
-    if new_size == 0 {
-        if !ptr.is_null() {
-            unsafe { thread_free::<P, B>(ptr) };
+    if !ptr.is_null() && new_size != 0 {
+        if !P::ZERO_INITIALIZE && !P::ENABLE_POISONING {
+            if new_size <= layout.size() {
+                return ptr;
+            }
+
+            if layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
+                if small_realloc_fits_existing_class(layout, new_size) {
+                    return ptr;
+                }
+            } else {
+                let current_usable = unsafe { usable_size(ptr) };
+                if new_size <= current_usable {
+                    return ptr;
+                }
+            }
         }
+    } else {
+        if ptr.is_null() {
+            if new_size == 0 {
+                return core::ptr::null_mut();
+            }
+            return unsafe { thread_alloc_layout::<P, B>(new_size, layout.align()) };
+        }
+        // new_size == 0 && !ptr.is_null()
+        unsafe { thread_free::<P, B>(ptr) };
         return core::ptr::null_mut();
-    }
-    if ptr.is_null() {
-        return unsafe { thread_alloc_layout::<P, B>(new_size, layout.align()) };
-    }
-
-    if !P::ZERO_INITIALIZE && !P::ENABLE_POISONING {
-        if new_size <= layout.size() {
-            return ptr;
-        }
-
-        if layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
-            if small_realloc_fits_existing_class(layout, new_size) {
-                return ptr;
-            }
-        } else {
-            let current_usable = unsafe { usable_size(ptr) };
-            if new_size <= current_usable {
-                return ptr;
-            }
-        }
     }
 
     let new_adjusted = core::cmp::max(new_size, layout.align());

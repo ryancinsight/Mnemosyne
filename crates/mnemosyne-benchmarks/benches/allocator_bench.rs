@@ -437,7 +437,6 @@ struct ThreadCycleWorkers<A: GlobalAlloc + Send + Sync + 'static> {
     senders: Vec<SyncSender<Option<usize>>>,
     done: Receiver<()>,
     handles: Vec<thread::JoinHandle<()>>,
-    layout: Layout,
     _allocator: &'static A,
 }
 
@@ -472,7 +471,6 @@ impl<A: GlobalAlloc + Send + Sync + 'static> ThreadCycleWorkers<A> {
             senders,
             done,
             handles,
-            layout,
             _allocator: allocator,
         }
     }

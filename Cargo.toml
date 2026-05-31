@@ -6,6 +6,8 @@ members = [
     "crates/mnemosyne-arena",
     "crates/mnemosyne-local",
     "crates/mnemosyne-heap",
+    "crates/mnemosyne-decay",
+    "crates/mnemosyne-prof",
     "crates/mnemosyne",
     "crates/mnemosyne-c-shim",
     "crates/mnemosyne-benchmarks",

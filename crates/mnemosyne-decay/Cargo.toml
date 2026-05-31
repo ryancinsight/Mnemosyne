@@ -1,5 +1,5 @@
 [package]
-name = "mnemosyne-heap"
+name = "mnemosyne-decay"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,5 +7,6 @@ edition = "2021"
 mnemosyne-core = { path = "../mnemosyne-core" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-arena = { path = "../mnemosyne-arena" }
+
+[dev-dependencies]
 mnemosyne-local = { path = "../mnemosyne-local" }
-mnemosyne-prof = { path = "../mnemosyne-prof" }

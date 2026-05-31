@@ -101,12 +101,18 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
         let ptr = S::get_cached_cell(|cell| cell.get());
         if !ptr.is_null() {
-            let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-            slot.with_allocator(f)
+            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
+            if alloc.is_allocating {
+                return None;
+            }
+            alloc.is_allocating = true;
+            let result = f(alloc);
+            alloc.is_allocating = false;
+            Some(result)
         } else {
             S::get_slot_standard(|slot| {
-                let raw = slot as *const LocalAllocatorSlot<B> as *mut core::ffi::c_void;
-                S::get_cached_cell(|cell| cell.set(raw));
+                let alloc_ptr = slot.allocator_ptr();
+                S::get_cached_cell(|cell| cell.set(alloc_ptr));
                 S::arm_thread_exit(slot);
                 slot.with_allocator(f)
             })
@@ -117,12 +123,18 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
     fn with_allocator_guard<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
         let ptr = S::get_cached_cell(|cell| cell.get());
         if !ptr.is_null() {
-            let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-            slot.with_allocator(f)
+            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
+            if alloc.is_allocating {
+                return None;
+            }
+            alloc.is_allocating = true;
+            let result = f(alloc);
+            alloc.is_allocating = false;
+            Some(result)
         } else {
             S::get_slot_standard(|slot| {
-                let raw = slot as *const LocalAllocatorSlot<B> as *mut core::ffi::c_void;
-                S::get_cached_cell(|cell| cell.set(raw));
+                let alloc_ptr = slot.allocator_ptr();
+                S::get_cached_cell(|cell| cell.set(alloc_ptr));
                 S::arm_thread_exit(slot);
                 slot.with_allocator(f)
             })
@@ -135,12 +147,15 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
     ) -> Option<R> {
         let ptr = S::get_cached_cell(|cell| cell.get());
         if !ptr.is_null() {
-            let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-            unsafe { slot.with_allocator_unguarded(f) }
+            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
+            if alloc.is_allocating {
+                return None;
+            }
+            Some(f(alloc))
         } else {
             S::get_slot_standard(|slot| {
-                let raw = slot as *const LocalAllocatorSlot<B> as *mut core::ffi::c_void;
-                S::get_cached_cell(|cell| cell.set(raw));
+                let alloc_ptr = slot.allocator_ptr();
+                S::get_cached_cell(|cell| cell.set(alloc_ptr));
                 S::arm_thread_exit(slot);
                 unsafe { slot.with_allocator_unguarded(f) }
             })
@@ -151,13 +166,12 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
     fn get_allocator_ptr() -> *mut core::ffi::c_void {
         let ptr = S::get_cached_cell(|cell| cell.get());
         if !ptr.is_null() {
-            let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-            slot.allocator_ptr()
+            ptr
         } else {
             S::get_slot_standard(|slot| {
-                let raw = slot as *const LocalAllocatorSlot<B> as *mut core::ffi::c_void;
-                S::get_cached_cell(|cell| cell.set(raw));
-                slot.allocator_ptr()
+                let alloc_ptr = slot.allocator_ptr();
+                S::get_cached_cell(|cell| cell.set(alloc_ptr));
+                alloc_ptr
             })
         }
     }
@@ -179,12 +193,18 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
         let key = get_os_tls_key(S::get_os_tls_key());
         let ptr = get_os_tls_value(key);
         if !ptr.is_null() {
-            let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-            slot.with_allocator(f)
+            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
+            if alloc.is_allocating {
+                return None;
+            }
+            alloc.is_allocating = true;
+            let result = f(alloc);
+            alloc.is_allocating = false;
+            Some(result)
         } else {
             S::get_slot_standard(|slot| {
-                let raw = slot as *const LocalAllocatorSlot<B> as *mut core::ffi::c_void;
-                set_os_tls_value(key, raw);
+                let alloc_ptr = slot.allocator_ptr();
+                set_os_tls_value(key, alloc_ptr);
                 S::arm_thread_exit(slot);
                 slot.with_allocator(f)
             })
@@ -196,12 +216,18 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
         let key = get_os_tls_key(S::get_os_tls_key());
         let ptr = get_os_tls_value(key);
         if !ptr.is_null() {
-            let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-            slot.with_allocator(f)
+            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
+            if alloc.is_allocating {
+                return None;
+            }
+            alloc.is_allocating = true;
+            let result = f(alloc);
+            alloc.is_allocating = false;
+            Some(result)
         } else {
             S::get_slot_standard(|slot| {
-                let raw = slot as *const LocalAllocatorSlot<B> as *mut core::ffi::c_void;
-                set_os_tls_value(key, raw);
+                let alloc_ptr = slot.allocator_ptr();
+                set_os_tls_value(key, alloc_ptr);
                 S::arm_thread_exit(slot);
                 slot.with_allocator(f)
             })
@@ -215,12 +241,15 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
         let key = get_os_tls_key(S::get_os_tls_key());
         let ptr = get_os_tls_value(key);
         if !ptr.is_null() {
-            let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-            unsafe { slot.with_allocator_unguarded(f) }
+            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
+            if alloc.is_allocating {
+                return None;
+            }
+            Some(f(alloc))
         } else {
             S::get_slot_standard(|slot| {
-                let raw = slot as *const LocalAllocatorSlot<B> as *mut core::ffi::c_void;
-                set_os_tls_value(key, raw);
+                let alloc_ptr = slot.allocator_ptr();
+                set_os_tls_value(key, alloc_ptr);
                 S::arm_thread_exit(slot);
                 unsafe { slot.with_allocator_unguarded(f) }
             })
@@ -232,13 +261,12 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
         let key = get_os_tls_key(S::get_os_tls_key());
         let ptr = get_os_tls_value(key);
         if !ptr.is_null() {
-            let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-            slot.allocator_ptr()
+            ptr
         } else {
             S::get_slot_standard(|slot| {
-                let raw = slot as *const LocalAllocatorSlot<B> as *mut core::ffi::c_void;
-                set_os_tls_value(key, raw);
-                slot.allocator_ptr()
+                let alloc_ptr = slot.allocator_ptr();
+                set_os_tls_value(key, alloc_ptr);
+                alloc_ptr
             })
         }
     }
@@ -264,12 +292,18 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
             let key = get_os_tls_key(S::get_os_tls_key());
             let ptr = unsafe { get_teb_tls_slot(key) };
             if !ptr.is_null() {
-                let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-                slot.with_allocator(f)
+                let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
+                if alloc.is_allocating {
+                    return None;
+                }
+                alloc.is_allocating = true;
+                let result = f(alloc);
+                alloc.is_allocating = false;
+                Some(result)
             } else {
                 S::get_slot_standard(|slot| {
-                    let raw = slot as *const LocalAllocatorSlot<B> as *mut core::ffi::c_void;
-                    unsafe { set_teb_tls_slot(key, raw) };
+                    let alloc_ptr = slot.allocator_ptr();
+                    unsafe { set_teb_tls_slot(key, alloc_ptr) };
                     S::arm_thread_exit(slot);
                     slot.with_allocator(f)
                 })
@@ -288,12 +322,18 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
             let key = get_os_tls_key(S::get_os_tls_key());
             let ptr = unsafe { get_teb_tls_slot(key) };
             if !ptr.is_null() {
-                let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-                slot.with_allocator(f)
+                let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
+                if alloc.is_allocating {
+                    return None;
+                }
+                alloc.is_allocating = true;
+                let result = f(alloc);
+                alloc.is_allocating = false;
+                Some(result)
             } else {
                 S::get_slot_standard(|slot| {
-                    let raw = slot as *const LocalAllocatorSlot<B> as *mut core::ffi::c_void;
-                    unsafe { set_teb_tls_slot(key, raw) };
+                    let alloc_ptr = slot.allocator_ptr();
+                    unsafe { set_teb_tls_slot(key, alloc_ptr) };
                     S::arm_thread_exit(slot);
                     slot.with_allocator(f)
                 })
@@ -314,12 +354,15 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
             let key = get_os_tls_key(S::get_os_tls_key());
             let ptr = unsafe { get_teb_tls_slot(key) };
             if !ptr.is_null() {
-                let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-                unsafe { slot.with_allocator_unguarded(f) }
+                let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
+                if alloc.is_allocating {
+                    return None;
+                }
+                Some(f(alloc))
             } else {
                 S::get_slot_standard(|slot| {
-                    let raw = slot as *const LocalAllocatorSlot<B> as *mut core::ffi::c_void;
-                    unsafe { set_teb_tls_slot(key, raw) };
+                    let alloc_ptr = slot.allocator_ptr();
+                    unsafe { set_teb_tls_slot(key, alloc_ptr) };
                     S::arm_thread_exit(slot);
                     unsafe { slot.with_allocator_unguarded(f) }
                 })
@@ -338,13 +381,12 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
             let key = get_os_tls_key(S::get_os_tls_key());
             let ptr = unsafe { get_teb_tls_slot(key) };
             if !ptr.is_null() {
-                let slot = unsafe { &*(ptr as *const LocalAllocatorSlot<B>) };
-                slot.allocator_ptr()
+                ptr
             } else {
                 S::get_slot_standard(|slot| {
-                    let raw = slot as *const LocalAllocatorSlot<B> as *mut core::ffi::c_void;
-                    unsafe { set_teb_tls_slot(key, raw) };
-                    slot.allocator_ptr()
+                    let alloc_ptr = slot.allocator_ptr();
+                    unsafe { set_teb_tls_slot(key, alloc_ptr) };
+                    alloc_ptr
                 })
             }
         }
