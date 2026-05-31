@@ -467,7 +467,10 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
     fn get_allocator_ptr() -> *mut core::ffi::c_void {
         #[cfg(feature = "nightly_tls")]
         {
-            S::get_slot_nightly(|slot| slot.allocator_ptr())
+            S::get_slot_nightly(|slot| {
+                S::arm_thread_exit(slot);
+                slot.allocator_ptr()
+            })
         }
         #[cfg(not(feature = "nightly_tls"))]
         {
@@ -479,7 +482,13 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
     fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
         #[cfg(feature = "nightly_tls")]
         {
-            S::get_slot_nightly(|slot| slot.allocator_ptr())
+            S::get_slot_nightly(|slot| {
+                if slot.exit_armed.get() {
+                    slot.allocator_ptr()
+                } else {
+                    core::ptr::null_mut()
+                }
+            })
         }
         #[cfg(not(feature = "nightly_tls"))]
         {
