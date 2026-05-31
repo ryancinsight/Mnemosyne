@@ -206,7 +206,16 @@ impl Page {
             list_state: 0,
         }
     }
+}
 
+impl Default for Page {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Page {
     /// Recovers this page's index within its parent segment's `pages` array
     /// from the page's own metadata address, in O(1).
     ///

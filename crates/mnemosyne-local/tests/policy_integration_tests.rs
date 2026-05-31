@@ -136,9 +136,9 @@ fn test_randomized_allocation_policy() {
     // 1. Run StandardPolicy check in a separate thread
     let std_consecutive = std::thread::spawn(move || unsafe {
         let mut std_ptrs = [core::ptr::null_mut::<u8>(); 5];
-        for i in 0..5 {
-            std_ptrs[i] = thread_alloc::<StandardPolicy, Backend>(SIZE, ALIGN);
-            assert!(!std_ptrs[i].is_null());
+        for slot in &mut std_ptrs {
+            *slot = thread_alloc::<StandardPolicy, Backend>(SIZE, ALIGN);
+            assert!(!slot.is_null());
         }
 
         let mut consecutive = true;
@@ -160,9 +160,9 @@ fn test_randomized_allocation_policy() {
     // 2. Run SecurePolicy check in a separate thread
     let sec_consecutive = std::thread::spawn(move || unsafe {
         let mut sec_ptrs = [core::ptr::null_mut::<u8>(); 5];
-        for i in 0..5 {
-            sec_ptrs[i] = thread_alloc::<SecurePolicy, Backend>(SIZE, ALIGN);
-            assert!(!sec_ptrs[i].is_null());
+        for slot in &mut sec_ptrs {
+            *slot = thread_alloc::<SecurePolicy, Backend>(SIZE, ALIGN);
+            assert!(!slot.is_null());
         }
 
         let mut consecutive = true;

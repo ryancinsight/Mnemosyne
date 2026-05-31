@@ -323,6 +323,45 @@ impl<'brand, T> BrandedBlock<'brand, T> {
     }
 }
 
+impl<'brand, T: ?Sized> core::fmt::Debug for BrandedBlock<'brand, T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("BrandedBlock").field(&self.ptr.as_ptr()).finish()
+    }
+}
+
+impl<'brand, T: ?Sized> core::fmt::Pointer for BrandedBlock<'brand, T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Pointer::fmt(&self.ptr.as_ptr(), f)
+    }
+}
+
+impl<'brand, T: ?Sized> PartialEq for BrandedBlock<'brand, T> {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr == other.ptr
+    }
+}
+impl<'brand, T: ?Sized> Eq for BrandedBlock<'brand, T> {}
+
+impl<'brand, T: ?Sized> PartialOrd for BrandedBlock<'brand, T> {
+    #[inline(always)]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl<'brand, T: ?Sized> Ord for BrandedBlock<'brand, T> {
+    #[inline(always)]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.ptr.cmp(&other.ptr)
+    }
+}
+impl<'brand, T: ?Sized> core::hash::Hash for BrandedBlock<'brand, T> {
+    #[inline(always)]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.ptr.hash(state);
+    }
+}
+
 /// A scoped, lifetime-branded memory heap.
 ///
 /// Statically validates local block ownership on deallocation via invariant
@@ -781,6 +820,78 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     }
 }
 
+impl<'brand, 'heap, T: Clone, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    BrandedBox<'brand, 'heap, T, P, B>
+{
+    /// Clones the box using the given allocator token.
+    ///
+    /// Returns `None` if allocation fails.
+    #[inline]
+    pub fn clone_in(&self, token: &AllocatorToken<'brand>) -> Option<Self> {
+        Self::new(self.heap, token, (**self).clone())
+    }
+}
+
+impl<'brand, 'heap, T: ?Sized + core::fmt::Debug, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    core::fmt::Debug for BrandedBox<'brand, 'heap, T, P, B>
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(&**self, f)
+    }
+}
+
+impl<'brand, 'heap, T: ?Sized + core::fmt::Display, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    core::fmt::Display for BrandedBox<'brand, 'heap, T, P, B>
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&**self, f)
+    }
+}
+
+impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    core::fmt::Pointer for BrandedBox<'brand, 'heap, T, P, B>
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Pointer::fmt(&self.ptr.as_ptr(), f)
+    }
+}
+
+impl<'brand, 'heap, T: ?Sized + PartialEq, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    PartialEq for BrandedBox<'brand, 'heap, T, P, B>
+{
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+impl<'brand, 'heap, T: ?Sized + Eq, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    Eq for BrandedBox<'brand, 'heap, T, P, B> {}
+
+impl<'brand, 'heap, T: ?Sized + PartialOrd, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    PartialOrd for BrandedBox<'brand, 'heap, T, P, B>
+{
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        (**self).partial_cmp(&**other)
+    }
+}
+impl<'brand, 'heap, T: ?Sized + Ord, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    Ord for BrandedBox<'brand, 'heap, T, P, B>
+{
+    #[inline]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        (**self).cmp(&**other)
+    }
+}
+impl<'brand, 'heap, T: ?Sized + core::hash::Hash, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    core::hash::Hash for BrandedBox<'brand, 'heap, T, P, B>
+{
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        (**self).hash(state);
+    }
+}
+
 /// A dynamically growing array allocated from a `BrandedHeap`.
 ///
 /// Automatically handles growth and reallocation, dropping all elements on drop.
@@ -1026,6 +1137,156 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         }
     }
 
+    /// Clears the vector, removing all values.
+    ///
+    /// Note that this method has no effect on the allocated capacity of the vector.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.truncate(0);
+    }
+
+    /// Shortens the vector, keeping the first `len` elements and dropping the rest.
+    ///
+    /// If `len` is greater than the vector's current length, this has no effect.
+    #[inline]
+    pub fn truncate(&mut self, len: usize) {
+        if len < self.len {
+            unsafe {
+                let remaining = self.len - len;
+                let tail = core::slice::from_raw_parts_mut(self.ptr.as_ptr().add(len), remaining);
+                self.len = len;
+                core::ptr::drop_in_place(tail);
+            }
+        }
+    }
+
+    /// Reserves capacity for at least `additional` more elements to be inserted in the vector.
+    ///
+    /// # Errors
+    /// Returns `Err(())` if layout calculations overflow or allocation fails.
+    #[inline]
+    pub fn reserve(&mut self, token: &mut AllocatorToken<'brand>, additional: usize) -> Result<(), ()> {
+        if core::mem::size_of::<T>() == 0 {
+            return Ok(());
+        }
+        let needed = match self.len.checked_add(additional) {
+            Some(n) => n,
+            None => return Err(()),
+        };
+        if needed <= self.cap {
+            return Ok(());
+        }
+        let new_cap = core::cmp::max(self.cap.checked_mul(2).unwrap_or(needed), needed);
+        let new_layout = Layout::array::<T>(new_cap).map_err(|_| ())?;
+        if self.cap == 0 {
+            let block = self.heap.alloc(token, new_layout).ok_or(())?;
+            self.ptr = block.ptr.cast();
+            self.cap = new_cap;
+        } else {
+            let old_layout = Layout::array::<T>(self.cap).unwrap();
+            let block = BrandedBlock {
+                ptr: self.ptr,
+                _marker: Invariant::new(),
+            };
+            let new_block = self
+                .heap
+                .realloc(token, block, old_layout, new_layout.size())
+                .ok_or(())?;
+            self.ptr = new_block.ptr.cast();
+            self.cap = new_cap;
+        }
+        Ok(())
+    }
+
+    /// Shrinks the capacity of the vector as much as possible.
+    ///
+    /// # Errors
+    /// Returns `Err(())` if allocation fails.
+    #[inline]
+    pub fn shrink_to_fit(&mut self, token: &mut AllocatorToken<'brand>) -> Result<(), ()> {
+        if core::mem::size_of::<T>() == 0 || self.cap <= self.len {
+            return Ok(());
+        }
+        if self.len == 0 {
+            unsafe {
+                self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
+            }
+            self.ptr = NonNull::dangling();
+            self.cap = 0;
+            return Ok(());
+        }
+        let new_layout = Layout::array::<T>(self.len).map_err(|_| ())?;
+        let block = BrandedBlock {
+            ptr: self.ptr,
+            _marker: Invariant::new(),
+        };
+        let old_layout = Layout::array::<T>(self.cap).unwrap();
+        if let Some(new_block) = self.heap.alloc(token, new_layout) {
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    self.ptr.as_ptr(),
+                    new_block.ptr.cast::<T>().as_ptr(),
+                    self.len,
+                );
+                self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
+            }
+            self.ptr = new_block.ptr.cast();
+            self.cap = self.len;
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    /// Inserts an element at position `index` within the vector, shifting all elements after it to the right.
+    ///
+    /// # Panics
+    /// Panics if `index > len`.
+    ///
+    /// # Errors
+    /// Returns `Err(element)` if growing the vector fails.
+    #[inline]
+    pub fn insert(
+        &mut self,
+        token: &mut AllocatorToken<'brand>,
+        index: usize,
+        element: T,
+    ) -> Result<(), T> {
+        assert!(index <= self.len, "insert index out of bounds");
+        if self.len == self.cap {
+            if self.reserve(token, 1).is_err() {
+                return Err(element);
+            }
+        }
+        unsafe {
+            let p = self.ptr.as_ptr().add(index);
+            if index < self.len {
+                core::ptr::copy(p, p.add(1), self.len - index);
+            }
+            p.write(element);
+            self.len += 1;
+        }
+        Ok(())
+    }
+
+    /// Removes and returns the element at position `index` within the vector, shifting all elements after it to the left.
+    ///
+    /// # Panics
+    /// Panics if `index >= len`.
+    #[inline]
+    pub fn remove(&mut self, index: usize) -> T {
+        assert!(index < self.len, "remove index out of bounds");
+        unsafe {
+            let p = self.ptr.as_ptr().add(index);
+            let val = core::ptr::read(p);
+            self.len -= 1;
+            if index < self.len {
+                core::ptr::copy(p.add(1), p, self.len - index);
+            }
+            val
+        }
+    }
+
     /// Converts this vector into a shared `BrandedCell` containing a slice.
     ///
     /// The memory is shrunk to fit and remains allocated until manually reclaimed.
@@ -1067,6 +1328,68 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
                 }
             }
         }
+    }
+}
+
+impl<'brand, 'heap, T: Clone, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    BrandedVec<'brand, 'heap, T, P, B>
+{
+    /// Clones the vector using the given allocator token.
+    ///
+    /// Returns `None` if allocation fails.
+    #[inline]
+    pub fn clone_in(&self, token: &mut AllocatorToken<'brand>) -> Option<Self> {
+        let mut new_vec = Self::with_capacity(self.heap, token, self.len())?;
+        for item in self.as_slice() {
+            if new_vec.push(token, item.clone()).is_err() {
+                return None;
+            }
+        }
+        Some(new_vec)
+    }
+}
+
+impl<'brand, 'heap, T: core::fmt::Debug, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    core::fmt::Debug for BrandedVec<'brand, 'heap, T, P, B>
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(self.as_slice(), f)
+    }
+}
+
+impl<'brand, 'heap, T: PartialEq, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    PartialEq for BrandedVec<'brand, 'heap, T, P, B>
+{
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+impl<'brand, 'heap, T: Eq, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    Eq for BrandedVec<'brand, 'heap, T, P, B> {}
+
+impl<'brand, 'heap, T: PartialOrd, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    PartialOrd for BrandedVec<'brand, 'heap, T, P, B>
+{
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        self.as_slice().partial_cmp(other.as_slice())
+    }
+}
+impl<'brand, 'heap, T: Ord, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    Ord for BrandedVec<'brand, 'heap, T, P, B>
+{
+    #[inline]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.as_slice().cmp(other.as_slice())
+    }
+}
+impl<'brand, 'heap, T: core::hash::Hash, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    core::hash::Hash for BrandedVec<'brand, 'heap, T, P, B>
+{
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.as_slice().hash(state);
     }
 }
 
@@ -1174,6 +1497,27 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
                 &mut *cell3.ptr.as_ptr(),
             )
         }
+    }
+}
+
+impl<'brand, T: ?Sized> core::fmt::Debug for BrandedCell<'brand, T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("BrandedCell").field(&self.ptr.as_ptr()).finish()
+    }
+}
+
+impl<'brand, T: ?Sized> PartialEq for BrandedCell<'brand, T> {
+    #[inline(always)]
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr == other.ptr
+    }
+}
+impl<'brand, T: ?Sized> Eq for BrandedCell<'brand, T> {}
+
+impl<'brand, T: ?Sized> core::hash::Hash for BrandedCell<'brand, T> {
+    #[inline(always)]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.ptr.hash(state);
     }
 }
 
@@ -1451,7 +1795,7 @@ mod tests {
     }
 
     std::thread_local! {
-        static ZST_DROP_COUNT: core::cell::Cell<usize> = core::cell::Cell::new(0);
+        static ZST_DROP_COUNT: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
     }
 
     #[derive(Debug)]
@@ -1705,7 +2049,7 @@ mod tests {
                 let (r1, r2, r3) = BrandedCell::borrow_mut_3(&c1, &c2, &c3, &mut token);
                 *r1 = 10;
                 *r2 = 20.0;
-                r3.push_str("0");
+                r3.push('0');
             }
 
             assert_eq!(*c1.borrow(&token), 10);

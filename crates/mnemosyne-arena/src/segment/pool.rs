@@ -65,6 +65,13 @@ impl NodeSegmentPool {
     const COUNT_WRAP_MASK: usize = (1usize << (usize::BITS - Self::PACKED_PTR_BITS)) - 1;
 }
 
+impl Default for NodeSegmentPool {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NodeSegmentPool {
     /// Creates a new empty `NodeSegmentPool`.
     pub const fn new() -> Self {
@@ -420,6 +427,13 @@ pub struct NodeHugeBucket {
     count: core::sync::atomic::AtomicUsize,
 }
 
+impl Default for NodeHugeBucket {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NodeHugeBucket {
     /// Creates a new empty `NodeHugeBucket`.
     pub const fn new() -> Self {
@@ -433,6 +447,13 @@ impl NodeHugeBucket {
 /// A lock-free pool of cached huge allocations for a single NUMA node, divided into 16 size-buckets.
 pub struct NodeHugePool {
     buckets: [NodeHugeBucket; 16],
+}
+
+impl Default for NodeHugePool {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl NodeHugePool {
@@ -473,6 +494,13 @@ fn huge_bucket_index(size: usize) -> usize {
         15
     } else {
         mb
+    }
+}
+
+impl Default for GlobalHugePool {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -629,6 +657,11 @@ impl GlobalHugePool {
     }
 
     /// Purges all cached huge blocks and releases them to the OS.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the backend `B` is valid and that no threads
+    /// are concurrently accessing the purged memory or segment pointers.
     pub unsafe fn purge<B: mnemosyne_core::MemoryBackend>(&self) {
         for node in 0..16 {
             let pool_node = &self.nodes[node];

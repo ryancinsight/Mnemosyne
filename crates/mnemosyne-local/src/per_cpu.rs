@@ -23,6 +23,13 @@ pub struct CpuCacheSlot {
     pub counts: [AtomicU8; NUM_SIZE_CLASSES],
 }
 
+impl Default for CpuCacheSlot {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpuCacheSlot {
     /// Creates a new empty `CpuCacheSlot`.
     pub const fn new() -> Self {
@@ -36,6 +43,13 @@ impl CpuCacheSlot {
 /// Global per-CPU block cache array.
 pub struct PerCpuCache {
     pub slots: [CpuCacheSlot; MAX_CPUS],
+}
+
+impl Default for PerCpuCache {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PerCpuCache {

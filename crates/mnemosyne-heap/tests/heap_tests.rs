@@ -64,6 +64,9 @@ fn test_runtime_options_override_default_retention() {
     std::env::set_var("MNEMOSYNE_MAX_RETAINED_SEGMENTS", "0");
 
     let pool = <MemoryBackendWrapper as HasSegmentPool>::global_segment_pool();
+    unsafe {
+        mnemosyne_arena::purge_segment_pool::<MemoryBackendWrapper>();
+    }
     let initial_retained = pool.retained_count();
 
     // Do an allocation via MnemosyneHeap to trigger options parsing and then drop it

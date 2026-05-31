@@ -16,13 +16,11 @@ fn main() {
 
     let start = Instant::now();
     for _ in 0..1000 {
-        // Setup phase: allocate N blocks
-        for i in 0..n {
-            ptrs[i] = unsafe { mnemosyne::Mnemosyne.alloc(layout_medium) };
+        for slot in &mut ptrs {
+            *slot = unsafe { mnemosyne::Mnemosyne.alloc(layout_medium) };
         }
-        // Routine phase: free N blocks
-        for i in 0..n {
-            unsafe { mnemosyne::Mnemosyne.dealloc(ptrs[i], layout_medium) };
+        for &ptr in &ptrs {
+            unsafe { mnemosyne::Mnemosyne.dealloc(ptr, layout_medium) };
         }
     }
     let elapsed = start.elapsed();
@@ -33,13 +31,11 @@ fn main() {
     let mut ptrs_large = vec![std::ptr::null_mut(); n];
     let start = Instant::now();
     for _ in 0..1000 {
-        // Setup phase: allocate N blocks
-        for i in 0..n {
-            ptrs_large[i] = unsafe { mnemosyne::Mnemosyne.alloc(layout_large) };
+        for slot in &mut ptrs_large {
+            *slot = unsafe { mnemosyne::Mnemosyne.alloc(layout_large) };
         }
-        // Routine phase: free N blocks
-        for i in 0..n {
-            unsafe { mnemosyne::Mnemosyne.dealloc(ptrs_large[i], layout_large) };
+        for &ptr in &ptrs_large {
+            unsafe { mnemosyne::Mnemosyne.dealloc(ptr, layout_large) };
         }
     }
     let elapsed = start.elapsed();
@@ -53,13 +49,11 @@ fn main() {
     let mut ptrs_huge = vec![std::ptr::null_mut(); n_huge];
     let start = Instant::now();
     for _ in 0..100 {
-        // Setup phase: allocate N blocks
-        for i in 0..n_huge {
-            ptrs_huge[i] = unsafe { mnemosyne::Mnemosyne.alloc(layout_huge) };
+        for slot in &mut ptrs_huge {
+            *slot = unsafe { mnemosyne::Mnemosyne.alloc(layout_huge) };
         }
-        // Routine phase: free N blocks
-        for i in 0..n_huge {
-            unsafe { mnemosyne::Mnemosyne.dealloc(ptrs_huge[i], layout_huge) };
+        for &ptr in &ptrs_huge {
+            unsafe { mnemosyne::Mnemosyne.dealloc(ptr, layout_huge) };
         }
     }
     let elapsed = start.elapsed();

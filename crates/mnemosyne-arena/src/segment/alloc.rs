@@ -268,6 +268,12 @@ pub unsafe fn release_segment_mapping<B: HasSegmentPool>(segment: *mut Segment) 
     }
 }
 
+/// Purges the global segment pool for the given backend.
+///
+/// # Safety
+///
+/// The caller must ensure that no threads are concurrently mutating the segment pool
+/// or accessing purged segment memory.
 pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
     let mut purged = 0;
     let pool = B::global_segment_pool();

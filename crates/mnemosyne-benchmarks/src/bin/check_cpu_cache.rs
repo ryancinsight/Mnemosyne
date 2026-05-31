@@ -165,7 +165,7 @@ fn main() {
     }
     
     page = Page {
-        free: unsafe { Some(NonNull::new_unchecked(page_start as *mut u8)) },
+        free: unsafe { Some(NonNull::new_unchecked(page_start)) },
         alloc_count: 0,
         max_blocks: layout.num_blocks - layout.reserved_blocks,
     };
