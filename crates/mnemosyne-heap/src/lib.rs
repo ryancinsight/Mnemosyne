@@ -1554,7 +1554,10 @@ mod tests {
 
             assert_eq!(boxed_slice.len(), 1);
             assert_eq!(boxed_slice[0], 0xCAFE_BABE);
-            panic!("before_usable: {}, after_usable: {}", before_usable, after_usable);
+            assert!(
+                after_usable <= before_usable,
+                "boxed slice conversion must not increase usable storage from {before_usable}, got {after_usable}"
+            );
         });
     }
 
