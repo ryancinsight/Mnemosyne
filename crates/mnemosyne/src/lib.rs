@@ -35,6 +35,7 @@ pub fn get_options() -> MnemosyneOptions {
 pub fn configure(options: MnemosyneOptions) {
     let old_cadence = mnemosyne_core::options::PURGE_CADENCE_MS.load(core::sync::atomic::Ordering::Acquire);
     mnemosyne_core::options::set_options(options);
+    mnemosyne_local::mark_options_initialized();
 
     if options.purge_cadence_ms > 0 && old_cadence == 0 {
         mnemosyne_decay::init_decay_engine();

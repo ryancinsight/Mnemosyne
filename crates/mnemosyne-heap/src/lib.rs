@@ -1759,7 +1759,7 @@ mod tests {
     #[test]
     fn test_branded_box_from_cell() {
         let counter = std::sync::atomic::AtomicUsize::new(0);
-        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
             let bbox = BrandedBox::new(&heap, &token, DropTracker(&counter))
                 .expect("allocation failed");
             assert_eq!(counter.load(Ordering::SeqCst), 0);

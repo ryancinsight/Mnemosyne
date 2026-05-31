@@ -156,6 +156,12 @@ pub fn reset_options_for_testing() {
     mnemosyne_prof::reset_profiler_for_testing();
 }
 
+/// Marks options as initialized, preventing subsequent environment parsing from overwriting them.
+#[doc(hidden)]
+pub fn mark_options_initialized() {
+    OPTIONS_INIT.store(true, core::sync::atomic::Ordering::Release);
+}
+
 /// Per-thread allocator cache plus reentrancy guard.
 ///
 /// Keeping the guard and cache in a single TLS object makes the allocation

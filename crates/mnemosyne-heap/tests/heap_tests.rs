@@ -136,9 +136,9 @@ fn multi_heap_release_does_not_touch_other_heaps() {
     }
     let initial_retained = pool.retained_count();
 
-    // 1. Create two separate heaps
-    let heap1 = MnemosyneHeap::<StandardPolicy>::new();
-    let heap2 = MnemosyneHeap::<StandardPolicy>::new();
+    // 1. Create two separate heaps using MemoryBackendWrapper
+    let heap1 = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
+    let heap2 = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
 
     let layout = Layout::from_size_align(32, 8).unwrap();
 
@@ -209,7 +209,7 @@ fn test_programmatic_options_configure() {
     let initial_retained = pool.retained_count();
 
     {
-        let heap = MnemosyneHeap::<StandardPolicy>::new();
+        let heap = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
         let layout = Layout::from_size_align(32, 8).unwrap();
         let ptr = heap.alloc(layout);
         assert!(!ptr.is_null());
