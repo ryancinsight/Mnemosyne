@@ -366,6 +366,7 @@ dependencies = [
  "mnemosyne-backend",
  "mnemosyne-core",
  "mnemosyne-decay",
+ "mnemosyne-hardened",
  "mnemosyne-heap",
  "mnemosyne-local",
  "mnemosyne-prof",
@@ -397,6 +398,7 @@ dependencies = [
  "mnemosyne-backend",
  "mnemosyne-core",
  "mnemosyne-decay",
+ "mnemosyne-hardened",
  "mnemosyne-heap",
  "mnemosyne-local",
  "serde_json",
@@ -428,6 +430,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mnemosyne-hardened"
+version = "0.1.0"
+dependencies = [
+ "mnemosyne-core",
+]
+
+[[package]]
 name = "mnemosyne-heap"
 version = "0.1.0"
 dependencies = [
@@ -446,6 +455,7 @@ dependencies = [
  "mnemosyne-backend",
  "mnemosyne-core",
  "mnemosyne-decay",
+ "mnemosyne-hardened",
  "mnemosyne-heap",
  "mnemosyne-prof",
 ]

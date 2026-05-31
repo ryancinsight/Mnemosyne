@@ -7,7 +7,8 @@ use mnemosyne_core::NUM_SIZE_CLASSES;
 use mnemosyne_local::{thread_alloc_layout, thread_free, thread_realloc, LocalAllocatorSelector};
 
 pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
-pub use mnemosyne_core::{AllocPolicy, HardenedPolicy, SecurePolicy, StandardPolicy};
+pub use mnemosyne_core::{AllocPolicy, StandardPolicy};
+pub use mnemosyne_hardened::{HardenedPolicy, SecurePolicy};
 pub use mnemosyne_local::{usable_size, SizeClassOccupancy};
 pub use mnemosyne_heap::MnemosyneHeap;
 pub use mnemosyne_prof::{

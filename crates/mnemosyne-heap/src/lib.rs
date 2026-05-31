@@ -176,9 +176,26 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
 
         let block = ptr as *mut Block;
         let owner = unsafe { (*segment).owner };
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
         let heap_ptr = self.allocator.get() as *mut ThreadAllocator<B> as *mut core::ffi::c_void;
 
-        if owner.matches(heap_ptr) {
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        let is_owner = {
+            let tid = unsafe {
+                let val: u32;
+                core::arch::asm!(
+                    "mov {0:e}, gs:[0x48]",
+                    out(reg) val,
+                    options(nostack, preserves_flags, readonly)
+                );
+                val
+            };
+            owner.matches_thread_id(tid)
+        };
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        let is_owner = owner.matches(heap_ptr);
+
+        if is_owner {
             let alloc = unsafe { &mut *self.allocator.get() };
             if alloc.is_allocating {
                 // Re-entrancy fallback.
@@ -304,6 +321,15 @@ impl<'brand, T> BrandedBlock<'brand, T> {
     pub fn as_ptr(&self) -> *mut T {
         self.ptr.as_ptr()
     }
+
+    /// Safely casts this branded block to managed memory of a different type.
+    #[inline(always)]
+    pub fn cast<U>(self) -> BrandedBlock<'brand, U> {
+        BrandedBlock {
+            ptr: self.ptr.cast(),
+            _marker: self._marker,
+        }
+    }
 }
 
 /// A scoped, lifetime-branded memory heap.
@@ -425,9 +451,9 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Bran
     /// it is statically guaranteed to have been allocated by this heap. We bypass
     /// the dynamic segment ownership check and execute a check-free local free.
     #[inline(always)]
-    pub fn free(&self, _token: &mut AllocatorToken<'brand>, block: BrandedBlock<'brand, u8>) {
+    pub fn free<T>(&self, _token: &mut AllocatorToken<'brand>, block: BrandedBlock<'brand, T>) {
         ensure_options_initialized();
-        let ptr = block.ptr.as_ptr();
+        let ptr = block.ptr.as_ptr() as *mut u8;
         
         let ptr_val = ptr as usize;
         let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
@@ -498,15 +524,15 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Bran
 
     /// Reallocates a memory block from this heap.
     #[inline(always)]
-    pub fn realloc(
+    pub fn realloc<T>(
         &self,
         _token: &mut AllocatorToken<'brand>,
-        block: BrandedBlock<'brand, u8>,
+        block: BrandedBlock<'brand, T>,
         layout: Layout,
         new_size: usize,
     ) -> Option<BrandedBlock<'brand, u8>> {
         ensure_options_initialized();
-        let ptr = block.ptr.as_ptr();
+        let ptr = block.ptr.as_ptr() as *mut u8;
         if new_size == 0 {
             self.free(_token, block);
             return None;
@@ -514,16 +540,25 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Bran
 
         if !P::ZERO_INITIALIZE && !P::ENABLE_POISONING {
             if new_size <= layout.size() {
-                return Some(block);
+                return Some(BrandedBlock {
+                    ptr: block.ptr.cast(),
+                    _marker: block._marker,
+                });
             }
             if layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
                 if mnemosyne_local::internal::small_realloc_fits_existing_class(layout, new_size) {
-                    return Some(block);
+                    return Some(BrandedBlock {
+                        ptr: block.ptr.cast(),
+                        _marker: block._marker,
+                    });
                 }
             } else {
                 let current_usable = unsafe { mnemosyne_local::usable_size(ptr) };
                 if new_size <= current_usable {
-                    return Some(block);
+                    return Some(BrandedBlock {
+                        ptr: block.ptr.cast(),
+                        _marker: block._marker,
+                    });
                 }
             }
         }
@@ -620,4 +655,25 @@ mod tests {
             heap.free(&mut token, new_block);
         });
     }
+
+    #[test]
+    fn test_branded_heap_generic_and_cast() {
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let layout = Layout::from_size_align(32, 8).unwrap();
+            let block: BrandedBlock<'_, u8> = heap.alloc(&token, layout).expect("branded allocation failed");
+            
+            // Cast to i32 block
+            let casted: BrandedBlock<'_, i32> = block.cast::<i32>();
+            let ptr = casted.as_ptr();
+            assert!(!ptr.is_null());
+            unsafe {
+                ptr.write(123456);
+                assert_eq!(ptr.read(), 123456);
+            }
+            
+            // Free generic block
+            heap.free(&mut token, casted);
+        });
+    }
 }
+

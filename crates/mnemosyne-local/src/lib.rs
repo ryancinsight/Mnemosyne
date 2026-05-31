@@ -1432,7 +1432,7 @@ mod tests {
 
     #[test]
     fn hardened_policy_round_trip_alloc_free() {
-        use mnemosyne_core::HardenedPolicy;
+        use mnemosyne_hardened::HardenedPolicy;
 
         let _guard = crate::local_alloc::TEST_LOCK
             .lock()
@@ -1463,7 +1463,7 @@ mod tests {
 
     #[test]
     fn hardened_policy_detects_freelist_tamper() {
-        use mnemosyne_core::HardenedPolicy;
+        use mnemosyne_hardened::HardenedPolicy;
 
         let _guard = crate::local_alloc::TEST_LOCK
             .lock()

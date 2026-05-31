@@ -8,6 +8,7 @@ members = [
     "crates/mnemosyne-heap",
     "crates/mnemosyne-decay",
     "crates/mnemosyne-prof",
+    "crates/mnemosyne-hardened",
     "crates/mnemosyne",
     "crates/mnemosyne-c-shim",
     "crates/mnemosyne-benchmarks",

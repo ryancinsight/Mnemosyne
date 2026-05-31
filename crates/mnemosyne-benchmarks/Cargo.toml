@@ -24,6 +24,7 @@ mnemosyne = { path = "../mnemosyne" }
 mnemosyne-arena = { path = "../mnemosyne-arena" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-core = { path = "../mnemosyne-core" }
+mnemosyne-hardened = { path = "../mnemosyne-hardened" }
 mnemosyne-local = { path = "../mnemosyne-local" }
 mnemosyne-heap = { path = "../mnemosyne-heap" }
 mnemosyne-decay = { path = "../mnemosyne-decay" }

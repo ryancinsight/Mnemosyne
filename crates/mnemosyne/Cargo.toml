@@ -9,6 +9,7 @@ mnemosyne-heap = { path = "../mnemosyne-heap" }
 mnemosyne-arena = { path = "../mnemosyne-arena" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-core = { path = "../mnemosyne-core" }
+mnemosyne-hardened = { path = "../mnemosyne-hardened" }
 mnemosyne-decay = { path = "../mnemosyne-decay" }
 mnemosyne-prof = { path = "../mnemosyne-prof" }
 

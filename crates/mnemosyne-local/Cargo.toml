@@ -22,3 +22,4 @@ mnemosyne-prof = { path = "../mnemosyne-prof" }
 
 [dev-dependencies]
 mnemosyne-heap = { path = "../mnemosyne-heap" }
+mnemosyne-hardened = { path = "../mnemosyne-hardened" }
