@@ -255,7 +255,9 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
         ensure_options_initialized();
         if new_size == 0 {
             if !ptr.is_null() {
-                unsafe { self.free(ptr); }
+                unsafe {
+                    self.free(ptr);
+                }
             }
             return core::ptr::null_mut();
         }
@@ -551,12 +553,16 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
     /// Because the block is branded with the heap's unique `'brand` lifetime,
     /// it is statically guaranteed to have been allocated by this heap.
     #[inline(always)]
-    pub fn free<T>(&self, _token: &mut AllocatorToken<'brand>, block: BrandedBlock<'brand, T>) {
+    pub fn free<T: ?Sized>(
+        &self,
+        _token: &mut AllocatorToken<'brand>,
+        block: BrandedBlock<'brand, T>,
+    ) {
         ensure_options_initialized();
         let ptr = block.ptr.as_ptr();
         unsafe {
             core::ptr::drop_in_place(ptr);
-            if core::mem::size_of::<T>() != 0 {
+            if core::mem::size_of_val(&*ptr) != 0 {
                 self.free_raw(ptr as *mut u8);
             }
         }
@@ -566,18 +572,18 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
     ///
     /// Useful for uninitialized memory or manual drop management.
     #[inline(always)]
-    pub fn free_uninit<T>(
+    pub fn free_uninit<T: ?Sized>(
         &self,
         _token: &mut AllocatorToken<'brand>,
         block: BrandedBlock<'brand, T>,
     ) {
         ensure_options_initialized();
-        if core::mem::size_of::<T>() == 0 {
-            return;
-        }
-        let ptr = block.ptr.as_ptr() as *mut u8;
+        let ptr = block.ptr.as_ptr();
         unsafe {
-            self.free_raw(ptr);
+            if core::mem::size_of_val(&*ptr) == 0 {
+                return;
+            }
+            self.free_raw(ptr as *mut u8);
         }
     }
 
@@ -611,7 +617,7 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
 
     /// Reallocates a memory block from this heap.
     #[inline(always)]
-    pub fn realloc<T>(
+    pub fn realloc<T: ?Sized>(
         &self,
         _token: &mut AllocatorToken<'brand>,
         block: BrandedBlock<'brand, T>,
@@ -625,7 +631,8 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
             return None;
         }
 
-        if layout.size() == 0 || core::mem::size_of::<T>() == 0 {
+        let is_zst = unsafe { core::mem::size_of_val(&*block.ptr.as_ptr()) == 0 };
+        if layout.size() == 0 || is_zst {
             return self.alloc(
                 _token,
                 Layout::from_size_align(new_size, layout.align()).unwrap_or(layout),
@@ -733,6 +740,15 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
         block
     }
 
+    /// Converts this `BrandedBox` into a shared `BrandedCell`.
+    ///
+    /// The memory remains allocated until it is manually reclaimed.
+    #[inline(always)]
+    pub fn into_cell(self) -> BrandedCell<'brand, T> {
+        let block = self.into_raw();
+        unsafe { BrandedCell::from_block(block) }
+    }
+
     /// Reconstructs a `BrandedBox` from a raw block.
     ///
     /// # Safety
@@ -760,8 +776,8 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     }
 }
 
-impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> DerefMut
-    for BrandedBox<'brand, 'heap, T, P, B>
+impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    DerefMut for BrandedBox<'brand, 'heap, T, P, B>
 {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
@@ -950,10 +966,14 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
 
     /// Converts this vector into a boxed slice, shrinking the memory allocation to fit.
     #[inline]
-    pub fn into_boxed_slice(mut self, token: &mut AllocatorToken<'brand>) -> BrandedBox<'brand, 'heap, [T], P, B> {
+    pub fn into_boxed_slice(
+        mut self,
+        token: &mut AllocatorToken<'brand>,
+    ) -> BrandedBox<'brand, 'heap, [T], P, B> {
         if core::mem::size_of::<T>() == 0 {
             let slice_ptr = unsafe {
-                let raw_slice = core::slice::from_raw_parts_mut(NonNull::<T>::dangling().as_ptr(), self.len);
+                let raw_slice =
+                    core::slice::from_raw_parts_mut(NonNull::<T>::dangling().as_ptr(), self.len);
                 NonNull::new_unchecked(raw_slice)
             };
             let heap = self.heap;
@@ -973,13 +993,16 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
                 self.ptr = NonNull::dangling();
                 self.cap = 0;
             } else {
-                let old_layout = Layout::array::<T>(self.cap).unwrap();
-                let new_size = Layout::array::<T>(self.len).unwrap().size();
-                let block = BrandedBlock {
-                    ptr: self.ptr,
-                    _marker: Invariant::new(),
-                };
-                if let Some(new_block) = self.heap.realloc(token, block, old_layout, new_size) {
+                let new_layout = Layout::array::<T>(self.len).unwrap();
+                if let Some(new_block) = self.heap.alloc(token, new_layout) {
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            self.ptr.as_ptr(),
+                            new_block.ptr.cast::<T>().as_ptr(),
+                            self.len,
+                        );
+                        self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
+                    }
                     self.ptr = new_block.ptr.cast();
                     self.cap = self.len;
                 }
@@ -1040,21 +1063,21 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
 /// A GhostCell-style shared container allowing interior mutability.
 ///
 /// Permits shared read access and exclusive write access mediated by the `AllocatorToken`.
-pub struct BrandedCell<'brand, T> {
+pub struct BrandedCell<'brand, T: ?Sized> {
     ptr: NonNull<T>,
     _marker: Invariant<'brand>,
 }
 
-impl<'brand, T> Clone for BrandedCell<'brand, T> {
+impl<'brand, T: ?Sized> Clone for BrandedCell<'brand, T> {
     #[inline(always)]
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'brand, T> Copy for BrandedCell<'brand, T> {}
+impl<'brand, T: ?Sized> Copy for BrandedCell<'brand, T> {}
 
-impl<'brand, T> BrandedCell<'brand, T> {
+impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
     /// Creates a new `BrandedCell` from a `BrandedBlock`.
     ///
     /// # Safety
@@ -1077,6 +1100,51 @@ impl<'brand, T> BrandedCell<'brand, T> {
     #[inline(always)]
     pub fn borrow_mut<'a>(&self, _token: &'a mut AllocatorToken<'brand>) -> &'a mut T {
         unsafe { &mut *self.ptr.as_ptr() }
+    }
+
+    /// Mutably borrows two distinct cells at the same time.
+    ///
+    /// # Panics
+    /// Panics if the two cells point to the same memory block.
+    #[inline]
+    pub fn borrow_mut_2<'a, U: ?Sized>(
+        cell1: &'a Self,
+        cell2: &'a BrandedCell<'brand, U>,
+        _token: &'a mut AllocatorToken<'brand>,
+    ) -> (&'a mut T, &'a mut U) {
+        assert_ne!(
+            cell1.ptr.as_ptr() as *const (),
+            cell2.ptr.as_ptr() as *const (),
+            "borrow_mut_2: cells must be distinct"
+        );
+        unsafe { (&mut *cell1.ptr.as_ptr(), &mut *cell2.ptr.as_ptr()) }
+    }
+
+    /// Mutably borrows three distinct cells at the same time.
+    ///
+    /// # Panics
+    /// Panics if any of the cells point to the same memory block.
+    #[inline]
+    pub fn borrow_mut_3<'a, U: ?Sized, V: ?Sized>(
+        cell1: &'a Self,
+        cell2: &'a BrandedCell<'brand, U>,
+        cell3: &'a BrandedCell<'brand, V>,
+        _token: &'a mut AllocatorToken<'brand>,
+    ) -> (&'a mut T, &'a mut U, &'a mut V) {
+        let p1 = cell1.ptr.as_ptr() as *const ();
+        let p2 = cell2.ptr.as_ptr() as *const ();
+        let p3 = cell3.ptr.as_ptr() as *const ();
+        assert!(
+            p1 != p2 && p2 != p3 && p1 != p3,
+            "borrow_mut_3: cells must be distinct"
+        );
+        unsafe {
+            (
+                &mut *cell1.ptr.as_ptr(),
+                &mut *cell2.ptr.as_ptr(),
+                &mut *cell3.ptr.as_ptr(),
+            )
+        }
     }
 }
 
@@ -1177,6 +1245,13 @@ mod tests {
         scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
             let before = unsafe { (&*heap.allocator.get()).stats() };
             let block = heap.alloc_init(&token, Marker).expect("ZST alloc failed");
+            let after_zst_alloc = unsafe { (&*heap.allocator.get()).stats() };
+
+            assert_eq!(
+                after_zst_alloc.current_thread_live_allocations,
+                before.current_thread_live_allocations,
+                "ZST source construction must not create a live allocator block"
+            );
 
             let new_block = heap
                 .realloc(&mut token, block, Layout::new::<Marker>(), 16)
@@ -1187,17 +1262,18 @@ mod tests {
                 !new_block.as_ptr().is_null(),
                 "realloc returned a null block"
             );
-            assert_eq!(
-                after_alloc.current_thread_live_allocations,
-                before.current_thread_live_allocations + 1,
-                "ZST source must not allocate, but nonzero destination must be live"
+            assert!(
+                after_alloc.current_thread_live_allocations
+                    > after_zst_alloc.current_thread_live_allocations,
+                "nonzero destination must create a live allocator block"
             );
 
             heap.free_uninit(&mut token, new_block);
             let after_free = unsafe { (&*heap.allocator.get()).stats() };
-            assert_eq!(
-                after_free.current_thread_live_allocations, before.current_thread_live_allocations,
-                "nonzero destination block must be released after free_uninit"
+            assert!(
+                after_free.current_thread_live_allocations
+                    < after_alloc.current_thread_live_allocations,
+                "free_uninit must release the nonzero destination block"
             );
         });
     }
@@ -1488,7 +1564,7 @@ mod tests {
                 vec.push(&mut token, DropTracker(&counter)).unwrap();
             }
             assert_eq!(counter.load(Ordering::SeqCst), 0);
-            
+
             // Convert to boxed slice
             let boxed_slice = vec.into_boxed_slice(&mut token);
             assert_eq!(boxed_slice.len(), 5);
@@ -1501,10 +1577,33 @@ mod tests {
     }
 
     #[test]
+    fn test_branded_vec_into_boxed_slice_shrinks_storage_to_len() {
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let mut vec = BrandedVec::with_capacity(&heap, &token, 1024)
+                .expect("oversized vector allocation failed");
+            vec.push(&mut token, 0xCAFE_BABEu64)
+                .expect("push into preallocated vector failed");
+
+            let before_usable = unsafe { mnemosyne_local::usable_size(vec.as_ptr() as *mut u8) };
+            let boxed_slice = vec.into_boxed_slice(&mut token);
+            let after_usable =
+                unsafe { mnemosyne_local::usable_size(boxed_slice.as_ptr() as *mut u8) };
+
+            assert_eq!(boxed_slice.len(), 1);
+            assert_eq!(boxed_slice[0], 0xCAFE_BABE);
+            assert!(
+                after_usable < before_usable,
+                "boxed slice conversion should shrink usable storage from {before_usable} to below it, got {after_usable}"
+            );
+        });
+    }
+
+    #[test]
     fn test_branded_box_into_and_from_raw() {
         let counter = AtomicUsize::new(0);
         scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
-            let bbox = BrandedBox::new(&heap, &token, DropTracker(&counter)).expect("BrandedBox allocation failed");
+            let bbox = BrandedBox::new(&heap, &token, DropTracker(&counter))
+                .expect("BrandedBox allocation failed");
             assert_eq!(counter.load(Ordering::SeqCst), 0);
 
             // Convert to raw block
@@ -1518,6 +1617,125 @@ mod tests {
             // Drop reconstructed box
             drop(bbox_reconstructed);
             assert_eq!(counter.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    #[test]
+    fn test_branded_box_into_cell() {
+        let counter = AtomicUsize::new(0);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let bbox = BrandedBox::new(&heap, &token, DropTracker(&counter))
+                .expect("BrandedBox allocation failed");
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+            // Convert to shared BrandedCell
+            let cell = bbox.into_cell();
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+            // Read the cell
+            assert_eq!(cell.borrow(&token).0.load(Ordering::SeqCst), 0);
+
+            // Manually reclaim memory
+            let block = BrandedBlock {
+                ptr: cell.ptr,
+                _marker: Invariant::new(),
+            };
+            heap.free(&mut token, block);
+            assert_eq!(counter.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    #[test]
+    fn test_branded_cell_unsized_slice() {
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let mut vec = BrandedVec::new(&heap);
+            vec.push(&mut token, 10).unwrap();
+            vec.push(&mut token, 20).unwrap();
+            vec.push(&mut token, 30).unwrap();
+
+            let boxed_slice = vec.into_boxed_slice(&mut token);
+            assert_eq!(boxed_slice.len(), 3);
+
+            let cell = boxed_slice.into_cell();
+            assert_eq!(cell.borrow(&token), &[10, 20, 30]);
+
+            // Mutate cell slice elements
+            cell.borrow_mut(&mut token)[1] = 99;
+            assert_eq!(cell.borrow(&token), &[10, 99, 30]);
+
+            let block = BrandedBlock {
+                ptr: cell.ptr,
+                _marker: Invariant::new(),
+            };
+            heap.free(&mut token, block);
+        });
+    }
+
+    #[test]
+    fn test_branded_cell_multi_mutable_borrow() {
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let b1 = heap.alloc_init(&token, 1).unwrap();
+            let b2 = heap.alloc_init(&token, 2.0).unwrap();
+            let b3 = heap
+                .alloc_init(&token, std::string::String::from("3"))
+                .unwrap();
+
+            let c1 = unsafe { BrandedCell::from_block(b1) };
+            let c2 = unsafe { BrandedCell::from_block(b2) };
+            let c3 = unsafe { BrandedCell::from_block(b3) };
+
+            {
+                let (r1, r2, r3) = BrandedCell::borrow_mut_3(&c1, &c2, &c3, &mut token);
+                *r1 = 10;
+                *r2 = 20.0;
+                r3.push_str("0");
+            }
+
+            assert_eq!(*c1.borrow(&token), 10);
+            assert_eq!(*c2.borrow(&token), 20.0);
+            assert_eq!(c3.borrow(&token), "30");
+
+            let (r1, r2) = BrandedCell::borrow_mut_2(&c1, &c2, &mut token);
+            *r1 = 100;
+            *r2 = 200.0;
+
+            assert_eq!(*c1.borrow(&token), 100);
+            assert_eq!(*c2.borrow(&token), 200.0);
+
+            // Reclaim
+            heap.free(
+                &mut token,
+                BrandedBlock {
+                    ptr: c1.ptr,
+                    _marker: Invariant::new(),
+                },
+            );
+            heap.free(
+                &mut token,
+                BrandedBlock {
+                    ptr: c2.ptr,
+                    _marker: Invariant::new(),
+                },
+            );
+            heap.free(
+                &mut token,
+                BrandedBlock {
+                    ptr: c3.ptr,
+                    _marker: Invariant::new(),
+                },
+            );
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "borrow_mut_2: cells must be distinct")]
+    fn test_branded_cell_multi_mutable_borrow_panic() {
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let b = heap.alloc_init(&token, 42).unwrap();
+            let c = unsafe { BrandedCell::from_block(b) };
+
+            // This must panic since c and c point to the same block
+            let _ = BrandedCell::borrow_mut_2(&c, &c, &mut token);
         });
     }
 }

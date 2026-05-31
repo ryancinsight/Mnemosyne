@@ -19,7 +19,9 @@ fn test_multi_heap_basic() {
     assert!(!ptr2.is_null());
     assert_eq!(unsafe { ptr2.read() }, 123);
 
-    unsafe { heap.free(ptr2); }
+    unsafe {
+        heap.free(ptr2);
+    }
 }
 
 #[test]
@@ -44,7 +46,9 @@ fn test_multi_heap_cross_thread() {
     let ptr = ptr_val as *mut u8;
 
     // Free the pointer on the main thread
-    unsafe { heap.lock().unwrap().free(ptr); }
+    unsafe {
+        heap.lock().unwrap().free(ptr);
+    }
 }
 
 #[test]
@@ -68,7 +72,9 @@ fn test_runtime_options_override_default_retention() {
         let layout = Layout::from_size_align(32, 8).unwrap();
         let ptr = heap.alloc(layout);
         assert!(!ptr.is_null());
-        unsafe { heap.free(ptr); }
+        unsafe {
+            heap.free(ptr);
+        }
     }
 
     let final_retained = pool.retained_count();

@@ -294,3 +294,4 @@ Target version: 0.1.0
 - [x] [patch] Extend the ZST path to `BrandedHeap::alloc_init`, `free`, and `free_uninit`; pin with a value-semantic test that `alloc_init::<ZST>` allocates no segment and `free` runs exactly one destructor.
 - [x] [patch] Extend the ZST path to `BrandedHeap::realloc`; pin ZST-to-nonzero and ZST-to-zero transitions with allocator-state and destructor-count assertions.
 - [x] [patch] Make `BrandedVec::new::<ZST>` use sentinel capacity; pin `len <= capacity`, allocation-free construction, and destructor execution after push/drop.
+- [x] [patch] Make `BrandedVec::into_boxed_slice` shrink oversized storage; pin with a usable-size regression test from 1024-element capacity to one-element boxed slice.
