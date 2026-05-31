@@ -767,7 +767,11 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     pub fn new(heap: &'heap BrandedHeap<'brand, P, B>) -> Self {
         Self {
             ptr: NonNull::dangling(),
-            cap: 0,
+            cap: if core::mem::size_of::<T>() == 0 {
+                usize::MAX
+            } else {
+                0
+            },
             len: 0,
             heap,
             _non_send: core::marker::PhantomData,
@@ -782,11 +786,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         capacity: usize,
     ) -> Option<Self> {
         if capacity == 0 || core::mem::size_of::<T>() == 0 {
-            let mut vec = Self::new(heap);
-            if core::mem::size_of::<T>() == 0 {
-                vec.cap = usize::MAX;
-            }
-            return Some(vec);
+            return Some(Self::new(heap));
         }
         let layout = Layout::array::<T>(capacity).ok()?;
         let block = heap.alloc(token, layout)?;
@@ -1312,6 +1312,43 @@ mod tests {
             assert_eq!(ZST_DROP_COUNT.load(Ordering::SeqCst), 1);
             drop(vec);
             assert_eq!(ZST_DROP_COUNT.load(Ordering::SeqCst), 4);
+        });
+    }
+
+    #[test]
+    fn test_branded_vec_new_zst_preserves_capacity_invariant() {
+        ZST_DROP_COUNT.store(0, Ordering::SeqCst);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let before = unsafe {
+                (&*heap.allocator.get())
+                    .stats()
+                    .current_thread_owned_segments
+            };
+            let mut vec = BrandedVec::new(&heap);
+
+            assert_eq!(
+                vec.capacity(),
+                usize::MAX,
+                "ZST vector constructed with new must use sentinel capacity"
+            );
+            vec.push(&mut token, ZstDrop).expect("ZST push failed");
+            assert_eq!(vec.len(), 1);
+            assert!(
+                vec.len() <= vec.capacity(),
+                "successful push must preserve len <= capacity"
+            );
+            assert_eq!(
+                unsafe {
+                    (&*heap.allocator.get())
+                        .stats()
+                        .current_thread_owned_segments
+                },
+                before,
+                "ZST vector constructed with new must not allocate a segment"
+            );
+
+            drop(vec);
+            assert_eq!(ZST_DROP_COUNT.load(Ordering::SeqCst), 1);
         });
     }
 
