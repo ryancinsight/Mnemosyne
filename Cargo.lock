@@ -440,6 +440,7 @@ dependencies = [
 name = "mnemosyne-heap"
 version = "0.1.0"
 dependencies = [
+ "mnemosyne",
  "mnemosyne-arena",
  "mnemosyne-backend",
  "mnemosyne-core",
