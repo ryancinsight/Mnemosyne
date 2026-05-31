@@ -21,6 +21,9 @@ pub trait AllocPolicy: private::Sealed + Send + Sync + 'static {
 
     /// If true, encrypt free list next pointers.
     const ENABLE_FREE_LIST_ENCRYPTION: bool = false;
+
+    /// If true, randomize the allocation order of blocks in a page.
+    const RANDOMIZE_ALLOCATION: bool = false;
 }
 
 /// Zero-Sized Type (ZST) representing the standard allocation policy with maximum performance.
@@ -32,4 +35,3 @@ impl AllocPolicy for StandardPolicy {
     const ENABLE_POISONING: bool = false;
     const ZERO_INITIALIZE: bool = false;
 }
-

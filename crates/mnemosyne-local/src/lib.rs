@@ -31,28 +31,19 @@ static OPTIONS_INIT: core::sync::atomic::AtomicBool = core::sync::atomic::Atomic
 #[cfg(windows)]
 fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
     extern "system" {
-        fn GetEnvironmentVariableA(
-            lpName: *const u8,
-            lpBuffer: *mut u8,
-            nSize: u32,
-        ) -> u32;
+        fn GetEnvironmentVariableA(lpName: *const u8, lpBuffer: *mut u8, nSize: u32) -> u32;
     }
-    
+
     let mut name_buf = [0u8; 64];
     if name.len() >= name_buf.len() {
         return None;
     }
     name_buf[..name.len()].copy_from_slice(name.as_bytes());
     name_buf[name.len()] = 0;
-    
-    let res = unsafe {
-        GetEnvironmentVariableA(
-            name_buf.as_ptr(),
-            buf.as_mut_ptr(),
-            buf.len() as u32,
-        )
-    };
-    
+
+    let res =
+        unsafe { GetEnvironmentVariableA(name_buf.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
+
     if res == 0 || res >= buf.len() as u32 {
         None
     } else {
@@ -65,19 +56,19 @@ fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
     extern "C" {
         fn getenv(name: *const u8) -> *mut u8;
     }
-    
+
     let mut name_buf = [0u8; 64];
     if name.len() >= name_buf.len() {
         return None;
     }
     name_buf[..name.len()].copy_from_slice(name.as_bytes());
     name_buf[name.len()] = 0;
-    
+
     let ptr = unsafe { getenv(name_buf.as_ptr()) };
     if ptr.is_null() {
         return None;
     }
-    
+
     let mut len = 0;
     unsafe {
         while *ptr.add(len) != 0 && len < buf.len() {
@@ -128,15 +119,18 @@ fn init_options_from_env() {
 
     if let Some(parsed) = parse_env_usize("MNEMOSYNE_MAX_RETAINED_SEGMENTS") {
         let clamped = core::cmp::min(parsed, 1024);
-        mnemosyne_core::options::MAX_RETAINED_SEGMENTS.store(clamped, core::sync::atomic::Ordering::Release);
+        mnemosyne_core::options::MAX_RETAINED_SEGMENTS
+            .store(clamped, core::sync::atomic::Ordering::Release);
     }
 
     if let Some(parsed) = parse_env_bool("MNEMOSYNE_ENABLE_HUGEPAGE_HINT") {
-        mnemosyne_core::options::ENABLE_HUGEPAGE_HINT.store(parsed, core::sync::atomic::Ordering::Release);
+        mnemosyne_core::options::ENABLE_HUGEPAGE_HINT
+            .store(parsed, core::sync::atomic::Ordering::Release);
     }
 
     if let Some(parsed) = parse_env_usize("MNEMOSYNE_PURGE_CADENCE_MS") {
-        mnemosyne_core::options::PURGE_CADENCE_MS.store(parsed, core::sync::atomic::Ordering::Release);
+        mnemosyne_core::options::PURGE_CADENCE_MS
+            .store(parsed, core::sync::atomic::Ordering::Release);
         if parsed > 0 {
             mnemosyne_decay::init_decay_engine();
         }
@@ -154,8 +148,10 @@ fn init_options_from_env() {
 #[doc(hidden)]
 pub fn reset_options_for_testing() {
     OPTIONS_INIT.store(false, core::sync::atomic::Ordering::Release);
-    mnemosyne_core::options::MAX_RETAINED_SEGMENTS.store(1024, core::sync::atomic::Ordering::Release);
-    mnemosyne_core::options::ENABLE_HUGEPAGE_HINT.store(true, core::sync::atomic::Ordering::Release);
+    mnemosyne_core::options::MAX_RETAINED_SEGMENTS
+        .store(1024, core::sync::atomic::Ordering::Release);
+    mnemosyne_core::options::ENABLE_HUGEPAGE_HINT
+        .store(true, core::sync::atomic::Ordering::Release);
     mnemosyne_core::options::PURGE_CADENCE_MS.store(0, core::sync::atomic::Ordering::Release);
     mnemosyne_prof::reset_profiler_for_testing();
 }
@@ -267,19 +263,21 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
 #[doc(hidden)]
 pub mod internal {
     pub use crate::ensure_options_initialized;
-    pub use mnemosyne_core::validation::is_valid_layout_alloc_request;
-    pub use mnemosyne_arena::{allocate_large_or_huge, deallocate_large_or_huge};
-    pub use crate::{
-        initialize_allocated_bytes, poison_freed_bytes,
-        do_local_free_internal, small_realloc_fits_existing_class,
-    };
     pub use crate::ThreadAllocator;
-    pub use mnemosyne_core::constants::{MIN_BLOCK_SIZE, MAX_SMALL_ALLOC_SIZE, SEGMENT_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT};
-    pub use mnemosyne_core::size_class::size_to_class_nonzero;
-    pub use mnemosyne_core::types::{Segment, Block, Page};
-    pub use mnemosyne_arena::HasSegmentPool;
+    pub use crate::{
+        do_local_free_internal, initialize_allocated_bytes, poison_freed_bytes,
+        small_realloc_fits_existing_class,
+    };
     pub use core::alloc::Layout;
     pub use core::ptr::NonNull;
+    pub use mnemosyne_arena::HasSegmentPool;
+    pub use mnemosyne_arena::{allocate_large_or_huge, deallocate_large_or_huge};
+    pub use mnemosyne_core::constants::{
+        MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT, SEGMENT_SIZE,
+    };
+    pub use mnemosyne_core::size_class::size_to_class_nonzero;
+    pub use mnemosyne_core::types::{Block, Page, Segment};
+    pub use mnemosyne_core::validation::is_valid_layout_alloc_request;
 }
 
 /// Thread-exit reclamation sentinel for the `#[thread_local]` fast cache.
@@ -708,7 +706,8 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     let class = match size_to_class_nonzero(adjusted_size) {
         Some(c) => c,
         None => {
-            let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
+            let ptr =
+                unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
             if !ptr.is_null() {
                 unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
             }
@@ -959,8 +958,9 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     if becomes_empty && !alloc.is_current_segment(segment) {
         let class = page.size_class as usize;
         let is_only_active = unsafe {
-            alloc.active_pages.get_unchecked(class)
-                .is_some_and(|head| head.as_ptr() == page as *mut Page && (*page).next_page.is_none())
+            alloc.active_pages.get_unchecked(class).is_some_and(|head| {
+                head.as_ptr() == page as *mut Page && (*page).next_page.is_none()
+            })
         };
         if !is_only_active && !alloc.try_reclaim_segment(segment) {
             alloc.unlink_page(page as *mut Page, class);
@@ -1007,17 +1007,35 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     if !ptr.is_null() && new_size != 0 {
         if !P::ZERO_INITIALIZE && !P::ENABLE_POISONING {
             if new_size <= layout.size() {
-                return ptr;
-            }
-
-            if layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
-                if small_realloc_fits_existing_class(layout, new_size) {
-                    return ptr;
+                if layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
+                    if new_size >= layout.size() / 2 {
+                        return ptr;
+                    }
+                } else {
+                    let current_usable = unsafe { usable_size(ptr) };
+                    let new_adjusted = core::cmp::max(new_size, layout.align());
+                    if new_adjusted <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
+                        if new_size >= layout.size() / 2 {
+                            return ptr;
+                        }
+                    } else {
+                        let page_size = mnemosyne_core::constants::PAGE_SIZE;
+                        let new_page_rounded = (new_adjusted + page_size - 1) & !(page_size - 1);
+                        if new_page_rounded >= current_usable {
+                            return ptr;
+                        }
+                    }
                 }
             } else {
-                let current_usable = unsafe { usable_size(ptr) };
-                if new_size <= current_usable {
-                    return ptr;
+                if layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
+                    if small_realloc_fits_existing_class(layout, new_size) {
+                        return ptr;
+                    }
+                } else {
+                    let current_usable = unsafe { usable_size(ptr) };
+                    if new_size <= current_usable {
+                        return ptr;
+                    }
                 }
             }
         }
@@ -1227,7 +1245,9 @@ mod tests {
         for &align in &[8usize, 64 * 1024, 1024 * 1024, SEGMENT_SIZE] {
             // Safety: power-of-two alignment, non-zero size.
             let ptr = unsafe {
-                mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(request, align, true)
+                mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(
+                    request, align, true,
+                )
             };
             assert!(!ptr.is_null(), "huge allocation failed for align {align}");
 
@@ -1255,7 +1275,9 @@ mod tests {
         for &align in &[8usize, 64 * 1024, 1024 * 1024, SEGMENT_SIZE] {
             // Safety: power-of-two alignment, non-zero size.
             let ptr = unsafe {
-                mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(request, align, true)
+                mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(
+                    request, align, true,
+                )
             };
             assert!(!ptr.is_null(), "huge allocation failed for align {align}");
 

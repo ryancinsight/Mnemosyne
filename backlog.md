@@ -129,7 +129,10 @@
 - [patch] Make primitive branded heap initialization/free ZST-aware so `alloc_init::<T>`, `free`, and `free_uninit` share the same allocation-free zero-sized-type contract as the safe containers.
 - [patch] Make primitive branded heap realloc ZST-aware so zero-sized source permissions never route dangling pointers through usable-size, byte-copy, or raw-free allocator logic.
 - [patch] Preserve the `len <= capacity` vector invariant for `BrandedVec::new::<ZST>` by installing the allocation-free sentinel capacity at construction.
-- [patch] Make `BrandedVec::into_boxed_slice` actually shrink oversized storage instead of retaining the original allocation through same-pointer shrink realloc.
+- [patch] Make `BrandedVec::into_boxed_slice` attempt an explicit shrink instead of relying on same-pointer shrink realloc, while preserving the original buffer if replacement allocation fails.
+- [patch] Wire secure and hardened allocation policies to seeded page free-list randomization while preserving the standard policy lazy bump path.
+- [patch] Route heap-local small allocation through `ThreadAllocator::alloc_class` as the single active-page pop/bump implementation.
+- [patch] Restore same-pointer shrink behavior in `thread_realloc` through the existing small-realloc size-class proof.
 - [patch] Use `benchmark_variance.csv` to retest remaining within-class realloc and historical threaded-row optimizations before accepting allocator changes.
 - [patch] Investigate cross-thread handoff batching or owner-token routing without increasing saturated threaded cycles.
 - [patch] Investigate mimalloc's remaining within-class realloc, historical threaded-row, saturated threaded-row, cross-thread handoff, and usable-size combined-cycle advantages after the unified TLS slot narrowed saturated threaded disparity.

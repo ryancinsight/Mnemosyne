@@ -31,20 +31,76 @@ pub const fn size_to_class_nonzero(size: usize) -> Option<usize> {
     }
 
     const LOOKUP: [SizeClassLookup; 14] = [
-        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 0 (size = 0, fallback)
-        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 1
-        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 2
-        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 3
-        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 4
-        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 5
-        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 6
-        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 7
-        SizeClassLookup { base: 8, shift: 5, sub: 129 }, // idx = 8
-        SizeClassLookup { base: 8, shift: 5, sub: 129 }, // idx = 9
-        SizeClassLookup { base: 20, shift: 7, sub: 513 }, // idx = 10
-        SizeClassLookup { base: 20, shift: 7, sub: 513 }, // idx = 11
-        SizeClassLookup { base: 32, shift: 9, sub: 2049 }, // idx = 12
-        SizeClassLookup { base: 32, shift: 9, sub: 2049 }, // idx = 13
+        SizeClassLookup {
+            base: 0,
+            shift: 4,
+            sub: 1,
+        }, // idx = 0 (size = 0, fallback)
+        SizeClassLookup {
+            base: 0,
+            shift: 4,
+            sub: 1,
+        }, // idx = 1
+        SizeClassLookup {
+            base: 0,
+            shift: 4,
+            sub: 1,
+        }, // idx = 2
+        SizeClassLookup {
+            base: 0,
+            shift: 4,
+            sub: 1,
+        }, // idx = 3
+        SizeClassLookup {
+            base: 0,
+            shift: 4,
+            sub: 1,
+        }, // idx = 4
+        SizeClassLookup {
+            base: 0,
+            shift: 4,
+            sub: 1,
+        }, // idx = 5
+        SizeClassLookup {
+            base: 0,
+            shift: 4,
+            sub: 1,
+        }, // idx = 6
+        SizeClassLookup {
+            base: 0,
+            shift: 4,
+            sub: 1,
+        }, // idx = 7
+        SizeClassLookup {
+            base: 8,
+            shift: 5,
+            sub: 129,
+        }, // idx = 8
+        SizeClassLookup {
+            base: 8,
+            shift: 5,
+            sub: 129,
+        }, // idx = 9
+        SizeClassLookup {
+            base: 20,
+            shift: 7,
+            sub: 513,
+        }, // idx = 10
+        SizeClassLookup {
+            base: 20,
+            shift: 7,
+            sub: 513,
+        }, // idx = 11
+        SizeClassLookup {
+            base: 32,
+            shift: 9,
+            sub: 2049,
+        }, // idx = 12
+        SizeClassLookup {
+            base: 32,
+            shift: 9,
+            sub: 2049,
+        }, // idx = 13
     ];
 
     let bits = usize::BITS - (size - 1).leading_zeros();

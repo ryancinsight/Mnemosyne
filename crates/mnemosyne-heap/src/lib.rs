@@ -8,7 +8,7 @@ use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::internal::{
     allocate_large_or_huge, deallocate_large_or_huge, do_local_free_internal,
     ensure_options_initialized, initialize_allocated_bytes, is_valid_layout_alloc_request,
-    poison_freed_bytes, size_to_class_nonzero, Block, HasSegmentPool, NonNull, Page, Segment,
+    poison_freed_bytes, size_to_class_nonzero, Block, HasSegmentPool, NonNull, Segment,
     ThreadAllocator, MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT,
     SEGMENT_SIZE,
 };
@@ -24,7 +24,6 @@ pub struct MnemosyneHeap<P: AllocPolicy, B: HasSegmentPool = mnemosyne_backend::
 }
 
 unsafe impl<P: AllocPolicy, B: HasSegmentPool> Send for MnemosyneHeap<P, B> {}
-unsafe impl<P: AllocPolicy, B: HasSegmentPool> Sync for MnemosyneHeap<P, B> {}
 
 impl<P: AllocPolicy, B: HasSegmentPool> Default for MnemosyneHeap<P, B> {
     #[inline]
@@ -94,39 +93,8 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
             }
         };
 
-        // Try fast path active page pop first (L1 heap-local)
-        if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
-            let page = unsafe { page_ptr.as_mut() };
-            if let Some(block) = page.free {
-                let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-                    let self_addr = page as *const Page as usize;
-                    let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
-                    let segment = segment_addr as *mut Segment;
-                    let page_index = page.index_in_segment();
-                    unsafe { (*segment).keys[page_index] }
-                } else {
-                    0
-                };
-                unsafe {
-                    page.free = (*block.as_ptr()).get_next::<P>(cookie);
-                }
-                page.alloc_count += 1;
-                let ptr = block.as_ptr() as *mut u8;
-                unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-                return ptr;
-            } else if page.initialized_blocks < page.max_blocks() {
-                let idx = page.initialized_blocks;
-                page.initialized_blocks += 1;
-                page.alloc_count += 1;
-                let page_start = page.page_start();
-                let ptr = unsafe { page_start.add(idx * page.block_size) };
-                unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-                return ptr;
-            }
-        }
-
         alloc.is_allocating = true;
-        let ptr = unsafe { alloc.alloc::<P>(adjusted_size) };
+        let ptr = unsafe { alloc.alloc_class::<P>(class) };
         let final_ptr = if ptr.is_null() {
             unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) }
         } else {
@@ -312,7 +280,7 @@ impl<'brand> Invariant<'brand> {
 /// that initialized the scoped brand.
 pub struct AllocatorToken<'brand> {
     _marker: Invariant<'brand>,
-    _non_send: core::marker::PhantomData<core::cell::Cell<&'brand ()>>,
+    _non_send_sync: core::marker::PhantomData<*mut ()>,
 }
 
 impl<'brand> AllocatorToken<'brand> {
@@ -320,7 +288,7 @@ impl<'brand> AllocatorToken<'brand> {
     unsafe fn new() -> Self {
         Self {
             _marker: Invariant::new(),
-            _non_send: core::marker::PhantomData,
+            _non_send_sync: core::marker::PhantomData,
         }
     }
 }
@@ -365,7 +333,6 @@ pub struct BrandedHeap<
 }
 
 unsafe impl<'brand, P: AllocPolicy, B: HasSegmentPool> Send for BrandedHeap<'brand, P, B> {}
-unsafe impl<'brand, P: AllocPolicy, B: HasSegmentPool> Sync for BrandedHeap<'brand, P, B> {}
 
 impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
     BrandedHeap<'brand, P, B>
@@ -432,39 +399,8 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
             }
         };
 
-        // Try fast path active page pop first (L1 heap-local)
-        if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
-            let page = unsafe { page_ptr.as_mut() };
-            if let Some(block) = page.free {
-                let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-                    let self_addr = page as *const Page as usize;
-                    let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
-                    let segment = segment_addr as *mut Segment;
-                    let page_index = page.index_in_segment();
-                    unsafe { (*segment).keys[page_index] }
-                } else {
-                    0
-                };
-                unsafe {
-                    page.free = (*block.as_ptr()).get_next::<P>(cookie);
-                }
-                page.alloc_count += 1;
-                let ptr = block.as_ptr() as *mut u8;
-                unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-                return ptr;
-            } else if page.initialized_blocks < page.max_blocks() {
-                let idx = page.initialized_blocks;
-                page.initialized_blocks += 1;
-                page.alloc_count += 1;
-                let page_start = page.page_start();
-                let ptr = unsafe { page_start.add(idx * page.block_size) };
-                unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-                return ptr;
-            }
-        }
-
         alloc.is_allocating = true;
-        let ptr = unsafe { alloc.alloc::<P>(adjusted_size) };
+        let ptr = unsafe { alloc.alloc_class::<P>(class) };
         let final_ptr = if ptr.is_null() {
             unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) }
         } else {
@@ -641,25 +577,52 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
 
         if !P::ZERO_INITIALIZE && !P::ENABLE_POISONING {
             if new_size <= layout.size() {
-                return Some(BrandedBlock {
-                    ptr: block.ptr.cast(),
-                    _marker: block._marker,
-                });
-            }
-            if layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
-                if mnemosyne_local::internal::small_realloc_fits_existing_class(layout, new_size) {
-                    return Some(BrandedBlock {
-                        ptr: block.ptr.cast(),
-                        _marker: block._marker,
-                    });
+                if layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
+                    if new_size >= layout.size() / 2 {
+                        return Some(BrandedBlock {
+                            ptr: block.ptr.cast(),
+                            _marker: block._marker,
+                        });
+                    }
+                } else {
+                    let current_usable = unsafe { mnemosyne_local::usable_size(ptr) };
+                    let new_adjusted = core::cmp::max(new_size, layout.align());
+                    if new_adjusted <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
+                        if new_size >= layout.size() / 2 {
+                            return Some(BrandedBlock {
+                                ptr: block.ptr.cast(),
+                                _marker: block._marker,
+                            });
+                        }
+                    } else {
+                        let page_size = mnemosyne_core::constants::PAGE_SIZE;
+                        let new_page_rounded = (new_adjusted + page_size - 1) & !(page_size - 1);
+                        if new_page_rounded >= current_usable {
+                            return Some(BrandedBlock {
+                                ptr: block.ptr.cast(),
+                                _marker: block._marker,
+                            });
+                        }
+                    }
                 }
             } else {
-                let current_usable = unsafe { mnemosyne_local::usable_size(ptr) };
-                if new_size <= current_usable {
-                    return Some(BrandedBlock {
-                        ptr: block.ptr.cast(),
-                        _marker: block._marker,
-                    });
+                if layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
+                    if mnemosyne_local::internal::small_realloc_fits_existing_class(
+                        layout, new_size,
+                    ) {
+                        return Some(BrandedBlock {
+                            ptr: block.ptr.cast(),
+                            _marker: block._marker,
+                        });
+                    }
+                } else {
+                    let current_usable = unsafe { mnemosyne_local::usable_size(ptr) };
+                    if new_size <= current_usable {
+                        return Some(BrandedBlock {
+                            ptr: block.ptr.cast(),
+                            _marker: block._marker,
+                        });
+                    }
                 }
             }
         }
@@ -1591,10 +1554,7 @@ mod tests {
 
             assert_eq!(boxed_slice.len(), 1);
             assert_eq!(boxed_slice[0], 0xCAFE_BABE);
-            assert!(
-                after_usable < before_usable,
-                "boxed slice conversion should shrink usable storage from {before_usable} to below it, got {after_usable}"
-            );
+            panic!("before_usable: {}, after_usable: {}", before_usable, after_usable);
         });
     }
 

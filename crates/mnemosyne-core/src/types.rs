@@ -181,6 +181,16 @@ impl SegmentOwner {
 unsafe impl Send for SegmentOwner {}
 unsafe impl Sync for SegmentOwner {}
 
+#[inline]
+fn gcd(mut a: usize, mut b: usize) -> usize {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
 impl Page {
     /// Creates a new uninitialized `Page`.
     pub const fn new() -> Self {
@@ -237,7 +247,9 @@ impl Page {
         // = (offset >> 6) << 16 = offset << 10.
         // The low 6 bits of offset are 0 because Page is 64-byte aligned,
         // so shift left by 10 is perfectly precise and avoids an intermediate right-shift.
-        let page_offset = offset << (crate::constants::PAGE_SHIFT - core::mem::size_of::<Page>().trailing_zeros() as usize);
+        let page_offset = offset
+            << (crate::constants::PAGE_SHIFT
+                - core::mem::size_of::<Page>().trailing_zeros() as usize);
         unsafe { (segment_addr as *mut u8).add(page_offset) }
     }
 
@@ -341,11 +353,69 @@ impl Page {
     /// and must be valid for reads and writes of size `PAGE_SIZE`.
     pub unsafe fn initialize_free_list<P: crate::policy::AllocPolicy>(
         &mut self,
-        _page_start: *mut u8,
+        page_start: *mut u8,
+        random_value: u64,
     ) {
-        self.initialized_blocks = 0;
         self.alloc_count = 0;
-        self.free = None;
+        if P::RANDOMIZE_ALLOCATION {
+            let n = self.max_blocks();
+            if n == 0 {
+                self.initialized_blocks = 0;
+                self.free = None;
+                return;
+            }
+
+            // Find a stride coprime to N.
+            let mut stride = (random_value as usize) % n;
+            if stride == 0 {
+                stride = 1;
+            }
+            while gcd(stride, n) != 1 {
+                stride = (stride + 1) % n;
+                if stride == 0 {
+                    stride = 1;
+                }
+            }
+
+            // Start index
+            let start = (random_value >> 16) as usize % n;
+
+            let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+                let self_addr = self as *const Page as usize;
+                let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
+                let segment = segment_addr as *mut Segment;
+                let page_index = self.index_in_segment();
+                unsafe { (*segment).keys[page_index] }
+            } else {
+                0
+            };
+
+            let block_size = self.block_size;
+            let mut prev_block: Option<NonNull<Block>> = None;
+            let mut current_idx = start;
+            for _ in 0..n {
+                let block_ptr = unsafe { page_start.add(current_idx * block_size) } as *mut Block;
+                let block = unsafe { NonNull::new_unchecked(block_ptr) };
+                if let Some(prev) = prev_block {
+                    unsafe {
+                        (*prev.as_ptr()).set_next::<P>(Some(block), cookie);
+                    }
+                } else {
+                    self.free = Some(block);
+                }
+                prev_block = Some(block);
+                current_idx = (current_idx + stride) % n;
+            }
+            if let Some(prev) = prev_block {
+                unsafe {
+                    (*prev.as_ptr()).set_next::<P>(None, cookie);
+                }
+            }
+            self.initialized_blocks = n;
+        } else {
+            self.initialized_blocks = 0;
+            self.free = None;
+        }
     }
 }
 
@@ -472,8 +542,18 @@ impl Segment {
 
 #[cfg(test)]
 mod tests {
-    use ::std::alloc::{alloc_zeroed, dealloc, Layout};
     use super::*;
+    use ::std::alloc::{Layout, alloc_zeroed, dealloc};
+
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    struct RandomizedTestPolicy;
+
+    impl crate::policy::private::Sealed for RandomizedTestPolicy {}
+    impl crate::policy::AllocPolicy for RandomizedTestPolicy {
+        const ENABLE_POISONING: bool = false;
+        const ZERO_INITIALIZE: bool = false;
+        const RANDOMIZE_ALLOCATION: bool = true;
+    }
 
     #[test]
     fn page_struct_size_stays_within_one_cache_line() {
@@ -497,13 +577,16 @@ mod tests {
         )
         .unwrap();
         let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
-        assert!(!segment_ptr.is_null(), "alloc_zeroed failed to allocate segment");
+        assert!(
+            !segment_ptr.is_null(),
+            "alloc_zeroed failed to allocate segment"
+        );
         let page = unsafe { &mut (*segment_ptr).pages[1] };
         page.block_size = 16;
 
         unsafe {
             let page_start = page.page_start();
-            page.initialize_free_list::<crate::policy::StandardPolicy>(page_start);
+            page.initialize_free_list::<crate::policy::StandardPolicy>(page_start, 0);
         }
 
         let first = unsafe { page.pop_block::<crate::policy::StandardPolicy>() };
@@ -534,13 +617,16 @@ mod tests {
         )
         .unwrap();
         let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
-        assert!(!segment_ptr.is_null(), "alloc_zeroed failed to allocate segment");
+        assert!(
+            !segment_ptr.is_null(),
+            "alloc_zeroed failed to allocate segment"
+        );
         let page = unsafe { &mut (*segment_ptr).pages[1] };
         page.block_size = 16;
 
         unsafe {
             let page_start = page.page_start();
-            page.initialize_free_list::<crate::policy::StandardPolicy>(page_start);
+            page.initialize_free_list::<crate::policy::StandardPolicy>(page_start, 0);
         }
 
         let b1 = unsafe { page.pop_block::<crate::policy::StandardPolicy>() };
@@ -574,6 +660,44 @@ mod tests {
         );
 
         unsafe {
+            dealloc(segment_ptr as *mut u8, layout);
+        }
+    }
+
+    #[test]
+    fn randomized_page_free_list_uses_seeded_permutation() {
+        let layout = Layout::from_size_align(
+            crate::constants::SEGMENT_SIZE,
+            crate::constants::SEGMENT_SIZE,
+        )
+        .unwrap();
+        let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+        assert!(
+            !segment_ptr.is_null(),
+            "alloc_zeroed failed to allocate segment"
+        );
+        let page = unsafe { &mut (*segment_ptr).pages[1] };
+        page.block_size = 16;
+        page.size_class = 0;
+
+        unsafe {
+            let page_start = page.page_start();
+            page.initialize_free_list::<RandomizedTestPolicy>(page_start, (7 << 16) | 5);
+
+            let first = page.pop_block::<RandomizedTestPolicy>();
+            let second = page.pop_block::<RandomizedTestPolicy>();
+
+            assert_eq!(
+                first.as_ptr() as usize - page_start as usize,
+                7 * page.block_size,
+                "randomized free list must start at the seed-derived index"
+            );
+            assert_eq!(
+                second.as_ptr() as usize - page_start as usize,
+                12 * page.block_size,
+                "randomized free list must advance by the seed-derived coprime stride"
+            );
+
             dealloc(segment_ptr as *mut u8, layout);
         }
     }

@@ -6,11 +6,11 @@
 extern crate std;
 
 pub mod constants;
+pub mod options;
 pub mod policy;
 pub mod size_class;
 pub mod sync;
 pub mod types;
-pub mod options;
 pub mod validation;
 
 pub use constants::*;

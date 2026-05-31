@@ -1,6 +1,6 @@
 //! Lock-free per-CPU L1 block caching with ABA protection.
 
-use core::sync::atomic::{AtomicUsize, AtomicU8, AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::policy::AllocPolicy;
 
@@ -127,29 +127,32 @@ pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
 
     let cpu_id = current_cpu_id();
     let slot = &PER_CPU_CACHE.slots[cpu_id];
-    
+
     loop {
         let count = slot.counts[class].load(Ordering::Relaxed);
         if count == 0 {
             return core::ptr::null_mut();
         }
-        
+
         let packed_head = slot.heads[class].load(Ordering::Acquire);
         let (head_ptr, count_val) = unpack_ptr(packed_head);
         if head_ptr.is_null() {
             return core::ptr::null_mut();
         }
-        
+
         // Safety: head_ptr points to a valid cached block.
         let next_ptr = unsafe { *(head_ptr as *mut *mut u8) };
         let new_packed = pack_ptr(next_ptr, count_val + 1);
-        
-        if slot.heads[class].compare_exchange_weak(
-            packed_head,
-            new_packed,
-            Ordering::Release,
-            Ordering::Acquire,
-        ).is_ok() {
+
+        if slot.heads[class]
+            .compare_exchange_weak(
+                packed_head,
+                new_packed,
+                Ordering::Release,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
             slot.counts[class].fetch_sub(1, Ordering::Release);
             return head_ptr;
         }
@@ -162,35 +165,38 @@ pub fn try_free_cpu<P: AllocPolicy>(ptr: *mut u8, class: usize) -> bool {
     if ptr.is_null() {
         return false;
     }
-    
+
     if DISABLE_CPU_CACHE.load(Ordering::Relaxed) || !PER_CPU_CACHE_ENABLED.load(Ordering::Relaxed) {
         return false;
     }
 
     let cpu_id = current_cpu_id();
     let slot = &PER_CPU_CACHE.slots[cpu_id];
-    
+
     loop {
         let count = slot.counts[class].load(Ordering::Relaxed);
         if count >= MAX_CACHED_BLOCKS {
             return false;
         }
-        
+
         let packed_head = slot.heads[class].load(Ordering::Acquire);
         let (head_ptr, count_val) = unpack_ptr(packed_head);
-        
+
         // Safety: ptr is a valid free block.
         unsafe {
             *(ptr as *mut *mut u8) = head_ptr;
         }
         let new_packed = pack_ptr(ptr, count_val + 1);
-        
-        if slot.heads[class].compare_exchange_weak(
-            packed_head,
-            new_packed,
-            Ordering::Release,
-            Ordering::Acquire,
-        ).is_ok() {
+
+        if slot.heads[class]
+            .compare_exchange_weak(
+                packed_head,
+                new_packed,
+                Ordering::Release,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
             slot.counts[class].fetch_add(1, Ordering::Release);
             return true;
         }

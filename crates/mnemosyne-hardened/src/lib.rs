@@ -11,6 +11,7 @@ impl Sealed for SecurePolicy {}
 impl AllocPolicy for SecurePolicy {
     const ENABLE_POISONING: bool = true;
     const ZERO_INITIALIZE: bool = true;
+    const RANDOMIZE_ALLOCATION: bool = true;
 }
 
 /// Zero-Sized Type (ZST) representing a hardened allocation policy with memory poisoning, zero-initialization, and free-list encryption.
@@ -23,4 +24,5 @@ impl AllocPolicy for HardenedPolicy {
     const ENABLE_POISONING: bool = true;
     const ZERO_INITIALIZE: bool = true;
     const ENABLE_FREE_LIST_ENCRYPTION: bool = true;
+    const RANDOMIZE_ALLOCATION: bool = true;
 }

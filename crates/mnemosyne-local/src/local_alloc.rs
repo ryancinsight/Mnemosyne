@@ -5,9 +5,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_arena::{allocate_segment, deallocate_segment, HasSegmentPool};
 use mnemosyne_backend::DefaultBackend;
-use mnemosyne_core::constants::{
-    NUM_SIZE_CLASSES, PAGES_PER_SEGMENT, PAGE_SIZE, SEGMENT_SIZE,
-};
+use mnemosyne_core::constants::{NUM_SIZE_CLASSES, PAGES_PER_SEGMENT, PAGE_SIZE, SEGMENT_SIZE};
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::{class_to_size, size_to_class};
 use mnemosyne_core::types::{Page, Segment, SegmentOwner};
@@ -109,7 +107,10 @@ unsafe fn pop_page_free_block<P: AllocPolicy>(
 /// `page_ptr` must be a valid, live page pointer owned by the current thread
 /// and must be currently linked in the list starting at `head_slot`.
 #[inline(always)]
-unsafe fn unlink_page_from_list(head_slot: &mut Option<NonNull<Page>>, mut page_ptr: NonNull<Page>) {
+unsafe fn unlink_page_from_list(
+    head_slot: &mut Option<NonNull<Page>>,
+    mut page_ptr: NonNull<Page>,
+) {
     let page = page_ptr.as_mut();
     let next = page.next_page;
     let prev = page.prev_page;
@@ -191,6 +192,8 @@ pub struct ThreadAllocator<B: HasSegmentPool = DefaultBackend> {
     pub recycle_sweeps: usize,
     /// Indicates whether an allocation or deallocation operation is currently active on this thread-local cache.
     pub is_allocating: bool,
+    /// Thread-local pseudo-random number generator state for allocation randomization.
+    pub rng_state: u64,
     /// Marker to bind the generic MemoryBackend parameter.
     pub _phantom: PhantomData<B>,
 }
@@ -219,8 +222,29 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             orphan_segments_adopted: 0,
             recycle_sweeps: 0,
             is_allocating: false,
+            rng_state: 0x123456789abcdefu64,
             _phantom: PhantomData,
         }
+    }
+
+    /// Generates the next pseudo-random 64-bit value using Xorshift64,
+    /// seeding with the allocator address on the first call to guarantee
+    /// different sequences per thread.
+    #[inline]
+    pub fn next_random(&mut self) -> u64 {
+        if self.rng_state == 0x123456789abcdefu64 {
+            let addr = self as *const Self as usize as u64;
+            self.rng_state ^= addr;
+            if self.rng_state == 0 {
+                self.rng_state = 0x123456789abcdefu64;
+            }
+        }
+        let mut x = self.rng_state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.rng_state = x;
+        x
     }
 
     #[inline(always)]
@@ -420,7 +444,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             if let Some(block) = try_reclaim_and_allocate::<P>(active_page) {
                 return block.as_ptr() as *mut u8;
             }
-            if active_page.free.is_none() && active_page.initialized_blocks == active_page.max_blocks() {
+            if active_page.free.is_none()
+                && active_page.initialized_blocks == active_page.max_blocks()
+            {
                 // The page is truly full! Move it to full_pages.
                 unsafe {
                     unlink_page_from_list(self.active_pages.get_unchecked_mut(class), active_ptr);
@@ -482,7 +508,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         // Page is no longer full! Move it back to active list.
                         // Safety: page_ptr and class are valid.
                         unsafe {
-                            unlink_page_from_list(self.full_pages.get_unchecked_mut(class), page_ptr);
+                            unlink_page_from_list(
+                                self.full_pages.get_unchecked_mut(class),
+                                page_ptr,
+                            );
                             self.push_active_page(page_ptr, class);
                         }
                     }
@@ -537,12 +566,17 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         if let Some(mut page_ptr) = self.empty_pages {
             unsafe {
                 unlink_page_from_list(&mut self.empty_pages, page_ptr);
+                let random_value = if P::RANDOMIZE_ALLOCATION {
+                    self.next_random() ^ page_ptr.as_ptr() as u64 ^ (class as u64).rotate_left(17)
+                } else {
+                    0
+                };
                 let page = page_ptr.as_mut();
 
                 let page_start = page.page_start();
                 page.block_size = block_size;
                 page.size_class = class as u32;
-                page.initialize_free_list::<P>(page_start);
+                page.initialize_free_list::<P>(page_start, random_value);
 
                 self.push_active_page(page_ptr, class);
                 self.recycled_pages += 1;
@@ -601,13 +635,18 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     }
 
                     if !found_page.is_null() {
+                        let random_value = if P::RANDOMIZE_ALLOCATION {
+                            self.next_random() ^ found_page as u64 ^ (class as u64).rotate_left(17)
+                        } else {
+                            0
+                        };
                         let page = unsafe { &mut *found_page };
                         page.block_size = block_size;
                         page.size_class = class as u32;
                         let page_start = page.page_start();
                         // Safety: initializing free list for the repurposed page
                         unsafe {
-                            page.initialize_free_list::<P>(page_start);
+                            page.initialize_free_list::<P>(page_start, random_value);
                             self.push_active_page(NonNull::new_unchecked(found_page), class);
                         }
                         return found_page;
@@ -652,8 +691,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         page.size_class = class as u32;
 
         let page_start = page.page_start();
+        let random_value = if P::RANDOMIZE_ALLOCATION {
+            self.next_random() ^ page_ptr as u64 ^ (class as u64).rotate_left(17)
+        } else {
+            0
+        };
         unsafe {
-            page.initialize_free_list::<P>(page_start);
+            page.initialize_free_list::<P>(page_start, random_value);
         }
 
         // Prepend to the size class active pages list.
@@ -726,10 +770,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             self.unlink_owned_segment(segment);
         }
 
-        if self
-            .current_segment
-            .is_some_and(|p| p.as_ptr() == segment)
-        {
+        if self.current_segment.is_some_and(|p| p.as_ptr() == segment) {
             self.set_current_segment(None);
             self.next_page_index = 0;
         }
@@ -963,8 +1004,7 @@ mod tests {
         mnemosyne_arena::GlobalSegmentPool::new();
     static MOCK_ORPHAN_POOL: mnemosyne_arena::GlobalSegmentPool =
         mnemosyne_arena::GlobalSegmentPool::new();
-    static MOCK_HUGE_POOL: mnemosyne_arena::GlobalHugePool =
-        mnemosyne_arena::GlobalHugePool::new();
+    static MOCK_HUGE_POOL: mnemosyne_arena::GlobalHugePool = mnemosyne_arena::GlobalHugePool::new();
 
     impl MemoryBackend for MockBackend {
         unsafe fn allocate(size: usize) -> *mut u8 {
