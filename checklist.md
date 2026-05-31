@@ -292,3 +292,4 @@ Target version: 0.1.0
 - [x] [patch] Reject Bounded Retention of Huge Mappings and per-CPU cache optimizations after allocator burst retention and threaded cycles regressed.
 - [x] [patch] Add zero-sized-type paths for `BrandedBox` and `BrandedVec`, assert they allocate no owned segment, preserve destructor execution, and guard `BrandedVec` capacity growth with checked arithmetic.
 - [x] [patch] Extend the ZST path to `BrandedHeap::alloc_init`, `free`, and `free_uninit`; pin with a value-semantic test that `alloc_init::<ZST>` allocates no segment and `free` runs exactly one destructor.
+- [x] [patch] Extend the ZST path to `BrandedHeap::realloc`; pin ZST-to-nonzero and ZST-to-zero transitions with allocator-state and destructor-count assertions.

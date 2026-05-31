@@ -615,6 +615,13 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
             return None;
         }
 
+        if layout.size() == 0 || core::mem::size_of::<T>() == 0 {
+            return self.alloc(
+                _token,
+                Layout::from_size_align(new_size, layout.align()).unwrap_or(layout),
+            );
+        }
+
         if !P::ZERO_INITIALIZE && !P::ENABLE_POISONING {
             if new_size <= layout.size() {
                 return Some(BrandedBlock {
@@ -1065,6 +1072,66 @@ mod tests {
                 assert_eq!(new_ptr.read(), 99);
             }
             heap.free(&mut token, new_block);
+        });
+    }
+
+    #[test]
+    fn test_branded_heap_realloc_zst_to_nonzero_skips_source_free() {
+        struct Marker;
+
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let before = unsafe { (&*heap.allocator.get()).stats() };
+            let block = heap.alloc_init(&token, Marker).expect("ZST alloc failed");
+
+            let new_block = heap
+                .realloc(&mut token, block, Layout::new::<Marker>(), 16)
+                .expect("ZST-to-nonzero realloc failed");
+            let after_alloc = unsafe { (&*heap.allocator.get()).stats() };
+
+            assert!(
+                !new_block.as_ptr().is_null(),
+                "realloc returned a null block"
+            );
+            assert_eq!(
+                after_alloc.current_thread_live_allocations,
+                before.current_thread_live_allocations + 1,
+                "ZST source must not allocate, but nonzero destination must be live"
+            );
+
+            heap.free_uninit(&mut token, new_block);
+            let after_free = unsafe { (&*heap.allocator.get()).stats() };
+            assert_eq!(
+                after_free.current_thread_live_allocations, before.current_thread_live_allocations,
+                "nonzero destination block must be released after free_uninit"
+            );
+        });
+    }
+
+    #[test]
+    fn test_branded_heap_realloc_zst_to_zero_drops_without_allocating() {
+        ZST_DROP_COUNT.store(0, Ordering::SeqCst);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let before = unsafe { (&*heap.allocator.get()).stats() };
+            let block = heap
+                .alloc_init(&token, ZstDrop)
+                .expect("ZST alloc_init failed");
+
+            let result = heap.realloc(&mut token, block, Layout::new::<ZstDrop>(), 0);
+            let after = unsafe { (&*heap.allocator.get()).stats() };
+
+            assert!(
+                result.is_none(),
+                "ZST-to-zero realloc must consume the block without a replacement"
+            );
+            assert_eq!(
+                after.current_thread_live_allocations, before.current_thread_live_allocations,
+                "ZST-to-zero realloc must not allocate or free a real block"
+            );
+            assert_eq!(
+                ZST_DROP_COUNT.load(Ordering::SeqCst),
+                1,
+                "ZST-to-zero realloc must drop the owned value exactly once"
+            );
         });
     }
 

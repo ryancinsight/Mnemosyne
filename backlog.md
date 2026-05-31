@@ -127,6 +127,7 @@
 - [patch] Reject Bounded Retention of Huge Mappings and per-CPU cache optimizations after allocator burst retention and threaded cycles regressed.
 - [patch] Make branded heap containers allocation-free for zero-sized types and reject overflowing `BrandedVec` capacity growth before layout construction.
 - [patch] Make primitive branded heap initialization/free ZST-aware so `alloc_init::<T>`, `free`, and `free_uninit` share the same allocation-free zero-sized-type contract as the safe containers.
+- [patch] Make primitive branded heap realloc ZST-aware so zero-sized source permissions never route dangling pointers through usable-size, byte-copy, or raw-free allocator logic.
 
 
 ## Next
