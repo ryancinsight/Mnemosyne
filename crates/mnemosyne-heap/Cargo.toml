@@ -9,3 +9,6 @@ mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-arena = { path = "../mnemosyne-arena" }
 mnemosyne-local = { path = "../mnemosyne-local" }
 mnemosyne-prof = { path = "../mnemosyne-prof" }
+
+[dev-dependencies]
+mnemosyne = { path = "../mnemosyne" }

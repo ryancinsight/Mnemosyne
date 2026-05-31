@@ -649,10 +649,8 @@ pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
     }
 
     let ptr = unsafe { thread_alloc_checked::<P, B>(size, align) };
-    if mnemosyne_prof::is_active() {
-        if !ptr.is_null() {
-            mnemosyne_prof::on_alloc(ptr, size);
-        }
+    if mnemosyne_prof::is_active() && !ptr.is_null() {
+        mnemosyne_prof::on_alloc(ptr, size);
     }
     ptr
 }
@@ -680,10 +678,8 @@ pub unsafe fn thread_alloc_layout<P: AllocPolicy, B: HasSegmentPool + LocalAlloc
         "Layout-validated allocation received invalid alignment {align}"
     );
     let ptr = unsafe { thread_alloc_checked::<P, B>(size, align) };
-    if mnemosyne_prof::is_active() {
-        if !ptr.is_null() {
-            mnemosyne_prof::on_alloc(ptr, size);
-        }
+    if mnemosyne_prof::is_active() && !ptr.is_null() {
+        mnemosyne_prof::on_alloc(ptr, size);
     }
     ptr
 }
@@ -925,6 +921,11 @@ unsafe fn thread_free_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
     }
 }
 
+/// Internal implementation of local deallocation.
+///
+/// # Safety
+///
+/// The block pointer must point to a valid block allocated in the target page and segment.
 #[inline(always)]
 pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     alloc: &mut ThreadAllocator<B>,
@@ -959,7 +960,7 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
         let class = page.size_class as usize;
         let is_only_active = unsafe {
             alloc.active_pages.get_unchecked(class).is_some_and(|head| {
-                head.as_ptr() == page as *mut Page && (*page).next_page.is_none()
+                core::ptr::eq(head.as_ptr(), page as *const Page) && page.next_page.is_none()
             })
         };
         if !is_only_active && !alloc.try_reclaim_segment(segment) {

@@ -47,10 +47,8 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
     #[inline(always)]
     pub fn alloc(&self, layout: Layout) -> *mut u8 {
         let ptr = unsafe { self.alloc_inner(layout) };
-        if mnemosyne_prof::is_active() {
-            if !ptr.is_null() {
-                mnemosyne_prof::on_alloc(ptr, layout.size());
-            }
+        if mnemosyne_prof::is_active() && !ptr.is_null() {
+            mnemosyne_prof::on_alloc(ptr, layout.size());
         }
         ptr
     }
@@ -266,6 +264,13 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
 /// A helper type representing a compile-time invariant brand lifetime.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Invariant<'brand>(core::marker::PhantomData<fn(&'brand ()) -> &'brand ()>);
+
+impl<'brand> Default for Invariant<'brand> {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl<'brand> Invariant<'brand> {
     #[inline(always)]
@@ -1019,6 +1024,14 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             heap,
             _non_send: core::marker::PhantomData,
         }
+    }
+
+    /// Converts this vector into a shared `BrandedCell` containing a slice.
+    ///
+    /// The memory is shrunk to fit and remains allocated until manually reclaimed.
+    #[inline(always)]
+    pub fn into_cell(self, token: &mut AllocatorToken<'brand>) -> BrandedCell<'brand, [T]> {
+        self.into_boxed_slice(token).into_cell()
     }
 }
 
@@ -1794,6 +1807,23 @@ mod tests {
             let zst_vec_recovered = BrandedVec::from_boxed_slice(zst_boxed);
             assert_eq!(zst_vec_recovered.len(), 2);
             assert_eq!(zst_vec_recovered.capacity(), usize::MAX);
+        });
+    }
+
+    #[test]
+    fn test_branded_vec_into_cell() {
+        let counter = std::sync::atomic::AtomicUsize::new(0);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let mut vec = BrandedVec::new(&heap);
+            vec.push(&mut token, DropTracker(&counter)).unwrap();
+            vec.push(&mut token, DropTracker(&counter)).unwrap();
+
+            let cell = vec.into_cell(&mut token);
+            assert_eq!(cell.borrow(&token).len(), 2);
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+            heap.free(&mut token, unsafe { cell.into_block() });
+            assert_eq!(counter.load(Ordering::SeqCst), 2);
         });
     }
 }
