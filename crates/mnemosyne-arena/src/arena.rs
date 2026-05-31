@@ -79,6 +79,7 @@ unsafe fn initialize_large_or_huge_segment(
             Segment::initialize(aligned_ptr, raw_ptr, node);
             (*aligned_ptr).pages[0].block_size = total_alloc_size;
         }
+        (*aligned_ptr).pages[0].alloc_count = size;
 
         let metadata_slot = (user_ptr as *mut *mut Segment).sub(1);
         metadata_slot.write(aligned_ptr);

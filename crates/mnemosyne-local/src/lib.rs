@@ -628,7 +628,12 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
     // Safety: large/huge allocations store the segment pointer in the metadata
     // slot immediately preceding the user pointer.
     let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-    unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+    let size = unsafe { (*segment).pages[0].alloc_count };
+    if size > 0 {
+        size
+    } else {
+        unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+    }
 }
 
 /// Returns a statistics snapshot for the current thread allocator.
@@ -827,7 +832,12 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
     if mnemosyne_prof::is_active() {
         let size = if page_index == 0 || page.block_size == 0 {
             let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-            unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+            let size = unsafe { (*segment).pages[0].alloc_count };
+            if size > 0 {
+                size
+            } else {
+                unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+            }
         } else {
             page.block_size
         };
@@ -837,7 +847,12 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
     if page.block_size == 0 {
         if P::ENABLE_POISONING {
             let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-            let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
+            let size = unsafe { (*segment).pages[0].alloc_count };
+            let size = if size > 0 {
+                size
+            } else {
+                unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+            };
             unsafe { poison_freed_bytes::<P>(ptr, size) };
         }
         let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };

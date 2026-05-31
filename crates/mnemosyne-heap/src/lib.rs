@@ -127,7 +127,12 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
         if mnemosyne_prof::is_active() {
             let size = if page_index == 0 || page.block_size == 0 {
                 let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-                unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+                let size = unsafe { (*segment).pages[0].alloc_count };
+                if size > 0 {
+                    size
+                } else {
+                    unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+                }
             } else {
                 page.block_size
             };
@@ -137,7 +142,12 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
         if page_index == 0 || page.block_size == 0 {
             if P::ENABLE_POISONING {
                 let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-                let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
+                let size = unsafe { (*segment).pages[0].alloc_count };
+                let size = if size > 0 {
+                    size
+                } else {
+                    unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+                };
                 unsafe { poison_freed_bytes::<P>(ptr, size) };
             }
             let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
@@ -469,7 +479,12 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
         if mnemosyne_prof::is_active() {
             let size = if page_index == 0 || page.block_size == 0 {
                 let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-                unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+                let size = unsafe { (*segment).pages[0].alloc_count };
+                if size > 0 {
+                    size
+                } else {
+                    unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+                }
             } else {
                 page.block_size
             };
@@ -479,7 +494,12 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
         if page_index == 0 || page.block_size == 0 {
             if P::ENABLE_POISONING {
                 let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-                let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
+                let size = unsafe { (*segment).pages[0].alloc_count };
+                let size = if size > 0 {
+                    size
+                } else {
+                    unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+                };
                 unsafe { poison_freed_bytes::<P>(ptr, size) };
             }
             let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
@@ -1085,16 +1105,13 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
                 self.ptr = NonNull::dangling();
                 self.cap = 0;
             } else {
-                let new_layout = Layout::array::<T>(self.len).unwrap();
-                if let Some(new_block) = self.heap.alloc(token, new_layout) {
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            self.ptr.as_ptr(),
-                            new_block.ptr.cast::<T>().as_ptr(),
-                            self.len,
-                        );
-                        self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
-                    }
+                let old_layout = Layout::array::<T>(self.cap).unwrap();
+                let block = BrandedBlock {
+                    ptr: self.ptr,
+                    _marker: Invariant::new(),
+                };
+                let new_size = core::mem::size_of::<T>() * self.len;
+                if let Some(new_block) = self.heap.realloc(token, block, old_layout, new_size) {
                     self.ptr = new_block.ptr.cast();
                     self.cap = self.len;
                 }
@@ -1217,16 +1234,13 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             self.cap = 0;
             return Ok(());
         }
-        let new_layout = Layout::array::<T>(self.len).map_err(|_| ())?;
-        if let Some(new_block) = self.heap.alloc(token, new_layout) {
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    self.ptr.as_ptr(),
-                    new_block.ptr.cast::<T>().as_ptr(),
-                    self.len,
-                );
-                self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
-            }
+        let old_layout = Layout::array::<T>(self.cap).map_err(|_| ())?;
+        let block = BrandedBlock {
+            ptr: self.ptr,
+            _marker: Invariant::new(),
+        };
+        let new_size = core::mem::size_of::<T>() * self.len;
+        if let Some(new_block) = self.heap.realloc(token, block, old_layout, new_size) {
             self.ptr = new_block.ptr.cast();
             self.cap = self.len;
             Ok(())
@@ -2183,7 +2197,7 @@ mod tests {
             assert_eq!(b1, b1);
             assert_ne!(b1, b2);
             // PartialOrd/Ord
-            assert!(b1 < b2 || b1 > b2);
+            assert!(b1 != b2);
             // Hash
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             use core::hash::Hash;
@@ -2239,7 +2253,7 @@ mod tests {
             let vec_clone = vec.clone_in(&mut token).unwrap();
             assert_eq!(vec, vec_clone);
             // PartialOrd/Ord
-            assert!(vec < vec_clone || vec == vec_clone);
+            assert!(vec <= vec_clone);
             
             // clear
             let mut vec_clear = vec_clone;
@@ -2278,6 +2292,51 @@ mod tests {
             // Clean up
             heap.free(&mut token, b1);
             heap.free(&mut token, b2);
+        });
+    }
+
+    #[test]
+    fn test_branded_vec_in_place_shrink() {
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            // Minor shrink (within 50% threshold): should shrink in-place
+            let mut vec_minor = BrandedVec::with_capacity(&heap, &token, 4).unwrap();
+            vec_minor.push(&mut token, 42).unwrap();
+            vec_minor.push(&mut token, 43).unwrap();
+            vec_minor.push(&mut token, 44).unwrap();
+            
+            let orig_ptr_minor = vec_minor.as_slice().as_ptr();
+            assert_eq!(vec_minor.capacity(), 4);
+            
+            // Shrink minor vector capacity from 4 to 3 (new_size 12 >= 16 / 2)
+            vec_minor.shrink_to_fit(&mut token).unwrap();
+            assert_eq!(vec_minor.len(), 3);
+            assert_eq!(vec_minor.capacity(), 3);
+            assert_eq!(vec_minor.as_slice().as_ptr(), orig_ptr_minor);
+            
+            // Major shrink (below 50% threshold): should copy & free to release memory
+            let mut vec_major = BrandedVec::with_capacity(&heap, &token, 10).unwrap();
+            vec_major.push(&mut token, 100).unwrap();
+            vec_major.push(&mut token, 101).unwrap();
+            
+            let orig_ptr_major = vec_major.as_slice().as_ptr();
+            assert_eq!(vec_major.capacity(), 10);
+            
+            // Shrink major vector capacity from 10 to 2 (new_size 8 < 40 / 2)
+            vec_major.shrink_to_fit(&mut token).unwrap();
+            assert_eq!(vec_major.len(), 2);
+            assert_eq!(vec_major.capacity(), 2);
+            assert_ne!(vec_major.as_slice().as_ptr(), orig_ptr_major);
+            
+            // Similar minor shrink check for into_boxed_slice
+            let mut vec_slice = BrandedVec::with_capacity(&heap, &token, 4).unwrap();
+            vec_slice.push(&mut token, 200).unwrap();
+            vec_slice.push(&mut token, 201).unwrap();
+            vec_slice.push(&mut token, 202).unwrap();
+            
+            let orig_ptr_slice = vec_slice.as_slice().as_ptr();
+            let boxed_slice = vec_slice.into_boxed_slice(&mut token);
+            assert_eq!(boxed_slice.len(), 3);
+            assert_eq!((*boxed_slice).as_ptr(), orig_ptr_slice);
         });
     }
 }
