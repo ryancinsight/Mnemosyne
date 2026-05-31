@@ -562,7 +562,7 @@ fn bench_allocator_cycles(c: &mut Criterion) {
                     benchmark_failure("MnemosyneHeap cycle", "heap returned null");
                 }
                 black_box(ptr);
-                heap.free(ptr);
+                unsafe { heap.free(ptr); }
             })
         });
         group.bench_with_input(BenchmarkId::new("BrandedHeap", name), &layout, |b, layout| {

@@ -15,11 +15,11 @@ fn test_multi_heap_basic() {
     assert_eq!(unsafe { ptr.read() }, 123);
 
     // Test realloc
-    let ptr2 = heap.realloc(ptr, layout, 64);
+    let ptr2 = unsafe { heap.realloc(ptr, layout, 64) };
     assert!(!ptr2.is_null());
     assert_eq!(unsafe { ptr2.read() }, 123);
 
-    heap.free(ptr2);
+    unsafe { heap.free(ptr2); }
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn test_multi_heap_cross_thread() {
     let ptr = ptr_val as *mut u8;
 
     // Free the pointer on the main thread
-    heap.lock().unwrap().free(ptr);
+    unsafe { heap.lock().unwrap().free(ptr); }
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn test_runtime_options_override_default_retention() {
         let layout = Layout::from_size_align(32, 8).unwrap();
         let ptr = heap.alloc(layout);
         assert!(!ptr.is_null());
-        heap.free(ptr);
+        unsafe { heap.free(ptr); }
     }
 
     let final_retained = pool.retained_count();

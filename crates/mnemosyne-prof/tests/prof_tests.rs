@@ -51,7 +51,7 @@ fn test_custom_trace_hooks() {
     assert!(!ptr2.is_null());
     assert_eq!(ALLOC_COUNT.load(Ordering::SeqCst), 2);
 
-    heap.free(ptr2);
+    unsafe { heap.free(ptr2); }
     assert_eq!(FREE_COUNT.load(Ordering::SeqCst), 2);
 
     // Unregister hooks

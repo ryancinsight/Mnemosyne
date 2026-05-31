@@ -140,8 +140,12 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
     }
 
     /// Frees a block of memory back to its originating heap/allocator.
+    ///
+    /// # Safety
+    ///
+    /// The pointer must be non-null and previously allocated by this heap.
     #[inline(always)]
-    pub fn free(&self, ptr: *mut u8) {
+    pub unsafe fn free(&self, ptr: *mut u8) {
         ensure_options_initialized();
         if ptr.is_null() {
             return;
@@ -242,12 +246,16 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
     }
 
     /// Reallocates a memory block from this heap.
+    ///
+    /// # Safety
+    ///
+    /// The pointer must be non-null and previously allocated by this heap.
     #[inline(always)]
-    pub fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+    pub unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         ensure_options_initialized();
         if new_size == 0 {
             if !ptr.is_null() {
-                self.free(ptr);
+                unsafe { self.free(ptr); }
             }
             return core::ptr::null_mut();
         }
@@ -279,8 +287,8 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
 
         unsafe {
             core::ptr::copy_nonoverlapping(ptr, new_ptr, core::cmp::min(layout.size(), new_size));
+            self.free(ptr);
         }
-        self.free(ptr);
         new_ptr
     }
 }
@@ -1103,8 +1111,8 @@ mod tests {
         unsafe {
             ptr.write(42);
             assert_eq!(ptr.read(), 42);
+            heap.free(ptr);
         }
-        heap.free(ptr);
     }
 
     #[test]
@@ -1114,13 +1122,13 @@ mod tests {
         let ptr = heap.alloc(layout);
         assert!(!ptr.is_null());
 
-        unsafe { ptr.write(99) };
-        let new_ptr = heap.realloc(ptr, layout, 32);
-        assert!(!new_ptr.is_null());
         unsafe {
+            ptr.write(99);
+            let new_ptr = heap.realloc(ptr, layout, 32);
+            assert!(!new_ptr.is_null());
             assert_eq!(new_ptr.read(), 99);
+            heap.free(new_ptr);
         }
-        heap.free(new_ptr);
     }
 
     #[test]
