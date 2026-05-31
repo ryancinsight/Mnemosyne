@@ -60,6 +60,7 @@ fn test_custom_trace_hooks() {
 }
 
 #[test]
+#[inline(never)]
 fn test_poisson_sampler_and_dump_profile() {
     let _guard = TEST_LOCK.lock().unwrap();
     reset_options_for_testing();

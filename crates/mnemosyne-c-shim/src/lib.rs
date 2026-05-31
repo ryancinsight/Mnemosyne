@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn malloc_zero_returns_unique_freeable_pointer() {
         let _guard = SHIM_LOCK.lock().expect("shim test lock poisoned");
-        let ptr = unsafe { malloc(0) };
+        let ptr = unsafe { malloc(core::hint::black_box(0)) };
         assert!(!ptr.is_null(), "malloc(0) should return a unique pointer");
         unsafe { free(ptr) };
     }
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn free_null_is_a_no_op() {
         let _guard = SHIM_LOCK.lock().expect("shim test lock poisoned");
-        unsafe { free(core::ptr::null_mut()) };
+        unsafe { free(core::hint::black_box(core::ptr::null_mut())) };
     }
 
     #[test]
@@ -276,14 +276,15 @@ mod tests {
     #[test]
     fn calloc_overflow_returns_null() {
         let _guard = SHIM_LOCK.lock().expect("shim test lock poisoned");
-        let ptr = unsafe { calloc(usize::MAX, 2) };
+        let ptr = unsafe { calloc(core::hint::black_box(usize::MAX), core::hint::black_box(2)) };
+        let ptr = core::hint::black_box(ptr);
         assert!(ptr.is_null(), "calloc overflow must return null");
     }
 
     #[test]
     fn realloc_null_acts_as_malloc() {
         let _guard = SHIM_LOCK.lock().expect("shim test lock poisoned");
-        let ptr = unsafe { realloc(core::ptr::null_mut(), 32) };
+        let ptr = unsafe { realloc(core::hint::black_box(core::ptr::null_mut()), core::hint::black_box(32)) };
         assert!(!ptr.is_null());
         unsafe { free(ptr) };
     }
@@ -291,9 +292,10 @@ mod tests {
     #[test]
     fn realloc_zero_frees_and_returns_null() {
         let _guard = SHIM_LOCK.lock().expect("shim test lock poisoned");
-        let ptr = unsafe { malloc(32) };
+        let ptr = unsafe { malloc(core::hint::black_box(32)) };
         assert!(!ptr.is_null());
-        let out = unsafe { realloc(ptr, 0) };
+        let out = unsafe { realloc(core::hint::black_box(ptr), core::hint::black_box(0)) };
+        let out = core::hint::black_box(out);
         assert!(out.is_null(), "realloc(_, 0) must return null");
     }
 
@@ -320,8 +322,8 @@ mod tests {
     #[test]
     fn aligned_alloc_honors_alignment_and_rejects_misuse() {
         let _guard = SHIM_LOCK.lock().expect("shim test lock poisoned");
-        // size must be a multiple of alignment per C11.
-        let bad = unsafe { aligned_alloc(64, 100) };
+        let bad = unsafe { aligned_alloc(core::hint::black_box(64), core::hint::black_box(100)) };
+        let bad = core::hint::black_box(bad);
         assert!(
             bad.is_null(),
             "aligned_alloc with non-multiple size must fail"
