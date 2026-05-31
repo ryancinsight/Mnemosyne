@@ -15,15 +15,13 @@ static SPAWNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool:
 pub fn init_decay_engine() {
     if !SPAWNED.load(Ordering::Acquire) {
         let cadence = PURGE_CADENCE_MS.load(Ordering::Acquire);
-        if cadence > 0 {
-            if !SPAWNED.swap(true, Ordering::AcqRel) {
-                thread::Builder::new()
-                    .name("mnemosyne-decay".to_string())
-                    .spawn(move || {
-                        decay_thread_loop(cadence);
-                    })
-                    .expect("Failed to spawn mnemosyne-decay thread");
-            }
+        if cadence > 0 && !SPAWNED.swap(true, Ordering::AcqRel) {
+            thread::Builder::new()
+                .name("mnemosyne-decay".to_string())
+                .spawn(move || {
+                    decay_thread_loop(cadence);
+                })
+                .expect("Failed to spawn mnemosyne-decay thread");
         }
     }
 }

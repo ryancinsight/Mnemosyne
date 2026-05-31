@@ -1,4 +1,5 @@
 //! NUMA querying utilities with thread-local caching.
+#![allow(clippy::missing_const_for_thread_local)]
 
 extern crate std;
 

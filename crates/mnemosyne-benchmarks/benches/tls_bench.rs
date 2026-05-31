@@ -1,4 +1,5 @@
 #![cfg_attr(feature = "nightly_tls", feature(thread_local))]
+#![allow(clippy::missing_const_for_thread_local)]
 
 use core::sync::atomic::AtomicU32;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -10,6 +11,8 @@ use mnemosyne_local::LocalAllocatorSlot;
 
 std::thread_local! {
     static DUMMY_SLOT: LocalAllocatorSlot<MemoryBackendWrapper> = const { LocalAllocatorSlot::new() };
+}
+std::thread_local! {
     static DUMMY_CACHE_CELL: core::cell::Cell<*mut core::ffi::c_void> = const { core::cell::Cell::new(core::ptr::null_mut()) };
 }
 

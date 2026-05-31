@@ -1,4 +1,5 @@
 #![cfg_attr(feature = "nightly_tls", feature(thread_local))]
+#![allow(clippy::missing_const_for_thread_local)]
 
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use core::ffi::c_void;
@@ -22,10 +23,8 @@ pub struct Sample {
 }
 
 const SHARDS: usize = 64;
-static ACTIVE_SAMPLES: [Mutex<Option<HashMap<usize, Sample>>>; SHARDS] = {
-    const INIT: Mutex<Option<HashMap<usize, Sample>>> = Mutex::new(None);
-    [INIT; SHARDS]
-};
+static ACTIVE_SAMPLES: [Mutex<Option<HashMap<usize, Sample>>>; SHARDS] =
+    [const { Mutex::new(None) }; SHARDS];
 
 fn get_map(shard: usize) -> std::sync::MutexGuard<'static, Option<HashMap<usize, Sample>>> {
     let mut lock = ACTIVE_SAMPLES[shard].lock().unwrap();
@@ -86,8 +85,8 @@ pub fn reset_profiler_for_testing() {
     ALLOC_HOOK.store(core::ptr::null_mut(), Ordering::Release);
     FREE_HOOK.store(core::ptr::null_mut(), Ordering::Release);
     SAMPLE_INTERVAL.store(512 * 1024, Ordering::Release);
-    for shard in 0..SHARDS {
-        let mut lock = ACTIVE_SAMPLES[shard].lock().unwrap();
+    for shard in &ACTIVE_SAMPLES {
+        let mut lock = shard.lock().unwrap();
         *lock = None;
     }
     update_active_flag();
@@ -356,8 +355,8 @@ pub fn dump_profile(path: &str) -> std::io::Result<()> {
 
 fn dump_profile_inner(path: &str) -> std::io::Result<()> {
     let mut samples = Vec::new();
-    for shard in 0..SHARDS {
-        let lock = ACTIVE_SAMPLES[shard].lock().unwrap();
+    for shard in &ACTIVE_SAMPLES {
+        let lock = shard.lock().unwrap();
         if let Some(ref map) = *lock {
             for (_, sample) in map.iter() {
                 samples.push(Sample {

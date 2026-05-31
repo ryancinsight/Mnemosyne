@@ -338,7 +338,7 @@ impl<'brand, T: ?Sized> core::fmt::Pointer for BrandedBlock<'brand, T> {
 impl<'brand, T: ?Sized> PartialEq for BrandedBlock<'brand, T> {
     #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
-        self.ptr == other.ptr
+        core::ptr::eq(self.ptr.as_ptr(), other.ptr.as_ptr())
     }
 }
 impl<'brand, T: ?Sized> Eq for BrandedBlock<'brand, T> {}
@@ -352,7 +352,7 @@ impl<'brand, T: ?Sized> PartialOrd for BrandedBlock<'brand, T> {
 impl<'brand, T: ?Sized> Ord for BrandedBlock<'brand, T> {
     #[inline(always)]
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        self.ptr.cmp(&other.ptr)
+        self.ptr.as_ptr().cast::<()>().cmp(&other.ptr.as_ptr().cast::<()>())
     }
 }
 impl<'brand, T: ?Sized> core::hash::Hash for BrandedBlock<'brand, T> {
@@ -1165,6 +1165,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// # Errors
     /// Returns `Err(())` if layout calculations overflow or allocation fails.
     #[inline]
+    #[allow(clippy::result_unit_err)]
     pub fn reserve(&mut self, token: &mut AllocatorToken<'brand>, additional: usize) -> Result<(), ()> {
         if core::mem::size_of::<T>() == 0 {
             return Ok(());
@@ -1203,6 +1204,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// # Errors
     /// Returns `Err(())` if allocation fails.
     #[inline]
+    #[allow(clippy::result_unit_err)]
     pub fn shrink_to_fit(&mut self, token: &mut AllocatorToken<'brand>) -> Result<(), ()> {
         if core::mem::size_of::<T>() == 0 || self.cap <= self.len {
             return Ok(());
@@ -1216,11 +1218,6 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             return Ok(());
         }
         let new_layout = Layout::array::<T>(self.len).map_err(|_| ())?;
-        let block = BrandedBlock {
-            ptr: self.ptr,
-            _marker: Invariant::new(),
-        };
-        let old_layout = Layout::array::<T>(self.cap).unwrap();
         if let Some(new_block) = self.heap.alloc(token, new_layout) {
             unsafe {
                 core::ptr::copy_nonoverlapping(
@@ -1253,10 +1250,8 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         element: T,
     ) -> Result<(), T> {
         assert!(index <= self.len, "insert index out of bounds");
-        if self.len == self.cap {
-            if self.reserve(token, 1).is_err() {
-                return Err(element);
-            }
+        if self.len == self.cap && self.reserve(token, 1).is_err() {
+            return Err(element);
         }
         unsafe {
             let p = self.ptr.as_ptr().add(index);
@@ -1509,7 +1504,7 @@ impl<'brand, T: ?Sized> core::fmt::Debug for BrandedCell<'brand, T> {
 impl<'brand, T: ?Sized> PartialEq for BrandedCell<'brand, T> {
     #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
-        self.ptr == other.ptr
+        core::ptr::eq(self.ptr.as_ptr(), other.ptr.as_ptr())
     }
 }
 impl<'brand, T: ?Sized> Eq for BrandedCell<'brand, T> {}
@@ -1537,7 +1532,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::missing_const_for_thread_local)]
     extern crate std;
+    use std::format;
     use super::*;
     use mnemosyne_backend::MemoryBackendWrapper;
     use mnemosyne_core::StandardPolicy;
@@ -2168,6 +2165,119 @@ mod tests {
 
             heap.free(&mut token, unsafe { cell.into_block() });
             assert_eq!(counter.load(Ordering::SeqCst), 2);
+        });
+    }
+
+    #[test]
+    fn test_branded_containers_traits_and_vec_ops() {
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            // --- BrandedBlock ---
+            let b1 = heap.alloc_init(&token, 42).unwrap();
+            let b2 = heap.alloc_init(&token, 42).unwrap();
+            
+            // Pointer
+            let _ = format!("{:p}", b1);
+            // Debug
+            let _ = format!("{:?}", b1);
+            // PartialEq/Eq
+            assert_eq!(b1, b1);
+            assert_ne!(b1, b2);
+            // PartialOrd/Ord
+            assert!(b1 < b2 || b1 > b2);
+            // Hash
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            use core::hash::Hash;
+            b1.hash(&mut hasher);
+
+            // --- BrandedBox ---
+            let box1 = BrandedBox::new(&heap, &token, 100).unwrap();
+            let box2 = BrandedBox::new(&heap, &token, 200).unwrap();
+            // Display/Pointer/Debug
+            let _ = format!("{}", box1);
+            let _ = format!("{:p}", box1);
+            let _ = format!("{:?}", box1);
+            // PartialEq/Eq
+            assert_eq!(box1, box1);
+            assert_ne!(box1, box2);
+            // PartialOrd/Ord
+            assert_eq!(box1.partial_cmp(&box2), Some(core::cmp::Ordering::Less));
+            assert_eq!(box1.cmp(&box2), core::cmp::Ordering::Less);
+            // Hash
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            box1.hash(&mut hasher);
+            // clone_in
+            let box1_clone = box1.clone_in(&token).unwrap();
+            assert_eq!(box1, box1_clone);
+
+            // --- BrandedCell ---
+            let cell1 = box1.into_cell();
+            let cell2 = box2.into_cell();
+            let cell1_clone = box1_clone.into_cell();
+            // Debug
+            let _ = format!("{:?}", cell1);
+            // PartialEq/Eq
+            assert_eq!(cell1, cell1);
+            assert_ne!(cell1, cell2);
+            // Hash
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            cell1.hash(&mut hasher);
+
+            // Reclaim BrandedCells
+            heap.free(&mut token, unsafe { cell1.into_block() });
+            heap.free(&mut token, unsafe { cell2.into_block() });
+            heap.free(&mut token, unsafe { cell1_clone.into_block() });
+
+            // --- BrandedVec ---
+            let mut vec = BrandedVec::new(&heap);
+            vec.push(&mut token, 10).unwrap();
+            vec.push(&mut token, 20).unwrap();
+            vec.push(&mut token, 30).unwrap();
+
+            // Debug
+            let _ = format!("{:?}", vec);
+            // PartialEq/Eq
+            let vec_clone = vec.clone_in(&mut token).unwrap();
+            assert_eq!(vec, vec_clone);
+            // PartialOrd/Ord
+            assert!(vec < vec_clone || vec == vec_clone);
+            
+            // clear
+            let mut vec_clear = vec_clone;
+            vec_clear.clear();
+            assert_eq!(vec_clear.len(), 0);
+
+            // truncate
+            let mut vec_trunc = vec.clone_in(&mut token).unwrap();
+            vec_trunc.truncate(1);
+            assert_eq!(vec_trunc.len(), 1);
+            assert_eq!(vec_trunc[0], 10);
+
+            // reserve & shrink_to_fit
+            let mut vec_res = vec.clone_in(&mut token).unwrap();
+            vec_res.reserve(&mut token, 100).unwrap();
+            assert!(vec_res.capacity() >= 103);
+            vec_res.shrink_to_fit(&mut token).unwrap();
+            assert_eq!(vec_res.capacity(), 3);
+
+            // insert & remove
+            let mut vec_ins = vec.clone_in(&mut token).unwrap();
+            vec_ins.insert(&mut token, 1, 99).unwrap();
+            assert_eq!(vec_ins.len(), 4);
+            assert_eq!(vec_ins[0], 10);
+            assert_eq!(vec_ins[1], 99);
+            assert_eq!(vec_ins[2], 20);
+            assert_eq!(vec_ins[3], 30);
+
+            let removed = vec_ins.remove(1);
+            assert_eq!(removed, 99);
+            assert_eq!(vec_ins.len(), 3);
+            assert_eq!(vec_ins[0], 10);
+            assert_eq!(vec_ins[1], 20);
+            assert_eq!(vec_ins[2], 30);
+
+            // Clean up
+            heap.free(&mut token, b1);
+            heap.free(&mut token, b2);
         });
     }
 }
