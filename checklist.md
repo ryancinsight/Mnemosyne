@@ -298,3 +298,4 @@ Target version: 0.1.0
 - [x] [patch] Add `AllocPolicy::RANDOMIZE_ALLOCATION`; pin randomized page free-list initialization with a seeded permutation test and keep `StandardPolicy` lazy.
 - [x] [patch] Route `MnemosyneHeap` and `BrandedHeap` small allocations through `ThreadAllocator::alloc_class`; verify heap and workspace suites.
 - [x] [patch] Restore `thread_realloc` shrink-within-class same-pointer behavior; verify `test_realloc_within_class_returns_same_ptr`.
+- [x] [patch] Fix decay engine thread-spawning shadowing bug and add `decay_purger_reaches_steady_state` integration test.
