@@ -13,7 +13,6 @@ static SPAWNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool:
 /// Lazily spawns a background worker thread on options initialization if
 /// `MNEMOSYNE_PURGE_CADENCE_MS` is non-zero.
 pub fn init_decay_engine() {
-    static SPAWNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
     if !SPAWNED.load(Ordering::Acquire) {
         let cadence = PURGE_CADENCE_MS.load(Ordering::Acquire);
         if cadence > 0 {

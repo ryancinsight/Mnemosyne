@@ -11,7 +11,7 @@ static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn test_decay_purger_spawns_and_cleans_orphans() {
-    let _guard = TEST_LOCK.lock().unwrap();
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // 1. Reset options state for testing
     reset_options_for_testing();
 
@@ -71,9 +71,83 @@ fn test_decay_purger_spawns_and_cleans_orphans() {
 
 #[test]
 fn test_decay_engine_no_spawn_if_zero_cadence() {
-    let _guard = TEST_LOCK.lock().unwrap();
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     reset_options_for_testing();
     // Leave PURGE_CADENCE_MS at 0
     mnemosyne_decay::init_decay_engine();
     assert_eq!(PURGE_CADENCE_MS.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn decay_purger_reaches_steady_state() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    reset_options_for_testing();
+
+    // 1. Configure cadence to 10ms for rapid sweeps
+    PURGE_CADENCE_MS.store(10, Ordering::Release);
+    mnemosyne_decay::init_decay_engine();
+
+    // 2. Perform allocation and free in a spawned thread. Upon exit, the
+    // thread-local cache is dropped and the segment is returned to the global segment pool.
+    let handle = thread::spawn(|| {
+        let ptr = unsafe { thread_alloc::<Policy, Backend>(32, 16) };
+        assert!(!ptr.is_null());
+        unsafe { thread_free::<Policy, Backend>(ptr); }
+    });
+    handle.join().expect("first allocation thread panicked");
+
+    let stats_before = mnemosyne_arena::arena_memory_stats::<Backend>();
+    assert!(
+        stats_before.retained_free_segments >= 1,
+        "Segment must be cached in pool after thread free and thread exit"
+    );
+
+    // 3. Wait for the decay purger to execute and reach steady state (retained = 0)
+    let mut steady = false;
+    for _ in 0..100 {
+        let stats = mnemosyne_arena::arena_memory_stats::<Backend>();
+        if stats.retained_free_segments == 0 {
+            steady = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(steady, "Purger failed to reach steady state of zero retained segments");
+
+    // 4. Shutdown purger by setting cadence to 0
+    PURGE_CADENCE_MS.store(0, Ordering::Release);
+    thread::sleep(Duration::from_millis(30));
+
+    // 5. Restart purger with 10ms cadence and verify restartability
+    PURGE_CADENCE_MS.store(10, Ordering::Release);
+    mnemosyne_decay::init_decay_engine();
+
+    let handle2 = thread::spawn(|| {
+        let ptr2 = unsafe { thread_alloc::<Policy, Backend>(32, 16) };
+        assert!(!ptr2.is_null());
+        unsafe { thread_free::<Policy, Backend>(ptr2); }
+    });
+    handle2.join().expect("second allocation thread panicked");
+
+    let stats_before2 = mnemosyne_arena::arena_memory_stats::<Backend>();
+    assert!(
+        stats_before2.retained_free_segments >= 1,
+        "Segment must be cached in pool after restart allocate/free and thread exit"
+    );
+
+    let mut steady2 = false;
+    for _ in 0..100 {
+        let stats = mnemosyne_arena::arena_memory_stats::<Backend>();
+        if stats.retained_free_segments == 0 {
+            steady2 = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(steady2, "Purger failed to reach steady state after restart");
+
+    // Reset options
+    PURGE_CADENCE_MS.store(0, Ordering::Release);
+    thread::sleep(Duration::from_millis(20));
+    reset_options_for_testing();
 }

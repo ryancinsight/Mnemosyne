@@ -223,7 +223,9 @@ unsafe impl GlobalAlloc for Mnemosyne {
     ///   - `ptr` is null (treated as a fresh allocation),
     ///   - `new_size` is 0 (treated as a deallocation),
     ///   - `new_size` exceeds the current usable size and a new size
-    ///     class is required.
+    ///     class is required,
+    ///   - `new_size` is less than 50% of the current size (capacity-shrink
+    ///     heuristic), forcing a real shrink to release memory.
     ///
     /// # Safety
     ///
@@ -292,9 +294,10 @@ unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
     }
 
     /// In-place `realloc` shortcut. See `Mnemosyne::realloc` for the
-    /// full rationale; the generic variant uses the policy-aware
-    /// `thread_alloc_layout` and `thread_free` paths so a `SecurePolicy`
-    /// realloc still zeroes/poisons the slow-path replacement.
+    /// full rationale (including capacity-shrink heuristic details); the
+    /// generic variant uses the policy-aware `thread_alloc_layout` and
+    /// `thread_free` paths so a `SecurePolicy` realloc still zeroes/poisons
+    /// the slow-path replacement.
     ///
     /// # Safety
     ///
