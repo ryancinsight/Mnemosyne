@@ -465,6 +465,10 @@ macro_rules! impl_local_allocator_selector {
                 };
             }
 
+            #[cfg(feature = "nightly_tls")]
+            #[thread_local]
+            static mut QUICK_ALLOCATOR_PTR: *mut core::ffi::c_void = core::ptr::null_mut();
+
             static OS_TLS_KEY: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(u32::MAX);
 
             struct SlotAccess;
@@ -509,6 +513,18 @@ macro_rules! impl_local_allocator_selector {
                 #[inline(always)]
                 fn get_slot_nightly<R>(f: impl FnOnce(&$crate::LocalAllocatorSlot<$backend>) -> R) -> R {
                     f(&ALLOCATOR_SLOT)
+                }
+
+                #[cfg(feature = "nightly_tls")]
+                #[inline(always)]
+                fn get_quick_allocator_ptr() -> *mut core::ffi::c_void {
+                    unsafe { QUICK_ALLOCATOR_PTR }
+                }
+
+                #[cfg(feature = "nightly_tls")]
+                #[inline(always)]
+                fn set_quick_allocator_ptr(ptr: *mut core::ffi::c_void) {
+                    unsafe { QUICK_ALLOCATOR_PTR = ptr; }
                 }
             }
 

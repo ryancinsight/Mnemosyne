@@ -21,6 +21,14 @@ pub trait TlsSlotAccess<B: HasSegmentPool>: 'static {
     /// Executes the closure with a reference to the nightly `#[thread_local]` static.
     #[cfg(feature = "nightly_tls")]
     fn get_slot_nightly<R>(f: impl FnOnce(&LocalAllocatorSlot<B>) -> R) -> R;
+
+    /// Returns the raw thread-local pointer to the allocator cache without closure overhead.
+    #[cfg(feature = "nightly_tls")]
+    fn get_quick_allocator_ptr() -> *mut core::ffi::c_void;
+
+    /// Sets the raw thread-local pointer to the allocator cache.
+    #[cfg(feature = "nightly_tls")]
+    fn set_quick_allocator_ptr(ptr: *mut core::ffi::c_void);
 }
 
 /// Monomorphized interface for accessing thread-local allocator caches.
@@ -467,10 +475,17 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
     fn get_allocator_ptr() -> *mut core::ffi::c_void {
         #[cfg(feature = "nightly_tls")]
         {
-            S::get_slot_nightly(|slot| {
-                S::arm_thread_exit(slot);
-                slot.allocator_ptr()
-            })
+            let ptr = S::get_quick_allocator_ptr();
+            if !ptr.is_null() {
+                ptr
+            } else {
+                S::get_slot_nightly(|slot| {
+                    S::arm_thread_exit(slot);
+                    let alloc_ptr = slot.allocator_ptr();
+                    S::set_quick_allocator_ptr(alloc_ptr);
+                    alloc_ptr
+                })
+            }
         }
         #[cfg(not(feature = "nightly_tls"))]
         {
@@ -482,13 +497,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
     fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
         #[cfg(feature = "nightly_tls")]
         {
-            S::get_slot_nightly(|slot| {
-                if slot.exit_armed.get() {
-                    slot.allocator_ptr()
-                } else {
-                    core::ptr::null_mut()
-                }
-            })
+            S::get_quick_allocator_ptr()
         }
         #[cfg(not(feature = "nightly_tls"))]
         {

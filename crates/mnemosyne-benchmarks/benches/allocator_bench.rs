@@ -565,6 +565,15 @@ fn bench_allocator_cycles(c: &mut Criterion) {
                 heap.free(ptr);
             })
         });
+        group.bench_with_input(BenchmarkId::new("BrandedHeap", name), &layout, |b, layout| {
+            mnemosyne_heap::scope::<mnemosyne::StandardPolicy, mnemosyne_backend::MemoryBackendWrapper, _, _>(|heap, mut token| {
+                b.iter(|| {
+                    let block = heap.alloc(&token, *layout).expect("BrandedHeap alloc failed");
+                    black_box(block.as_ptr());
+                    heap.free(&mut token, block);
+                })
+            })
+        });
         group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { alloc_dealloc(&System, *layout) })

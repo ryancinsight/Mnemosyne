@@ -155,21 +155,7 @@ pub fn on_alloc(ptr: *mut u8, size: usize) {
 
     #[cfg(not(feature = "nightly_tls"))]
     {
-        let active = PROFILING_CACHED_ACTIVE.with(|cell_active| {
-            let mut active = cell_active.get();
-            PROFILING_CHECK_COUNTER.with(|cell_counter| {
-                let counter = cell_counter.get();
-                if counter == 0 {
-                    active = PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed);
-                    cell_active.set(active);
-                    cell_counter.set(1023);
-                } else {
-                    cell_counter.set(counter - 1);
-                }
-            });
-            active
-        });
-        if !active {
+        if !PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed) {
             return;
         }
     }
@@ -248,21 +234,7 @@ pub fn on_free(ptr: *mut u8, size: usize) {
 
     #[cfg(not(feature = "nightly_tls"))]
     {
-        let active = PROFILING_CACHED_ACTIVE.with(|cell_active| {
-            let mut active = cell_active.get();
-            PROFILING_CHECK_COUNTER.with(|cell_counter| {
-                let counter = cell_counter.get();
-                if counter == 0 {
-                    active = PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed);
-                    cell_active.set(active);
-                    cell_counter.set(1023);
-                } else {
-                    cell_counter.set(counter - 1);
-                }
-            });
-            active
-        });
-        if !active {
+        if !PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed) {
             return;
         }
     }
