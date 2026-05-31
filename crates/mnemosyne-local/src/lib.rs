@@ -1050,39 +1050,27 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     if is_old_small {
         if let Some(class) = new_class {
             let _ = B::with_allocator_guard(|alloc| {
-                let current_ptr = alloc as *mut ThreadAllocator<B> as *mut core::ffi::c_void;
-                let is_owner = unsafe { (*segment).owner.matches(current_ptr) };
+                #[cfg(all(windows, target_arch = "x86_64"))]
+                let is_owner = {
+                    let tid = unsafe {
+                        let val: u32;
+                        core::arch::asm!(
+                            "mov {0:e}, gs:[0x48]",
+                            out(reg) val,
+                            options(nostack, preserves_flags, readonly)
+                        );
+                        val
+                    };
+                    unsafe { (*segment).owner.matches_thread_id(tid) }
+                };
+                #[cfg(not(all(windows, target_arch = "x86_64")))]
+                let is_owner = {
+                    let current_ptr = alloc as *mut ThreadAllocator<B> as *mut core::ffi::c_void;
+                    unsafe { (*segment).owner.matches(current_ptr) }
+                };
+
                 if is_owner {
-                    let mut allocated = core::ptr::null_mut();
-                    if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) }
-                    {
-                        let active_page = unsafe { page_ptr.as_mut() };
-                        if let Some(block) = active_page.free {
-                            let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-                                let self_addr = active_page as *const Page as usize;
-                                  let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
-                                  let segment = segment_addr as *mut Segment;
-                                  let page_index = active_page.index_in_segment();
-                                  unsafe { (*segment).keys[page_index] }
-                            } else {
-                                0
-                            };
-                            unsafe {
-                                active_page.free = (*block.as_ptr()).get_next::<P>(cookie);
-                            }
-                            active_page.alloc_count += 1;
-                            allocated = block.as_ptr() as *mut u8;
-                        } else if active_page.initialized_blocks < active_page.max_blocks() {
-                            let idx = active_page.initialized_blocks;
-                            active_page.initialized_blocks += 1;
-                            active_page.alloc_count += 1;
-                            let page_start = active_page.page_start();
-                            allocated = unsafe { page_start.add(idx * active_page.block_size) };
-                        }
-                    }
-                    if allocated.is_null() {
-                        allocated = unsafe { alloc.alloc_cold::<P>(class) };
-                    }
+                    let allocated = unsafe { alloc.alloc_class::<P>(class) };
                     new_ptr = allocated;
                     if !new_ptr.is_null() {
                         unsafe {

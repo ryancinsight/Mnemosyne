@@ -1,6 +1,6 @@
-use mnemosyne_heap::MnemosyneHeap;
-use mnemosyne_core::StandardPolicy;
 use core::alloc::Layout;
+use mnemosyne_core::StandardPolicy;
+use mnemosyne_heap::MnemosyneHeap;
 
 static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -13,25 +13,25 @@ fn test_multi_heap_basic() {
     assert!(!ptr.is_null());
     unsafe { ptr.write(123) };
     assert_eq!(unsafe { ptr.read() }, 123);
-    
+
     // Test realloc
     let ptr2 = heap.realloc(ptr, layout, 64);
     assert!(!ptr2.is_null());
     assert_eq!(unsafe { ptr2.read() }, 123);
-    
+
     heap.free(ptr2);
 }
 
 #[test]
 fn test_multi_heap_cross_thread() {
     let _guard = TEST_LOCK.lock().unwrap();
-    use std::thread;
     use std::sync::{Arc, Mutex};
+    use std::thread;
     let heap = Arc::new(Mutex::new(MnemosyneHeap::<StandardPolicy>::new()));
-    
+
     let heap_clone = heap.clone();
     let layout = Layout::from_size_align(64, 8).unwrap();
-    
+
     let handle = thread::spawn(move || {
         let heap_guard = heap_clone.lock().unwrap();
         let ptr = heap_guard.alloc(layout);
@@ -39,10 +39,10 @@ fn test_multi_heap_cross_thread() {
         unsafe { ptr.write(42) };
         ptr as usize
     });
-    
+
     let ptr_val = handle.join().unwrap();
     let ptr = ptr_val as *mut u8;
-    
+
     // Free the pointer on the main thread
     heap.lock().unwrap().free(ptr);
 }

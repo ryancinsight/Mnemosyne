@@ -3,15 +3,16 @@
 extern crate alloc as std_alloc;
 
 use core::alloc::Layout;
+use core::ops::{Deref, DerefMut};
 use mnemosyne_core::AllocPolicy;
-use mnemosyne_local::LocalAllocatorSelector;
 use mnemosyne_local::internal::{
-    ensure_options_initialized, is_valid_layout_alloc_request, allocate_large_or_huge,
-    initialize_allocated_bytes, poison_freed_bytes, deallocate_large_or_huge,
-    do_local_free_internal, ThreadAllocator,
-    MIN_BLOCK_SIZE, MAX_SMALL_ALLOC_SIZE, SEGMENT_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT,
-    size_to_class_nonzero, Segment, Block, Page, HasSegmentPool, NonNull,
+    allocate_large_or_huge, deallocate_large_or_huge, do_local_free_internal,
+    ensure_options_initialized, initialize_allocated_bytes, is_valid_layout_alloc_request,
+    poison_freed_bytes, size_to_class_nonzero, Block, HasSegmentPool, NonNull, Page, Segment,
+    ThreadAllocator, MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT,
+    SEGMENT_SIZE,
 };
+use mnemosyne_local::LocalAllocatorSelector;
 
 /// An explicit custom memory heap.
 ///
@@ -64,7 +65,9 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
         let alloc = unsafe { &mut *self.allocator.get() };
         if alloc.is_allocating {
             // Re-entrancy protection fallback.
-            return unsafe { allocate_large_or_huge::<B>(layout.size(), layout.align(), P::ENABLE_POISONING) };
+            return unsafe {
+                allocate_large_or_huge::<B>(layout.size(), layout.align(), P::ENABLE_POISONING)
+            };
         }
 
         let size = layout.size();
@@ -81,7 +84,9 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
         let class = match size_to_class_nonzero(adjusted_size) {
             Some(c) => c,
             None => {
-                let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
+                let ptr = unsafe {
+                    allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING)
+                };
                 if !ptr.is_null() {
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
                 }
@@ -266,7 +271,8 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
             }
         }
 
-        let new_ptr = self.alloc(Layout::from_size_align(new_size, layout.align()).unwrap_or(layout));
+        let new_ptr =
+            self.alloc(Layout::from_size_align(new_size, layout.align()).unwrap_or(layout));
         if new_ptr.is_null() {
             return core::ptr::null_mut();
         }
@@ -336,7 +342,11 @@ impl<'brand, T> BrandedBlock<'brand, T> {
 ///
 /// Statically validates local block ownership on deallocation via invariant
 /// lifetimes, bypassing dynamic segment ownership checks entirely.
-pub struct BrandedHeap<'brand, P: AllocPolicy, B: HasSegmentPool = mnemosyne_backend::DefaultBackend> {
+pub struct BrandedHeap<
+    'brand,
+    P: AllocPolicy,
+    B: HasSegmentPool = mnemosyne_backend::MemoryBackendWrapper,
+> {
     allocator: core::cell::UnsafeCell<ThreadAllocator<B>>,
     _phantom: Invariant<'brand>,
     _policy: core::marker::PhantomData<P>,
@@ -345,13 +355,19 @@ pub struct BrandedHeap<'brand, P: AllocPolicy, B: HasSegmentPool = mnemosyne_bac
 unsafe impl<'brand, P: AllocPolicy, B: HasSegmentPool> Send for BrandedHeap<'brand, P, B> {}
 unsafe impl<'brand, P: AllocPolicy, B: HasSegmentPool> Sync for BrandedHeap<'brand, P, B> {}
 
-impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> BrandedHeap<'brand, P, B> {
+impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    BrandedHeap<'brand, P, B>
+{
     /// Allocates a block of memory from this branded heap.
     ///
     /// The block is tied to the heap's unique `'brand` lifetime. Returns `None`
     /// if the allocation fails.
     #[inline(always)]
-    pub fn alloc(&self, _token: &AllocatorToken<'brand>, layout: Layout) -> Option<BrandedBlock<'brand, u8>> {
+    pub fn alloc(
+        &self,
+        _token: &AllocatorToken<'brand>,
+        layout: Layout,
+    ) -> Option<BrandedBlock<'brand, u8>> {
         let ptr = unsafe { self.alloc_inner(layout) };
         if !ptr.is_null() {
             if mnemosyne_prof::is_active() {
@@ -375,7 +391,9 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Bran
         let alloc = unsafe { &mut *self.allocator.get() };
         if alloc.is_allocating {
             // Re-entrancy protection fallback.
-            return unsafe { allocate_large_or_huge::<B>(layout.size(), layout.align(), P::ENABLE_POISONING) };
+            return unsafe {
+                allocate_large_or_huge::<B>(layout.size(), layout.align(), P::ENABLE_POISONING)
+            };
         }
 
         let size = layout.size();
@@ -392,7 +410,9 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Bran
         let class = match size_to_class_nonzero(adjusted_size) {
             Some(c) => c,
             None => {
-                let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
+                let ptr = unsafe {
+                    allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING)
+                };
                 if !ptr.is_null() {
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
                 }
@@ -445,16 +465,9 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Bran
         final_ptr
     }
 
-    /// Frees a block of memory back to this branded heap.
-    ///
-    /// Because the block is branded with the heap's unique `'brand` lifetime,
-    /// it is statically guaranteed to have been allocated by this heap. We bypass
-    /// the dynamic segment ownership check and execute a check-free local free.
+    /// Internal raw deallocation function.
     #[inline(always)]
-    pub fn free<T>(&self, _token: &mut AllocatorToken<'brand>, block: BrandedBlock<'brand, T>) {
-        ensure_options_initialized();
-        let ptr = block.ptr.as_ptr() as *mut u8;
-        
+    unsafe fn free_raw(&self, ptr: *mut u8) {
         let ptr_val = ptr as usize;
         let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
         let segment = segment_addr as *mut Segment;
@@ -492,7 +505,8 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Bran
         if alloc.is_allocating {
             // Re-entrancy fallback.
             unsafe {
-                page.thread_free.push::<P>(NonNull::new_unchecked(block_ptr));
+                page.thread_free
+                    .push::<P>(NonNull::new_unchecked(block_ptr));
             }
             return;
         }
@@ -520,6 +534,53 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Bran
             do_local_free_internal::<P, B>(alloc, block_ptr, page, segment);
         }
         alloc.is_allocating = false;
+    }
+
+    /// Frees a block of memory back to this branded heap, dropping the value in-place first.
+    ///
+    /// Because the block is branded with the heap's unique `'brand` lifetime,
+    /// it is statically guaranteed to have been allocated by this heap.
+    #[inline(always)]
+    pub fn free<T>(&self, _token: &mut AllocatorToken<'brand>, block: BrandedBlock<'brand, T>) {
+        ensure_options_initialized();
+        let ptr = block.ptr.as_ptr();
+        unsafe {
+            core::ptr::drop_in_place(ptr);
+            self.free_raw(ptr as *mut u8);
+        }
+    }
+
+    /// Frees a block of memory back to this branded heap without dropping the value.
+    ///
+    /// Useful for uninitialized memory or manual drop management.
+    #[inline(always)]
+    pub fn free_uninit<T>(
+        &self,
+        _token: &mut AllocatorToken<'brand>,
+        block: BrandedBlock<'brand, T>,
+    ) {
+        ensure_options_initialized();
+        let ptr = block.ptr.as_ptr() as *mut u8;
+        unsafe {
+            self.free_raw(ptr);
+        }
+    }
+
+    /// Allocates and initializes a value directly in a branded memory block.
+    ///
+    /// The block is guaranteed to contain a fully initialized value of type `T`.
+    #[inline(always)]
+    pub fn alloc_init<T>(
+        &self,
+        token: &AllocatorToken<'brand>,
+        val: T,
+    ) -> Option<BrandedBlock<'brand, T>> {
+        let block = self.alloc(token, Layout::new::<T>())?;
+        let casted = block.cast::<T>();
+        unsafe {
+            casted.as_ptr().write(val);
+        }
+        Some(casted)
     }
 
     /// Reallocates a memory block from this heap.
@@ -563,12 +624,341 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Bran
             }
         }
 
-        let new_block = self.alloc(_token, Layout::from_size_align(new_size, layout.align()).unwrap_or(layout))?;
+        let new_block = self.alloc(
+            _token,
+            Layout::from_size_align(new_size, layout.align()).unwrap_or(layout),
+        )?;
         unsafe {
-            core::ptr::copy_nonoverlapping(ptr, new_block.ptr.as_ptr(), core::cmp::min(layout.size(), new_size));
+            core::ptr::copy_nonoverlapping(
+                ptr,
+                new_block.ptr.as_ptr(),
+                core::cmp::min(layout.size(), new_size),
+            );
+            self.free_raw(ptr);
         }
-        self.free(_token, block);
         Some(new_block)
+    }
+}
+
+/// A uniquely owned, safe pointer to heap-allocated memory of type `T` from a `BrandedHeap`.
+///
+/// Automatically drops `T` and deallocates the memory back to the heap on drop.
+pub struct BrandedBox<
+    'brand,
+    'heap,
+    T,
+    P: AllocPolicy = mnemosyne_core::StandardPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B> = mnemosyne_backend::MemoryBackendWrapper,
+> {
+    ptr: NonNull<T>,
+    heap: &'heap BrandedHeap<'brand, P, B>,
+    _non_send: core::marker::PhantomData<core::cell::Cell<&'brand ()>>,
+}
+
+impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    BrandedBox<'brand, 'heap, T, P, B>
+{
+    /// Creates a new `BrandedBox` containing `val` allocated from the given `BrandedHeap`.
+    #[inline(always)]
+    pub fn new(
+        heap: &'heap BrandedHeap<'brand, P, B>,
+        token: &AllocatorToken<'brand>,
+        val: T,
+    ) -> Option<Self> {
+        if core::mem::size_of::<T>() == 0 {
+            let ptr: NonNull<T> = NonNull::dangling();
+            unsafe {
+                ptr.as_ptr().write(val);
+            }
+            return Some(Self {
+                ptr,
+                heap,
+                _non_send: core::marker::PhantomData,
+            });
+        }
+
+        let block = heap.alloc_init(token, val)?;
+        Some(Self {
+            ptr: block.ptr,
+            heap,
+            _non_send: core::marker::PhantomData,
+        })
+    }
+}
+
+impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Deref
+    for BrandedBox<'brand, 'heap, T, P, B>
+{
+    type Target = T;
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.ptr.as_ref() }
+    }
+}
+
+impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> DerefMut
+    for BrandedBox<'brand, 'heap, T, P, B>
+{
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.ptr.as_mut() }
+    }
+}
+
+impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Drop
+    for BrandedBox<'brand, 'heap, T, P, B>
+{
+    #[inline]
+    fn drop(&mut self) {
+        unsafe {
+            core::ptr::drop_in_place(self.ptr.as_ptr());
+            if core::mem::size_of::<T>() != 0 {
+                self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
+            }
+        }
+    }
+}
+
+/// A dynamically growing array allocated from a `BrandedHeap`.
+///
+/// Automatically handles growth and reallocation, dropping all elements on drop.
+pub struct BrandedVec<
+    'brand,
+    'heap,
+    T,
+    P: AllocPolicy = mnemosyne_core::StandardPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B> = mnemosyne_backend::MemoryBackendWrapper,
+> {
+    ptr: NonNull<T>,
+    cap: usize,
+    len: usize,
+    heap: &'heap BrandedHeap<'brand, P, B>,
+    _non_send: core::marker::PhantomData<core::cell::Cell<&'brand ()>>,
+}
+
+impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    BrandedVec<'brand, 'heap, T, P, B>
+{
+    /// Creates a new empty `BrandedVec` backed by the given `BrandedHeap`.
+    #[inline(always)]
+    pub fn new(heap: &'heap BrandedHeap<'brand, P, B>) -> Self {
+        Self {
+            ptr: NonNull::dangling(),
+            cap: 0,
+            len: 0,
+            heap,
+            _non_send: core::marker::PhantomData,
+        }
+    }
+
+    /// Creates a new `BrandedVec` with space for at least `capacity` elements.
+    #[inline]
+    pub fn with_capacity(
+        heap: &'heap BrandedHeap<'brand, P, B>,
+        token: &AllocatorToken<'brand>,
+        capacity: usize,
+    ) -> Option<Self> {
+        if capacity == 0 || core::mem::size_of::<T>() == 0 {
+            let mut vec = Self::new(heap);
+            if core::mem::size_of::<T>() == 0 {
+                vec.cap = usize::MAX;
+            }
+            return Some(vec);
+        }
+        let layout = Layout::array::<T>(capacity).ok()?;
+        let block = heap.alloc(token, layout)?;
+        Some(Self {
+            ptr: block.ptr.cast(),
+            cap: capacity,
+            len: 0,
+            heap,
+            _non_send: core::marker::PhantomData,
+        })
+    }
+
+    /// Pushes an element onto the back of the vector, growing it if necessary.
+    #[inline]
+    pub fn push(&mut self, token: &mut AllocatorToken<'brand>, val: T) -> Result<(), T> {
+        if core::mem::size_of::<T>() == 0 {
+            self.len = match self.len.checked_add(1) {
+                Some(len) => len,
+                None => return Err(val),
+            };
+            unsafe {
+                self.ptr.as_ptr().write(val);
+            }
+            return Ok(());
+        }
+
+        if self.len == self.cap {
+            let new_cap = if self.cap == 0 {
+                4
+            } else {
+                match self.cap.checked_mul(2) {
+                    Some(cap) => cap,
+                    None => return Err(val),
+                }
+            };
+            let new_layout = match Layout::array::<T>(new_cap) {
+                Ok(l) => l,
+                Err(_) => return Err(val),
+            };
+            if self.cap == 0 {
+                let block = match self.heap.alloc(token, new_layout) {
+                    Some(b) => b,
+                    None => return Err(val),
+                };
+                self.ptr = block.ptr.cast();
+                self.cap = new_cap;
+            } else {
+                let old_layout = Layout::array::<T>(self.cap).unwrap();
+                let block = BrandedBlock {
+                    ptr: self.ptr,
+                    _marker: Invariant::new(),
+                };
+                let new_block = match self
+                    .heap
+                    .realloc(token, block, old_layout, new_layout.size())
+                {
+                    Some(b) => b,
+                    None => return Err(val),
+                };
+                self.ptr = new_block.ptr.cast();
+                self.cap = new_cap;
+            }
+        }
+        unsafe {
+            self.ptr.as_ptr().add(self.len).write(val);
+        }
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Pops the last element from the vector, returning it or None if empty.
+    #[inline(always)]
+    pub fn pop(&mut self) -> Option<T> {
+        if self.len == 0 {
+            None
+        } else {
+            self.len -= 1;
+            unsafe { Some(self.ptr.as_ptr().add(self.len).read()) }
+        }
+    }
+
+    /// Returns the number of elements in the vector.
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns true if the vector contains no elements.
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns the capacity of the vector.
+    #[inline(always)]
+    pub fn capacity(&self) -> usize {
+        self.cap
+    }
+
+    /// Extracts a slice containing the entire vector.
+    #[inline(always)]
+    pub fn as_slice(&self) -> &[T] {
+        if self.len == 0 {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+        }
+    }
+
+    /// Extracts a mutable slice containing the entire vector.
+    #[inline(always)]
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        if self.len == 0 {
+            &mut []
+        } else {
+            unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+        }
+    }
+}
+
+impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Deref
+    for BrandedVec<'brand, 'heap, T, P, B>
+{
+    type Target = [T];
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> DerefMut
+    for BrandedVec<'brand, 'heap, T, P, B>
+{
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_mut_slice()
+    }
+}
+
+impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Drop
+    for BrandedVec<'brand, 'heap, T, P, B>
+{
+    #[inline]
+    fn drop(&mut self) {
+        if self.cap > 0 || (core::mem::size_of::<T>() == 0 && self.len > 0) {
+            unsafe {
+                core::ptr::drop_in_place(self.as_mut_slice());
+                if core::mem::size_of::<T>() != 0 {
+                    self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
+                }
+            }
+        }
+    }
+}
+
+/// A GhostCell-style shared container allowing interior mutability.
+///
+/// Permits shared read access and exclusive write access mediated by the `AllocatorToken`.
+pub struct BrandedCell<'brand, T> {
+    ptr: NonNull<T>,
+    _marker: Invariant<'brand>,
+}
+
+impl<'brand, T> Clone for BrandedCell<'brand, T> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'brand, T> Copy for BrandedCell<'brand, T> {}
+
+impl<'brand, T> BrandedCell<'brand, T> {
+    /// Creates a new `BrandedCell` from a `BrandedBlock`.
+    ///
+    /// # Safety
+    /// The block must be initialized.
+    #[inline(always)]
+    pub unsafe fn from_block(block: BrandedBlock<'brand, T>) -> Self {
+        Self {
+            ptr: block.ptr,
+            _marker: block._marker,
+        }
+    }
+
+    /// Accesses the value immutably using the allocator token.
+    #[inline(always)]
+    pub fn borrow<'a>(&self, _token: &'a AllocatorToken<'brand>) -> &'a T {
+        unsafe { self.ptr.as_ref() }
+    }
+
+    /// Accesses the value mutably using the allocator token.
+    #[inline(always)]
+    pub fn borrow_mut<'a>(&self, _token: &'a mut AllocatorToken<'brand>) -> &'a mut T {
+        unsafe { &mut *self.ptr.as_ptr() }
     }
 }
 
@@ -590,8 +980,8 @@ where
 mod tests {
     extern crate std;
     use super::*;
-    use mnemosyne_core::StandardPolicy;
     use mnemosyne_backend::MemoryBackendWrapper;
+    use mnemosyne_core::StandardPolicy;
 
     #[test]
     fn test_heap_allocation_and_free() {
@@ -599,7 +989,7 @@ mod tests {
         let layout = Layout::from_size_align(32, 8).unwrap();
         let ptr = heap.alloc(layout);
         assert!(!ptr.is_null(), "heap allocation failed");
-        
+
         unsafe {
             ptr.write(42);
             assert_eq!(ptr.read(), 42);
@@ -613,7 +1003,7 @@ mod tests {
         let layout = Layout::from_size_align(16, 8).unwrap();
         let ptr = heap.alloc(layout);
         assert!(!ptr.is_null());
-        
+
         unsafe { ptr.write(99) };
         let new_ptr = heap.realloc(ptr, layout, 32);
         assert!(!new_ptr.is_null());
@@ -627,7 +1017,9 @@ mod tests {
     fn test_branded_heap_allocation_and_free() {
         scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
             let layout = Layout::from_size_align(32, 8).unwrap();
-            let block = heap.alloc(&token, layout).expect("branded allocation failed");
+            let block = heap
+                .alloc(&token, layout)
+                .expect("branded allocation failed");
             let ptr = block.as_ptr();
             assert!(!ptr.is_null());
             unsafe {
@@ -642,12 +1034,16 @@ mod tests {
     fn test_branded_heap_realloc() {
         scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
             let layout = Layout::from_size_align(16, 8).unwrap();
-            let block = heap.alloc(&token, layout).expect("branded allocation failed");
+            let block = heap
+                .alloc(&token, layout)
+                .expect("branded allocation failed");
             let ptr = block.as_ptr();
             unsafe {
                 ptr.write(99);
             }
-            let new_block = heap.realloc(&mut token, block, layout, 32).expect("branded realloc failed");
+            let new_block = heap
+                .realloc(&mut token, block, layout, 32)
+                .expect("branded realloc failed");
             let new_ptr = new_block.as_ptr();
             unsafe {
                 assert_eq!(new_ptr.read(), 99);
@@ -660,8 +1056,10 @@ mod tests {
     fn test_branded_heap_generic_and_cast() {
         scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
             let layout = Layout::from_size_align(32, 8).unwrap();
-            let block: BrandedBlock<'_, u8> = heap.alloc(&token, layout).expect("branded allocation failed");
-            
+            let block: BrandedBlock<'_, u8> = heap
+                .alloc(&token, layout)
+                .expect("branded allocation failed");
+
             // Cast to i32 block
             let casted: BrandedBlock<'_, i32> = block.cast::<i32>();
             let ptr = casted.as_ptr();
@@ -670,10 +1068,171 @@ mod tests {
                 ptr.write(123456);
                 assert_eq!(ptr.read(), 123456);
             }
-            
+
             // Free generic block
             heap.free(&mut token, casted);
         });
     }
-}
 
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Debug)]
+    struct DropTracker<'a>(&'a AtomicUsize);
+    impl<'a> Drop for DropTracker<'a> {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn test_branded_box_and_drop_tracking() {
+        let counter = AtomicUsize::new(0);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
+            let bbox = BrandedBox::new(&heap, &token, DropTracker(&counter))
+                .expect("BrandedBox allocation failed");
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+            // Drop should occur here when bbox goes out of scope.
+            drop(bbox);
+            assert_eq!(counter.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    #[test]
+    fn test_branded_heap_free_drops_value() {
+        let counter = AtomicUsize::new(0);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let block = heap
+                .alloc_init(&token, DropTracker(&counter))
+                .expect("alloc_init failed");
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+            heap.free(&mut token, block);
+            assert_eq!(counter.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    #[test]
+    fn test_branded_vec_growth_and_drop() {
+        let counter = AtomicUsize::new(0);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let mut vec = BrandedVec::new(&heap);
+            assert!(vec.is_empty());
+            assert_eq!(vec.len(), 0);
+            assert_eq!(vec.capacity(), 0);
+
+            // Push elements to trigger growth
+            for _ in 0..10 {
+                vec.push(&mut token, DropTracker(&counter)).unwrap();
+            }
+            assert_eq!(vec.len(), 10);
+            assert!(vec.capacity() >= 10);
+
+            // Pop half of the elements
+            for _ in 0..5 {
+                let popped = vec.pop();
+                assert!(popped.is_some());
+                drop(popped);
+            }
+            assert_eq!(vec.len(), 5);
+            assert_eq!(counter.load(Ordering::SeqCst), 5); // 5 popped elements dropped
+
+            // Drop vec, remainder should drop
+            drop(vec);
+            assert_eq!(counter.load(Ordering::SeqCst), 10); // all 10 elements dropped
+        });
+    }
+
+    static ZST_DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Debug)]
+    struct ZstDrop;
+
+    impl Drop for ZstDrop {
+        fn drop(&mut self) {
+            ZST_DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn test_branded_box_zst_drops_without_allocating() {
+        ZST_DROP_COUNT.store(0, Ordering::SeqCst);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
+            let before = unsafe {
+                (&*heap.allocator.get())
+                    .stats()
+                    .current_thread_owned_segments
+            };
+            let bbox = BrandedBox::new(&heap, &token, ZstDrop).expect("ZST box allocation failed");
+            let after_new = unsafe {
+                (&*heap.allocator.get())
+                    .stats()
+                    .current_thread_owned_segments
+            };
+            assert_eq!(after_new, before, "ZST box must not allocate a segment");
+            drop(bbox);
+            assert_eq!(ZST_DROP_COUNT.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    #[test]
+    fn test_branded_vec_zst_uses_sentinel_capacity_and_drops_elements() {
+        ZST_DROP_COUNT.store(0, Ordering::SeqCst);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let before = unsafe {
+                (&*heap.allocator.get())
+                    .stats()
+                    .current_thread_owned_segments
+            };
+            let mut vec = BrandedVec::with_capacity(&heap, &token, 8)
+                .expect("ZST vector construction failed");
+            assert_eq!(vec.capacity(), usize::MAX);
+            assert_eq!(
+                unsafe {
+                    (&*heap.allocator.get())
+                        .stats()
+                        .current_thread_owned_segments
+                },
+                before,
+                "ZST vector capacity must not allocate a segment"
+            );
+
+            for _ in 0..4 {
+                vec.push(&mut token, ZstDrop).expect("ZST push failed");
+            }
+            assert_eq!(vec.len(), 4);
+            drop(vec.pop());
+            assert_eq!(ZST_DROP_COUNT.load(Ordering::SeqCst), 1);
+            drop(vec);
+            assert_eq!(ZST_DROP_COUNT.load(Ordering::SeqCst), 4);
+        });
+    }
+
+    #[test]
+    fn test_branded_cell_sharing_and_mutation() {
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let block = heap.alloc_init(&token, 42).expect("alloc_init failed");
+            let cell = unsafe { BrandedCell::from_block(block) };
+
+            // Cell is Copy/Clone, create multiple copies
+            let cell_copy1 = cell;
+            let cell_copy2 = cell;
+
+            // Read original value
+            assert_eq!(*cell_copy1.borrow(&token), 42);
+            assert_eq!(*cell_copy2.borrow(&token), 42);
+
+            // Mutate value via mutable borrow
+            *cell_copy1.borrow_mut(&mut token) = 100;
+
+            // Verify mutation is reflected in all copies
+            assert_eq!(*cell_copy2.borrow(&token), 100);
+            assert_eq!(*cell.borrow(&token), 100);
+
+            // Free the memory. BrandedCell is shared, so we cast to a block to free
+            let block = BrandedBlock {
+                ptr: cell.ptr,
+                _marker: Invariant::new(),
+            };
+            heap.free(&mut token, block);
+        });
+    }
+}

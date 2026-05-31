@@ -264,20 +264,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         CROSS_THREAD_RECLAIMED_BLOCKS.load(Ordering::Relaxed)
     }
 
-    /// Allocates a block of memory of the given size.
-    ///
-    /// Returns null if the size is not a small class or if allocation fails.
+    /// Allocates a small memory block of the specified size class.
     ///
     /// # Safety
     ///
-    /// This method is unsafe because it works with raw pointers and handles manual memory layouts.
+    /// `class` must be a valid size class index (< `NUM_SIZE_CLASSES`).
     #[inline(always)]
-    pub unsafe fn alloc<P: AllocPolicy>(&mut self, size: usize) -> *mut u8 {
-        let class = match size_to_class(size) {
-            Some(c) => c,
-            None => return core::ptr::null_mut(),
-        };
-
+    pub unsafe fn alloc_class<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
         if let Some(mut page_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
             // Safety: page_ptr points to a valid Page structure inside an active segment owned by us.
             let page = unsafe { page_ptr.as_mut() };
@@ -323,6 +316,22 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // Outline the cold allocation path to keep alloc() small and fast.
         // Safety: Cold allocation path request is routed safely within bounds.
         unsafe { self.alloc_cold::<P>(class) }
+    }
+
+    /// Allocates a block of memory of the given size.
+    ///
+    /// Returns null if the size is not a small class or if allocation fails.
+    ///
+    /// # Safety
+    ///
+    /// This method is unsafe because it works with raw pointers and handles manual memory layouts.
+    #[inline(always)]
+    pub unsafe fn alloc<P: AllocPolicy>(&mut self, size: usize) -> *mut u8 {
+        let class = match size_to_class(size) {
+            Some(c) => c,
+            None => return core::ptr::null_mut(),
+        };
+        unsafe { self.alloc_class::<P>(class) }
     }
 
     /// Returns true when `segment` is the active segment being sliced by this thread.
