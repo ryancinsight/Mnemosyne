@@ -298,6 +298,9 @@ Target version: 0.1.0
 - [x] [patch] Add `AllocPolicy::RANDOMIZE_ALLOCATION`; pin randomized page free-list initialization with a seeded permutation test and keep `StandardPolicy` lazy.
 - [x] [patch] Route `MnemosyneHeap` and `BrandedHeap` small allocations through `ThreadAllocator::alloc_class`; verify heap and workspace suites.
 - [x] [patch] Restore `thread_realloc` shrink-within-class same-pointer behavior; verify `test_realloc_within_class_returns_same_ptr`.
+- [x] [patch] Return the same pointer for standard-policy large/huge half-shrink reallocs; pin with `test_realloc_large_half_shrink_returns_same_ptr`.
+- [x] [patch] Copy only `min(layout.size(), new_size)` bytes on `thread_realloc` replacement paths; pin secure shrink preservation with `test_realloc_shrink_replacement_copies_only_new_size`.
+- [x] [patch] Refresh `realloc latency/Mnemosyne/huge_shrink_4m_to_2m` after the half-shrink fast path; current focused row is `22.405 ns`.
 - [x] [patch] Fix decay engine thread-spawning shadowing bug and add `decay_purger_reaches_steady_state` integration test.
 - [x] [patch] Expose `get_options` and `configure` in the top-level `mnemosyne` crate and verify via programmatic configuration tests.
 - [x] [patch] Add `multi_heap_isolates_allocation_streams` and `multi_heap_release_does_not_touch_other_heaps` integration tests.

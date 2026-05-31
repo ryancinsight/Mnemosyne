@@ -7,16 +7,16 @@ use mnemosyne_core::NUM_SIZE_CLASSES;
 use mnemosyne_local::{thread_alloc_layout, thread_free, thread_realloc, LocalAllocatorSelector};
 
 pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
-pub use mnemosyne_core::{AllocPolicy, StandardPolicy, options::MnemosyneOptions};
+pub use mnemosyne_core::{options::MnemosyneOptions, AllocPolicy, StandardPolicy};
 pub use mnemosyne_hardened::{HardenedPolicy, SecurePolicy};
-pub use mnemosyne_local::{usable_size, SizeClassOccupancy};
 pub use mnemosyne_heap::{
     scope as branded_scope, AllocatorToken, BrandedBlock, BrandedBox, BrandedCell, BrandedHeap,
     BrandedVec, MnemosyneHeap,
 };
+pub use mnemosyne_local::{usable_size, SizeClassOccupancy};
 pub use mnemosyne_prof::{
-    register_alloc_hook, register_free_hook, enable_profiling, disable_profiling,
-    is_profiling_enabled, dump_profile,
+    disable_profiling, dump_profile, enable_profiling, is_profiling_enabled, register_alloc_hook,
+    register_free_hook,
 };
 
 /// Returns the current allocator configuration options snapshot.
@@ -33,7 +33,8 @@ pub fn get_options() -> MnemosyneOptions {
 /// background decay engine thread.
 #[inline]
 pub fn configure(options: MnemosyneOptions) {
-    let old_cadence = mnemosyne_core::options::PURGE_CADENCE_MS.load(core::sync::atomic::Ordering::Acquire);
+    let old_cadence =
+        mnemosyne_core::options::PURGE_CADENCE_MS.load(core::sync::atomic::Ordering::Acquire);
     mnemosyne_core::options::set_options(options);
     mnemosyne_local::mark_options_initialized();
 
@@ -748,6 +749,33 @@ mod tests {
     }
 
     #[test]
+    fn test_realloc_large_half_shrink_returns_same_ptr() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
+        let old_layout = Layout::from_size_align(4 * 1024 * 1024, 8).expect("valid layout");
+        let new_size = 2 * 1024 * 1024;
+        let ptr = unsafe { ALLOCATOR.alloc(old_layout) };
+        assert!(!ptr.is_null(), "large realloc setup allocation failed");
+
+        unsafe {
+            ptr.write(0xC3);
+            ptr.add(new_size - 1).write(0x3C);
+        }
+
+        let shrunk = unsafe { ALLOCATOR.realloc(ptr, old_layout, new_size) };
+        assert_eq!(
+            shrunk, ptr,
+            "standard half-shrink must avoid allocate-copy-free churn"
+        );
+        assert_eq!(unsafe { shrunk.read() }, 0xC3);
+        assert_eq!(unsafe { shrunk.add(new_size - 1).read() }, 0x3C);
+
+        let new_layout = Layout::from_size_align(new_size, 8).expect("valid layout");
+        unsafe { ALLOCATOR.dealloc(shrunk, new_layout) };
+    }
+
+    #[test]
     fn test_realloc_across_class_copies_and_returns_new_ptr() {
         let _guard = TEST_LOCK
             .lock()
@@ -840,6 +868,38 @@ mod tests {
         }
 
         let new_layout = Layout::from_size_align(64, 8).expect("valid layout");
+        unsafe { allocator.dealloc(new_ptr, new_layout) };
+    }
+
+    #[test]
+    fn test_realloc_shrink_replacement_copies_only_new_size() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
+        let allocator = MnemosyneAllocator::<SecurePolicy>::new();
+        let old_layout = Layout::from_size_align(16 * 1024, 8).expect("valid layout");
+        let new_size = 4 * 1024;
+        let ptr = unsafe { allocator.alloc(old_layout) };
+        assert!(!ptr.is_null(), "secure shrink setup allocation failed");
+
+        for i in 0..new_size {
+            unsafe { ptr.add(i).write((i as u8).wrapping_mul(17)) };
+        }
+
+        let new_ptr = unsafe { allocator.realloc(ptr, old_layout, new_size) };
+        assert!(
+            !new_ptr.is_null(),
+            "secure shrink replacement allocation failed"
+        );
+        for i in 0..new_size {
+            assert_eq!(
+                unsafe { new_ptr.add(i).read() },
+                (i as u8).wrapping_mul(17),
+                "secure shrink failed to preserve byte {i}"
+            );
+        }
+
+        let new_layout = Layout::from_size_align(new_size, 8).expect("valid layout");
         unsafe { allocator.dealloc(new_ptr, new_layout) };
     }
 

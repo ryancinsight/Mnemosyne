@@ -68,7 +68,7 @@ fn test_runtime_options_override_default_retention() {
 
     // Do an allocation via MnemosyneHeap to trigger options parsing and then drop it
     {
-        let heap = MnemosyneHeap::<StandardPolicy>::new();
+        let heap = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
         let layout = Layout::from_size_align(32, 8).unwrap();
         let ptr = heap.alloc(layout);
         assert!(!ptr.is_null());
@@ -129,6 +129,7 @@ fn multi_heap_release_does_not_touch_other_heaps() {
         purge_cadence_ms: 0,
         enable_hugepage_hint: true,
     });
+    mnemosyne_local::mark_options_initialized();
 
     let pool = <MemoryBackendWrapper as HasSegmentPool>::global_segment_pool();
     unsafe {
@@ -197,6 +198,7 @@ fn test_programmatic_options_configure() {
         max_retained_segments: 0,
         ..default_options
     });
+    mnemosyne_local::mark_options_initialized();
 
     let active_options = mnemosyne_core::options::get_options();
     assert_eq!(active_options.max_retained_segments, 0);

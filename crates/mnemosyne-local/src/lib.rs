@@ -1025,6 +1025,8 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                         if new_size >= layout.size() / 2 {
                             return ptr;
                         }
+                    } else if new_size >= layout.size() / 2 {
+                        return ptr;
                     } else {
                         let page_size = mnemosyne_core::constants::PAGE_SIZE;
                         let new_page_rounded = (new_adjusted + page_size - 1) & !(page_size - 1);
@@ -1100,7 +1102,11 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                     if !new_ptr.is_null() {
                         unsafe {
                             initialize_allocated_bytes::<P>(new_ptr, new_adjusted);
-                            core::ptr::copy_nonoverlapping(ptr, new_ptr, layout.size());
+                            core::ptr::copy_nonoverlapping(
+                                ptr,
+                                new_ptr,
+                                core::cmp::min(layout.size(), new_size),
+                            );
                             let page_ref = &mut *page;
                             if P::ENABLE_POISONING {
                                 poison_freed_bytes::<P>(ptr, page_ref.block_size);
@@ -1139,7 +1145,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
 
     if !local_free_done {
         unsafe {
-            core::ptr::copy_nonoverlapping(ptr, new_ptr, layout.size());
+            core::ptr::copy_nonoverlapping(ptr, new_ptr, core::cmp::min(layout.size(), new_size));
             thread_free::<P, B>(ptr);
         }
     }

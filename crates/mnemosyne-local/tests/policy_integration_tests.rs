@@ -134,57 +134,59 @@ fn test_randomized_allocation_policy() {
     const ALIGN: usize = 8;
 
     // 1. Run StandardPolicy check in a separate thread
-    let std_consecutive = std::thread::spawn(move || {
-        unsafe {
-            let mut std_ptrs = [core::ptr::null_mut::<u8>(); 5];
-            for i in 0..5 {
-                std_ptrs[i] = thread_alloc::<StandardPolicy, Backend>(SIZE, ALIGN);
-                assert!(!std_ptrs[i].is_null());
-            }
-
-            let mut consecutive = true;
-            for i in 0..4 {
-                let diff = (std_ptrs[i + 1] as isize - std_ptrs[i] as isize).abs();
-                if diff != SIZE as isize {
-                    consecutive = false;
-                }
-            }
-
-            for &p in &std_ptrs {
-                thread_free::<StandardPolicy, Backend>(p);
-            }
-            consecutive
+    let std_consecutive = std::thread::spawn(move || unsafe {
+        let mut std_ptrs = [core::ptr::null_mut::<u8>(); 5];
+        for i in 0..5 {
+            std_ptrs[i] = thread_alloc::<StandardPolicy, Backend>(SIZE, ALIGN);
+            assert!(!std_ptrs[i].is_null());
         }
+
+        let mut consecutive = true;
+        for i in 0..4 {
+            let diff = (std_ptrs[i + 1] as isize - std_ptrs[i] as isize).abs();
+            if diff != SIZE as isize {
+                consecutive = false;
+            }
+        }
+
+        for &p in &std_ptrs {
+            thread_free::<StandardPolicy, Backend>(p);
+        }
+        consecutive
     })
     .join()
     .unwrap();
 
     // 2. Run SecurePolicy check in a separate thread
-    let sec_consecutive = std::thread::spawn(move || {
-        unsafe {
-            let mut sec_ptrs = [core::ptr::null_mut::<u8>(); 5];
-            for i in 0..5 {
-                sec_ptrs[i] = thread_alloc::<SecurePolicy, Backend>(SIZE, ALIGN);
-                assert!(!sec_ptrs[i].is_null());
-            }
-
-            let mut consecutive = true;
-            for i in 0..4 {
-                let diff = (sec_ptrs[i + 1] as isize - sec_ptrs[i] as isize).abs();
-                if diff != SIZE as isize {
-                    consecutive = false;
-                }
-            }
-
-            for &p in &sec_ptrs {
-                thread_free::<SecurePolicy, Backend>(p);
-            }
-            consecutive
+    let sec_consecutive = std::thread::spawn(move || unsafe {
+        let mut sec_ptrs = [core::ptr::null_mut::<u8>(); 5];
+        for i in 0..5 {
+            sec_ptrs[i] = thread_alloc::<SecurePolicy, Backend>(SIZE, ALIGN);
+            assert!(!sec_ptrs[i].is_null());
         }
+
+        let mut consecutive = true;
+        for i in 0..4 {
+            let diff = (sec_ptrs[i + 1] as isize - sec_ptrs[i] as isize).abs();
+            if diff != SIZE as isize {
+                consecutive = false;
+            }
+        }
+
+        for &p in &sec_ptrs {
+            thread_free::<SecurePolicy, Backend>(p);
+        }
+        consecutive
     })
     .join()
     .unwrap();
 
-    assert!(std_consecutive, "StandardPolicy allocations must be consecutive");
-    assert!(!sec_consecutive, "SecurePolicy allocations must be non-consecutive (randomized)");
+    assert!(
+        std_consecutive,
+        "StandardPolicy allocations must be consecutive"
+    );
+    assert!(
+        !sec_consecutive,
+        "SecurePolicy allocations must be non-consecutive (randomized)"
+    );
 }

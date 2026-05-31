@@ -23,7 +23,7 @@
 | cross-thread free handoff/small_32 | 16837.003 | 30427.169 | 18237.876 | 21126.545 | 27554.410 | 0.55x | 0.92x | 0.80x | 0.61x |
 | realloc latency/cross_class_32_to_64 | 6.871 | 42.829 | 7.542 | 32.801 | 16.928 | 0.16x | 0.91x | 0.21x | 0.41x |
 | realloc latency/cross_class_8k_to_16k | 48.145 | 128.782 | 67.077 | 130.010 | 57.544 | 0.37x | 0.72x | 0.37x | 0.84x |
-| realloc latency/huge_shrink_4m_to_2m | 70724.790 | 953597.633 | 9032.371 | 1023116.143 | 248.343 | 0.07x | 7.83x | 0.07x | 284.79x |
+| realloc latency/huge_shrink_4m_to_2m | 22.405 | 953597.633 | 9032.371 | 1023116.143 | 248.343 | 0.00x | 0.00x | 0.00x | 0.09x |
 | realloc latency/within_class_24_to_32 | 3.460 | 43.028 | 4.429 | 17.264 | 15.253 | 0.08x | 0.78x | 0.20x | 0.23x |
 | realloc latency/within_class_6k_to_8k | 25.080 | 102.278 | 56.062 | 96.022 | 52.248 | 0.25x | 0.45x | 0.26x | 0.48x |
 | segment cache eviction | 205531.743 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
