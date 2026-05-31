@@ -420,13 +420,45 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
         }
 
+        // 1b. Check if the new head of active_pages can satisfy the allocation.
+        if let Some(mut active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
+            let active_page = active_ptr.as_mut();
+            if let Some(block) = active_page.free {
+                let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+                    let self_addr = active_page as *const Page as usize;
+                    let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
+                    let segment = segment_addr as *mut Segment;
+                    let page_index = active_page.index_in_segment();
+                    unsafe { (*segment).keys[page_index] }
+                } else {
+                    0
+                };
+                unsafe {
+                    active_page.free = (*block.as_ptr()).get_next::<P>(cookie);
+                }
+                active_page.alloc_count += 1;
+                return block.as_ptr() as *mut u8;
+            }
+            if active_page.initialized_blocks < active_page.max_blocks() {
+                let idx = active_page.initialized_blocks;
+                active_page.initialized_blocks += 1;
+                active_page.alloc_count += 1;
+                let page_start = active_page.page_start();
+                let block_ptr = unsafe { page_start.add(idx * active_page.block_size) };
+                return block_ptr;
+            }
+            if let Some(block) = unsafe { try_reclaim_and_allocate::<P>(active_page) } {
+                return block.as_ptr() as *mut u8;
+            }
+        }
+
         // 2. Check if any page in full_pages has reclaimed cross-thread frees!
         // We only check pages that actually have pending cross-thread frees.
-        // Also limit loop to 8 pages to bound search latency under threaded saturation.
+        // Also limit loop to 128 pages to bound search latency under threaded saturation.
         let mut curr_opt = unsafe { *self.full_pages.get_unchecked(class) };
         let mut checked = 0;
         while let Some(mut page_ptr) = curr_opt {
-            if checked >= 8 {
+            if checked >= 128 {
                 break;
             }
             checked += 1;
@@ -637,9 +669,16 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             return false;
         }
 
-        let is_only_segment = self.owned_segments_head == segment
-            && unsafe { (*segment).next_owned_segment.is_null() };
-        if is_only_segment {
+        let mut count = 0;
+        let mut curr = self.owned_segments_head;
+        while !curr.is_null() {
+            count += 1;
+            if count >= 4 {
+                break;
+            }
+            curr = unsafe { (*curr).next_owned_segment };
+        }
+        if count < 4 {
             return false;
         }
 
@@ -758,7 +797,23 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // guarantees it is unlinked, so overwriting its link fields and
         // relinking the current head is sound.
         unsafe {
-            (*segment).owner = SegmentOwner::from_ptr(self as *mut ThreadAllocator<B>);
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            {
+                let tid = {
+                    let val: u32;
+                    core::arch::asm!(
+                        "mov {0:e}, gs:[0x48]",
+                        out(reg) val,
+                        options(nostack, preserves_flags, readonly)
+                    );
+                    val
+                };
+                (*segment).owner = SegmentOwner::from_thread_id(tid);
+            }
+            #[cfg(not(all(windows, target_arch = "x86_64")))]
+            {
+                (*segment).owner = SegmentOwner::from_ptr(self as *mut ThreadAllocator<B>);
+            }
             (*segment).prev_owned_segment = core::ptr::null_mut();
             (*segment).next_owned_segment = self.owned_segments_head;
             if !self.owned_segments_head.is_null() {

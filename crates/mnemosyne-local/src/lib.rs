@@ -127,7 +127,7 @@ fn init_options_from_env() {
     }
 
     if let Some(parsed) = parse_env_usize("MNEMOSYNE_MAX_RETAINED_SEGMENTS") {
-        let clamped = core::cmp::min(parsed, 32);
+        let clamped = core::cmp::min(parsed, 1024);
         mnemosyne_core::options::MAX_RETAINED_SEGMENTS.store(clamped, core::sync::atomic::Ordering::Release);
     }
 
@@ -144,7 +144,7 @@ fn init_options_from_env() {
 #[doc(hidden)]
 pub fn reset_options_for_testing() {
     OPTIONS_INIT.store(false, core::sync::atomic::Ordering::Release);
-    mnemosyne_core::options::MAX_RETAINED_SEGMENTS.store(32, core::sync::atomic::Ordering::Release);
+    mnemosyne_core::options::MAX_RETAINED_SEGMENTS.store(1024, core::sync::atomic::Ordering::Release);
     mnemosyne_core::options::ENABLE_HUGEPAGE_HINT.store(true, core::sync::atomic::Ordering::Release);
     mnemosyne_core::options::PURGE_CADENCE_MS.store(0, core::sync::atomic::Ordering::Release);
 }
@@ -985,10 +985,28 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
 
     let block = ptr as *mut Block;
     let owner = unsafe { (*segment).owner };
-    let current_allocator = B::get_allocator_ptr_raw();
+
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    let is_owner = {
+        let tid = unsafe {
+            let val: u32;
+            core::arch::asm!(
+                "mov {0:e}, gs:[0x48]",
+                out(reg) val,
+                options(nostack, preserves_flags, readonly)
+            );
+            val
+        };
+        owner.matches_thread_id(tid)
+    };
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    let is_owner = {
+        let current_allocator = B::get_allocator_ptr_raw();
+        owner.matches(current_allocator)
+    };
 
     // 1. Try fast thread-local free first
-    if owner.matches(current_allocator) {
+    if is_owner {
         debug_assert!(page.alloc_count > 0, "local free observed zero alloc_count");
         let page_free = page.free;
         let page_alloc_count = page.alloc_count;
@@ -1008,6 +1026,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         }
 
         unsafe {
+            let current_allocator = B::get_allocator_ptr_raw();
             let alloc = &mut *(current_allocator as *mut ThreadAllocator<B>);
             if !alloc.is_allocating {
                 alloc.is_allocating = true;
@@ -1058,11 +1077,17 @@ unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
             }
         }
     }
-    if becomes_empty && !alloc.is_current_segment(segment) && !alloc.try_reclaim_segment(segment) {
+    if becomes_empty && !alloc.is_current_segment(segment) {
         let class = page.size_class as usize;
-        alloc.unlink_page(page as *mut Page, class);
-        unsafe {
-            alloc.push_empty_page(NonNull::new_unchecked(page as *mut Page));
+        let is_only_active = unsafe {
+            alloc.active_pages.get_unchecked(class)
+                .is_some_and(|head| head.as_ptr() == page as *mut Page && (*page).next_page.is_none())
+        };
+        if !is_only_active && !alloc.try_reclaim_segment(segment) {
+            alloc.unlink_page(page as *mut Page, class);
+            unsafe {
+                alloc.push_empty_page(NonNull::new_unchecked(page as *mut Page));
+            }
         }
     }
 }
@@ -1160,6 +1185,12 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                             }
                             active_page.alloc_count += 1;
                             allocated = block.as_ptr() as *mut u8;
+                        } else if active_page.initialized_blocks < active_page.max_blocks() {
+                            let idx = active_page.initialized_blocks;
+                            active_page.initialized_blocks += 1;
+                            active_page.alloc_count += 1;
+                            let page_start = active_page.page_start();
+                            allocated = unsafe { page_start.add(idx * active_page.block_size) };
                         }
                     }
                     if allocated.is_null() {
@@ -1209,52 +1240,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     if !local_free_done {
         unsafe {
             core::ptr::copy_nonoverlapping(ptr, new_ptr, layout.size());
-        }
-
-        if is_old_small {
-            let mut freed_locally = false;
-            let _ = B::with_allocator_guard(|alloc| {
-                let current_ptr = alloc as *mut ThreadAllocator<B> as *mut core::ffi::c_void;
-                let is_owner = unsafe { (*segment).owner.matches(current_ptr) };
-                if is_owner {
-                    let page_ref = &mut *page;
-                    if P::ENABLE_POISONING {
-                        unsafe { poison_freed_bytes::<P>(ptr, page_ref.block_size) };
-                    }
-                    let block = ptr as *mut Block;
-                    let page_free = page_ref.free;
-                    let page_alloc_count = page_ref.alloc_count;
-                    let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-                        (*segment).keys[page_index]
-                    } else {
-                        0
-                    };
-                    if page_free.is_some() && (page_alloc_count != 1 || (*segment).is_current) {
-                        (*block).set_next::<P>(page_free, cookie);
-                        page_ref.free = Some(NonNull::new_unchecked(block));
-                        page_ref.alloc_count = page_alloc_count - 1;
-                    } else {
-                        do_local_free_internal::<P, B>(alloc, block, page_ref, segment);
-                    }
-                    freed_locally = true;
-                }
-            });
-            if !freed_locally {
-                let page_ref = &mut *page;
-                if P::ENABLE_POISONING {
-                    unsafe { poison_freed_bytes::<P>(ptr, page_ref.block_size) };
-                }
-                let block = ptr as *mut Block;
-                page_ref
-                    .thread_free
-                    .push::<P>(NonNull::new_unchecked(block));
-            }
-        } else {
-            if P::ENABLE_POISONING {
-                let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
-                unsafe { poison_freed_bytes::<P>(ptr, size) };
-            }
-            let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
+            thread_free::<P, B>(ptr);
         }
     }
 

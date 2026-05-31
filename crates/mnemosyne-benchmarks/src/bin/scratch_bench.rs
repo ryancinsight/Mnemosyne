@@ -2,59 +2,68 @@ use std::alloc::{Layout, GlobalAlloc};
 use std::time::Instant;
 
 fn main() {
-    let layout_small = Layout::from_size_align(32, 8).unwrap();
     let layout_medium = Layout::from_size_align(1024, 8).unwrap();
+    let layout_large = Layout::from_size_align(8192, 8).unwrap();
 
-    // Warm up
-    for _ in 0..10_000 {
-        let ptr = unsafe { mnemosyne::Mnemosyne.alloc(layout_small) };
-        unsafe { mnemosyne::Mnemosyne.dealloc(ptr, layout_small) };
-    }
+    println!("--- Medium 1024 Simulation ---");
+    // Run setup and routine sequentially like Criterion with batching
+    // Let's allocate N times, then free N times, to see if page count grows or if it behaves well.
+    let n = 100;
+    let mut ptrs = vec![std::ptr::null_mut(); n];
 
-    // Time small allocation/deallocation round trips
+    // Reset stats
+    let _ = mnemosyne::memory_stats();
+
     let start = Instant::now();
-    for _ in 0..100_000 {
-        let ptr = unsafe { mnemosyne::Mnemosyne.alloc(layout_small) };
-        unsafe { mnemosyne::Mnemosyne.dealloc(ptr, layout_small) };
-    }
-    let elapsed = start.elapsed();
-    println!("100,000 small alloc/free round trips: {:?}", elapsed);
-
-    // Time medium allocation/deallocation round trips
-    let start = Instant::now();
-    for _ in 0..100_000 {
-        let ptr = unsafe { mnemosyne::Mnemosyne.alloc(layout_medium) };
-        unsafe { mnemosyne::Mnemosyne.dealloc(ptr, layout_medium) };
-    }
-    let elapsed = start.elapsed();
-    println!("100,000 medium alloc/free round trips: {:?}", elapsed);
-
-    // Batch small (100)
-    let mut ptrs = [std::ptr::null_mut(); 100];
-    let start = Instant::now();
-    for _ in 0..1_000 {
-        for ptr in &mut ptrs {
-            *ptr = unsafe { mnemosyne::Mnemosyne.alloc(layout_small) };
+    for _ in 0..1000 {
+        // Setup phase: allocate N blocks
+        for i in 0..n {
+            ptrs[i] = unsafe { mnemosyne::Mnemosyne.alloc(layout_medium) };
         }
-        for &ptr in &ptrs {
-            unsafe { mnemosyne::Mnemosyne.dealloc(ptr, layout_small) };
+        // Routine phase: free N blocks
+        for i in 0..n {
+            unsafe { mnemosyne::Mnemosyne.dealloc(ptrs[i], layout_medium) };
         }
     }
     let elapsed = start.elapsed();
-    println!("Batch small (1,000 * 100): {:?}", elapsed);
+    println!("Time for 100,000 medium alloc/free: {:?}", elapsed);
+    println!("{:#?}", mnemosyne::memory_stats());
 
-    // Batch medium (100)
-    let mut ptrs = [std::ptr::null_mut(); 100];
+    println!("--- Large 8192 Simulation ---");
+    let mut ptrs_large = vec![std::ptr::null_mut(); n];
     let start = Instant::now();
-    for _ in 0..1_000 {
-        for ptr in &mut ptrs {
-            *ptr = unsafe { mnemosyne::Mnemosyne.alloc(layout_medium) };
+    for _ in 0..1000 {
+        // Setup phase: allocate N blocks
+        for i in 0..n {
+            ptrs_large[i] = unsafe { mnemosyne::Mnemosyne.alloc(layout_large) };
         }
-        for &ptr in &ptrs {
-            unsafe { mnemosyne::Mnemosyne.dealloc(ptr, layout_medium) };
+        // Routine phase: free N blocks
+        for i in 0..n {
+            unsafe { mnemosyne::Mnemosyne.dealloc(ptrs_large[i], layout_large) };
         }
     }
     let elapsed = start.elapsed();
-    println!("Batch medium (1,000 * 100): {:?}", elapsed);
+    println!("Time for 100,000 large alloc/free: {:?}", elapsed);
+    println!("{:#?}", mnemosyne::memory_stats());
+
+    println!("--- Huge 2M Simulation ---");
+    let layout_huge = Layout::from_size_align(2 * 1024 * 1024, 8).unwrap();
+    // Use smaller count for huge to avoid virtual address space exhaustion in 32-bit (though we are 64-bit)
+    let n_huge = 10;
+    let mut ptrs_huge = vec![std::ptr::null_mut(); n_huge];
+    let start = Instant::now();
+    for _ in 0..100 {
+        // Setup phase: allocate N blocks
+        for i in 0..n_huge {
+            ptrs_huge[i] = unsafe { mnemosyne::Mnemosyne.alloc(layout_huge) };
+        }
+        // Routine phase: free N blocks
+        for i in 0..n_huge {
+            unsafe { mnemosyne::Mnemosyne.dealloc(ptrs_huge[i], layout_huge) };
+        }
+    }
+    let elapsed = start.elapsed();
+    println!("Time for 1,000 huge alloc/free: {:?}", elapsed);
     println!("{:#?}", mnemosyne::memory_stats());
 }
+

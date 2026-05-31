@@ -11,7 +11,7 @@ use mnemosyne_core::types::Segment;
 pub const SEGMENT_MAPPING_SIZE: usize = SEGMENT_SIZE * 2;
 
 /// Free segment mappings retained for reuse.
-pub const MAX_RETAINED_SEGMENTS: usize = mnemosyne_core::PAGES_PER_SEGMENT;
+pub const MAX_RETAINED_SEGMENTS: usize = 1024;
 
 /// Size of the guard region installed in the slack after every segment.
 ///

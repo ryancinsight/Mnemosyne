@@ -414,18 +414,49 @@ impl Default for GlobalSegmentPool {
     }
 }
 
-/// A lock-free pool of cached huge allocations for a single NUMA node.
-pub struct NodeHugePool {
+/// A single lock-free size-bucket for cached huge allocations.
+pub struct NodeHugeBucket {
     head: core::sync::atomic::AtomicPtr<Segment>,
     count: core::sync::atomic::AtomicUsize,
+}
+
+impl NodeHugeBucket {
+    /// Creates a new empty `NodeHugeBucket`.
+    pub const fn new() -> Self {
+        Self {
+            head: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            count: core::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+
+/// A lock-free pool of cached huge allocations for a single NUMA node, divided into 16 size-buckets.
+pub struct NodeHugePool {
+    buckets: [NodeHugeBucket; 16],
 }
 
 impl NodeHugePool {
     /// Creates a new empty `NodeHugePool`.
     pub const fn new() -> Self {
         Self {
-            head: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
-            count: core::sync::atomic::AtomicUsize::new(0),
+            buckets: [
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+                NodeHugeBucket::new(),
+            ],
         }
     }
 }
@@ -435,9 +466,19 @@ pub struct GlobalHugePool {
     nodes: [NodeHugePool; 16],
 }
 
+#[inline(always)]
+fn huge_bucket_index(size: usize) -> usize {
+    let mb = size >> 20;
+    if mb >= 16 {
+        15
+    } else {
+        mb
+    }
+}
+
 impl GlobalHugePool {
-    /// Bounded maximum number of huge allocations cached per NUMA node.
-    pub const MAX_CACHED_HUGE_BLOCKS: usize = 8;
+    /// Bounded maximum number of huge allocations cached per NUMA node bucket.
+    pub const MAX_CACHED_HUGE_BLOCKS: usize = 1024;
     /// Maximum size class we cache (16MB).
     pub const MAX_CACHED_HUGE_SIZE: usize = 16 * 1024 * 1024;
 
@@ -478,27 +519,30 @@ impl GlobalHugePool {
         }
 
         let node = numa_node % 16;
+        let bucket_idx = huge_bucket_index(size);
         let pool_node = &self.nodes[node];
-        let count = pool_node.count.load(core::sync::atomic::Ordering::Relaxed);
+        let bucket = &pool_node.buckets[bucket_idx];
+
+        let count = bucket.count.load(core::sync::atomic::Ordering::Relaxed);
         if count >= Self::MAX_CACHED_HUGE_BLOCKS {
             return false;
         }
 
-        let mut head = pool_node.head.load(core::sync::atomic::Ordering::Relaxed);
+        let mut head = bucket.head.load(core::sync::atomic::Ordering::Relaxed);
         loop {
             // Write next pointer into the segment header
             unsafe {
                 (*segment).next_free_segment = head;
             }
 
-            match pool_node.head.compare_exchange_weak(
+            match bucket.head.compare_exchange_weak(
                 head,
                 segment,
                 core::sync::atomic::Ordering::Release,
                 core::sync::atomic::Ordering::Relaxed,
             ) {
                 Ok(_) => {
-                    pool_node.count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    bucket.count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     return true;
                 }
                 Err(actual) => head = actual,
@@ -513,16 +557,17 @@ impl GlobalHugePool {
     /// The returned segment is exclusively owned by the caller.
     pub unsafe fn pop<B: mnemosyne_core::MemoryBackend>(&self, size: usize, numa_node: usize) -> Option<*mut Segment> {
         let start_node = numa_node % 16;
+        let bucket_idx = huge_bucket_index(size);
         
         // 1. Try local NUMA node first
-        if let Some(res) = self.pop_from_node::<B>(size, start_node) {
+        if let Some(res) = self.pop_from_node::<B>(size, start_node, bucket_idx) {
             return Some(res);
         }
 
         // 2. Steal from other nodes
         for i in 1..16 {
             let other_node = (start_node + i) % 16;
-            if let Some(res) = self.pop_from_node::<B>(size, other_node) {
+            if let Some(res) = self.pop_from_node::<B>(size, other_node, bucket_idx) {
                 return Some(res);
             }
         }
@@ -530,63 +575,75 @@ impl GlobalHugePool {
         None
     }
 
-    unsafe fn pop_from_node<B: mnemosyne_core::MemoryBackend>(&self, size: usize, node: usize) -> Option<*mut Segment> {
+    unsafe fn pop_from_node<B: mnemosyne_core::MemoryBackend>(
+        &self,
+        size: usize,
+        node: usize,
+        start_bucket: usize,
+    ) -> Option<*mut Segment> {
         let pool_node = &self.nodes[node];
-        let mut head = pool_node.head.load(core::sync::atomic::Ordering::Acquire);
-        loop {
-            if head.is_null() {
-                return None;
-            }
-
-            let next = unsafe { (*head).next_free_segment };
-            let block_size = unsafe { (*head).pages[0].block_size };
-
-            if block_size >= size {
-                match pool_node.head.compare_exchange_weak(
-                    head,
-                    next,
-                    core::sync::atomic::Ordering::AcqRel,
-                    core::sync::atomic::Ordering::Acquire,
-                ) {
-                    Ok(_) => {
-                        pool_node.count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-                        return Some(head);
-                    }
-                    Err(actual) => head = actual,
+        for bucket_idx in start_bucket..16 {
+            let bucket = &pool_node.buckets[bucket_idx];
+            let mut head = bucket.head.load(core::sync::atomic::Ordering::Acquire);
+            loop {
+                if head.is_null() {
+                    break;
                 }
-            } else {
-                // If it is too small, pop it anyway, deallocate it to OS, and continue.
-                match pool_node.head.compare_exchange_weak(
-                    head,
-                    next,
-                    core::sync::atomic::Ordering::AcqRel,
-                    core::sync::atomic::Ordering::Acquire,
-                ) {
-                    Ok(_) => {
-                        pool_node.count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-                        let raw_ptr = unsafe { (*head).raw_alloc_ptr };
-                        let _ = unsafe { B::deallocate(raw_ptr, block_size) };
-                        head = pool_node.head.load(core::sync::atomic::Ordering::Acquire);
+
+                let next = unsafe { (*head).next_free_segment };
+                let block_size = unsafe { (*head).pages[0].block_size };
+
+                if block_size >= size {
+                    match bucket.head.compare_exchange_weak(
+                        head,
+                        next,
+                        core::sync::atomic::Ordering::AcqRel,
+                        core::sync::atomic::Ordering::Acquire,
+                    ) {
+                        Ok(_) => {
+                            bucket.count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+                            return Some(head);
+                        }
+                        Err(actual) => head = actual,
                     }
-                    Err(actual) => head = actual,
+                } else {
+                    // If it is too small, pop it anyway, deallocate it to OS, and continue.
+                    match bucket.head.compare_exchange_weak(
+                        head,
+                        next,
+                        core::sync::atomic::Ordering::AcqRel,
+                        core::sync::atomic::Ordering::Acquire,
+                    ) {
+                        Ok(_) => {
+                            bucket.count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+                            let raw_ptr = unsafe { (*head).raw_alloc_ptr };
+                            let _ = unsafe { B::deallocate(raw_ptr, block_size) };
+                            head = bucket.head.load(core::sync::atomic::Ordering::Acquire);
+                        }
+                        Err(actual) => head = actual,
+                    }
                 }
             }
         }
+        None
     }
 
     /// Purges all cached huge blocks and releases them to the OS.
     pub unsafe fn purge<B: mnemosyne_core::MemoryBackend>(&self) {
         for node in 0..16 {
             let pool_node = &self.nodes[node];
-            let mut head = pool_node.head.swap(core::ptr::null_mut(), core::sync::atomic::Ordering::Acquire);
-            pool_node.count.store(0, core::sync::atomic::Ordering::Relaxed);
-            
-            while !head.is_null() {
-                let next = unsafe { (*head).next_free_segment };
-                let raw_ptr = unsafe { (*head).raw_alloc_ptr };
-                let block_size = unsafe { (*head).pages[0].block_size };
-                let _ = unsafe { B::deallocate(raw_ptr, block_size) };
-                head = next;
+            for bucket_idx in 0..16 {
+                let bucket = &pool_node.buckets[bucket_idx];
+                let mut head = bucket.head.swap(core::ptr::null_mut(), core::sync::atomic::Ordering::Acquire);
+                bucket.count.store(0, core::sync::atomic::Ordering::Relaxed);
+                
+                while !head.is_null() {
+                    let next = unsafe { (*head).next_free_segment };
+                    let raw_ptr = unsafe { (*head).raw_alloc_ptr };
+                    let block_size = unsafe { (*head).pages[0].block_size };
+                    let _ = unsafe { B::deallocate(raw_ptr, block_size) };
+                    head = next;
+                }
             }
         }
     }
