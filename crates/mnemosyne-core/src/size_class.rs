@@ -21,32 +21,49 @@ pub const fn size_to_class(size: usize) -> Option<usize> {
 /// Maps a non-zero allocation size to its corresponding size class index.
 #[inline(always)]
 pub const fn size_to_class_nonzero(size: usize) -> Option<usize> {
-    if size <= 128 {
-        Some((size - 1) >> 4)
-    } else if size <= 512 {
-        Some(8 + ((size - 129) >> 5))
-    } else if size <= 2048 {
-        Some(20 + ((size - 513) >> 7))
-    } else if size <= 8192 {
-        Some(32 + ((size - 2049) >> 9))
-    } else {
-        None
+    if size > 8192 {
+        return None;
     }
+    struct SizeClassLookup {
+        base: u8,
+        shift: u8,
+        sub: u16,
+    }
+
+    const LOOKUP: [SizeClassLookup; 14] = [
+        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 0 (size = 0, fallback)
+        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 1
+        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 2
+        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 3
+        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 4
+        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 5
+        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 6
+        SizeClassLookup { base: 0, shift: 4, sub: 1 },  // idx = 7
+        SizeClassLookup { base: 8, shift: 5, sub: 129 }, // idx = 8
+        SizeClassLookup { base: 8, shift: 5, sub: 129 }, // idx = 9
+        SizeClassLookup { base: 20, shift: 7, sub: 513 }, // idx = 10
+        SizeClassLookup { base: 20, shift: 7, sub: 513 }, // idx = 11
+        SizeClassLookup { base: 32, shift: 9, sub: 2049 }, // idx = 12
+        SizeClassLookup { base: 32, shift: 9, sub: 2049 }, // idx = 13
+    ];
+
+    let bits = usize::BITS - (size - 1).leading_zeros();
+    let entry = &LOOKUP[bits as usize];
+    Some(entry.base as usize + ((size - entry.sub as usize) >> entry.shift))
 }
 
 /// Returns the rounded size-class block size for a given allocation size.
 #[inline(always)]
 pub const fn round_up_size(size: usize) -> Option<usize> {
-    if size <= 128 {
-        Some((size + 15) & !15)
-    } else if size <= 512 {
-        Some((size + 31) & !31)
-    } else if size <= 2048 {
-        Some((size + 127) & !127)
-    } else if size <= 8192 {
-        Some((size + 511) & !511)
-    } else {
-        None
+    if size == 0 {
+        return Some(0);
+    }
+    if size > 8192 {
+        return None;
+    }
+    match size_to_class_nonzero(size) {
+        Some(class) => Some(class_to_size(class)),
+        None => None,
     }
 }
 

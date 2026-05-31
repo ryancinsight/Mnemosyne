@@ -40,22 +40,6 @@ fn update_active_flag() {
         || !ALLOC_HOOK.load(Ordering::Acquire).is_null()
         || !FREE_HOOK.load(Ordering::Acquire).is_null();
     PROFILING_OR_HOOKS_ACTIVE.store(active, Ordering::Release);
-    sync_local_profiling_state();
-}
-
-#[inline(always)]
-fn sync_local_profiling_state() {
-    let active = PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed);
-    #[cfg(feature = "nightly_tls")]
-    unsafe {
-        PROFILING_CACHED_ACTIVE = active;
-        PROFILING_CHECK_COUNTER = 1023;
-    }
-    #[cfg(not(feature = "nightly_tls"))]
-    {
-        PROFILING_CACHED_ACTIVE.with(|c| c.set(active));
-        PROFILING_CHECK_COUNTER.with(|c| c.set(1023));
-    }
 }
 
 /// Registers a custom user allocation tracing hook.
@@ -117,20 +101,16 @@ static mut BYTES_UNTIL_SAMPLE: isize = 0;
 #[thread_local]
 static mut IN_HOOK: bool = false;
 
-#[cfg(feature = "nightly_tls")]
-#[thread_local]
-static mut PROFILING_CHECK_COUNTER: u32 = 0;
-
-#[cfg(feature = "nightly_tls")]
-#[thread_local]
-static mut PROFILING_CACHED_ACTIVE: bool = false;
-
 #[cfg(not(feature = "nightly_tls"))]
 std::thread_local! {
     static BYTES_UNTIL_SAMPLE: core::cell::Cell<isize> = const { core::cell::Cell::new(0) };
     static IN_HOOK: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
-    static PROFILING_CHECK_COUNTER: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
-    static PROFILING_CACHED_ACTIVE: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+/// Returns whether any tracing hooks or profiling sessions are currently active.
+#[inline(always)]
+pub fn is_active() -> bool {
+    PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed)
 }
 
 /// Entry point invoked on every successful memory allocation.
@@ -139,27 +119,9 @@ std::thread_local! {
 /// Poisson heap sampler is active.
 #[inline(always)]
 pub fn on_alloc(ptr: *mut u8, size: usize) {
-    #[cfg(feature = "nightly_tls")]
-    unsafe {
-        let counter = PROFILING_CHECK_COUNTER;
-        if counter == 0 {
-            PROFILING_CACHED_ACTIVE = PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed);
-            PROFILING_CHECK_COUNTER = 1023;
-        } else {
-            PROFILING_CHECK_COUNTER = counter - 1;
-        }
-        if !PROFILING_CACHED_ACTIVE {
-            return;
-        }
+    if !PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed) {
+        return;
     }
-
-    #[cfg(not(feature = "nightly_tls"))]
-    {
-        if !PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed) {
-            return;
-        }
-    }
-
     on_alloc_cold(ptr, size);
 }
 
@@ -218,27 +180,9 @@ fn on_alloc_cold(ptr: *mut u8, size: usize) {
 /// if active.
 #[inline(always)]
 pub fn on_free(ptr: *mut u8, size: usize) {
-    #[cfg(feature = "nightly_tls")]
-    unsafe {
-        let counter = PROFILING_CHECK_COUNTER;
-        if counter == 0 {
-            PROFILING_CACHED_ACTIVE = PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed);
-            PROFILING_CHECK_COUNTER = 1023;
-        } else {
-            PROFILING_CHECK_COUNTER = counter - 1;
-        }
-        if !PROFILING_CACHED_ACTIVE {
-            return;
-        }
+    if !PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed) {
+        return;
     }
-
-    #[cfg(not(feature = "nightly_tls"))]
-    {
-        if !PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed) {
-            return;
-        }
-    }
-
     on_free_cold(ptr, size);
 }
 

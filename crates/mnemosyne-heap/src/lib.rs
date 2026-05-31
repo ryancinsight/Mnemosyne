@@ -47,8 +47,10 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
     #[inline(always)]
     pub fn alloc(&self, layout: Layout) -> *mut u8 {
         let ptr = unsafe { self.alloc_inner(layout) };
-        if !ptr.is_null() {
-            mnemosyne_prof::on_alloc(ptr, layout.size());
+        if mnemosyne_prof::is_active() {
+            if !ptr.is_null() {
+                mnemosyne_prof::on_alloc(ptr, layout.size());
+            }
         }
         ptr
     }
@@ -147,13 +149,15 @@ impl<P: AllocPolicy, B: HasSegmentPool> MnemosyneHeap<P, B> {
 
         // Safety: ptr is non-null and comes from Mnemosyne.
         let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
-        let size = if page_index == 0 || page.block_size == 0 {
-            let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-            unsafe { (*segment).huge_mapping_suffix_from(ptr) }
-        } else {
-            page.block_size
-        };
-        mnemosyne_prof::on_free(ptr, size);
+        if mnemosyne_prof::is_active() {
+            let size = if page_index == 0 || page.block_size == 0 {
+                let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+                unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+            } else {
+                page.block_size
+            };
+            mnemosyne_prof::on_free(ptr, size);
+        }
 
         if page_index == 0 || page.block_size == 0 {
             if P::ENABLE_POISONING {
@@ -324,7 +328,9 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Bran
     pub fn alloc(&self, _token: &AllocatorToken<'brand>, layout: Layout) -> Option<BrandedBlock<'brand, u8>> {
         let ptr = unsafe { self.alloc_inner(layout) };
         if !ptr.is_null() {
-            mnemosyne_prof::on_alloc(ptr, layout.size());
+            if mnemosyne_prof::is_active() {
+                mnemosyne_prof::on_alloc(ptr, layout.size());
+            }
             Some(BrandedBlock {
                 ptr: unsafe { NonNull::new_unchecked(ptr) },
                 _marker: Invariant::new(),
@@ -429,13 +435,15 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Bran
         let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
 
         let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
-        let size = if page_index == 0 || page.block_size == 0 {
-            let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-            unsafe { (*segment).huge_mapping_suffix_from(ptr) }
-        } else {
-            page.block_size
-        };
-        mnemosyne_prof::on_free(ptr, size);
+        if mnemosyne_prof::is_active() {
+            let size = if page_index == 0 || page.block_size == 0 {
+                let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+                unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+            } else {
+                page.block_size
+            };
+            mnemosyne_prof::on_free(ptr, size);
+        }
 
         if page_index == 0 || page.block_size == 0 {
             if P::ENABLE_POISONING {

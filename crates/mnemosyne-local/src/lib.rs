@@ -651,8 +651,10 @@ pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
     }
 
     let ptr = unsafe { thread_alloc_checked::<P, B>(size, align) };
-    if !ptr.is_null() {
-        mnemosyne_prof::on_alloc(ptr, size);
+    if mnemosyne_prof::is_active() {
+        if !ptr.is_null() {
+            mnemosyne_prof::on_alloc(ptr, size);
+        }
     }
     ptr
 }
@@ -680,8 +682,10 @@ pub unsafe fn thread_alloc_layout<P: AllocPolicy, B: HasSegmentPool + LocalAlloc
         "Layout-validated allocation received invalid alignment {align}"
     );
     let ptr = unsafe { thread_alloc_checked::<P, B>(size, align) };
-    if !ptr.is_null() {
-        mnemosyne_prof::on_alloc(ptr, size);
+    if mnemosyne_prof::is_active() {
+        if !ptr.is_null() {
+            mnemosyne_prof::on_alloc(ptr, size);
+        }
     }
     ptr
 }
@@ -692,8 +696,6 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     align: usize,
 ) -> *mut u8 {
     if align > MIN_BLOCK_SIZE {
-        // Fall back to direct arena/huge allocation to break recursion and get high alignment (64KB aligned page-starts).
-        // Safety: allocate_large_or_huge handles safety.
         let ptr = unsafe { allocate_large_or_huge::<B>(size, align, P::ENABLE_POISONING) };
         if !ptr.is_null() {
             unsafe { initialize_allocated_bytes::<P>(ptr, size) };
@@ -714,14 +716,10 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
         }
     };
 
-    let mut slot_ptr = B::get_allocator_ptr_raw();
-    if slot_ptr.is_null() {
-        slot_ptr = B::get_allocator_ptr();
-    }
+    let slot_ptr = B::get_allocator_ptr_raw();
     if !slot_ptr.is_null() {
         let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
         if !alloc.is_allocating {
-            // Try fast path active page pop first (L1 thread-local)
             if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
                 let page = unsafe { page_ptr.as_mut() };
                 if let Some(block) = page.free {
@@ -751,35 +749,19 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                     return ptr;
                 }
             }
-
-            // Try L1 per-CPU cache second (L2)
-            if B::ENABLE_CPU_CACHE {
-                let cpu_ptr = per_cpu::try_alloc_cpu::<P>(class);
-                if !cpu_ptr.is_null() {
-                    unsafe { initialize_allocated_bytes::<P>(cpu_ptr, adjusted_size) };
-                    return cpu_ptr;
-                }
-            }
-
-            // Fallback: enter allocator guard for cold allocations (L3)
-            alloc.is_allocating = true;
-            let ptr = unsafe { alloc.alloc_cold::<P>(class) };
-            alloc.is_allocating = false;
-
-            let final_ptr = if ptr.is_null() {
-                unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) }
-            } else {
-                ptr
-            };
-
-            if !final_ptr.is_null() {
-                unsafe { initialize_allocated_bytes::<P>(final_ptr, adjusted_size) };
-            }
-            return final_ptr;
         }
     }
 
-    // Try L1 per-CPU cache if slot is null or is_allocating is true
+    unsafe { thread_alloc_cold::<P, B>(class, adjusted_size, align) }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+    class: usize,
+    adjusted_size: usize,
+    align: usize,
+) -> *mut u8 {
     if B::ENABLE_CPU_CACHE {
         let cpu_ptr = per_cpu::try_alloc_cpu::<P>(class);
         if !cpu_ptr.is_null() {
@@ -788,12 +770,37 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
         }
     }
 
-    // Fallback: slot is null or is_allocating is true.
-    let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
-    if !ptr.is_null() {
-        unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+    let slot_ptr = B::get_allocator_ptr();
+    if slot_ptr.is_null() {
+        let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
+        if !ptr.is_null() {
+            unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+        }
+        return ptr;
     }
-    ptr
+
+    let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
+    if alloc.is_allocating {
+        let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
+        if !ptr.is_null() {
+            unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+        }
+        return ptr;
+    }
+
+    alloc.is_allocating = true;
+    let ptr = unsafe { alloc.alloc_cold::<P>(class) };
+    alloc.is_allocating = false;
+
+    let final_ptr = if ptr.is_null() {
+        unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) }
+    } else {
+        ptr
+    };
+    if !final_ptr.is_null() {
+        unsafe { initialize_allocated_bytes::<P>(final_ptr, adjusted_size) };
+    }
+    final_ptr
 }
 
 /// Frees a memory block.
@@ -815,22 +822,19 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
 
     let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
 
-    // Safety: segment header is initialized. For a huge allocation, either the pointer is
-    // segment-aligned (page_index == 0) or page.block_size is 0. In either case, we route
-    // to the huge deallocation path.
     let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
-    let size = if page_index == 0 || page.block_size == 0 {
-        let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-        unsafe { (*segment).huge_mapping_suffix_from(ptr) }
-    } else {
-        page.block_size
-    };
-    mnemosyne_prof::on_free(ptr, size);
+    if mnemosyne_prof::is_active() {
+        let size = if page_index == 0 || page.block_size == 0 {
+            let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+            unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+        } else {
+            page.block_size
+        };
+        mnemosyne_prof::on_free(ptr, size);
+    }
 
     if page.block_size == 0 {
         if P::ENABLE_POISONING {
-            // Safety: large/huge allocations store the segment pointer in the metadata
-            // slot immediately preceding the user pointer.
             let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
             let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
             unsafe { poison_freed_bytes::<P>(ptr, size) };
@@ -872,7 +876,6 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         owner.matches(current_allocator)
     };
 
-    // 1. Try fast thread-local free first
     if is_owner {
         debug_assert!(page.alloc_count > 0, "local free observed zero alloc_count");
         let page_free = page.free;
@@ -892,9 +895,9 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
             return;
         }
 
-        unsafe {
-            let current_allocator = B::get_allocator_ptr_raw();
-            let alloc = &mut *(current_allocator as *mut ThreadAllocator<B>);
+        let current_allocator = B::get_allocator_ptr_raw();
+        if !current_allocator.is_null() {
+            let alloc = unsafe { &mut *(current_allocator as *mut ThreadAllocator<B>) };
             if !alloc.is_allocating {
                 alloc.is_allocating = true;
                 do_local_free_internal::<P, B>(alloc, block, page, segment);
@@ -904,7 +907,16 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         }
     }
 
-    // 2. Try L1 per-CPU cache second
+    unsafe { thread_free_cold::<P, B>(ptr, page, block) };
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn thread_free_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+    ptr: *mut u8,
+    page: &mut Page,
+    block: *mut Block,
+) {
     if B::ENABLE_CPU_CACHE && per_cpu::try_free_cpu::<P>(ptr, page.size_class as usize) {
         return;
     }
