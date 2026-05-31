@@ -546,7 +546,9 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
         let ptr = block.ptr.as_ptr();
         unsafe {
             core::ptr::drop_in_place(ptr);
-            self.free_raw(ptr as *mut u8);
+            if core::mem::size_of::<T>() != 0 {
+                self.free_raw(ptr as *mut u8);
+            }
         }
     }
 
@@ -560,6 +562,9 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
         block: BrandedBlock<'brand, T>,
     ) {
         ensure_options_initialized();
+        if core::mem::size_of::<T>() == 0 {
+            return;
+        }
         let ptr = block.ptr.as_ptr() as *mut u8;
         unsafe {
             self.free_raw(ptr);
@@ -575,6 +580,17 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
         token: &AllocatorToken<'brand>,
         val: T,
     ) -> Option<BrandedBlock<'brand, T>> {
+        if core::mem::size_of::<T>() == 0 {
+            let ptr: NonNull<T> = NonNull::dangling();
+            unsafe {
+                ptr.as_ptr().write(val);
+            }
+            return Some(BrandedBlock {
+                ptr,
+                _marker: Invariant::new(),
+            });
+        }
+
         let block = self.alloc(token, Layout::new::<T>())?;
         let casted = block.cast::<T>();
         unsafe {
@@ -1107,6 +1123,32 @@ mod tests {
             assert_eq!(counter.load(Ordering::SeqCst), 0);
             heap.free(&mut token, block);
             assert_eq!(counter.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    #[test]
+    fn test_branded_heap_alloc_init_zst_drops_without_allocating() {
+        ZST_DROP_COUNT.store(0, Ordering::SeqCst);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let before = unsafe {
+                (&*heap.allocator.get())
+                    .stats()
+                    .current_thread_owned_segments
+            };
+            let block = heap
+                .alloc_init(&token, ZstDrop)
+                .expect("ZST alloc_init failed");
+            assert_eq!(
+                unsafe {
+                    (&*heap.allocator.get())
+                        .stats()
+                        .current_thread_owned_segments
+                },
+                before,
+                "ZST alloc_init must not allocate a segment"
+            );
+            heap.free(&mut token, block);
+            assert_eq!(ZST_DROP_COUNT.load(Ordering::SeqCst), 1);
         });
     }
 
