@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "nightly_tls", feature(thread_local))]
+
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use core::ffi::c_void;
 use std::collections::HashMap;
@@ -38,6 +40,22 @@ fn update_active_flag() {
         || !ALLOC_HOOK.load(Ordering::Acquire).is_null()
         || !FREE_HOOK.load(Ordering::Acquire).is_null();
     PROFILING_OR_HOOKS_ACTIVE.store(active, Ordering::Release);
+    sync_local_profiling_state();
+}
+
+#[inline(always)]
+fn sync_local_profiling_state() {
+    let active = PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed);
+    #[cfg(feature = "nightly_tls")]
+    unsafe {
+        PROFILING_CACHED_ACTIVE = active;
+        PROFILING_CHECK_COUNTER = 1023;
+    }
+    #[cfg(not(feature = "nightly_tls"))]
+    {
+        PROFILING_CACHED_ACTIVE.with(|c| c.set(active));
+        PROFILING_CHECK_COUNTER.with(|c| c.set(1023));
+    }
 }
 
 /// Registers a custom user allocation tracing hook.
@@ -91,15 +109,71 @@ pub fn reset_profiler_for_testing() {
     update_active_flag();
 }
 
+#[cfg(feature = "nightly_tls")]
+#[thread_local]
+static mut BYTES_UNTIL_SAMPLE: isize = 0;
+
+#[cfg(feature = "nightly_tls")]
+#[thread_local]
+static mut IN_HOOK: bool = false;
+
+#[cfg(feature = "nightly_tls")]
+#[thread_local]
+static mut PROFILING_CHECK_COUNTER: u32 = 0;
+
+#[cfg(feature = "nightly_tls")]
+#[thread_local]
+static mut PROFILING_CACHED_ACTIVE: bool = false;
+
+#[cfg(not(feature = "nightly_tls"))]
+std::thread_local! {
+    static BYTES_UNTIL_SAMPLE: core::cell::Cell<isize> = const { core::cell::Cell::new(0) };
+    static IN_HOOK: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+    static PROFILING_CHECK_COUNTER: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+    static PROFILING_CACHED_ACTIVE: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
 /// Entry point invoked on every successful memory allocation.
 ///
 /// Calls any registered custom user hook and registers a sample if the
 /// Poisson heap sampler is active.
 #[inline(always)]
 pub fn on_alloc(ptr: *mut u8, size: usize) {
-    if !PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed) {
-        return;
+    #[cfg(feature = "nightly_tls")]
+    unsafe {
+        let counter = PROFILING_CHECK_COUNTER;
+        if counter == 0 {
+            PROFILING_CACHED_ACTIVE = PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed);
+            PROFILING_CHECK_COUNTER = 1023;
+        } else {
+            PROFILING_CHECK_COUNTER = counter - 1;
+        }
+        if !PROFILING_CACHED_ACTIVE {
+            return;
+        }
     }
+
+    #[cfg(not(feature = "nightly_tls"))]
+    {
+        let active = PROFILING_CACHED_ACTIVE.with(|cell_active| {
+            let mut active = cell_active.get();
+            PROFILING_CHECK_COUNTER.with(|cell_counter| {
+                let counter = cell_counter.get();
+                if counter == 0 {
+                    active = PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed);
+                    cell_active.set(active);
+                    cell_counter.set(1023);
+                } else {
+                    cell_counter.set(counter - 1);
+                }
+            });
+            active
+        });
+        if !active {
+            return;
+        }
+    }
+
     on_alloc_cold(ptr, size);
 }
 
@@ -115,6 +189,16 @@ fn on_alloc_cold(ptr: *mut u8, size: usize) {
         return;
     }
 
+    #[cfg(feature = "nightly_tls")]
+    let in_hook = unsafe {
+        if IN_HOOK {
+            true
+        } else {
+            IN_HOOK = true;
+            false
+        }
+    };
+    #[cfg(not(feature = "nightly_tls"))]
     let in_hook = IN_HOOK.with(|cell| {
         if cell.get() {
             true
@@ -136,6 +220,9 @@ fn on_alloc_cold(ptr: *mut u8, size: usize) {
         sample_alloc_inner(ptr, size);
     }
 
+    #[cfg(feature = "nightly_tls")]
+    unsafe { IN_HOOK = false; }
+    #[cfg(not(feature = "nightly_tls"))]
     IN_HOOK.with(|cell| cell.set(false));
 }
 
@@ -145,9 +232,41 @@ fn on_alloc_cold(ptr: *mut u8, size: usize) {
 /// if active.
 #[inline(always)]
 pub fn on_free(ptr: *mut u8, size: usize) {
-    if !PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed) {
-        return;
+    #[cfg(feature = "nightly_tls")]
+    unsafe {
+        let counter = PROFILING_CHECK_COUNTER;
+        if counter == 0 {
+            PROFILING_CACHED_ACTIVE = PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed);
+            PROFILING_CHECK_COUNTER = 1023;
+        } else {
+            PROFILING_CHECK_COUNTER = counter - 1;
+        }
+        if !PROFILING_CACHED_ACTIVE {
+            return;
+        }
     }
+
+    #[cfg(not(feature = "nightly_tls"))]
+    {
+        let active = PROFILING_CACHED_ACTIVE.with(|cell_active| {
+            let mut active = cell_active.get();
+            PROFILING_CHECK_COUNTER.with(|cell_counter| {
+                let counter = cell_counter.get();
+                if counter == 0 {
+                    active = PROFILING_OR_HOOKS_ACTIVE.load(Ordering::Relaxed);
+                    cell_active.set(active);
+                    cell_counter.set(1023);
+                } else {
+                    cell_counter.set(counter - 1);
+                }
+            });
+            active
+        });
+        if !active {
+            return;
+        }
+    }
+
     on_free_cold(ptr, size);
 }
 
@@ -163,6 +282,16 @@ fn on_free_cold(ptr: *mut u8, size: usize) {
         return;
     }
 
+    #[cfg(feature = "nightly_tls")]
+    let in_hook = unsafe {
+        if IN_HOOK {
+            true
+        } else {
+            IN_HOOK = true;
+            false
+        }
+    };
+    #[cfg(not(feature = "nightly_tls"))]
     let in_hook = IN_HOOK.with(|cell| {
         if cell.get() {
             true
@@ -184,15 +313,39 @@ fn on_free_cold(ptr: *mut u8, size: usize) {
         sample_free_inner(ptr);
     }
 
+    #[cfg(feature = "nightly_tls")]
+    unsafe { IN_HOOK = false; }
+    #[cfg(not(feature = "nightly_tls"))]
     IN_HOOK.with(|cell| cell.set(false));
 }
 
-std::thread_local! {
-    static BYTES_UNTIL_SAMPLE: core::cell::Cell<isize> = const { core::cell::Cell::new(0) };
-    static IN_HOOK: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
-}
-
 fn sample_alloc_inner(ptr: *mut u8, size: usize) {
+    #[cfg(feature = "nightly_tls")]
+    unsafe {
+        let mut val = BYTES_UNTIL_SAMPLE;
+        if val <= 0 {
+            let mean = SAMPLE_INTERVAL.load(Ordering::Relaxed);
+            val = next_sample_interval(mean) as isize;
+
+            let mut stack = Vec::with_capacity(32);
+            backtrace::trace(|frame| {
+                let ip = frame.ip() as usize;
+                if ip != 0 {
+                    stack.push(ip);
+                }
+                stack.len() < 32
+            });
+
+            let shard = (ptr as usize >> 6) % SHARDS;
+            let mut lock = get_map(shard);
+            if let Some(ref mut map) = *lock {
+                map.insert(ptr as usize, Sample { size, stack });
+            }
+        }
+        BYTES_UNTIL_SAMPLE = val - size as isize;
+    }
+
+    #[cfg(not(feature = "nightly_tls"))]
     BYTES_UNTIL_SAMPLE.with(|cell| {
         let mut val = cell.get();
         if val <= 0 {
@@ -254,6 +407,16 @@ fn next_sample_interval(mean: usize) -> usize {
 /// The output uses the standard collapsed stack format:
 /// `func1;func2;func3 <bytes>`
 pub fn dump_profile(path: &str) -> std::io::Result<()> {
+    #[cfg(feature = "nightly_tls")]
+    let in_hook = unsafe {
+        if IN_HOOK {
+            true
+        } else {
+            IN_HOOK = true;
+            false
+        }
+    };
+    #[cfg(not(feature = "nightly_tls"))]
     let in_hook = IN_HOOK.with(|cell| {
         if cell.get() {
             true
@@ -268,6 +431,9 @@ pub fn dump_profile(path: &str) -> std::io::Result<()> {
 
     let result = dump_profile_inner(path);
 
+    #[cfg(feature = "nightly_tls")]
+    unsafe { IN_HOOK = false; }
+    #[cfg(not(feature = "nightly_tls"))]
     IN_HOOK.with(|cell| cell.set(false));
     result
 }

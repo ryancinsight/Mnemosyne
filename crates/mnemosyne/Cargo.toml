@@ -13,4 +13,4 @@ mnemosyne-decay = { path = "../mnemosyne-decay" }
 mnemosyne-prof = { path = "../mnemosyne-prof" }
 
 [features]
-nightly_tls = ["mnemosyne-local/nightly_tls"]
+nightly_tls = ["mnemosyne-local/nightly_tls", "mnemosyne-prof/nightly_tls"]

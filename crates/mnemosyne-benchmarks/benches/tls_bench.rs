@@ -35,6 +35,12 @@ impl TlsSlotAccess<MemoryBackendWrapper> for BenchSlotAccess {
     fn get_os_tls_key() -> &'static AtomicU32 {
         &DUMMY_OS_TLS_KEY
     }
+
+    #[cfg(feature = "nightly_tls")]
+    #[inline(always)]
+    fn get_slot_nightly<R>(f: impl FnOnce(&LocalAllocatorSlot<MemoryBackendWrapper>) -> R) -> R {
+        DUMMY_SLOT.with(f)
+    }
 }
 
 type BenchStandard = StandardTls<MemoryBackendWrapper, BenchSlotAccess>;

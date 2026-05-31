@@ -584,7 +584,7 @@ impl_local_allocator_selector!(mnemosyne_backend::CudaUnifiedBackend);
 /// originated from a different allocator is undefined behavior; the
 /// function uses the same segment-rounding classification as
 /// `thread_free` and dereferences the resulting segment header.
-#[inline]
+#[inline(always)]
 pub unsafe fn usable_size(ptr: *mut u8) -> usize {
     if ptr.is_null() {
         return 0;
@@ -1032,10 +1032,10 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                         if let Some(block) = active_page.free {
                             let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
                                 let self_addr = active_page as *const Page as usize;
-                                let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
-                                let segment = segment_addr as *mut Segment;
-                                let page_index = active_page.index_in_segment();
-                                unsafe { (*segment).keys[page_index] }
+                                  let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
+                                  let segment = segment_addr as *mut Segment;
+                                  let page_index = active_page.index_in_segment();
+                                  unsafe { (*segment).keys[page_index] }
                             } else {
                                 0
                             };

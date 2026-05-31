@@ -7,6 +7,9 @@ edition = "2021"
 mnemosyne-core = { path = "../mnemosyne-core" }
 backtrace = "0.3"
 
+[features]
+nightly_tls = []
+
 [dev-dependencies]
 mnemosyne = { path = "../mnemosyne" }
 mnemosyne-local = { path = "../mnemosyne-local" }
