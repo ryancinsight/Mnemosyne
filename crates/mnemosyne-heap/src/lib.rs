@@ -712,6 +712,19 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
         unsafe { BrandedCell::from_block(block) }
     }
 
+    /// Reconstructs a `BrandedBox` from a shared `BrandedCell`.
+    ///
+    /// # Safety
+    /// The caller must ensure that no other copies of this `BrandedCell` (or pointers derived from it)
+    /// are active or will be used.
+    #[inline(always)]
+    pub unsafe fn from_cell(
+        heap: &'heap BrandedHeap<'brand, P, B>,
+        cell: BrandedCell<'brand, T>,
+    ) -> Self {
+        Self::from_raw(heap, cell.into_block())
+    }
+
     /// Reconstructs a `BrandedBox` from a raw block.
     ///
     /// # Safety
@@ -986,6 +999,27 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             _non_send: core::marker::PhantomData,
         }
     }
+
+    /// Converts a `BrandedBox<'brand, 'heap, [T], P, B>` back into a `BrandedVec<'brand, 'heap, T, P, B>`.
+    ///
+    /// This does not allocate or copy.
+    #[inline]
+    pub fn from_boxed_slice(boxed_slice: BrandedBox<'brand, 'heap, [T], P, B>) -> Self {
+        let len = boxed_slice.len();
+        let heap = boxed_slice.heap;
+        let block = boxed_slice.into_raw();
+        Self {
+            ptr: unsafe { NonNull::new_unchecked(block.ptr.as_ptr() as *mut T) },
+            cap: if core::mem::size_of::<T>() == 0 {
+                usize::MAX
+            } else {
+                len
+            },
+            len,
+            heap,
+            _non_send: core::marker::PhantomData,
+        }
+    }
 }
 
 impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Deref
@@ -1050,6 +1084,25 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
         Self {
             ptr: block.ptr,
             _marker: block._marker,
+        }
+    }
+
+    /// Returns the raw pointer to the cell's managed memory.
+    #[inline(always)]
+    pub fn as_ptr(&self) -> *mut T {
+        self.ptr.as_ptr()
+    }
+
+    /// Consumes the `BrandedCell` (by copy) and reconstructs the `BrandedBlock`.
+    ///
+    /// # Safety
+    /// The caller must ensure that this is the only active reference to the cell,
+    /// and that no other copies of this `BrandedCell` will be used to access the memory.
+    #[inline(always)]
+    pub unsafe fn into_block(self) -> BrandedBlock<'brand, T> {
+        BrandedBlock {
+            ptr: self.ptr,
+            _marker: self._marker,
         }
     }
 
@@ -1509,12 +1562,8 @@ mod tests {
             assert_eq!(*cell_copy2.borrow(&token), 100);
             assert_eq!(*cell.borrow(&token), 100);
 
-            // Free the memory. BrandedCell is shared, so we cast to a block to free
-            let block = BrandedBlock {
-                ptr: cell.ptr,
-                _marker: Invariant::new(),
-            };
-            heap.free(&mut token, block);
+            // Free the memory using the safe/encapsulated conversion
+            heap.free(&mut token, unsafe { cell.into_block() });
         });
     }
 
@@ -1598,12 +1647,8 @@ mod tests {
             // Read the cell
             assert_eq!(cell.borrow(&token).0.load(Ordering::SeqCst), 0);
 
-            // Manually reclaim memory
-            let block = BrandedBlock {
-                ptr: cell.ptr,
-                _marker: Invariant::new(),
-            };
-            heap.free(&mut token, block);
+            // Reclaim memory using the safe/encapsulated conversion
+            heap.free(&mut token, unsafe { cell.into_block() });
             assert_eq!(counter.load(Ordering::SeqCst), 1);
         });
     }
@@ -1626,11 +1671,7 @@ mod tests {
             cell.borrow_mut(&mut token)[1] = 99;
             assert_eq!(cell.borrow(&token), &[10, 99, 30]);
 
-            let block = BrandedBlock {
-                ptr: cell.ptr,
-                _marker: Invariant::new(),
-            };
-            heap.free(&mut token, block);
+            heap.free(&mut token, unsafe { cell.into_block() });
         });
     }
 
@@ -1666,27 +1707,9 @@ mod tests {
             assert_eq!(*c2.borrow(&token), 200.0);
 
             // Reclaim
-            heap.free(
-                &mut token,
-                BrandedBlock {
-                    ptr: c1.ptr,
-                    _marker: Invariant::new(),
-                },
-            );
-            heap.free(
-                &mut token,
-                BrandedBlock {
-                    ptr: c2.ptr,
-                    _marker: Invariant::new(),
-                },
-            );
-            heap.free(
-                &mut token,
-                BrandedBlock {
-                    ptr: c3.ptr,
-                    _marker: Invariant::new(),
-                },
-            );
+            heap.free(&mut token, unsafe { c1.into_block() });
+            heap.free(&mut token, unsafe { c2.into_block() });
+            heap.free(&mut token, unsafe { c3.into_block() });
         });
     }
 
@@ -1699,6 +1722,78 @@ mod tests {
 
             // This must panic since c and c point to the same block
             let _ = BrandedCell::borrow_mut_2(&c, &c, &mut token);
+        });
+    }
+
+    #[test]
+    fn test_branded_cell_as_ptr_identity() {
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let b1 = heap.alloc_init(&token, 42).unwrap();
+            let b2 = heap.alloc_init(&token, 42).unwrap();
+
+            let c1 = unsafe { BrandedCell::from_block(b1) };
+            let c2 = unsafe { BrandedCell::from_block(b2) };
+            let c1_copy = c1;
+
+            assert_eq!(c1.as_ptr(), c1_copy.as_ptr());
+            assert_ne!(c1.as_ptr(), c2.as_ptr());
+
+            heap.free(&mut token, unsafe { c1.into_block() });
+            heap.free(&mut token, unsafe { c2.into_block() });
+        });
+    }
+
+    #[test]
+    fn test_branded_box_from_cell() {
+        let counter = std::sync::atomic::AtomicUsize::new(0);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let bbox = BrandedBox::new(&heap, &token, DropTracker(&counter))
+                .expect("allocation failed");
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+            let cell = bbox.into_cell();
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+            // Reconstruct box from cell
+            let bbox_reconstructed = unsafe { BrandedBox::from_cell(&heap, cell) };
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+            drop(bbox_reconstructed);
+            assert_eq!(counter.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    #[test]
+    fn test_branded_vec_from_boxed_slice_transitions() {
+        let counter = std::sync::atomic::AtomicUsize::new(0);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            // Sized types test
+            let mut vec = BrandedVec::new(&heap);
+            vec.push(&mut token, DropTracker(&counter)).unwrap();
+            vec.push(&mut token, DropTracker(&counter)).unwrap();
+
+            let boxed = vec.into_boxed_slice(&mut token);
+            assert_eq!(boxed.len(), 2);
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+            let vec_recovered = BrandedVec::from_boxed_slice(boxed);
+            assert_eq!(vec_recovered.len(), 2);
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+            drop(vec_recovered);
+            assert_eq!(counter.load(Ordering::SeqCst), 2);
+
+            // ZST test
+            let mut zst_vec = BrandedVec::new(&heap);
+            zst_vec.push(&mut token, ()).unwrap();
+            zst_vec.push(&mut token, ()).unwrap();
+
+            let zst_boxed = zst_vec.into_boxed_slice(&mut token);
+            assert_eq!(zst_boxed.len(), 2);
+
+            let zst_vec_recovered = BrandedVec::from_boxed_slice(zst_boxed);
+            assert_eq!(zst_vec_recovered.len(), 2);
+            assert_eq!(zst_vec_recovered.capacity(), usize::MAX);
         });
     }
 }
