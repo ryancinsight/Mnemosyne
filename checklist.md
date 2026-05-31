@@ -301,6 +301,7 @@ Target version: 0.1.0
 - [x] [patch] Return the same pointer for standard-policy large/huge half-shrink reallocs; pin with `test_realloc_large_half_shrink_returns_same_ptr`.
 - [x] [patch] Copy only `min(layout.size(), new_size)` bytes on `thread_realloc` replacement paths; pin secure shrink preservation with `test_realloc_shrink_replacement_copies_only_new_size`.
 - [x] [patch] Refresh `realloc latency/Mnemosyne/huge_shrink_4m_to_2m` after the half-shrink fast path; current focused row is `22.405 ns`.
+- [x] [patch] Refresh `usable size latency/Mnemosyne/small_32` after the current hot-path stack; current focused row is `2.479 ns`, ahead of the retained mimalloc row.
 - [x] [patch] Fix decay engine thread-spawning shadowing bug and add `decay_purger_reaches_steady_state` integration test.
 - [x] [patch] Expose `get_options` and `configure` in the top-level `mnemosyne` crate and verify via programmatic configuration tests.
 - [x] [patch] Add `multi_heap_isolates_allocation_streams` and `multi_heap_release_does_not_touch_other_heaps` integration tests.
