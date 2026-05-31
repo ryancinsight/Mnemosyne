@@ -316,18 +316,20 @@ impl<'brand> AllocatorToken<'brand> {
 }
 
 /// A wrapper representing a heap block branded with a compile-time unique lifetime.
-pub struct BrandedBlock<'brand, T> {
+pub struct BrandedBlock<'brand, T: ?Sized> {
     ptr: NonNull<T>,
     _marker: Invariant<'brand>,
 }
 
-impl<'brand, T> BrandedBlock<'brand, T> {
+impl<'brand, T: ?Sized> BrandedBlock<'brand, T> {
     /// Returns the raw pointer to the block's managed memory.
     #[inline(always)]
     pub fn as_ptr(&self) -> *mut T {
         self.ptr.as_ptr()
     }
+}
 
+impl<'brand, T> BrandedBlock<'brand, T> {
     /// Safely casts this branded block to managed memory of a different type.
     #[inline(always)]
     pub fn cast<U>(self) -> BrandedBlock<'brand, U> {
@@ -669,7 +671,7 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
 pub struct BrandedBox<
     'brand,
     'heap,
-    T,
+    T: ?Sized,
     P: AllocPolicy = mnemosyne_core::StandardPolicy,
     B: HasSegmentPool + LocalAllocatorSelector<B> = mnemosyne_backend::MemoryBackendWrapper,
 > {
@@ -709,7 +711,38 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     }
 }
 
-impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Deref
+impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    BrandedBox<'brand, 'heap, T, P, B>
+{
+    /// Consumes the `BrandedBox`, returning the wrapped raw block without dropping or deallocating.
+    #[inline(always)]
+    pub fn into_raw(self) -> BrandedBlock<'brand, T> {
+        let block = BrandedBlock {
+            ptr: self.ptr,
+            _marker: Invariant::new(),
+        };
+        core::mem::forget(self);
+        block
+    }
+
+    /// Reconstructs a `BrandedBox` from a raw block.
+    ///
+    /// # Safety
+    /// The memory block must be initialized with a valid value of type `T`.
+    #[inline(always)]
+    pub unsafe fn from_raw(
+        heap: &'heap BrandedHeap<'brand, P, B>,
+        block: BrandedBlock<'brand, T>,
+    ) -> Self {
+        Self {
+            ptr: block.ptr,
+            heap,
+            _non_send: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Deref
     for BrandedBox<'brand, 'heap, T, P, B>
 {
     type Target = T;
@@ -719,7 +752,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     }
 }
 
-impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> DerefMut
+impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> DerefMut
     for BrandedBox<'brand, 'heap, T, P, B>
 {
     #[inline(always)]
@@ -728,14 +761,15 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     }
 }
 
-impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Drop
+impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Drop
     for BrandedBox<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn drop(&mut self) {
         unsafe {
+            let size = core::mem::size_of_val(self.ptr.as_ref());
             core::ptr::drop_in_place(self.ptr.as_ptr());
-            if core::mem::size_of::<T>() != 0 {
+            if size != 0 {
                 self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
             }
         }
@@ -903,6 +937,59 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             &mut []
         } else {
             unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+        }
+    }
+
+    /// Converts this vector into a boxed slice, shrinking the memory allocation to fit.
+    #[inline]
+    pub fn into_boxed_slice(mut self, token: &mut AllocatorToken<'brand>) -> BrandedBox<'brand, 'heap, [T], P, B> {
+        if core::mem::size_of::<T>() == 0 {
+            let slice_ptr = unsafe {
+                let raw_slice = core::slice::from_raw_parts_mut(NonNull::<T>::dangling().as_ptr(), self.len);
+                NonNull::new_unchecked(raw_slice)
+            };
+            let heap = self.heap;
+            core::mem::forget(self);
+            return BrandedBox {
+                ptr: slice_ptr,
+                heap,
+                _non_send: core::marker::PhantomData,
+            };
+        }
+
+        if self.cap > self.len {
+            if self.len == 0 {
+                unsafe {
+                    self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
+                }
+                self.ptr = NonNull::dangling();
+                self.cap = 0;
+            } else {
+                let old_layout = Layout::array::<T>(self.cap).unwrap();
+                let new_size = Layout::array::<T>(self.len).unwrap().size();
+                let block = BrandedBlock {
+                    ptr: self.ptr,
+                    _marker: Invariant::new(),
+                };
+                if let Some(new_block) = self.heap.realloc(token, block, old_layout, new_size) {
+                    self.ptr = new_block.ptr.cast();
+                    self.cap = self.len;
+                }
+            }
+        }
+
+        let slice_ptr = unsafe {
+            let raw_slice = core::ptr::slice_from_raw_parts_mut(self.ptr.as_ptr(), self.len);
+            NonNull::new_unchecked(raw_slice)
+        };
+
+        let heap = self.heap;
+        core::mem::forget(self);
+
+        BrandedBox {
+            ptr: slice_ptr,
+            heap,
+            _non_send: core::marker::PhantomData,
         }
     }
 }
@@ -1109,7 +1196,7 @@ mod tests {
 
     #[test]
     fn test_branded_heap_realloc_zst_to_zero_drops_without_allocating() {
-        ZST_DROP_COUNT.store(0, Ordering::SeqCst);
+        ZST_DROP_COUNT.with(|c| c.set(0));
         scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
             let before = unsafe { (&*heap.allocator.get()).stats() };
             let block = heap
@@ -1128,7 +1215,7 @@ mod tests {
                 "ZST-to-zero realloc must not allocate or free a real block"
             );
             assert_eq!(
-                ZST_DROP_COUNT.load(Ordering::SeqCst),
+                ZST_DROP_COUNT.with(|c| c.get()),
                 1,
                 "ZST-to-zero realloc must drop the owned value exactly once"
             );
@@ -1195,7 +1282,7 @@ mod tests {
 
     #[test]
     fn test_branded_heap_alloc_init_zst_drops_without_allocating() {
-        ZST_DROP_COUNT.store(0, Ordering::SeqCst);
+        ZST_DROP_COUNT.with(|c| c.set(0));
         scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
             let before = unsafe {
                 (&*heap.allocator.get())
@@ -1215,7 +1302,7 @@ mod tests {
                 "ZST alloc_init must not allocate a segment"
             );
             heap.free(&mut token, block);
-            assert_eq!(ZST_DROP_COUNT.load(Ordering::SeqCst), 1);
+            assert_eq!(ZST_DROP_COUNT.with(|c| c.get()), 1);
         });
     }
 
@@ -1250,20 +1337,22 @@ mod tests {
         });
     }
 
-    static ZST_DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+    std::thread_local! {
+        static ZST_DROP_COUNT: core::cell::Cell<usize> = core::cell::Cell::new(0);
+    }
 
     #[derive(Debug)]
     struct ZstDrop;
 
     impl Drop for ZstDrop {
         fn drop(&mut self) {
-            ZST_DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            ZST_DROP_COUNT.with(|c| c.set(c.get() + 1));
         }
     }
 
     #[test]
     fn test_branded_box_zst_drops_without_allocating() {
-        ZST_DROP_COUNT.store(0, Ordering::SeqCst);
+        ZST_DROP_COUNT.with(|c| c.set(0));
         scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
             let before = unsafe {
                 (&*heap.allocator.get())
@@ -1278,13 +1367,13 @@ mod tests {
             };
             assert_eq!(after_new, before, "ZST box must not allocate a segment");
             drop(bbox);
-            assert_eq!(ZST_DROP_COUNT.load(Ordering::SeqCst), 1);
+            assert_eq!(ZST_DROP_COUNT.with(|c| c.get()), 1);
         });
     }
 
     #[test]
     fn test_branded_vec_zst_uses_sentinel_capacity_and_drops_elements() {
-        ZST_DROP_COUNT.store(0, Ordering::SeqCst);
+        ZST_DROP_COUNT.with(|c| c.set(0));
         scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
             let before = unsafe {
                 (&*heap.allocator.get())
@@ -1309,15 +1398,15 @@ mod tests {
             }
             assert_eq!(vec.len(), 4);
             drop(vec.pop());
-            assert_eq!(ZST_DROP_COUNT.load(Ordering::SeqCst), 1);
+            assert_eq!(ZST_DROP_COUNT.with(|c| c.get()), 1);
             drop(vec);
-            assert_eq!(ZST_DROP_COUNT.load(Ordering::SeqCst), 4);
+            assert_eq!(ZST_DROP_COUNT.with(|c| c.get()), 4);
         });
     }
 
     #[test]
     fn test_branded_vec_new_zst_preserves_capacity_invariant() {
-        ZST_DROP_COUNT.store(0, Ordering::SeqCst);
+        ZST_DROP_COUNT.with(|c| c.set(0));
         scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
             let before = unsafe {
                 (&*heap.allocator.get())
@@ -1348,7 +1437,7 @@ mod tests {
             );
 
             drop(vec);
-            assert_eq!(ZST_DROP_COUNT.load(Ordering::SeqCst), 1);
+            assert_eq!(ZST_DROP_COUNT.with(|c| c.get()), 1);
         });
     }
 
@@ -1379,6 +1468,48 @@ mod tests {
                 _marker: Invariant::new(),
             };
             heap.free(&mut token, block);
+        });
+    }
+
+    #[test]
+    fn test_branded_box_unsized_slice_and_drop() {
+        let counter = AtomicUsize::new(0);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let mut vec = BrandedVec::new(&heap);
+            for _ in 0..5 {
+                vec.push(&mut token, DropTracker(&counter)).unwrap();
+            }
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+            
+            // Convert to boxed slice
+            let boxed_slice = vec.into_boxed_slice(&mut token);
+            assert_eq!(boxed_slice.len(), 5);
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+            // Drop boxed slice
+            drop(boxed_slice);
+            assert_eq!(counter.load(Ordering::SeqCst), 5); // All 5 elements dropped
+        });
+    }
+
+    #[test]
+    fn test_branded_box_into_and_from_raw() {
+        let counter = AtomicUsize::new(0);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
+            let bbox = BrandedBox::new(&heap, &token, DropTracker(&counter)).expect("BrandedBox allocation failed");
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+            // Convert to raw block
+            let block = bbox.into_raw();
+            assert_eq!(counter.load(Ordering::SeqCst), 0); // No drop yet
+
+            // Reconstruct BrandedBox from raw block
+            let bbox_reconstructed = unsafe { BrandedBox::from_raw(&heap, block) };
+            assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+            // Drop reconstructed box
+            drop(bbox_reconstructed);
+            assert_eq!(counter.load(Ordering::SeqCst), 1);
         });
     }
 }

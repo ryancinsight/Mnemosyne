@@ -10,7 +10,10 @@ pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
 pub use mnemosyne_core::{AllocPolicy, StandardPolicy};
 pub use mnemosyne_hardened::{HardenedPolicy, SecurePolicy};
 pub use mnemosyne_local::{usable_size, SizeClassOccupancy};
-pub use mnemosyne_heap::MnemosyneHeap;
+pub use mnemosyne_heap::{
+    scope as branded_scope, AllocatorToken, BrandedBlock, BrandedBox, BrandedCell, BrandedHeap,
+    BrandedVec, MnemosyneHeap,
+};
 pub use mnemosyne_prof::{
     register_alloc_hook, register_free_hook, enable_profiling, disable_profiling,
     is_profiling_enabled, dump_profile,

@@ -53,7 +53,7 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | Aligned 2 MiB segments (matches x86 large-page boundary) | Implemented (`SEGMENT_SIZE = 2 MiB`, `SEGMENT_ALIGN = 2 MiB`) | mimalloc 4 MiB / snmalloc 16 MiB | Parity; smaller segments trade fragmentation for adoption granularity. | done |
 | Bounded retained-segment pool (`MAX_RETAINED_SEGMENTS = PAGES_PER_SEGMENT = 32`) | Implemented | mimalloc page reset bound, snmalloc chunk reuse | Parity. | done |
 | Explicit `purge()` (drains pool, releases to OS) | Implemented | mimalloc `mi_collect`, jemalloc `arena.purge` | Parity for explicit purge. | done |
-| **Decay-based purging** (background gradual `madvise(MADV_DONTNEED)`) | Not implemented | jemalloc decay, mimalloc reset delay | Cuts RSS on idle workloads; needs a `Decay` policy + background thread or per-alloc bookkeeping. | `[major]` |
+| **Decay-based purging** (background gradual `page_reset` via thread) | Implemented (`mnemosyne-decay` background thread) | jemalloc decay, mimalloc reset delay | Cuts RSS on idle workloads. | done |
 | **`MADV_DONTNEED` / `MADV_FREE` on idle pages** (not just whole segments) | Implemented at backend (Linux `MADV_DONTNEED`, macOS/FreeBSD `MADV_FREE`, Windows `VirtualAlloc(MEM_RESET)`) *and* arena layers; `mnemosyne::reset()` exposes the public knob | jemalloc, tcmalloc, mimalloc page reset | Parity for whole-cached-segment reset; sub-segment (per-page idle-list) reset remains a possible follow-on. | done |
 | Huge-page request flags (`MADV_HUGEPAGE`, `MAP_HUGETLB`, `MEM_LARGE_PAGES`) | `MADV_HUGEPAGE` hint implemented for Linux segment-sized mappings; `MAP_HUGETLB` / `MEM_LARGE_PAGES` not requested (require root / SeLockMemoryPrivilege) | jemalloc THP, mimalloc large page, tcmalloc HugePageHeap | `MADV_HUGEPAGE` parity; explicit `MAP_HUGETLB` remains a follow-on. | partial |
 | Orphaned segment adoption | Implemented (`GLOBAL_ORPHAN_POOL`) | snmalloc message-passed alloc / mimalloc abandoned page list | Parity for thread-death; snmalloc adopts at sub-segment granularity. | done |
@@ -77,7 +77,7 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | --- | --- | --- | --- | --- |
 | Thread-local cache via `thread_local!` macro | Implemented per backend via `LocalAllocatorSelector` | mimalloc, jemalloc TCs | Parity. | done |
 | Re-entrancy guard (`IS_ALLOCATING` flag) | Implemented per backend | mimalloc reentrancy bit | Parity. | done |
-| **Multiple heaps per thread (`mi_heap_t`)** | Not implemented (single TLS per backend) | mimalloc heap API, jemalloc arenas | Supports compartmentalization (per-request arenas, freed-as-a-group). Would require lifting `ThreadAllocator` out of TLS into an owned heap object. | `[arch]` |
+| **Multiple heaps per thread (`MnemosyneHeap`)** | Implemented (`MnemosyneHeap` owns its `ThreadAllocator`) | mimalloc heap API, jemalloc arenas | Supports compartmentalization (per-request arenas, freed-as-a-group). | done |
 | **Per-CPU caching** (rather than per-thread) | Not implemented | tcmalloc per-CPU, snmalloc 0.6+ per-CPU | Reduces TLS overhead in heavily threaded workloads; needs `restartable sequences` on Linux. | `[arch]` |
 | **NUMA-aware arena selection** | Not implemented | jemalloc `arena.numa_node`, tcmalloc per-NUMA arenas | Cross-socket bandwidth wins on >16 core boxes. | `[major]` |
 | Active/full page lists per size class | Implemented (`active_pages`, `full_pages`) | mimalloc full list | Parity. | done |
@@ -115,7 +115,7 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | Feature | Mnemosyne current state | Reference | Implication | Priority |
 | --- | --- | --- | --- | --- |
 | Compile-time `AllocPolicy` selection | Implemented (`StandardPolicy`, `SecurePolicy`) | mimalloc compile flags | Parity for compile-time. | done |
-| **Runtime environment-variable knobs** (`MIMALLOC_*`, `MALLOC_CONF`) | Not implemented (all constants are `const`) | mimalloc `mi_option_set`, jemalloc `MALLOC_CONF`, tcmalloc `TCMALLOC_*` | Enables production tuning without rebuild. Requires `OnceCell` for the runtime values plus a parse layer. | `[major]` |
+| **Runtime environment-variable knobs** (`MNEMOSYNE_*`) | Implemented (`ensure_options_initialized` reads at runtime) | mimalloc `mi_option_set`, jemalloc `MALLOC_CONF`, tcmalloc `TCMALLOC_*` | Enables production tuning without rebuild. | done |
 | Per-deployment knobs: segment size, retention bound, purge cadence | Hardcoded constants | mimalloc all tunable, jemalloc all tunable | Trade-off: const = zero cost, env = flexibility. Compromise: `extern const`-style override block. | `[minor]` |
 | **Custom per-heap configuration at runtime** | Not implemented | mimalloc `mi_heap_new_in_arena`, jemalloc per-arena opts | Multi-tenant workloads. | `[arch]` |
 
@@ -124,7 +124,7 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | Feature | Mnemosyne current state | Reference | Implication | Priority |
 | --- | --- | --- | --- | --- |
 | `#[global_allocator]` for Rust | Implemented (`Mnemosyne`, `MnemosyneAllocator<P, B>`) | jemallocator, mimalloc-rs, snmalloc-rs | Parity. | done |
-| **C ABI (`malloc`/`free`/`calloc`/`realloc`)** | Not implemented | jemalloc, mimalloc, snmalloc all ship C shims; mimalloc-rs / snmalloc-rs offer optional C-API | Enables `LD_PRELOAD` and use from C/C++ code linked into Rust binaries. | `[major]` |
+| **C ABI (`malloc`/`free`/`calloc`/`realloc`)** | Implemented (`mnemosyne-c-shim` cdylib) | jemalloc, mimalloc, snmalloc all ship C shims; mimalloc-rs / snmalloc-rs offer optional C-API | Enables `LD_PRELOAD` and use from C/C++ code linked into Rust binaries. | done |
 | **`posix_memalign` / `aligned_alloc` / `memalign`** | Indirectly via `GlobalAlloc` Layout | mimalloc, jemalloc | Same scope as C ABI above. | `[major]` |
 | **`malloc_usable_size`** | Implemented as `mnemosyne::usable_size(ptr)` / `mnemosyne_local::usable_size(ptr)` | mimalloc `mi_usable_size`, jemalloc `malloc_usable_size` | Lets Rust `Vec` shrink without reallocating. Returns size-class block size for small, payload remainder for huge, 0 for null. | done |
 | Custom backend (`MemoryBackend` trait, `HasSegmentPool` trait) | Implemented; CPU + CUDA backends shipped | mimalloc has `mi_os_*` indirection; jemalloc has `extent_hooks` | Parity for opt-in backend; CUDA backend exceeds typical allocator scope. | done |
