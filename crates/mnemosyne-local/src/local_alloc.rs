@@ -112,6 +112,8 @@ pub struct ThreadAllocator<B: HasSegmentPool = DefaultBackend> {
     pub is_allocating: bool,
     /// Thread-local pseudo-random number generator state for allocation randomization.
     pub rng_state: u64,
+    /// Counter used to trigger periodic online defragmentation sweeps.
+    pub defrag_counter: usize,
     /// Marker to bind the generic MemoryBackend parameter.
     pub _phantom: PhantomData<B>,
 }
@@ -141,6 +143,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             recycle_sweeps: 0,
             is_allocating: false,
             rng_state: 0x123456789abcdefu64,
+            defrag_counter: 0,
             _phantom: PhantomData,
         }
     }

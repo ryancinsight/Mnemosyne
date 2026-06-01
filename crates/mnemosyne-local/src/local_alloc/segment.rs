@@ -213,4 +213,90 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         }
         true
     }
+
+    /// Performs a defragmentation sweep over all owned segments (excluding `current_segment`),
+    /// consolidating cross-thread frees, identifying empty pages, and reclaiming empty segments.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the allocator is in a safe, non-reentrant state.
+    pub(crate) unsafe fn periodic_defragmentation_sweep<P: AllocPolicy>(&mut self) {
+        let mut curr = self.owned_segments_head;
+        while !curr.is_null() {
+            let segment = curr;
+            // Advance `curr` immediately, because we might unlink and deallocate `segment`.
+            curr = unsafe { (*segment).next_owned_segment };
+
+            // Skip the current active segment.
+            if self.is_current_segment(segment) {
+                continue;
+            }
+
+            let dynamic_encrypted = unsafe { (*segment).free_list_encrypted };
+            let mut total_allocations = 0;
+
+            // 1. First pass: drain remote frees on all pages of this segment.
+            for i in 1..PAGES_PER_SEGMENT {
+                let pg = unsafe { &mut (*segment).pages[i] };
+                if pg.block_size > 0 {
+                    let reclaimed = pg.reclaim_thread_free_dynamic(dynamic_encrypted);
+                    if reclaimed > 0 {
+                        super::record_cross_thread_reclaimed(reclaimed);
+                    }
+                    total_allocations += pg.alloc_count;
+
+                    // If page has zero active allocations and is currently linked in active/full lists,
+                    // move it to the empty_pages recycling stack (if it's not the last active page of its class).
+                    if pg.alloc_count == 0 && (pg.list_state == 1 || pg.list_state == 2) {
+                        let class = pg.size_class as usize;
+                        let is_only_active = self.active_pages[class].is_some_and(|head| {
+                            head.as_ptr() == pg as *mut Page && unsafe { (*head.as_ptr()).next_page.is_none() }
+                        });
+                        if !is_only_active {
+                            unsafe {
+                                self.unlink_page(pg as *mut Page, class);
+                                self.push_empty_page(core::ptr::NonNull::new_unchecked(pg as *mut Page));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. If the segment is completely empty (zero active allocations across all pages),
+            // and we have more than 3 segments in our owned list, reclaim it.
+            if total_allocations == 0 {
+                // Count owned segments
+                let mut segment_count = 0;
+                let mut scan = self.owned_segments_head;
+                while !scan.is_null() {
+                    segment_count += 1;
+                    scan = unsafe { (*scan).next_owned_segment };
+                }
+
+                if segment_count >= 4 {
+                    // Unlink all pages of this segment from whichever list they are in
+                    for i in 1..PAGES_PER_SEGMENT {
+                        let pg = unsafe { &mut (*segment).pages[i] };
+                        if pg.block_size > 0 {
+                            let class = pg.size_class as usize;
+                            unsafe {
+                                self.unlink_page(pg as *mut Page, class);
+                            }
+                        }
+                        unsafe {
+                            self.unlink_empty_page(pg as *mut Page);
+                        }
+                    }
+
+                    // Unlink segment and deallocate it back to the global pool
+                    unsafe {
+                        self.unlink_owned_segment(segment);
+                        (*segment).owner = SegmentOwner::NONE;
+                        (*segment).next_owned_segment = core::ptr::null_mut();
+                        deallocate_segment::<B>(segment);
+                    }
+                }
+            }
+        }
+    }
 }

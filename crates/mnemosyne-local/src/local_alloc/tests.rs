@@ -710,3 +710,129 @@ fn test_orphan_segment_reuse() {
         crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(ptr_b);
     }
 }
+
+#[test]
+fn test_online_defragmentation_page_prioritization() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("local allocator test lock was poisoned");
+
+    let mut alloc = ThreadAllocator::<DefaultBackend>::new();
+
+    // Allocate two segments
+    let seg1 = unsafe { allocate_segment::<DefaultBackend>() }.expect("seg1 allocation failed");
+    let seg2 = unsafe { allocate_segment::<DefaultBackend>() }.expect("seg2 allocation failed");
+
+    // Make seg1 dirty by setting alloc_count on page 1
+    unsafe {
+        (*seg1).pages[1].alloc_count = 1;
+        (*seg1).pages[2].alloc_count = 0;
+    }
+
+    // Make seg2 clean by setting alloc_count on all pages to 0
+    unsafe {
+        for i in 1..mnemosyne_core::constants::PAGES_PER_SEGMENT {
+            (*seg2).pages[i].alloc_count = 0;
+        }
+    }
+
+    let seg1_page2 = unsafe { NonNull::new_unchecked(&mut (*seg1).pages[2] as *mut Page) };
+    let seg2_page1 = unsafe { NonNull::new_unchecked(&mut (*seg2).pages[1] as *mut Page) };
+
+    // Push seg1_page2 first, then seg2_page1 second
+    unsafe {
+        alloc.push_empty_page(seg1_page2);
+        alloc.push_empty_page(seg2_page1);
+    }
+
+    // pop_best_empty_page should prioritize the page in seg1 (the dirty segment)
+    let popped = unsafe { alloc.pop_best_empty_page() };
+    assert_eq!(popped, Some(seg1_page2));
+
+    // The second call should fall back to the clean segment page
+    let popped2 = unsafe { alloc.pop_best_empty_page() };
+    assert_eq!(popped2, Some(seg2_page1));
+
+    // A third call should return None
+    let popped3 = unsafe { alloc.pop_best_empty_page() };
+    assert_eq!(popped3, None);
+
+    // Clean up
+    unsafe {
+        deallocate_segment::<DefaultBackend>(seg1);
+        deallocate_segment::<DefaultBackend>(seg2);
+    }
+}
+
+#[test]
+fn test_periodic_defragmentation_segment_reclaim() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("local allocator test lock was poisoned");
+
+    // Case 1: Count < 4. Empty segments should be retained.
+    {
+        let mut alloc = ThreadAllocator::<DefaultBackend>::new();
+        let seg1 = unsafe { allocate_segment::<DefaultBackend>() }.expect("seg1 failed");
+        let seg2 = unsafe { allocate_segment::<DefaultBackend>() }.expect("seg2 failed");
+        let seg3 = unsafe { allocate_segment::<DefaultBackend>() }.expect("seg3 failed");
+
+        unsafe {
+            alloc.push_owned_segment::<StandardPolicy>(seg1);
+            alloc.push_owned_segment::<StandardPolicy>(seg2);
+            alloc.push_owned_segment::<StandardPolicy>(seg3);
+        }
+
+        // Verify we have 3 segments
+        let stats = alloc.stats();
+        assert_eq!(stats.current_thread_owned_segments, 3);
+
+        // Run sweep
+        unsafe {
+            alloc.periodic_defragmentation_sweep::<StandardPolicy>();
+        }
+
+        // Verify we still have 3 segments (none reclaimed because count < 4)
+        let stats = alloc.stats();
+        assert_eq!(stats.current_thread_owned_segments, 3);
+    }
+
+    // Case 2: Count >= 4. Empty segments should be reclaimed down to 3.
+    {
+        let mut alloc = ThreadAllocator::<DefaultBackend>::new();
+        let seg1 = unsafe { allocate_segment::<DefaultBackend>() }.expect("seg1 failed");
+        let seg2 = unsafe { allocate_segment::<DefaultBackend>() }.expect("seg2 failed");
+        let seg3 = unsafe { allocate_segment::<DefaultBackend>() }.expect("seg3 failed");
+        let seg4 = unsafe { allocate_segment::<DefaultBackend>() }.expect("seg4 failed");
+
+        unsafe {
+            alloc.push_owned_segment::<StandardPolicy>(seg1);
+            alloc.push_owned_segment::<StandardPolicy>(seg2);
+            alloc.push_owned_segment::<StandardPolicy>(seg3);
+            alloc.push_owned_segment::<StandardPolicy>(seg4);
+        }
+
+        // Set seg1 as the current active segment
+        unsafe {
+            alloc.set_current_segment(Some(NonNull::new_unchecked(seg1)));
+        }
+
+        // Verify we have 4 segments
+        let stats = alloc.stats();
+        assert_eq!(stats.current_thread_owned_segments, 4);
+
+        // Run sweep
+        unsafe {
+            alloc.periodic_defragmentation_sweep::<StandardPolicy>();
+        }
+
+        // Verify that one segment (seg4, which is head of list, or one of the empty ones)
+        // was reclaimed, leaving exactly 3 segments.
+        let stats = alloc.stats();
+        assert_eq!(stats.current_thread_owned_segments, 3);
+
+        // Verify that seg1 (current active segment) was not reclaimed
+        assert!(alloc.is_current_segment(seg1));
+    }
+}
+

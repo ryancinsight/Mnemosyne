@@ -204,9 +204,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let block_size = class_to_size(class);
 
         // Check if there is an empty page in the defragmentation list first.
-        if let Some(mut page_ptr) = self.empty_pages {
+        if let Some(mut page_ptr) = unsafe { self.pop_best_empty_page() } {
             unsafe {
-                unlink_page_from_list(&mut self.empty_pages, page_ptr);
                 let random_value = if P::RANDOMIZE_ALLOCATION {
                     self.next_random() ^ page_ptr.as_ptr() as u64 ^ (class as u64).rotate_left(17)
                 } else {

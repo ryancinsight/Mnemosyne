@@ -160,4 +160,45 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             false
         }
     }
+
+    /// Pops the best empty page from the recycling list, prioritizing pages
+    /// belonging to segments that are already dirty (contain other active pages).
+    /// If no such page is found, falls back to the head of the empty page list (LIFO).
+    pub(crate) unsafe fn pop_best_empty_page(&mut self) -> Option<NonNull<Page>> {
+        use mnemosyne_core::constants::{PAGES_PER_SEGMENT, SEGMENT_SIZE};
+        use mnemosyne_core::types::Segment;
+
+        let mut curr = self.empty_pages;
+        while let Some(page_ptr) = curr {
+            let page_addr = page_ptr.as_ptr() as usize;
+            let segment_addr = page_addr & !(SEGMENT_SIZE - 1);
+            let segment = segment_addr as *mut Segment;
+
+            // Check if there are other active allocations in this segment
+            let mut segment_allocations = 0;
+            for i in 1..PAGES_PER_SEGMENT {
+                segment_allocations += unsafe { (*segment).pages[i].alloc_count };
+            }
+
+            if segment_allocations > 0 {
+                // Found an empty page in a dirty segment! Unlink and return it.
+                unsafe {
+                    self.unlink_empty_page(page_ptr.as_ptr());
+                }
+                return Some(page_ptr);
+            }
+
+            curr = unsafe { page_ptr.as_ref().next_page };
+        }
+
+        // Fall back to LIFO (the head of the empty_pages list)
+        if let Some(page_ptr) = self.empty_pages {
+            unsafe {
+                self.unlink_empty_page(page_ptr.as_ptr());
+            }
+            Some(page_ptr)
+        } else {
+            None
+        }
+    }
 }

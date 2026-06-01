@@ -106,6 +106,15 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                     page.alloc_count += 1;
                     let ptr = block.as_ptr() as *mut u8;
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+
+                    alloc.defrag_counter += 1;
+                    if alloc.defrag_counter >= 1024 {
+                        alloc.defrag_counter = 0;
+                        alloc.is_allocating = true;
+                        unsafe { alloc.periodic_defragmentation_sweep::<P>() };
+                        alloc.is_allocating = false;
+                    }
+
                     return ptr;
                 } else if page.initialized_blocks < page.max_blocks() {
                     let idx = page.initialized_blocks;
@@ -114,6 +123,15 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                     let page_start = page.page_start();
                     let ptr = unsafe { page_start.add(idx * page.block_size) };
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+
+                    alloc.defrag_counter += 1;
+                    if alloc.defrag_counter >= 1024 {
+                        alloc.defrag_counter = 0;
+                        alloc.is_allocating = true;
+                        unsafe { alloc.periodic_defragmentation_sweep::<P>() };
+                        alloc.is_allocating = false;
+                    }
+
                     return ptr;
                 }
             }
@@ -159,6 +177,16 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
     alloc.is_allocating = true;
     let ptr = unsafe { alloc.alloc_cold::<P>(class) };
     alloc.is_allocating = false;
+
+    if !ptr.is_null() {
+        alloc.defrag_counter += 1;
+        if alloc.defrag_counter >= 1024 {
+            alloc.defrag_counter = 0;
+            alloc.is_allocating = true;
+            unsafe { alloc.periodic_defragmentation_sweep::<P>() };
+            alloc.is_allocating = false;
+        }
+    }
 
     let final_ptr = if ptr.is_null() {
         unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) }

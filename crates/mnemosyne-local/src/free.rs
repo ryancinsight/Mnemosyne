@@ -105,6 +105,19 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
                 page.free = Some(NonNull::new_unchecked(block));
                 page.alloc_count = page_alloc_count - 1;
             }
+            let current_allocator = B::get_allocator_ptr_raw();
+            if !current_allocator.is_null() {
+                let alloc = unsafe { &mut *(current_allocator as *mut ThreadAllocator<B>) };
+                alloc.defrag_counter += 1;
+                if alloc.defrag_counter >= 1024 {
+                    alloc.defrag_counter = 0;
+                    if !alloc.is_allocating {
+                        alloc.is_allocating = true;
+                        unsafe { alloc.periodic_defragmentation_sweep::<P>() };
+                        alloc.is_allocating = false;
+                    }
+                }
+            }
             return;
         }
 
@@ -114,6 +127,13 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
             if !alloc.is_allocating {
                 alloc.is_allocating = true;
                 do_local_free_internal::<P, B>(alloc, block, page, segment);
+                
+                alloc.defrag_counter += 1;
+                if alloc.defrag_counter >= 1024 {
+                    alloc.defrag_counter = 0;
+                    unsafe { alloc.periodic_defragmentation_sweep::<P>() };
+                }
+                
                 alloc.is_allocating = false;
                 return;
             }
