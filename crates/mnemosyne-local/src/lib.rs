@@ -142,6 +142,12 @@ fn init_options_from_env() {
             mnemosyne_prof::enable_profiling(interval);
         }
     }
+
+    if let Some(parsed) = parse_env_bool("MNEMOSYNE_LEAK_DETECTOR") {
+        if parsed {
+            mnemosyne_prof::enable_leak_detector();
+        }
+    }
 }
 
 /// Reset options state and atomic option values to their defaults. Intended for testing.

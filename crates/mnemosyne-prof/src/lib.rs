@@ -11,6 +11,7 @@ static ALLOC_HOOK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 static FREE_HOOK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 
 static PROFILING_ACTIVE: AtomicBool = AtomicBool::new(false);
+static LEAK_DETECTOR_ACTIVE: AtomicBool = AtomicBool::new(false);
 static PROFILING_OR_HOOKS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static SAMPLE_INTERVAL: AtomicUsize = AtomicUsize::new(512 * 1024); // Default 512 KB
 
@@ -36,6 +37,7 @@ fn get_map(shard: usize) -> std::sync::MutexGuard<'static, Option<HashMap<usize,
 
 fn update_active_flag() {
     let active = PROFILING_ACTIVE.load(Ordering::Acquire)
+        || LEAK_DETECTOR_ACTIVE.load(Ordering::Acquire)
         || !ALLOC_HOOK.load(Ordering::Acquire).is_null()
         || !FREE_HOOK.load(Ordering::Acquire).is_null();
     PROFILING_OR_HOOKS_ACTIVE.store(active, Ordering::Release);
@@ -82,6 +84,7 @@ pub fn is_profiling_enabled() -> bool {
 /// Resets the profiler state, trace hooks, and sampled data. Intended for testing.
 pub fn reset_profiler_for_testing() {
     PROFILING_ACTIVE.store(false, Ordering::Release);
+    LEAK_DETECTOR_ACTIVE.store(false, Ordering::Release);
     ALLOC_HOOK.store(core::ptr::null_mut(), Ordering::Release);
     FREE_HOOK.store(core::ptr::null_mut(), Ordering::Release);
     SAMPLE_INTERVAL.store(512 * 1024, Ordering::Release);
@@ -90,6 +93,23 @@ pub fn reset_profiler_for_testing() {
         *lock = None;
     }
     update_active_flag();
+}
+
+/// Enables the built-in memory leak detector, tracking every allocation with its backtrace.
+pub fn enable_leak_detector() {
+    LEAK_DETECTOR_ACTIVE.store(true, Ordering::Release);
+    update_active_flag();
+}
+
+/// Disables the built-in memory leak detector.
+pub fn disable_leak_detector() {
+    LEAK_DETECTOR_ACTIVE.store(false, Ordering::Release);
+    update_active_flag();
+}
+
+/// Returns whether the memory leak detector is currently active.
+pub fn is_leak_detector_enabled() -> bool {
+    LEAK_DETECTOR_ACTIVE.load(Ordering::Acquire)
 }
 
 #[cfg(feature = "nightly_tls")]
@@ -132,7 +152,8 @@ fn on_alloc_cold(ptr: *mut u8, size: usize) {
 
     let hook_ptr = ALLOC_HOOK.load(Ordering::Relaxed);
     let active = PROFILING_ACTIVE.load(Ordering::Relaxed);
-    if hook_ptr.is_null() && !active {
+    let leak_active = LEAK_DETECTOR_ACTIVE.load(Ordering::Relaxed);
+    if hook_ptr.is_null() && !active && !leak_active {
         return;
     }
 
@@ -163,8 +184,8 @@ fn on_alloc_cold(ptr: *mut u8, size: usize) {
         unsafe { hook(ptr as *mut core::ffi::c_void, size) };
     }
 
-    if active {
-        sample_alloc_inner(ptr, size);
+    if active || leak_active {
+        sample_alloc_inner(ptr, size, leak_active);
     }
 
     #[cfg(feature = "nightly_tls")]
@@ -195,7 +216,8 @@ fn on_free_cold(ptr: *mut u8, size: usize) {
 
     let hook_ptr = FREE_HOOK.load(Ordering::Relaxed);
     let active = PROFILING_ACTIVE.load(Ordering::Relaxed);
-    if hook_ptr.is_null() && !active {
+    let leak_active = LEAK_DETECTOR_ACTIVE.load(Ordering::Relaxed);
+    if hook_ptr.is_null() && !active && !leak_active {
         return;
     }
 
@@ -226,7 +248,7 @@ fn on_free_cold(ptr: *mut u8, size: usize) {
         unsafe { hook(ptr as *mut core::ffi::c_void, size) };
     }
 
-    if active {
+    if active || leak_active {
         sample_free_inner(ptr);
     }
 
@@ -238,13 +260,15 @@ fn on_free_cold(ptr: *mut u8, size: usize) {
     IN_HOOK.with(|cell| cell.set(false));
 }
 
-fn sample_alloc_inner(ptr: *mut u8, size: usize) {
+fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
     #[cfg(feature = "nightly_tls")]
     unsafe {
         let mut val = BYTES_UNTIL_SAMPLE;
-        if val <= 0 {
-            let mean = SAMPLE_INTERVAL.load(Ordering::Relaxed);
-            val = next_sample_interval(mean) as isize;
+        if leak_active || val <= 0 {
+            if !leak_active {
+                let mean = SAMPLE_INTERVAL.load(Ordering::Relaxed);
+                val = next_sample_interval(mean) as isize;
+            }
 
             let mut stack = Vec::with_capacity(32);
             backtrace::trace(|frame| {
@@ -261,15 +285,19 @@ fn sample_alloc_inner(ptr: *mut u8, size: usize) {
                 map.insert(ptr as usize, Sample { size, stack });
             }
         }
-        BYTES_UNTIL_SAMPLE = val - size as isize;
+        if !leak_active {
+            BYTES_UNTIL_SAMPLE = val - size as isize;
+        }
     }
 
     #[cfg(not(feature = "nightly_tls"))]
     BYTES_UNTIL_SAMPLE.with(|cell| {
         let mut val = cell.get();
-        if val <= 0 {
-            let mean = SAMPLE_INTERVAL.load(Ordering::Relaxed);
-            val = next_sample_interval(mean) as isize;
+        if leak_active || val <= 0 {
+            if !leak_active {
+                let mean = SAMPLE_INTERVAL.load(Ordering::Relaxed);
+                val = next_sample_interval(mean) as isize;
+            }
 
             let mut stack = Vec::with_capacity(32);
             backtrace::trace(|frame| {
@@ -286,7 +314,9 @@ fn sample_alloc_inner(ptr: *mut u8, size: usize) {
                 map.insert(ptr as usize, Sample { size, stack });
             }
         }
-        cell.set(val - size as isize);
+        if !leak_active {
+            cell.set(val - size as isize);
+        }
     });
 }
 
@@ -419,4 +449,95 @@ fn dump_profile_inner(path: &str) -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+/// Dumps all active allocations (representing leaks) with their resolved stacks to a file.
+///
+/// Returns the number of leaked blocks.
+pub fn dump_leaks(path: &str) -> std::io::Result<usize> {
+    #[cfg(feature = "nightly_tls")]
+    let in_hook = unsafe {
+        if IN_HOOK {
+            true
+        } else {
+            IN_HOOK = true;
+            false
+        }
+    };
+    #[cfg(not(feature = "nightly_tls"))]
+    let in_hook = IN_HOOK.with(|cell| {
+        if cell.get() {
+            true
+        } else {
+            cell.set(true);
+            false
+        }
+    });
+    if in_hook {
+        return Ok(0);
+    }
+
+    let result = dump_leaks_inner(path);
+
+    #[cfg(feature = "nightly_tls")]
+    unsafe { IN_HOOK = false; }
+    #[cfg(not(feature = "nightly_tls"))]
+    IN_HOOK.with(|cell| cell.set(false));
+    result
+}
+
+fn dump_leaks_inner(path: &str) -> std::io::Result<usize> {
+    let mut samples = Vec::new();
+    for shard in &ACTIVE_SAMPLES {
+        let lock = shard.lock().unwrap();
+        if let Some(ref map) = *lock {
+            for (&ptr, sample) in map.iter() {
+                samples.push((ptr, sample.size, sample.stack.clone()));
+            }
+        }
+    }
+
+    if samples.is_empty() {
+        return Ok(0);
+    }
+
+    let mut file = std::fs::File::create(path)?;
+    writeln!(file, "Mnemosyne Leak Report:")?;
+    writeln!(file, "======================")?;
+
+    let total_leaks = samples.len();
+    for (ptr, size, stack) in &samples {
+        writeln!(file, "\nLeak of {} bytes at {:#x}:", size, ptr)?;
+        for (idx, &ip) in stack.iter().enumerate() {
+            let mut name_opt = None;
+            let mut filename_opt = None;
+            let mut line_opt = None;
+            backtrace::resolve(ip as *mut c_void, |symbol| {
+                if let Some(name) = symbol.name() {
+                    name_opt = Some(name.to_string());
+                }
+                if let Some(path_buf) = symbol.filename() {
+                    filename_opt = Some(path_buf.to_string_lossy().into_owned());
+                }
+                if let Some(line) = symbol.lineno() {
+                    line_opt = Some(line);
+                }
+            });
+
+            let name = name_opt.unwrap_or_else(|| format!("{:#x}", ip));
+            match (filename_opt, line_opt) {
+                (Some(file_path), Some(line)) => {
+                    writeln!(file, "  #{}: {} ({}:{})", idx, name, file_path, line)?;
+                }
+                (Some(file_path), None) => {
+                    writeln!(file, "  #{}: {} ({})", idx, name, file_path)?;
+                }
+                _ => {
+                    writeln!(file, "  #{}: {}", idx, name)?;
+                }
+            }
+        }
+    }
+
+    Ok(total_leaks)
 }

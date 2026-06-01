@@ -151,3 +151,48 @@ fn test_reentrancy_protection() {
 
     register_alloc_hook(None);
 }
+
+#[test]
+fn test_leak_detector_and_dump_leaks() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    reset_options_for_testing();
+    mnemosyne_prof::reset_profiler_for_testing();
+
+    // Enable the leak detector
+    mnemosyne_prof::enable_leak_detector();
+    assert!(mnemosyne_prof::is_leak_detector_enabled());
+
+    // Do some allocations
+    let ptr1 = unsafe { thread_alloc::<StandardPolicy, Backend>(64, 8) };
+    let ptr2 = unsafe { thread_alloc::<StandardPolicy, Backend>(128, 8) };
+    assert!(!ptr1.is_null());
+    assert!(!ptr2.is_null());
+
+    // Free one allocation, keep the other as a leak
+    unsafe { thread_free::<StandardPolicy, Backend>(ptr1) };
+
+    // Dump leaks
+    let temp_dir = std::env::temp_dir();
+    let leak_path = temp_dir.join("mnemosyne_leaks_test.txt");
+    let leak_path_str = leak_path.to_str().unwrap();
+
+    let leak_count_res = mnemosyne_prof::dump_leaks(leak_path_str);
+    assert!(leak_count_res.is_ok(), "dump_leaks failed: {:?}", leak_count_res.err());
+    let leak_count = leak_count_res.unwrap();
+
+    // Clean up leak before asserting to avoid polluting subsequent tests
+    unsafe { thread_free::<StandardPolicy, Backend>(ptr2) };
+    mnemosyne_prof::disable_leak_detector();
+
+    // Verify report details
+    assert_eq!(leak_count, 1, "expected exactly 1 leak, found {}", leak_count);
+
+    let content = std::fs::read_to_string(leak_path_str).expect("Failed to read leak report file");
+    println!("Leak Report Content:\n{}", content);
+
+    assert!(content.contains("Mnemosyne Leak Report:"), "Report header missing");
+    assert!(content.contains("Leak of 128 bytes"), "Leak size missing or incorrect");
+    assert!(content.contains("test_leak_detector_and_dump_leaks"), "Stack trace missing the test function symbol");
+
+    let _ = std::fs::remove_file(leak_path);
+}

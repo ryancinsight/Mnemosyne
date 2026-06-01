@@ -16,7 +16,8 @@ pub use mnemosyne_heap::{
 pub use mnemosyne_local::{usable_size, SizeClassOccupancy};
 pub use mnemosyne_prof::{
     disable_profiling, dump_profile, enable_profiling, is_profiling_enabled, register_alloc_hook,
-    register_free_hook,
+    register_free_hook, enable_leak_detector, disable_leak_detector, is_leak_detector_enabled,
+    dump_leaks,
 };
 
 /// Returns the current allocator configuration options snapshot.
@@ -1021,5 +1022,44 @@ mod tests {
 
         // Verify is_cuda_available is callable
         let _ = is_cuda_available();
+    }
+
+    #[test]
+    fn test_leak_detector_integration() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("global allocator test lock was poisoned");
+        mnemosyne_prof::reset_profiler_for_testing();
+
+        enable_leak_detector();
+        assert!(is_leak_detector_enabled());
+
+        let layout = Layout::from_size_align(64, 8).expect("valid layout");
+        let ptr = unsafe { ALLOCATOR.alloc(layout) };
+        assert!(!ptr.is_null());
+
+        disable_leak_detector();
+        assert!(!is_leak_detector_enabled());
+
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("mnemosyne_integration_leaks.txt");
+        let path_str = path.to_str().expect("valid temp path");
+
+        let dump_res = dump_leaks(path_str);
+        assert!(dump_res.is_ok(), "dump_leaks failed: {:?}", dump_res.err());
+        let count = dump_res.unwrap();
+        assert!(count >= 1, "Expected at least 1 leak captured (got {})", count);
+
+        // Verify the file was created and contains the backtrace info
+        let content = std::fs::read_to_string(&path).expect("failed to read leak report");
+        assert!(
+            content.contains("test_leak_detector_integration"),
+            "Stack trace missing integration test function symbol: {}",
+            content
+        );
+
+        let _ = std::fs::remove_file(&path);
+        unsafe { ALLOCATOR.dealloc(ptr, layout) };
+        mnemosyne_prof::reset_profiler_for_testing();
     }
 }

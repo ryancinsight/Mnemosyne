@@ -49,6 +49,11 @@ int mnemosyne_is_profiling_enabled(void);
 int mnemosyne_dump_profile(const char *path);
 void mnemosyne_reset_profiler_for_testing(void);
 
+void mnemosyne_enable_leak_detector(void);
+void mnemosyne_disable_leak_detector(void);
+int mnemosyne_is_leak_detector_enabled(void);
+int mnemosyne_dump_leaks(const char *path);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

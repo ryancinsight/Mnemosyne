@@ -293,6 +293,51 @@ pub extern "C" fn mnemosyne_reset_profiler_for_testing() {
     mnemosyne_prof::reset_profiler_for_testing();
 }
 
+/// Enables the built-in memory leak detector, tracking every allocation with its backtrace.
+#[no_mangle]
+pub extern "C" fn mnemosyne_enable_leak_detector() {
+    mnemosyne_prof::enable_leak_detector();
+}
+
+/// Disables the built-in memory leak detector.
+#[no_mangle]
+pub extern "C" fn mnemosyne_disable_leak_detector() {
+    mnemosyne_prof::disable_leak_detector();
+}
+
+/// Returns whether the memory leak detector is currently active (1 if active, 0 if inactive).
+#[no_mangle]
+pub extern "C" fn mnemosyne_is_leak_detector_enabled() -> i32 {
+    if mnemosyne_prof::is_leak_detector_enabled() {
+        1
+    } else {
+        0
+    }
+}
+
+/// Dumps a report of all active memory allocations (leaks) to the specified file path.
+///
+/// Returns the number of leaks written on success, or -1 on error.
+///
+/// # Safety
+///
+/// `path` must be a valid, null-terminated UTF-8 C string.
+#[no_mangle]
+pub unsafe extern "C" fn mnemosyne_dump_leaks(path: *const core::ffi::c_char) -> i32 {
+    if path.is_null() {
+        return -1;
+    }
+    // Safety: path must be a valid null-terminated C string.
+    let c_str = unsafe { core::ffi::CStr::from_ptr(path) };
+    let Ok(str_slice) = c_str.to_str() else {
+        return -1;
+    };
+    match mnemosyne_prof::dump_leaks(str_slice) {
+        Ok(count) => count as i32,
+        Err(_) => -1,
+    }
+}
+
 #[cfg(test)]
 extern crate std;
 
@@ -487,5 +532,41 @@ mod tests {
             "malloc_usable_size(null) must be 0"
         );
         unsafe { free(ptr) };
+    }
+
+    #[test]
+    fn test_c_shim_leak_detector() {
+        let _guard = SHIM_LOCK.lock().expect("shim test lock poisoned");
+        unsafe {
+            mnemosyne_reset_profiler_for_testing();
+            mnemosyne_enable_leak_detector();
+            assert_eq!(mnemosyne_is_leak_detector_enabled(), 1);
+
+            let ptr = malloc(64);
+            assert!(!ptr.is_null());
+
+            mnemosyne_disable_leak_detector();
+            assert_eq!(mnemosyne_is_leak_detector_enabled(), 0);
+
+            let temp_dir = std::env::temp_dir();
+            let path = temp_dir.join("mnemosyne_c_shim_leaks.txt");
+            let path_str = path.to_str().expect("valid temp path");
+
+            // Convert string to C string
+            let c_path = std::ffi::CString::new(path_str).unwrap();
+            let count = mnemosyne_dump_leaks(c_path.as_ptr());
+            assert_eq!(count, 1, "Expected exactly 1 leak captured in C shim (got {})", count);
+
+            let content = std::fs::read_to_string(&path).expect("failed to read leak report");
+            assert!(
+                content.contains("test_c_shim_leak_detector"),
+                "Stack trace missing c_shim test function symbol: {}",
+                content
+            );
+
+            let _ = std::fs::remove_file(&path);
+            free(ptr);
+            mnemosyne_reset_profiler_for_testing();
+        }
     }
 }
