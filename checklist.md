@@ -266,6 +266,7 @@ Target version: 0.1.0
 
 ## Next
 
+- [x] [patch] Harden global allocator leak-detector integration test with guarded profiler/allocation cleanup and contextual dump diagnostics.
 - [x] [patch] Replace bare policy integration test layout/thread-join unwraps with contextual diagnostics.
 - [x] [patch] Harden local topology tests with contextual lock/layout/segment diagnostics and an RAII guard for the global per-CPU cache flag.
 - [x] [patch] Replace the remaining bare C-shim leak-report `CString` unwrap with contextual UTF-8 and interior-NUL diagnostics.
@@ -358,3 +359,4 @@ Target version: 0.1.0
 - [x] [patch] Narrow local-free defrag accounting to `became_empty` transitions so full-page-to-active deallocations do not pay periodic-sweep cadence; focused Criterion improved `allocator deallocation latency/Mnemosyne/large_8192` from about `70.679 ns` in the retained table to `29.550 ns`.
 - [x] [patch] Reject a guard-free full-page-to-active local-free split after it failed to improve `allocator deallocation latency/Mnemosyne/large_8192` and regressed small/medium/large cycle rows.
 - [x] [patch] Reject deferred empty-page migration after focused benchmarking showed no material `large_8192` deallocation improvement.
+- [x] [patch] Replace bare heap integration test layout and worker-join unwraps with contextual diagnostics.

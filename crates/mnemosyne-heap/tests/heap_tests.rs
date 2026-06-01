@@ -4,11 +4,16 @@ use mnemosyne_heap::MnemosyneHeap;
 
 static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+fn test_layout(size: usize, align: usize) -> Layout {
+    Layout::from_size_align(size, align)
+        .expect("heap integration test layout must use a nonzero power-of-two alignment")
+}
+
 #[test]
 fn test_multi_heap_basic() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let heap = MnemosyneHeap::<StandardPolicy>::new();
-    let layout = Layout::from_size_align(32, 8).unwrap();
+    let layout = test_layout(32, 8);
     let ptr = heap.alloc(layout);
     assert!(!ptr.is_null());
     unsafe { ptr.write(123) };
@@ -32,7 +37,7 @@ fn test_multi_heap_cross_thread() {
     let heap = Arc::new(Mutex::new(MnemosyneHeap::<StandardPolicy>::new()));
 
     let heap_clone = heap.clone();
-    let layout = Layout::from_size_align(64, 8).unwrap();
+    let layout = test_layout(64, 8);
 
     let handle = thread::spawn(move || {
         let heap_guard = heap_clone.lock().unwrap_or_else(|e| e.into_inner());
@@ -42,7 +47,9 @@ fn test_multi_heap_cross_thread() {
         ptr as usize
     });
 
-    let ptr_val = handle.join().unwrap();
+    let ptr_val = handle
+        .join()
+        .expect("heap cross-thread allocation worker panicked");
     let ptr = ptr_val as *mut u8;
 
     // Free the pointer on the main thread
@@ -72,7 +79,7 @@ fn test_runtime_options_override_default_retention() {
     // Do an allocation via MnemosyneHeap to trigger options parsing and then drop it
     {
         let heap = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
-        let layout = Layout::from_size_align(32, 8).unwrap();
+        let layout = test_layout(32, 8);
         let ptr = heap.alloc(layout);
         assert!(!ptr.is_null());
         unsafe {
@@ -96,7 +103,7 @@ fn multi_heap_isolates_allocation_streams() {
     let heap1 = MnemosyneHeap::<StandardPolicy>::new();
     let heap2 = MnemosyneHeap::<StandardPolicy>::new();
 
-    let layout = Layout::from_size_align(32, 8).unwrap();
+    let layout = test_layout(32, 8);
 
     // Allocate from both heaps
     let ptr1 = heap1.alloc(layout);
@@ -144,7 +151,7 @@ fn multi_heap_release_does_not_touch_other_heaps() {
     let heap1 = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
     let heap2 = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
 
-    let layout = Layout::from_size_align(32, 8).unwrap();
+    let layout = test_layout(32, 8);
 
     // 2. Allocate blocks
     let ptr1 = heap1.alloc(layout);
@@ -215,7 +222,7 @@ fn test_programmatic_options_configure() {
 
     {
         let heap = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
-        let layout = Layout::from_size_align(32, 8).unwrap();
+        let layout = test_layout(32, 8);
         let ptr = heap.alloc(layout);
         assert!(!ptr.is_null());
         unsafe {

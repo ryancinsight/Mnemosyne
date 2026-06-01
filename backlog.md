@@ -2,6 +2,8 @@
 
 ## Completed
 
+- [patch] Replace bare heap integration test layout and worker-join unwraps with contextual diagnostics.
+- [patch] Harden global allocator leak-detector integration test with guarded profiler/allocation cleanup and contextual dump diagnostics.
 - [patch] Replace bare policy integration test layout/thread-join unwraps with contextual diagnostics.
 - [patch] Harden local topology tests with contextual diagnostics and an RAII guard for the global per-CPU cache flag.
 - [patch] Replace the remaining bare C-shim leak-report `CString` unwrap with contextual diagnostics.
