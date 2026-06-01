@@ -180,6 +180,35 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             .is_some_and(|current| current.as_ptr() == segment)
     }
 
+    /// Records one cold allocator transition and runs the defragmentation sweep
+    /// when the cadence threshold is reached. Hot block alloc/free paths do not
+    /// call this helper; sweep cadence is tied to page-level transitions.
+    ///
+    /// # Safety
+    ///
+    /// The caller must hold exclusive access to this thread allocator.
+    #[inline(always)]
+    pub unsafe fn record_defrag_operation<P: mnemosyne_core::AllocPolicy>(&mut self) {
+        self.defrag_counter += 1;
+        if self.defrag_counter >= 64 {
+            unsafe { self.run_periodic_defragmentation::<P>() };
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    unsafe fn run_periodic_defragmentation<P: mnemosyne_core::AllocPolicy>(&mut self) {
+        self.defrag_counter = 0;
+        if self.is_allocating {
+            unsafe { self.periodic_defragmentation_sweep::<P>() };
+            return;
+        }
+
+        self.is_allocating = true;
+        unsafe { self.periodic_defragmentation_sweep::<P>() };
+        self.is_allocating = false;
+    }
+
     /// Updates the active slicing segment marker.
     ///
     /// # Safety

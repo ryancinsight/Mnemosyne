@@ -74,7 +74,7 @@ pub(crate) unsafe fn try_reclaim_and_allocate<P: AllocPolicy>(
     // Safety: `reclaim_thread_free` returning a nonzero count guarantees
     // that the drained chain is now linked onto `page.free`.
     let block = unsafe { pop_page_free_block::<P>(page) };
-    page.alloc_count += 1;
+    unsafe { page.increment_alloc_count() };
     Some(block)
 }
 

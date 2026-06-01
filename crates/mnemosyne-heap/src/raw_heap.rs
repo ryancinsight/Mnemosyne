@@ -4,8 +4,9 @@ use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::internal::{
     allocate_large_or_huge, deallocate_large_or_huge, do_local_free_internal,
     ensure_options_initialized, initialize_allocated_bytes, is_valid_layout_alloc_request,
-    poison_freed_bytes, size_to_class_nonzero, Block, HasSegmentPool, Page, Segment, ThreadAllocator,
-    MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT, SEGMENT_SIZE,
+    poison_freed_bytes, size_to_class_nonzero, Block, HasSegmentPool, Page, Segment,
+    ThreadAllocator, MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT,
+    SEGMENT_SIZE,
 };
 
 pub(crate) struct RawHeap<P: AllocPolicy, B: HasSegmentPool> {
@@ -129,7 +130,8 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         }
 
         if alloc.is_allocating {
-            let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
+            let ptr =
+                unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
             if !ptr.is_null() {
                 unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
             }
@@ -276,7 +278,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             unsafe {
                 (*block).set_next::<P>(page_free, cookie);
                 page.free = Some(NonNull::new_unchecked(block));
-                page.set_alloc_count(page_alloc_count - 1);
+                page.decrement_alloc_count_for_segment(segment, page_index);
             }
 
             alloc.defrag_counter += 1;
@@ -291,7 +293,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
 
         alloc.is_allocating = true;
         unsafe {
-            do_local_free_internal::<P, B>(alloc, block, page, segment);
+            do_local_free_internal::<P, B>(alloc, block, page, segment, page_index);
         }
 
         alloc.defrag_counter += 1;

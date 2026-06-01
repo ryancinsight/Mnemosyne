@@ -88,6 +88,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// index is within bounds of the `active_pages` array.
     #[inline(never)]
     pub unsafe fn alloc_cold<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
+        unsafe { self.record_defrag_operation::<P>() };
         // 1. Move the current active page to full_pages if it is indeed full.
         if let Some(mut active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
             let active_page = active_ptr.as_mut();
@@ -121,14 +122,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 };
                 unsafe {
                     active_page.free = (*block.as_ptr()).get_next::<P>(cookie);
-                    active_page.set_alloc_count(active_page.alloc_count + 1);
+                    active_page.increment_alloc_count();
                 }
                 return block.as_ptr() as *mut u8;
             }
             if active_page.initialized_blocks < active_page.max_blocks() {
                 let idx = active_page.initialized_blocks;
                 active_page.initialized_blocks += 1;
-                active_page.set_alloc_count(active_page.alloc_count + 1);
+                active_page.increment_alloc_count();
                 let page_start = active_page.page_start();
                 let block_ptr = unsafe { page_start.add(idx * active_page.block_size) };
                 return block_ptr;
@@ -186,7 +187,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // `initialize_free_list` populated `free` with at least one block.
         let block = pop_page_free_block::<P>(page);
 
-        page.set_alloc_count(page.alloc_count + 1);
+        page.increment_alloc_count();
 
         // If it becomes full immediately, move to full list
         if page.alloc_count == page.max_blocks() {

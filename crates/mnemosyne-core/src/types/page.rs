@@ -91,18 +91,135 @@ impl Page {
         if old == count {
             return;
         }
-        self.alloc_count = count;
         if (old == 0) != (count == 0) {
             let self_addr = self as *mut Page as usize;
             let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
             let segment = segment_addr as *mut Segment;
-            let idx = self.index_in_segment();
-            unsafe {
-                if count > 0 {
-                    (*segment).page_occupied_mask |= 1 << idx;
-                } else {
-                    (*segment).page_occupied_mask &= !(1 << idx);
-                }
+            let pages_base = segment_addr + core::mem::offset_of!(Segment, pages);
+            let idx = (self_addr - pages_base) / core::mem::size_of::<Page>();
+            unsafe { self.set_alloc_count_for_segment(segment, idx, count) };
+        } else {
+            self.alloc_count = count;
+        }
+    }
+
+    /// Sets `alloc_count` when the caller already knows the containing segment
+    /// and page index.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must be this page's parent segment, and `page_index` must be
+    /// this page's index in `segment.pages`.
+    #[inline(always)]
+    pub unsafe fn set_alloc_count_for_segment(
+        &mut self,
+        segment: *mut Segment,
+        page_index: usize,
+        count: usize,
+    ) {
+        debug_assert!(page_index < crate::constants::PAGES_PER_SEGMENT);
+        let old = self.alloc_count;
+        if old == count {
+            return;
+        }
+        self.alloc_count = count;
+        if (old == 0) != (count == 0) {
+            unsafe { Self::set_segment_page_occupied(segment, page_index, count > 0) };
+        }
+    }
+
+    /// Increments `alloc_count`, updating the segment occupancy bit only on
+    /// the empty-to-occupied transition.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee that the parent segment is a valid Segment mapping.
+    #[inline(always)]
+    pub unsafe fn increment_alloc_count(&mut self) {
+        let old = self.alloc_count;
+        self.alloc_count = old + 1;
+        if old == 0 {
+            let self_addr = self as *mut Page as usize;
+            let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
+            let segment = segment_addr as *mut Segment;
+            let pages_base = segment_addr + core::mem::offset_of!(Segment, pages);
+            let idx = (self_addr - pages_base) / core::mem::size_of::<Page>();
+            unsafe { Self::set_segment_page_occupied(segment, idx, true) };
+        }
+    }
+
+    /// Increments `alloc_count` when the caller already knows the containing
+    /// segment and page index.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must be this page's parent segment, and `page_index` must be
+    /// this page's index in `segment.pages`.
+    #[inline(always)]
+    pub unsafe fn increment_alloc_count_for_segment(
+        &mut self,
+        segment: *mut Segment,
+        page_index: usize,
+    ) {
+        debug_assert!(page_index < crate::constants::PAGES_PER_SEGMENT);
+        let old = self.alloc_count;
+        self.alloc_count = old + 1;
+        if old == 0 {
+            unsafe { Self::set_segment_page_occupied(segment, page_index, true) };
+        }
+    }
+
+    /// Decrements `alloc_count`, updating the segment occupancy bit only on
+    /// the occupied-to-empty transition.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee that the parent segment is a valid Segment mapping.
+    #[inline(always)]
+    pub unsafe fn decrement_alloc_count(&mut self) {
+        debug_assert!(self.alloc_count > 0);
+        let count = self.alloc_count - 1;
+        self.alloc_count = count;
+        if count == 0 {
+            let self_addr = self as *mut Page as usize;
+            let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
+            let segment = segment_addr as *mut Segment;
+            let pages_base = segment_addr + core::mem::offset_of!(Segment, pages);
+            let idx = (self_addr - pages_base) / core::mem::size_of::<Page>();
+            unsafe { Self::set_segment_page_occupied(segment, idx, false) };
+        }
+    }
+
+    /// Decrements `alloc_count` when the caller already knows the containing
+    /// segment and page index.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must be this page's parent segment, and `page_index` must be
+    /// this page's index in `segment.pages`.
+    #[inline(always)]
+    pub unsafe fn decrement_alloc_count_for_segment(
+        &mut self,
+        segment: *mut Segment,
+        page_index: usize,
+    ) {
+        debug_assert!(page_index < crate::constants::PAGES_PER_SEGMENT);
+        debug_assert!(self.alloc_count > 0);
+        let count = self.alloc_count - 1;
+        self.alloc_count = count;
+        if count == 0 {
+            unsafe { Self::set_segment_page_occupied(segment, page_index, false) };
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn set_segment_page_occupied(segment: *mut Segment, page_index: usize, occupied: bool) {
+        let mask = 1 << page_index;
+        unsafe {
+            if occupied {
+                (*segment).page_occupied_mask |= mask;
+            } else {
+                (*segment).page_occupied_mask &= !mask;
             }
         }
     }

@@ -158,7 +158,10 @@
 - [patch] Fix decay engine thread-spawning shadowing bug and add `decay_purger_reaches_steady_state` integration test.
 - [patch] Expose `get_options` and `configure` in the top-level `mnemosyne` crate and verify via programmatic configuration tests.
 - [patch] Add `multi_heap_isolates_allocation_streams` and `multi_heap_release_does_not_touch_other_heaps` integration tests.
+- [patch] Consolidate public allocator periodic-defragmentation accounting into a shared `ThreadAllocator::record_defrag_operation` cold-sweep boundary.
+- [patch] Reject extending the shared defrag-accounting helper to `RawHeap` after explicit/branded cycle rows regressed; heap-local hot paths retain their inline accounting shape.
+- [patch] Split page allocation-counter updates into monomorphized increment/decrement helpers and pass known page indices through free paths so occupancy-mask maintenance avoids redundant page-index recovery.
 
 ## Next
 
-- [patch] Continue reducing the remaining mimalloc disparity in allocator rows that remain above parity after focused reruns, without moving selected benchmark baselines.
+- [patch] Close remaining comparator-parity gaps in `allocator_comparison.md`: mimalloc still leads small cycle, small burst, cross-class realloc, within-class realloc, and threaded saturated small; jemalloc still leads huge allocation, medium allocation, and large deallocation by current point estimates.

@@ -102,36 +102,18 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                     };
                     unsafe {
                         page.free = (*block.as_ptr()).get_next::<P>(cookie);
-                        page.set_alloc_count(page.alloc_count + 1);
+                        page.increment_alloc_count();
                     }
                     let ptr = block.as_ptr() as *mut u8;
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-
-                    alloc.defrag_counter += 1;
-                    if alloc.defrag_counter >= 1024 {
-                        alloc.defrag_counter = 0;
-                        alloc.is_allocating = true;
-                        unsafe { alloc.periodic_defragmentation_sweep::<P>() };
-                        alloc.is_allocating = false;
-                    }
-
                     return ptr;
                 } else if page.initialized_blocks < page.max_blocks() {
                     let idx = page.initialized_blocks;
                     page.initialized_blocks += 1;
-                    page.set_alloc_count(page.alloc_count + 1);
+                    page.increment_alloc_count();
                     let page_start = page.page_start();
                     let ptr = unsafe { page_start.add(idx * page.block_size) };
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-
-                    alloc.defrag_counter += 1;
-                    if alloc.defrag_counter >= 1024 {
-                        alloc.defrag_counter = 0;
-                        alloc.is_allocating = true;
-                        unsafe { alloc.periodic_defragmentation_sweep::<P>() };
-                        alloc.is_allocating = false;
-                    }
-
                     return ptr;
                 }
             }
@@ -179,13 +161,7 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
     alloc.is_allocating = false;
 
     if !ptr.is_null() {
-        alloc.defrag_counter += 1;
-        if alloc.defrag_counter >= 1024 {
-            alloc.defrag_counter = 0;
-            alloc.is_allocating = true;
-            unsafe { alloc.periodic_defragmentation_sweep::<P>() };
-            alloc.is_allocating = false;
-        }
+        unsafe { alloc.record_defrag_operation::<P>() };
     }
 
     let final_ptr = if ptr.is_null() {

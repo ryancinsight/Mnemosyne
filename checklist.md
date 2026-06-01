@@ -329,3 +329,9 @@ Target version: 0.1.0
 - [x] [patch] Fix decay engine thread-spawning shadowing bug and add `decay_purger_reaches_steady_state` integration test.
 - [x] [patch] Expose `get_options` and `configure` in the top-level `mnemosyne` crate and verify via programmatic configuration tests.
 - [x] [patch] Add `multi_heap_isolates_allocation_streams` and `multi_heap_release_does_not_touch_other_heaps` integration tests.
+
+- [x] [patch] Consolidate public allocator periodic-defragmentation accounting behind `ThreadAllocator::record_defrag_operation`, keeping the sweep cold and shared across allocation/free paths.
+- [x] [patch] Reject applying the shared defrag-accounting helper to `RawHeap` after explicit/branded heap cycle rows showed measurable regressions; keep heap-local hot defrag accounting inline.
+- [x] [patch] Re-run focused Mnemosyne hot rows after public defrag-accounting consolidation: small cycle no regression, small usable-size combined improved, saturated threaded improved, and threshold summary passed.
+- [x] [patch] Specialize page allocation-counter transitions with increment/decrement helpers and known-index free paths; focused Criterion reports small cycle `2.952 ns`, usable-size combined `3.089 ns`, threaded small `6.076 us`, and saturated threaded `86.402 us`.
+- [x] [patch] Refresh `benchmarks/allocator_comparison.md` after focused reruns; public small deallocation now beats listed comparators, while large deallocation remains behind jemalloc.

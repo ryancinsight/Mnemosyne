@@ -835,4 +835,3 @@ fn test_periodic_defragmentation_segment_reclaim() {
         assert!(alloc.is_current_segment(seg1));
     }
 }
-

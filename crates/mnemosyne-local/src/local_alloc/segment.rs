@@ -253,12 +253,15 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         if pg.alloc_count == 0 && (pg.list_state == 1 || pg.list_state == 2) {
                             let class = pg.size_class as usize;
                             let is_only_active = self.active_pages[class].is_some_and(|head| {
-                                core::ptr::eq(head.as_ptr(), pg) && unsafe { (*head.as_ptr()).next_page.is_none() }
+                                core::ptr::eq(head.as_ptr(), pg)
+                                    && unsafe { (*head.as_ptr()).next_page.is_none() }
                             });
                             if !is_only_active {
                                 unsafe {
                                     self.unlink_page(pg as *mut Page, class);
-                                    self.push_empty_page(core::ptr::NonNull::new_unchecked(pg as *mut Page));
+                                    self.push_empty_page(core::ptr::NonNull::new_unchecked(
+                                        pg as *mut Page,
+                                    ));
                                 }
                             }
                         }
