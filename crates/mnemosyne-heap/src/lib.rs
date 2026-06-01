@@ -1304,6 +1304,75 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         }
     }
 
+    /// Clones and appends all elements in a slice to the vector.
+    ///
+    /// # Errors
+    /// Returns `Err(())` if capacity overflow or allocation fails.
+    #[inline]
+    pub fn extend_from_slice(
+        &mut self,
+        token: &mut AllocatorToken<'brand>,
+        other: &[T],
+    ) -> Result<(), ()>
+    where
+        T: Clone,
+    {
+        self.reserve(token, other.len())?;
+        for item in other {
+            self.push(token, item.clone()).map_err(|_| ())?;
+        }
+        Ok(())
+    }
+
+    /// Resizes the vector in-place so that `len` is equal to `new_len`.
+    ///
+    /// If `new_len` is greater than `len`, the vector is extended by the difference,
+    /// with each additional slot filled with a clone of `value`.
+    /// If `new_len` is less than `len`, the vector is truncated.
+    ///
+    /// # Errors
+    /// Returns `Err(())` if capacity overflow or allocation fails.
+    #[inline]
+    pub fn resize(
+        &mut self,
+        token: &mut AllocatorToken<'brand>,
+        new_len: usize,
+        value: T,
+    ) -> Result<(), ()>
+    where
+        T: Clone,
+    {
+        if new_len > self.len {
+            self.reserve(token, new_len - self.len)?;
+            while self.len < new_len {
+                self.push(token, value.clone()).map_err(|_| ())?;
+            }
+        } else {
+            self.truncate(new_len);
+        }
+        Ok(())
+    }
+
+    /// Extends the vector with the contents of an iterator.
+    ///
+    /// # Errors
+    /// Returns `Err(())` if allocation fails.
+    #[inline]
+    pub fn extend<I>(&mut self, token: &mut AllocatorToken<'brand>, iter: I) -> Result<(), ()>
+    where
+        I: IntoIterator<Item = T>,
+    {
+        let iterator = iter.into_iter();
+        let (lower, _) = iterator.size_hint();
+        if lower > 0 {
+            self.reserve(token, lower)?;
+        }
+        for item in iterator {
+            self.push(token, item).map_err(|_| ())?;
+        }
+        Ok(())
+    }
+
     /// Inserts an element at position `index` within the vector, shifting all elements after it to the right.
     ///
     /// # Panics
@@ -1610,6 +1679,102 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedCell<'brand, T> {
 }
 
 /// Executes a closure with a fresh, compile-time unique branded heap and token.
+///
+/// # Examples
+///
+/// ```
+/// use mnemosyne_core::StandardPolicy;
+/// use mnemosyne_backend::MemoryBackendWrapper;
+/// use mnemosyne_heap::scope;
+///
+/// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+///     let val = mnemosyne_heap::BrandedBox::new(&heap, &token, 42).unwrap();
+///     assert_eq!(*val, 42);
+/// });
+/// ```
+///
+/// This example fails to compile because it attempts to escape a branded block from its scope:
+///
+/// ```compile_fail
+/// use mnemosyne_core::StandardPolicy;
+/// use mnemosyne_backend::MemoryBackendWrapper;
+/// use mnemosyne_heap::{scope, BrandedBlock};
+///
+/// let mut escaped: Option<BrandedBlock<'static, i32>> = None;
+/// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+///     let block = heap.alloc_init(&token, 42).unwrap();
+///     // This compile error is expected because the 'brand lifetime cannot escape the closure scope:
+///     escaped = Some(block);
+/// });
+/// ```
+///
+/// Proving that thread-exclusivity bounds are enforced at compile time.
+/// Since `AllocatorToken` is `!Send` and `!Sync`, the following fails to compile:
+///
+/// ```compile_fail
+/// use mnemosyne_core::StandardPolicy;
+/// use mnemosyne_backend::MemoryBackendWrapper;
+/// use mnemosyne_heap::scope;
+/// use std::thread;
+///
+/// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
+///     // AllocatorToken is !Send, so sending it to another thread is a compile error:
+///     thread::spawn(move || {
+///         let _t = token;
+///     });
+/// });
+/// ```
+///
+/// Proving that `BrandedBox` is `!Send`:
+///
+/// ```compile_fail
+/// use mnemosyne_core::StandardPolicy;
+/// use mnemosyne_backend::MemoryBackendWrapper;
+/// use mnemosyne_heap::scope;
+/// use std::thread;
+///
+/// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
+///     let val = heap.alloc_init(&token, 42).unwrap();
+///     let boxed = unsafe { mnemosyne_heap::BrandedBox::from_raw(&heap, val) };
+///     // BrandedBox is !Send, so sending it to another thread is a compile error:
+///     thread::spawn(move || {
+///         let _b = boxed;
+///     });
+/// });
+/// ```
+///
+/// Proving that `BrandedVec` is `!Send`:
+///
+/// ```compile_fail
+/// use mnemosyne_core::StandardPolicy;
+/// use mnemosyne_backend::MemoryBackendWrapper;
+/// use mnemosyne_heap::{scope, BrandedVec};
+/// use std::thread;
+///
+/// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
+///     let mut vec = BrandedVec::new(&heap);
+///     // BrandedVec is !Send, so sending it to another thread is a compile error:
+///     thread::spawn(move || {
+///         let _v = vec;
+///     });
+/// });
+/// ```
+///
+/// Proving that two distinct scopes cannot mix allocation tokens or heaps:
+///
+/// ```compile_fail
+/// use mnemosyne_core::StandardPolicy;
+/// use mnemosyne_backend::MemoryBackendWrapper;
+/// use mnemosyne_heap::scope;
+///
+/// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap1, mut token1| {
+///     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap2, mut token2| {
+///         let val = heap1.alloc_init(&token1, 42).unwrap();
+///         // This fails to compile because token2 has a different 'brand:
+///         heap2.free(&mut token2, val);
+///     });
+/// });
+/// ```
 pub fn scope<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>, F, R>(f: F) -> R
 where
     F: for<'brand> FnOnce(BrandedHeap<'brand, P, B>, AllocatorToken<'brand>) -> R,
@@ -2443,5 +2608,40 @@ mod tests {
         // struct SyncAssert<T: Sync>(T);
         // let _ = SendAssert(std::marker::PhantomData::<*mut ()>);
         // let _ = SyncAssert(std::marker::PhantomData::<*mut ()>);
+    }
+
+    #[test]
+    fn test_branded_vec_extensions() {
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let mut vec = BrandedVec::new(&heap);
+            assert_eq!(vec.len(), 0);
+
+            // Test extend
+            vec.extend(&mut token, std::vec![10, 20, 30]).unwrap();
+            assert_eq!(vec.len(), 3);
+            assert_eq!(vec[0], 10);
+            assert_eq!(vec[1], 20);
+            assert_eq!(vec[2], 30);
+
+            // Test extend_from_slice
+            vec.extend_from_slice(&mut token, &[40, 50]).unwrap();
+            assert_eq!(vec.len(), 5);
+            assert_eq!(vec[3], 40);
+            assert_eq!(vec[4], 50);
+
+            // Test resize (grow)
+            vec.resize(&mut token, 7, 99).unwrap();
+            assert_eq!(vec.len(), 7);
+            assert_eq!(vec[5], 99);
+            assert_eq!(vec[6], 99);
+
+            // Test resize (shrink)
+            vec.resize(&mut token, 4, 99).unwrap();
+            assert_eq!(vec.len(), 4);
+            assert_eq!(vec[0], 10);
+            assert_eq!(vec[1], 20);
+            assert_eq!(vec[2], 30);
+            assert_eq!(vec[3], 40);
+        });
     }
 }
