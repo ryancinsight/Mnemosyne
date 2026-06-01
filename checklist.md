@@ -362,3 +362,7 @@ Target version: 0.1.0
 - [x] [patch] Replace bare heap integration test layout and worker-join unwraps with contextual diagnostics.
 - [x] [patch] Replace bare heap unit-test layout unwraps with a shared contextual layout helper.
 - [x] [patch] Replace bare branded-vector transition push unwraps with operation-specific diagnostics.
+- [x] [patch] Replace bare branded-cell test allocation and vector-push unwraps with operation-specific diagnostics.
+- [x] [patch] Replace bare branded container trait-operation unwraps with operation-specific diagnostics.
+- [x] [patch] Replace remaining branded vector shrink and extension unwraps with operation-specific diagnostics.
+- [x] [patch] Replace the local allocator page-saturation test panic with a value assertion carrying segment/page diagnostics.

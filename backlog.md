@@ -2,6 +2,10 @@
 
 ## Completed
 
+- [patch] Replace the local allocator page-saturation test panic with a value assertion carrying segment/page diagnostics.
+- [patch] Replace remaining branded vector shrink and extension unwraps with operation-specific diagnostics.
+- [patch] Replace bare branded container trait-operation unwraps with operation-specific diagnostics.
+- [patch] Replace bare branded-cell test allocation and vector-push unwraps with operation-specific diagnostics.
 - [patch] Replace bare branded-vector transition push unwraps with operation-specific diagnostics.
 - [patch] Replace bare heap unit-test layout unwraps with a shared contextual layout helper.
 - [patch] Replace bare heap integration test layout and worker-join unwraps with contextual diagnostics.

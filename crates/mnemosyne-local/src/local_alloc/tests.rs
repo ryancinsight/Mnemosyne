@@ -531,9 +531,11 @@ fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
         let ptr_val = ptr as usize;
         let ptr_seg = ptr_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
         let ptr_page = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-        if ptr_seg != segment_addr || ptr_page != page_index {
-            panic!("allocation {count} left the page before saturation (max_blocks={max_blocks})");
-        }
+        assert_eq!(
+            (ptr_seg, ptr_page),
+            (segment_addr, page_index),
+            "allocation {count} left the page before saturation: ptr={ptr:p}, expected_segment={segment_addr:#x}, actual_segment={ptr_seg:#x}, expected_page={page_index}, actual_page={ptr_page}, max_blocks={max_blocks}"
+        );
         assert_ne!(
             ptr, last,
             "allocator returned a duplicate pointer at {count}"
