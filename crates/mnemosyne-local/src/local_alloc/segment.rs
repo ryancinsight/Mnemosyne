@@ -272,11 +272,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // 2. If the segment is completely empty (zero active allocations across all pages),
             // and we have more than 3 segments in our owned list, reclaim it.
             if total_allocations == 0 {
-                // Count owned segments
                 let mut segment_count = 0;
                 let mut scan = self.owned_segments_head;
                 while !scan.is_null() {
                     segment_count += 1;
+                    if segment_count >= 4 {
+                        break;
+                    }
                     scan = unsafe { (*scan).next_owned_segment };
                 }
 
