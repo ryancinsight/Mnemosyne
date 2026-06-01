@@ -125,10 +125,8 @@ impl Page {
             return;
         }
         self.alloc_count = count;
-        if (old == 0) != (count == 0) {
-            if count > 0 || unsafe { !(*segment).is_current } {
-                unsafe { Self::set_segment_page_occupied(segment, page_index, count > 0) };
-            }
+        if (old == 0) != (count == 0) && (count > 0 || unsafe { !(*segment).is_current }) {
+            unsafe { Self::set_segment_page_occupied(segment, page_index, count > 0) };
         }
     }
 

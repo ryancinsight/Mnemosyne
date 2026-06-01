@@ -220,10 +220,13 @@ fn test_c_shim_leak_detector() {
 
         let temp_dir = std::env::temp_dir();
         let path = temp_dir.join("mnemosyne_c_shim_leaks.txt");
-        let path_str = path.to_str().expect("valid temp path");
+        let path_str = path
+            .to_str()
+            .expect("temporary C-shim leak-report path must be valid UTF-8");
 
         // Convert string to C string
-        let c_path = std::ffi::CString::new(path_str).unwrap();
+        let c_path = std::ffi::CString::new(path_str)
+            .expect("temporary C-shim leak-report path must not contain interior NUL bytes");
         let count = mnemosyne_dump_leaks(c_path.as_ptr());
         assert_eq!(
             count, 1,

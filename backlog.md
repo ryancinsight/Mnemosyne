@@ -2,6 +2,15 @@
 
 ## Completed
 
+- [patch] Replace bare policy integration test layout/thread-join unwraps with contextual diagnostics.
+- [patch] Harden local topology tests with contextual diagnostics and an RAII guard for the global per-CPU cache flag.
+- [patch] Replace the remaining bare C-shim leak-report `CString` unwrap with contextual diagnostics.
+- [patch] Reconcile `complexity_audit.md` with the current free-list/bump-page allocator after the bitmap free-list experiment was rejected.
+- [patch] Replace bare segment-layout unwraps in `mnemosyne-core::types` tests with a single contextual layout helper.
+- [patch] Harden `mnemosyne-prof` integration tests with contextual diagnostics and RAII cleanup for global profiler state and live thread allocations.
+- [patch] Remove production panic paths from OS TLS key initialization; native TLS failure now falls back to standard thread-local state for allocator and profiler access.
+- [patch] Harden profiler sample storage against poisoned shard locks and bounded stack-capture overflow while preserving exact retained stack slices.
+- [patch] Clean up the clippy-reported nested occupancy-mask branch in `Page::set_alloc_count_for_segment`.
 - [patch] Include the `Threaded medium allocation cycles` Criterion group in benchmark-summary extraction and generated allocator comparison reports.
 - [patch] Pin benchmark-summary active-group filtering with unit tests so all allocator benchmark groups are retained and exploratory TLS benchmark rows stay out of allocator comparison summaries.
 - [patch] Make benchmark threshold enforcement reject incomplete current Criterion data when any selected baseline row is absent.
@@ -174,4 +183,4 @@
 
 ## Next
 
-- [patch] Close remaining comparator-parity gaps in `allocator_comparison.md`: mimalloc still narrowly leads public small cycle by current point estimate (`2.799 ns` vs `2.744 ns`), while combined small usable-size latency now measures ahead of mimalloc (`2.848 ns` vs `2.987 ns`).
+- [patch] Re-run focused Criterion rows for `usable size latency/small_32`, `threaded small allocation cycles`, and `threaded saturated small allocation cycles` under a quiescent environment; current summary extraction shows selected thresholds passing, public small cycle ahead of mimalloc, and remaining point-estimate gaps in combined usable-size and threaded rows.

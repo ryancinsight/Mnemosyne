@@ -11,6 +11,14 @@ impl crate::policy::AllocPolicy for RandomizedTestPolicy {
     const RANDOMIZE_ALLOCATION: bool = true;
 }
 
+fn segment_layout() -> Layout {
+    Layout::from_size_align(
+        crate::constants::SEGMENT_SIZE,
+        crate::constants::SEGMENT_SIZE,
+    )
+    .expect("segment layout uses equal power-of-two size and alignment")
+}
+
 #[test]
 fn page_struct_size_stays_within_one_cache_line() {
     // Page metadata is hot: every allocation reads and writes
@@ -27,11 +35,7 @@ fn page_struct_size_stays_within_one_cache_line() {
 
 #[test]
 fn test_page_reclaim_thread_free() {
-    let layout = Layout::from_size_align(
-        crate::constants::SEGMENT_SIZE,
-        crate::constants::SEGMENT_SIZE,
-    )
-    .unwrap();
+    let layout = segment_layout();
     let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
     assert!(
         !segment_ptr.is_null(),
@@ -68,11 +72,7 @@ fn test_page_reclaim_thread_free() {
 
 #[test]
 fn test_page_reclaim_thread_free_hot_path() {
-    let layout = Layout::from_size_align(
-        crate::constants::SEGMENT_SIZE,
-        crate::constants::SEGMENT_SIZE,
-    )
-    .unwrap();
+    let layout = segment_layout();
     let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
     assert!(
         !segment_ptr.is_null(),
@@ -124,11 +124,7 @@ fn test_page_reclaim_thread_free_hot_path() {
 
 #[test]
 fn randomized_page_free_list_uses_seeded_permutation() {
-    let layout = Layout::from_size_align(
-        crate::constants::SEGMENT_SIZE,
-        crate::constants::SEGMENT_SIZE,
-    )
-    .unwrap();
+    let layout = segment_layout();
     let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
     assert!(
         !segment_ptr.is_null(),

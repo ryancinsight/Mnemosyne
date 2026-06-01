@@ -64,7 +64,9 @@ static ACTIVE_SAMPLES: [Mutex<Option<HashMap<usize, Sample, FastBuildHasher>>>; 
 fn get_map(
     shard: usize,
 ) -> std::sync::MutexGuard<'static, Option<HashMap<usize, Sample, FastBuildHasher>>> {
-    let mut lock = ACTIVE_SAMPLES[shard].lock().unwrap();
+    let mut lock = ACTIVE_SAMPLES[shard]
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if lock.is_none() {
         *lock = Some(HashMap::with_hasher(FastBuildHasher));
     }
@@ -74,7 +76,9 @@ fn get_map(
 /// Reset the sampler state (active samples).
 pub(crate) fn reset_sampler_state() {
     for shard in &ACTIVE_SAMPLES {
-        let mut lock = shard.lock().unwrap();
+        let mut lock = shard
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *lock = None;
     }
 }
@@ -138,6 +142,9 @@ pub(crate) fn capture_stack() -> Box<[usize]> {
     backtrace::trace(|frame| {
         let ip = frame.ip() as usize;
         if ip != 0 {
+            if len == MAX_STACK_FRAMES {
+                return false;
+            }
             frames[len] = ip;
             len += 1;
         }
@@ -200,7 +207,9 @@ pub fn dump_profile(path: &str) -> std::io::Result<()> {
 fn dump_profile_inner(path: &str) -> std::io::Result<()> {
     let mut samples = Vec::new();
     for shard in &ACTIVE_SAMPLES {
-        let lock = shard.lock().unwrap();
+        let lock = shard
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(ref map) = *lock {
             for (_, sample) in map.iter() {
                 samples.push(sample.clone());
@@ -273,7 +282,9 @@ pub fn dump_leaks(path: &str) -> std::io::Result<usize> {
 fn dump_leaks_inner(path: &str) -> std::io::Result<usize> {
     let mut samples = Vec::new();
     for shard in &ACTIVE_SAMPLES {
-        let lock = shard.lock().unwrap();
+        let lock = shard
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(ref map) = *lock {
             for (&ptr, sample) in map.iter() {
                 samples.push((ptr, sample.clone()));

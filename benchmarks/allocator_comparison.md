@@ -2,39 +2,39 @@
 
 | Benchmark | Mnemosyne (ns) | MnemosyneHeap (ns) | BrandedHeap (ns) | System (ns) | MiMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs System | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc | MnemosyneHeap vs Mnemosyne | BrandedHeap vs Mnemosyne |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| allocator allocation latency/huge_2m | 523.478 | N/A | N/A | 4252.651 | 5127.208 | N/A | 1732.458 | 0.12x | 0.10x | N/A | 0.30x | N/A | N/A |
-| allocator allocation latency/large_8192 | 68.781 | N/A | N/A | 284.575 | 1384.427 | 407.080 | 75.731 | 0.24x | 0.05x | 0.17x | 0.91x | N/A | N/A |
-| allocator allocation latency/medium_1024 | 14.180 | N/A | N/A | 55.027 | 339.721 | 101.268 | 29.162 | 0.26x | 0.04x | 0.14x | 0.49x | N/A | N/A |
-| allocator allocation latency/small_32 | 7.857 | N/A | N/A | 22.172 | 16.090 | 12.773 | 12.898 | 0.35x | 0.49x | 0.62x | 0.61x | N/A | N/A |
-| allocator burst retention/large_8192 | 2278.326 | N/A | N/A | 10797.141 | 498256.076 | 20755.323 | 26336.016 | 0.21x | 0.00x | 0.11x | 0.09x | N/A | N/A |
-| allocator burst retention/medium_1024 | 1075.788 | N/A | N/A | 7811.932 | 93105.558 | 7909.205 | 8737.742 | 0.14x | 0.01x | 0.14x | 0.12x | N/A | N/A |
-| allocator burst retention/small_32 | 729.734 | N/A | N/A | 6939.406 | 892.025 | 4183.832 | 2615.959 | 0.11x | 0.82x | 0.17x | 0.28x | N/A | N/A |
-| allocator cycle latency/huge_2m | 22.077 | 22.100 | 21.880 | 9171.264 | 9544.597 | N/A | 115.016 | 0.00x | 0.00x | N/A | 0.19x | 1.00x | 0.99x |
-| allocator cycle latency/large_8192 | 3.006 | 3.063 | 3.329 | 20.539 | 16.250 | 17.241 | 15.418 | 0.15x | 0.19x | 0.17x | 0.19x | 1.02x | 1.11x |
-| allocator cycle latency/medium_1024 | 3.315 | 3.609 | 3.858 | 21.568 | 6.056 | 16.319 | 7.242 | 0.15x | 0.55x | 0.20x | 0.46x | 1.09x | 1.16x |
-| allocator cycle latency/small_32 | 2.807 | 2.780 | 2.895 | 21.408 | 3.837 | 15.393 | 6.815 | 0.13x | 0.73x | 0.18x | 0.41x | 0.99x | 1.03x |
-| allocator deallocation latency/huge_2m | 971.385 | N/A | N/A | 4679.447 | 5196.121 | N/A | 3030.860 | 0.21x | 0.19x | N/A | 0.32x | N/A | N/A |
-| allocator deallocation latency/large_8192 | 32.739 | N/A | N/A | 63.194 | 588.544 | 169.438 | 46.348 | 0.52x | 0.06x | 0.19x | 0.71x | N/A | N/A |
-| allocator deallocation latency/medium_1024 | 10.835 | N/A | N/A | 27.182 | 101.010 | 55.346 | 16.857 | 0.40x | 0.11x | 0.20x | 0.64x | N/A | N/A |
-| allocator deallocation latency/small_32 | 3.514 | N/A | N/A | 13.979 | 6.259 | 9.787 | 6.596 | 0.25x | 0.56x | 0.36x | 0.53x | N/A | N/A |
-| cross-thread free handoff/huge_2m | 824.243 | N/A | N/A | 110736.005 | 123286.819 | N/A | 7228.476 | 0.01x | 0.01x | N/A | 0.11x | N/A | N/A |
-| cross-thread free handoff/large_8192 | 22541.719 | N/A | N/A | 57097.250 | 1010608.492 | 88430.725 | 77239.485 | 0.39x | 0.02x | 0.25x | 0.29x | N/A | N/A |
-| cross-thread free handoff/medium_1024 | 11031.047 | N/A | N/A | 30084.544 | 173370.472 | 35686.810 | 39076.890 | 0.37x | 0.06x | 0.31x | 0.28x | N/A | N/A |
-| cross-thread free handoff/small_32 | 5278.376 | N/A | N/A | 29318.375 | 9732.736 | 20037.575 | 27554.410 | 0.18x | 0.54x | 0.26x | 0.19x | N/A | N/A |
-| realloc latency/cross_class_32_to_64 | 11.511 | N/A | N/A | 59.241 | 10.697 | 33.077 | 16.928 | 0.19x | 1.08x | 0.35x | 0.68x | N/A | N/A |
-| realloc latency/cross_class_8k_to_16k | 70.797 | N/A | N/A | 136.854 | 93.202 | 137.674 | 57.544 | 0.52x | 0.76x | 0.51x | 1.23x | N/A | N/A |
-| realloc latency/huge_shrink_4m_to_2m | 21.179 | N/A | N/A | 1000676.046 | 10321.503 | 1022992.799 | 248.343 | 0.00x | 0.00x | 0.00x | 0.09x | N/A | N/A |
-| realloc latency/within_class_24_to_32 | 5.446 | N/A | N/A | 55.477 | 6.852 | 17.202 | 15.253 | 0.10x | 0.79x | 0.32x | 0.36x | N/A | N/A |
-| realloc latency/within_class_6k_to_8k | 32.243 | N/A | N/A | 116.440 | 66.561 | 106.878 | 52.248 | 0.28x | 0.48x | 0.30x | 0.62x | N/A | N/A |
-| segment cache eviction | 225310.139 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| threaded medium allocation cycles | 6404.029 | N/A | N/A | 33926.404 | 16064.214 | 28369.238 | 18411.964 | 0.19x | 0.40x | 0.23x | 0.35x | N/A | N/A |
-| threaded saturated small allocation cycles | 81920.786 | N/A | N/A | 411919.680 | 79981.763 | 279050.116 | 128288.271 | 0.20x | 1.02x | 0.29x | 0.64x | N/A | N/A |
-| threaded small allocation cycles | 6814.730 | N/A | N/A | 33181.661 | 6064.588 | 29582.454 | 17486.846 | 0.21x | 1.12x | 0.23x | 0.39x | N/A | N/A |
-| usable size latency/huge_2m | 20.846 | N/A | N/A | N/A | 8687.124 | N/A | 116.998 | N/A | 0.00x | N/A | 0.18x | N/A | N/A |
-| usable size latency/large_8192 | 3.204 | N/A | N/A | N/A | 15.775 | 17.214 | 17.806 | N/A | 0.20x | 0.19x | 0.18x | N/A | N/A |
-| usable size latency/medium_1024 | 4.416 | N/A | N/A | N/A | 6.474 | 16.971 | 10.254 | N/A | 0.68x | 0.26x | 0.43x | N/A | N/A |
-| usable size latency/small_32 | 4.569 | N/A | N/A | N/A | 3.431 | 16.386 | 9.912 | N/A | 1.33x | 0.28x | 0.46x | N/A | N/A |
-| usable size query latency/huge_2m | 0.432 | N/A | N/A | N/A | 0.741 | N/A | 3.199 | N/A | 0.58x | N/A | 0.13x | N/A | N/A |
-| usable size query latency/large_8192 | 0.379 | N/A | N/A | N/A | 0.688 | 0.602 | 3.198 | N/A | 0.55x | 0.63x | 0.12x | N/A | N/A |
-| usable size query latency/medium_1024 | 0.336 | N/A | N/A | N/A | 0.725 | 0.583 | 3.200 | N/A | 0.46x | 0.58x | 0.10x | N/A | N/A |
-| usable size query latency/small_32 | 0.396 | N/A | N/A | N/A | 0.642 | 0.680 | 3.212 | N/A | 0.62x | 0.58x | 0.12x | N/A | N/A |
+| allocator allocation latency/huge_2m | 715.101 | N/A | N/A | 2787.810 | 4399.481 | N/A | 1732.458 | 0.26x | 0.16x | N/A | 0.41x | N/A | N/A |
+| allocator allocation latency/large_8192 | 70.813 | N/A | N/A | 226.518 | 1267.346 | 395.632 | 75.731 | 0.31x | 0.06x | 0.18x | 0.94x | N/A | N/A |
+| allocator allocation latency/medium_1024 | 14.370 | N/A | N/A | 58.763 | 269.951 | 89.746 | 29.162 | 0.24x | 0.05x | 0.16x | 0.49x | N/A | N/A |
+| allocator allocation latency/small_32 | 11.164 | N/A | N/A | 21.869 | 17.913 | 15.180 | 12.898 | 0.51x | 0.62x | 0.74x | 0.87x | N/A | N/A |
+| allocator burst retention/large_8192 | 2980.393 | N/A | N/A | 8872.552 | 394061.238 | 20404.701 | 26336.016 | 0.34x | 0.01x | 0.15x | 0.11x | N/A | N/A |
+| allocator burst retention/medium_1024 | 1026.977 | N/A | N/A | 6973.715 | 78792.745 | 7777.536 | 8737.742 | 0.15x | 0.01x | 0.13x | 0.12x | N/A | N/A |
+| allocator burst retention/small_32 | 619.569 | N/A | N/A | 6306.882 | 803.694 | 4189.314 | 2615.959 | 0.10x | 0.77x | 0.15x | 0.24x | N/A | N/A |
+| allocator cycle latency/huge_2m | 22.139 | 22.214 | 22.297 | 8270.352 | 9021.250 | N/A | 115.016 | 0.00x | 0.00x | N/A | 0.19x | 1.00x | 1.01x |
+| allocator cycle latency/large_8192 | 2.829 | 2.750 | 2.876 | 21.247 | 16.849 | 17.267 | 15.418 | 0.13x | 0.17x | 0.16x | 0.18x | 0.97x | 1.02x |
+| allocator cycle latency/medium_1024 | 2.831 | 2.763 | 2.860 | 20.098 | 5.978 | 16.724 | 7.242 | 0.14x | 0.47x | 0.17x | 0.39x | 0.98x | 1.01x |
+| allocator cycle latency/small_32 | 2.820 | 2.743 | 2.879 | 19.916 | 2.780 | 16.267 | 6.815 | 0.14x | 1.01x | 0.17x | 0.41x | 0.97x | 1.02x |
+| allocator deallocation latency/huge_2m | 1200.755 | N/A | N/A | 4229.516 | 4577.309 | N/A | 3030.860 | 0.28x | 0.26x | N/A | 0.40x | N/A | N/A |
+| allocator deallocation latency/large_8192 | 30.664 | N/A | N/A | 76.644 | 498.081 | 158.704 | 46.348 | 0.40x | 0.06x | 0.19x | 0.66x | N/A | N/A |
+| allocator deallocation latency/medium_1024 | 10.045 | N/A | N/A | 21.784 | 87.693 | 51.991 | 16.857 | 0.46x | 0.11x | 0.19x | 0.60x | N/A | N/A |
+| allocator deallocation latency/small_32 | 3.349 | N/A | N/A | 11.892 | 5.523 | 9.704 | 6.596 | 0.28x | 0.61x | 0.35x | 0.51x | N/A | N/A |
+| cross-thread free handoff/huge_2m | 1536.845 | N/A | N/A | 85179.822 | 94809.194 | N/A | 7228.476 | 0.02x | 0.02x | N/A | 0.21x | N/A | N/A |
+| cross-thread free handoff/large_8192 | 22873.359 | N/A | N/A | 52467.826 | 839613.537 | 92735.166 | 77239.485 | 0.44x | 0.03x | 0.25x | 0.30x | N/A | N/A |
+| cross-thread free handoff/medium_1024 | 17552.130 | N/A | N/A | 31995.644 | 142546.591 | 35670.937 | 39076.890 | 0.55x | 0.12x | 0.49x | 0.45x | N/A | N/A |
+| cross-thread free handoff/small_32 | 14888.852 | N/A | N/A | 29027.019 | 16267.429 | 18546.481 | 27554.410 | 0.51x | 0.92x | 0.80x | 0.54x | N/A | N/A |
+| realloc latency/cross_class_32_to_64 | 7.941 | N/A | N/A | 43.385 | 7.677 | 33.071 | 16.928 | 0.18x | 1.03x | 0.24x | 0.47x | N/A | N/A |
+| realloc latency/cross_class_8k_to_16k | 47.651 | N/A | N/A | 136.390 | 67.113 | 130.970 | 57.544 | 0.35x | 0.71x | 0.36x | 0.83x | N/A | N/A |
+| realloc latency/huge_shrink_4m_to_2m | 22.716 | N/A | N/A | 992582.437 | 7238.210 | 1030577.725 | 248.343 | 0.00x | 0.00x | 0.00x | 0.09x | N/A | N/A |
+| realloc latency/within_class_24_to_32 | 4.373 | N/A | N/A | 43.593 | 4.389 | 17.211 | 15.253 | 0.10x | 1.00x | 0.25x | 0.29x | N/A | N/A |
+| realloc latency/within_class_6k_to_8k | 26.733 | N/A | N/A | 101.730 | 55.857 | 94.775 | 52.248 | 0.26x | 0.48x | 0.28x | 0.51x | N/A | N/A |
+| segment cache eviction | 226356.668 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| threaded medium allocation cycles | 8728.473 | N/A | N/A | 30122.294 | 15420.784 | 35028.314 | 18411.964 | 0.29x | 0.57x | 0.25x | 0.47x | N/A | N/A |
+| threaded saturated small allocation cycles | 64294.298 | N/A | N/A | 361851.590 | 76591.886 | 260740.204 | 128288.271 | 0.18x | 0.84x | 0.25x | 0.50x | N/A | N/A |
+| threaded small allocation cycles | 10512.881 | N/A | N/A | 31196.264 | 6076.770 | 25259.486 | 17486.846 | 0.34x | 1.73x | 0.42x | 0.60x | N/A | N/A |
+| usable size latency/huge_2m | 22.347 | N/A | N/A | N/A | 6614.424 | N/A | 116.998 | N/A | 0.00x | N/A | 0.19x | N/A | N/A |
+| usable size latency/large_8192 | 2.899 | N/A | N/A | N/A | 16.381 | 17.725 | 17.806 | N/A | 0.18x | 0.16x | 0.16x | N/A | N/A |
+| usable size latency/medium_1024 | 4.349 | N/A | N/A | N/A | 6.158 | 16.833 | 10.254 | N/A | 0.71x | 0.26x | 0.42x | N/A | N/A |
+| usable size latency/small_32 | 4.308 | N/A | N/A | N/A | 2.913 | 16.537 | 9.912 | N/A | 1.48x | 0.26x | 0.43x | N/A | N/A |
+| usable size query latency/huge_2m | 0.351 | N/A | N/A | N/A | 0.549 | N/A | 3.199 | N/A | 0.64x | N/A | 0.11x | N/A | N/A |
+| usable size query latency/large_8192 | 0.294 | N/A | N/A | N/A | 0.531 | 0.462 | 3.198 | N/A | 0.55x | 0.64x | 0.09x | N/A | N/A |
+| usable size query latency/medium_1024 | 0.297 | N/A | N/A | N/A | 0.529 | 0.458 | 3.200 | N/A | 0.56x | 0.65x | 0.09x | N/A | N/A |
+| usable size query latency/small_32 | 0.290 | N/A | N/A | N/A | 0.522 | 0.456 | 3.212 | N/A | 0.56x | 0.64x | 0.09x | N/A | N/A |

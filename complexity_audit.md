@@ -1,9 +1,9 @@
 # Complexity Audit
 
 Per-component, per-operation asymptotic complexity of the Mnemosyne allocator.
-Refreshed for the current 11-crate workspace after the bitmap-free-list,
-per-segment-occupancy-mask, per-CPU-cache, free-list-encryption, doubly-linked
-page-list, and module-split changes.
+Refreshed for the current 11-crate workspace after the bitmap-free-list
+experiment was rejected, and after the per-segment-occupancy-mask, per-CPU-cache,
+free-list-encryption, doubly-linked page-list, and module-split changes.
 
 `n_p(c)` = pages of size class `c` held by one thread (active + full lists);
 `n_s` = segments owned by one thread; `P` = `PAGES_PER_SEGMENT` (32, a
@@ -32,9 +32,9 @@ only to make the constant factor explicit.
 | :--- | :--- | :---: | :--- |
 | `size_to_class` / `round_up_size` | `core::size_class` | O(1) | piecewise bit-shift schedule (bounded 4-way) |
 | `class_to_size` / `class_to_max_blocks` | `core::size_class` | O(1) | `const` lookup tables |
-| `alloc` (linked class ≥3, fast) | `local` | O(1) | pop head of active page free list |
-| `alloc` (bitmap class 0–2) | `local` | O(W) → O(1) amortized | `alloc_bitmap_block` scans ≤ `num_u64s` (≤64) words for a set bit; first non-empty word is the common case |
-| `free` (local, non-full) | `local::free` | O(1) | push onto `page.free` (linked) or set bitmap bit; **O(1) `page_occupied_mask` update only on 0↔nonzero transition** |
+| `alloc` (initialized free list, fast) | `local` | O(1) | pop head of active page free list |
+| `alloc` (fresh page bump) | `core::types::Page` | O(1) | `initialized_blocks` index computes the next block address directly |
+| `free` (local, non-full) | `local::free` | O(1) | push onto `page.free`; **O(1) `page_occupied_mask` update only on 0↔nonzero transition** |
 | `free` (per-CPU L1 hit) | `local::per_cpu` | O(1) | single CAS push/pop on a per-CPU class stack |
 | `free` (cross-thread) | `local::free` | O(1) | single CAS onto `page.thread_free` |
 | `alloc` cross-thread reclaim | `local` | O(k) → O(1) amortized | drain `thread_free`, relink; each block reclaimed once |
@@ -45,10 +45,9 @@ only to make the constant factor explicit.
 | free-list `get_next`/`set_next` | `core::types` | O(1) | optional XOR-with-per-page-key (encryption) — branchless |
 | `GlobalAlloc::{alloc,dealloc}` | `mnemosyne` | O(1) | dispatch to the above under a ZST policy |
 
-Every steady-state allocate/free is O(1). The bitmap classes' word scan is
-bounded by `num_u64s` (≤ 64 for the 16-byte class) and hits the first
-non-empty word in the common case; a hierarchical summary word would make it
-strictly O(1) (see reduction plan).
+Every steady-state allocate/free is O(1). Small classes use the same
+free-list/bump-page mechanics as other size classes; the rejected bitmap
+experiment is not present in the current allocator.
 
 ## Headline improvement since the prior audit: `page_occupied_mask`
 
@@ -83,14 +82,7 @@ Consequences:
 
 ## Remaining super-constant operations (runtime-variable input)
 
-1. **Bitmap `alloc_bitmap_block`** — O(`num_u64s`) word scan (≤ 64). The only
-   per-allocation operation not strictly O(1). **Reduction plan:** add a single
-   hierarchical *summary word* (one bit per bitmap word, set iff that word has a
-   free block); `summary.trailing_zeros()` selects the word in O(1), then one
-   `trailing_zeros` inside it. Turns the scan into two `trailing_zeros` ops =
-   strict O(1). Requires one extra `u64` per bitmap page (free space exists in
-   the reserved prefix). *Planned.*
-2. `stats` / `reclaim_owned_segments` / `decay_step` — O(n_s · P) or
+1. `stats` / `reclaim_owned_segments` / `decay_step` — O(n_s · P) or
    O(orphan · P). Diagnostic / teardown / background only; not optimization
    targets (running counters would push maintenance onto the hot path, a
    previously rejected trade — see `gap_audit.md`). The occupancy mask already
@@ -118,8 +110,8 @@ Consequences:
 - Per-component O(1) hot-path claims hold structurally, and the value-semantic
   guarantees they assume are currently **green**: `cargo test --workspace
   -- --test-threads=1` passes (33 test groups, 0 failures), including the
-  `mnemosyne-local` lib suite (27 tests) that exercises the bitmap / encryption /
-  per-CPU / page-recycling interaction. The earlier free-poison-vs-free-list
+  `mnemosyne-local` lib suite that exercises the free-list, encryption,
+  per-CPU, and page-recycling interaction. The earlier free-poison-vs-free-list
   corruption regression (a `0xDE` byte reaching an inline free-list `next`) has
   been resolved in the current `main`.
 - Pages are now doubly linked (`prev_page`/`next_page`), so `unlink_page_from_list`

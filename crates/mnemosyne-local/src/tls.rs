@@ -198,7 +198,12 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
 
     #[inline(always)]
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
-        let key = get_os_tls_key(S::get_os_tls_key());
+        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
+            return S::get_slot_standard(|slot| {
+                S::arm_thread_exit(slot);
+                slot.with_allocator(f)
+            });
+        };
         let ptr = get_os_tls_value(key);
         if !ptr.is_null() {
             let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
@@ -221,7 +226,12 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
 
     #[inline(always)]
     fn with_allocator_guard<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
-        let key = get_os_tls_key(S::get_os_tls_key());
+        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
+            return S::get_slot_standard(|slot| {
+                S::arm_thread_exit(slot);
+                slot.with_allocator(f)
+            });
+        };
         let ptr = get_os_tls_value(key);
         if !ptr.is_null() {
             let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
@@ -246,7 +256,12 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
     unsafe fn with_allocator_unguarded<R>(
         f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
     ) -> Option<R> {
-        let key = get_os_tls_key(S::get_os_tls_key());
+        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
+            return S::get_slot_standard(|slot| {
+                S::arm_thread_exit(slot);
+                unsafe { slot.with_allocator_unguarded(f) }
+            });
+        };
         let ptr = get_os_tls_value(key);
         if !ptr.is_null() {
             let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
@@ -266,7 +281,9 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
 
     #[inline(always)]
     fn get_allocator_ptr() -> *mut core::ffi::c_void {
-        let key = get_os_tls_key(S::get_os_tls_key());
+        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
+            return S::get_slot_standard(|slot| slot.allocator_ptr());
+        };
         let ptr = get_os_tls_value(key);
         if !ptr.is_null() {
             ptr
@@ -281,8 +298,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
 
     #[inline(always)]
     fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
-        let key = get_os_tls_key(S::get_os_tls_key());
-        get_os_tls_value(key)
+        get_os_tls_key(S::get_os_tls_key()).map_or(core::ptr::null_mut(), get_os_tls_value)
     }
 }
 
@@ -297,7 +313,12 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
         #[cfg(all(windows, target_arch = "x86_64"))]
         {
-            let key = get_os_tls_key(S::get_os_tls_key());
+            let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
+                return S::get_slot_standard(|slot| {
+                    S::arm_thread_exit(slot);
+                    slot.with_allocator(f)
+                });
+            };
             let ptr = unsafe { get_teb_tls_slot(key) };
             if !ptr.is_null() {
                 let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
@@ -327,7 +348,12 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
     fn with_allocator_guard<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
         #[cfg(all(windows, target_arch = "x86_64"))]
         {
-            let key = get_os_tls_key(S::get_os_tls_key());
+            let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
+                return S::get_slot_standard(|slot| {
+                    S::arm_thread_exit(slot);
+                    slot.with_allocator(f)
+                });
+            };
             let ptr = unsafe { get_teb_tls_slot(key) };
             if !ptr.is_null() {
                 let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
@@ -359,7 +385,12 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
     ) -> Option<R> {
         #[cfg(all(windows, target_arch = "x86_64"))]
         {
-            let key = get_os_tls_key(S::get_os_tls_key());
+            let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
+                return S::get_slot_standard(|slot| {
+                    S::arm_thread_exit(slot);
+                    unsafe { slot.with_allocator_unguarded(f) }
+                });
+            };
             let ptr = unsafe { get_teb_tls_slot(key) };
             if !ptr.is_null() {
                 let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
@@ -386,7 +417,9 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
     fn get_allocator_ptr() -> *mut core::ffi::c_void {
         #[cfg(all(windows, target_arch = "x86_64"))]
         {
-            let key = get_os_tls_key(S::get_os_tls_key());
+            let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
+                return S::get_slot_standard(|slot| slot.allocator_ptr());
+            };
             let ptr = unsafe { get_teb_tls_slot(key) };
             if !ptr.is_null() {
                 ptr
@@ -408,8 +441,9 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
     fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
         #[cfg(all(windows, target_arch = "x86_64"))]
         {
-            let key = get_os_tls_key(S::get_os_tls_key());
-            unsafe { get_teb_tls_slot(key) }
+            get_os_tls_key(S::get_os_tls_key()).map_or(core::ptr::null_mut(), |key| unsafe {
+                get_teb_tls_slot(key)
+            })
         }
         #[cfg(not(all(windows, target_arch = "x86_64")))]
         {
@@ -436,7 +470,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
         #[cfg(not(feature = "nightly_tls"))]
         {
             let _ = f;
-            unreachable!("NightlyTls is only available under nightly_tls feature gate");
+            None
         }
     }
 
@@ -452,7 +486,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
         #[cfg(not(feature = "nightly_tls"))]
         {
             let _ = f;
-            unreachable!("NightlyTls is only available under nightly_tls feature gate");
+            None
         }
     }
 
@@ -467,7 +501,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
         #[cfg(not(feature = "nightly_tls"))]
         {
             let _ = f;
-            unreachable!("NightlyTls is only available under nightly_tls feature gate");
+            None
         }
     }
 
@@ -489,7 +523,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
         }
         #[cfg(not(feature = "nightly_tls"))]
         {
-            unreachable!("NightlyTls is only available under nightly_tls feature gate");
+            core::ptr::null_mut()
         }
     }
 
@@ -501,7 +535,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
         }
         #[cfg(not(feature = "nightly_tls"))]
         {
-            unreachable!("NightlyTls is only available under nightly_tls feature gate");
+            core::ptr::null_mut()
         }
     }
 }
@@ -509,17 +543,17 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
 // --- OS TLS Helpers ---
 
 #[inline(always)]
-fn get_os_tls_key(atomic_key: &AtomicU32) -> u32 {
+fn get_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
     let mut key = atomic_key.load(Ordering::Relaxed);
     if key == u32::MAX {
-        key = init_os_tls_key(atomic_key);
+        key = init_os_tls_key(atomic_key)?;
     }
-    key
+    Some(key)
 }
 
 #[cold]
 #[inline(never)]
-fn init_os_tls_key(atomic_key: &AtomicU32) -> u32 {
+fn init_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
     unsafe {
         #[cfg(windows)]
         {
@@ -529,13 +563,13 @@ fn init_os_tls_key(atomic_key: &AtomicU32) -> u32 {
             }
             let key = TlsAlloc();
             if key == u32::MAX {
-                panic!("Failed to allocate Win32 TLS index");
+                return None;
             }
             match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Relaxed) {
-                Ok(_) => key,
+                Ok(_) => Some(key),
                 Err(existing) => {
                     TlsFree(key);
-                    existing
+                    (existing != u32::MAX).then_some(existing)
                 }
             }
         }
@@ -551,13 +585,13 @@ fn init_os_tls_key(atomic_key: &AtomicU32) -> u32 {
             let mut key = 0u32;
             let res = pthread_key_create(&mut key, None);
             if res != 0 {
-                panic!("Failed to create pthread TLS key");
+                return None;
             }
             match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Relaxed) {
-                Ok(_) => key,
+                Ok(_) => Some(key),
                 Err(existing) => {
                     pthread_key_delete(key);
-                    existing
+                    (existing != u32::MAX).then_some(existing)
                 }
             }
         }

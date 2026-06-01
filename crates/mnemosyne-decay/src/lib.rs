@@ -60,7 +60,7 @@ fn decay_step_for_backend<B: HasSegmentPool>() {
 
 fn decay_orphan_pool<B: HasSegmentPool>() {
     let pool = B::global_orphan_pool();
-    let mut retained = std::vec::Vec::new();
+    let mut retained_head = core::ptr::null_mut::<mnemosyne_core::Segment>();
 
     // Drain the orphan pool
     while let Some(segment) = pool.pop() {
@@ -88,15 +88,22 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
                 mnemosyne_arena::deallocate_segment::<B>(segment);
             }
         } else {
-            // Segment still has live allocations, retain it
-            retained.push(segment);
+            // Segment still has live allocations, retain it in the local intrusive list
+            unsafe {
+                (*segment).next_free_segment = retained_head;
+            }
+            retained_head = segment;
         }
     }
 
     // Push back retained segments to the orphan pool
-    for segment in retained {
+    let mut curr = retained_head;
+    while !curr.is_null() {
+        let next = unsafe { (*curr).next_free_segment };
         unsafe {
-            pool.push_unbounded(segment);
+            (*curr).next_free_segment = core::ptr::null_mut();
+            pool.push_unbounded(curr);
         }
+        curr = next;
     }
 }

@@ -13,6 +13,57 @@ static TEST_LOCK: Mutex<()> = Mutex::new(());
 static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
 static FREE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+struct ProfilerResetGuard;
+
+impl ProfilerResetGuard {
+    fn new() -> Self {
+        reset_options_for_testing();
+        mnemosyne_prof::reset_profiler_for_testing();
+        Self
+    }
+}
+
+impl Drop for ProfilerResetGuard {
+    fn drop(&mut self) {
+        register_alloc_hook(None);
+        register_free_hook(None);
+        disable_profiling();
+        mnemosyne_prof::disable_leak_detector();
+        mnemosyne_prof::reset_profiler_for_testing();
+    }
+}
+
+struct ThreadAllocation {
+    ptr: *mut u8,
+}
+
+impl ThreadAllocation {
+    unsafe fn new(size: usize, align: usize) -> Self {
+        let ptr = unsafe { thread_alloc::<StandardPolicy, Backend>(size, align) };
+        assert!(
+            !ptr.is_null(),
+            "thread allocation returned null for size {size} align {align}"
+        );
+        Self { ptr }
+    }
+
+    unsafe fn free_now(mut self) {
+        let ptr = core::mem::replace(&mut self.ptr, core::ptr::null_mut());
+        if !ptr.is_null() {
+            unsafe { thread_free::<StandardPolicy, Backend>(ptr) };
+        }
+    }
+}
+
+impl Drop for ThreadAllocation {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe { thread_free::<StandardPolicy, Backend>(self.ptr) };
+            self.ptr = core::ptr::null_mut();
+        }
+    }
+}
+
 unsafe extern "C" fn custom_alloc_hook(ptr: *mut core::ffi::c_void, size: usize) {
     if !ptr.is_null() && size > 0 {
         ALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -27,8 +78,10 @@ unsafe extern "C" fn custom_free_hook(ptr: *mut core::ffi::c_void, size: usize) 
 
 #[test]
 fn test_custom_trace_hooks() {
-    let _guard = TEST_LOCK.lock().unwrap();
-    reset_options_for_testing();
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("profiler integration test lock was poisoned");
+    let _profiler_guard = ProfilerResetGuard::new();
     ALLOC_COUNT.store(0, Ordering::SeqCst);
     FREE_COUNT.store(0, Ordering::SeqCst);
 
@@ -36,18 +89,15 @@ fn test_custom_trace_hooks() {
     register_free_hook(Some(custom_free_hook));
 
     // Test global allocation
-    unsafe {
-        let ptr = thread_alloc::<StandardPolicy, Backend>(32, 16);
-        assert!(!ptr.is_null());
-        assert_eq!(ALLOC_COUNT.load(Ordering::SeqCst), 1);
-
-        thread_free::<StandardPolicy, Backend>(ptr);
-        assert_eq!(FREE_COUNT.load(Ordering::SeqCst), 1);
-    }
+    let ptr = unsafe { ThreadAllocation::new(32, 16) };
+    assert_eq!(ALLOC_COUNT.load(Ordering::SeqCst), 1);
+    unsafe { ptr.free_now() };
+    assert_eq!(FREE_COUNT.load(Ordering::SeqCst), 1);
 
     // Test heap allocation
     let heap = MnemosyneHeap::<StandardPolicy, Backend>::new();
-    let layout = std::alloc::Layout::from_size_align(64, 8).unwrap();
+    let layout = std::alloc::Layout::from_size_align(64, 8)
+        .expect("64-byte allocation with 8-byte alignment is a valid Layout");
     let ptr2 = heap.alloc(layout);
     assert!(!ptr2.is_null());
     assert_eq!(ALLOC_COUNT.load(Ordering::SeqCst), 2);
@@ -56,17 +106,15 @@ fn test_custom_trace_hooks() {
         heap.free(ptr2);
     }
     assert_eq!(FREE_COUNT.load(Ordering::SeqCst), 2);
-
-    // Unregister hooks
-    register_alloc_hook(None);
-    register_free_hook(None);
 }
 
 #[test]
 #[inline(never)]
 fn test_poisson_sampler_and_dump_profile() {
-    let _guard = TEST_LOCK.lock().unwrap();
-    reset_options_for_testing();
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("profiler integration test lock was poisoned");
+    let _profiler_guard = ProfilerResetGuard::new();
 
     // Enable profiling with a small interval (e.g. 100 bytes) so we get samples quickly
     enable_profiling(100);
@@ -74,23 +122,22 @@ fn test_poisson_sampler_and_dump_profile() {
     // Do some allocations
     let mut ptrs = Vec::new();
     for _ in 0..10 {
-        unsafe {
-            let ptr = thread_alloc::<StandardPolicy, Backend>(50, 8);
-            assert!(!ptr.is_null());
-            ptrs.push(ptr);
-        }
+        ptrs.push(unsafe { ThreadAllocation::new(50, 8) });
     }
 
     // Dump profile
     let temp_dir = std::env::temp_dir();
     let prof_path = temp_dir.join("mnemosyne_test.prof");
-    let prof_path_str = prof_path.to_str().unwrap();
+    let prof_path_str = prof_path
+        .to_str()
+        .expect("temporary profile path must be valid UTF-8");
 
     let res = dump_profile(prof_path_str);
     assert!(res.is_ok(), "dump_profile failed: {:?}", res.err());
 
     // Read the dumped profile
-    let content = std::fs::read_to_string(prof_path_str).expect("Failed to read profile file");
+    let content =
+        std::fs::read_to_string(prof_path_str).expect("failed to read profiler output file");
     println!("Dumped Profile Content:\n{}", content);
 
     // Verify it contains entries (should contain symbol stacks) and size counts
@@ -100,14 +147,6 @@ fn test_poisson_sampler_and_dump_profile() {
         "Profile must contain current test function name in stack"
     );
 
-    // Clean up allocations
-    for ptr in ptrs {
-        unsafe {
-            thread_free::<StandardPolicy, Backend>(ptr);
-        }
-    }
-
-    disable_profiling();
     let _ = std::fs::remove_file(prof_path);
 }
 
@@ -128,16 +167,17 @@ unsafe extern "C" fn reentrant_alloc_hook(ptr: *mut core::ffi::c_void, size: usi
 
 #[test]
 fn test_reentrancy_protection() {
-    let _guard = TEST_LOCK.lock().unwrap();
-    reset_options_for_testing();
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("profiler integration test lock was poisoned");
+    let _profiler_guard = ProfilerResetGuard::new();
     RECURSIVE_ALLOC_COUNT.store(0, Ordering::SeqCst);
 
     register_alloc_hook(Some(reentrant_alloc_hook));
 
     unsafe {
-        let ptr = thread_alloc::<StandardPolicy, Backend>(32, 16);
-        assert!(!ptr.is_null());
-        thread_free::<StandardPolicy, Backend>(ptr);
+        let ptr = ThreadAllocation::new(32, 16);
+        ptr.free_now();
     }
 
     // The hook should be called for the primary allocation.
@@ -149,38 +189,37 @@ fn test_reentrancy_protection() {
         1,
         "Re-entrancy guard failed to prevent recursive hook execution"
     );
-
-    register_alloc_hook(None);
 }
 
 #[inline(never)]
-fn do_leak_alloc() -> *mut u8 {
-    unsafe { thread_alloc::<StandardPolicy, Backend>(128, 8) }
+unsafe fn do_leak_alloc() -> ThreadAllocation {
+    unsafe { ThreadAllocation::new(128, 8) }
 }
 
 #[test]
 fn test_leak_detector_and_dump_leaks() {
-    let _guard = TEST_LOCK.lock().unwrap();
-    reset_options_for_testing();
-    mnemosyne_prof::reset_profiler_for_testing();
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("profiler integration test lock was poisoned");
+    let _profiler_guard = ProfilerResetGuard::new();
 
     // Enable the leak detector
     mnemosyne_prof::enable_leak_detector();
     assert!(mnemosyne_prof::is_leak_detector_enabled());
 
     // Do some allocations
-    let ptr1 = unsafe { thread_alloc::<StandardPolicy, Backend>(64, 8) };
-    let ptr2 = do_leak_alloc();
-    assert!(!ptr1.is_null());
-    assert!(!ptr2.is_null());
+    let ptr1 = unsafe { ThreadAllocation::new(64, 8) };
+    let _ptr2 = unsafe { do_leak_alloc() };
 
     // Free one allocation, keep the other as a leak
-    unsafe { thread_free::<StandardPolicy, Backend>(ptr1) };
+    unsafe { ptr1.free_now() };
 
     // Dump leaks
     let temp_dir = std::env::temp_dir();
     let leak_path = temp_dir.join("mnemosyne_leaks_test.txt");
-    let leak_path_str = leak_path.to_str().unwrap();
+    let leak_path_str = leak_path
+        .to_str()
+        .expect("temporary leak-report path must be valid UTF-8");
 
     let leak_count_res = mnemosyne_prof::dump_leaks(leak_path_str);
     assert!(
@@ -188,11 +227,7 @@ fn test_leak_detector_and_dump_leaks() {
         "dump_leaks failed: {:?}",
         leak_count_res.err()
     );
-    let leak_count = leak_count_res.unwrap();
-
-    // Clean up leak before asserting to avoid polluting subsequent tests
-    unsafe { thread_free::<StandardPolicy, Backend>(ptr2) };
-    mnemosyne_prof::disable_leak_detector();
+    let leak_count = leak_count_res.expect("dump_leaks failed after positive status check");
 
     // Verify report details
     assert_eq!(
@@ -201,7 +236,8 @@ fn test_leak_detector_and_dump_leaks() {
         leak_count
     );
 
-    let content = std::fs::read_to_string(leak_path_str).expect("Failed to read leak report file");
+    let content =
+        std::fs::read_to_string(leak_path_str).expect("failed to read leak report output file");
     println!("Leak Report Content:\n{}", content);
 
     assert!(

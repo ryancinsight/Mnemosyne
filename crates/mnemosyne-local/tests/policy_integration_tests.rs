@@ -69,7 +69,8 @@ fn test_realloc_under_policies() {
     use core::alloc::Layout;
 
     const ALIGN: usize = 8;
-    let old_layout = Layout::from_size_align(16, ALIGN).unwrap();
+    let old_layout = Layout::from_size_align(16, ALIGN)
+        .expect("16-byte allocation with 8-byte alignment is a valid Layout");
     let new_size = 64;
 
     unsafe {
@@ -155,7 +156,7 @@ fn test_randomized_allocation_policy() {
         consecutive
     })
     .join()
-    .unwrap();
+    .expect("standard-policy allocation worker thread panicked");
 
     // 2. Run SecurePolicy check in a separate thread
     let sec_consecutive = std::thread::spawn(move || unsafe {
@@ -179,7 +180,7 @@ fn test_randomized_allocation_policy() {
         consecutive
     })
     .join()
-    .unwrap();
+    .expect("secure-policy allocation worker thread panicked");
 
     assert!(
         std_consecutive,

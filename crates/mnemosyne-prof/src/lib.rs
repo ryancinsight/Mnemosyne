@@ -123,18 +123,18 @@ static PROFILER_TLS_KEY: core::sync::atomic::AtomicU32 =
 
 #[cfg(not(feature = "nightly_tls"))]
 #[inline(always)]
-fn get_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> u32 {
+fn get_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
     let mut key = atomic_key.load(Ordering::Acquire);
     if key == u32::MAX {
-        key = init_os_tls_key(atomic_key);
+        key = init_os_tls_key(atomic_key)?;
     }
-    key
+    Some(key)
 }
 
 #[cfg(not(feature = "nightly_tls"))]
 #[cold]
 #[inline(never)]
-fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> u32 {
+fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
     unsafe {
         #[cfg(windows)]
         {
@@ -144,13 +144,13 @@ fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> u32 {
             }
             let key = TlsAlloc();
             if key == u32::MAX {
-                panic!("Failed to allocate Win32 TLS index");
+                return None;
             }
             match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Acquire) {
-                Ok(_) => key,
+                Ok(_) => Some(key),
                 Err(existing) => {
                     TlsFree(key);
-                    existing
+                    (existing != u32::MAX).then_some(existing)
                 }
             }
         }
@@ -164,15 +164,15 @@ fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> u32 {
                 fn pthread_key_delete(key: u32) -> i32;
             }
             let mut key = 0u32;
-            let res = pthread_key_create(&mut key, core::ptr::null_mut());
+            let res = pthread_key_create(&mut key, None);
             if res != 0 {
-                panic!("Failed to create pthread TLS key");
+                return None;
             }
             match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Acquire) {
-                Ok(_) => key,
+                Ok(_) => Some(key),
                 Err(existing) => {
                     pthread_key_delete(key);
-                    existing
+                    (existing != u32::MAX).then_some(existing)
                 }
             }
         }
@@ -280,7 +280,9 @@ unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
 pub(crate) fn get_profiler_state() -> *mut ThreadState {
     #[cfg(all(windows, target_arch = "x86_64"))]
     {
-        let key = get_os_tls_key(&PROFILER_TLS_KEY);
+        let Some(key) = get_os_tls_key(&PROFILER_TLS_KEY) else {
+            return THREAD_STATE.with(|cell| cell.get());
+        };
         let ptr = unsafe { get_teb_tls_slot(key) } as *mut ThreadState;
         if !ptr.is_null() {
             ptr
@@ -294,7 +296,9 @@ pub(crate) fn get_profiler_state() -> *mut ThreadState {
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     {
-        let key = get_os_tls_key(&PROFILER_TLS_KEY);
+        let Some(key) = get_os_tls_key(&PROFILER_TLS_KEY) else {
+            return THREAD_STATE.with(|cell| cell.get());
+        };
         let ptr = get_os_tls_value(key) as *mut ThreadState;
         if !ptr.is_null() {
             ptr

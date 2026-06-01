@@ -266,6 +266,15 @@ Target version: 0.1.0
 
 ## Next
 
+- [x] [patch] Replace bare policy integration test layout/thread-join unwraps with contextual diagnostics.
+- [x] [patch] Harden local topology tests with contextual lock/layout/segment diagnostics and an RAII guard for the global per-CPU cache flag.
+- [x] [patch] Replace the remaining bare C-shim leak-report `CString` unwrap with contextual UTF-8 and interior-NUL diagnostics.
+- [x] [patch] Reconcile `complexity_audit.md` with the current free-list/bump-page allocator and remove the stale planned bitmap summary-word item.
+- [x] [patch] Replace bare segment-layout unwraps in `mnemosyne-core::types` tests with a contextual `segment_layout()` helper.
+- [x] [patch] Remove bare `unwrap()`/panic-prone cleanup paths from `mnemosyne-prof` integration tests; add RAII guards for profiler state and thread allocations so failure paths release hooks, profiling/leak-detector state, and live allocations.
+- [x] [patch] Remove production panic paths from native TLS-key initialization in `mnemosyne-local` and `mnemosyne-prof`; native TLS allocation failure now falls back to the standard thread-local slot instead of unwinding.
+- [x] [patch] Harden profiler sampling against poisoned shard locks and 32-frame stack capture overflow; retained samples still store exact-length `Box<[usize]>` stacks.
+- [x] [patch] Collapse the clippy-reported nested occupancy-mask transition branch in `Page::set_alloc_count_for_segment`.
 - [x] [patch] Re-run selected baseline Criterion rows and `benchmark_summary -- --enforce-thresholds` under a quiescent benchmark environment; current public `Mnemosyne` selected rows now pass the retained threshold gate against the source-controlled baseline.
 - [x] [patch] Preserve profiler sample memory efficiency by retaining exact captured stack slices instead of fixed 32-frame arrays while keeping sharded active-sample maps.
 - [x] [patch] Re-run `usable size latency/small_32` after the profiler/heap consolidation cycle; the focused row now measures Mnemosyne `2.450 ns` versus mimalloc `3.342 ns`.
