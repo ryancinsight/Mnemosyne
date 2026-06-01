@@ -2,10 +2,10 @@
 
 | Benchmark | Mnemosyne (ns) | System (ns) | MiMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs System | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| allocator allocation latency/huge_2m | 3079.298 | 2896.588 | 4367.924 | 2821.193 | 2154.572 | 1.06x | 0.70x | 1.09x | 1.43x |
-| allocator allocation latency/large_8192 | 186.093 | 981.359 | 1374.434 | 890.868 | 132.699 | 0.19x | 0.14x | 0.21x | 1.40x |
-| allocator allocation latency/medium_1024 | 22.741 | 245.183 | 340.648 | 140.671 | 42.336 | 0.09x | 0.07x | 0.16x | 0.54x |
-| allocator allocation latency/small_32 | 10.302 | 38.220 | 20.589 | 15.880 | 16.707 | 0.27x | 0.50x | 0.65x | 0.62x |
+| allocator allocation latency/huge_2m | 2903.494 | 3037.691 | 4740.434 | 2787.401 | 3035.669 | 0.96x | 0.61x | 1.04x | 0.96x |
+| allocator allocation latency/large_8192 | 175.024 | 1045.721 | 1183.551 | 844.639 | 112.179 | 0.17x | 0.15x | 0.21x | 1.56x |
+| allocator allocation latency/medium_1024 | 21.487 | 237.927 | 322.606 | 157.454 | 36.756 | 0.09x | 0.07x | 0.14x | 0.58x |
+| allocator allocation latency/small_32 | 11.065 | 34.376 | 15.916 | 16.647 | 13.466 | 0.32x | 0.70x | 0.66x | 0.82x |
 | allocator burst retention/large_8192 | 2360.557 | 9626.337 | 428485.156 | 21513.477 | 32007.373 | 0.25x | 0.01x | 0.11x | 0.07x |
 | allocator burst retention/medium_1024 | 1092.469 | 8146.356 | 89181.689 | 7792.511 | 9778.357 | 0.13x | 0.01x | 0.14x | 0.11x |
 | allocator burst retention/small_32 | 1159.754 | 7720.996 | 824.855 | 4173.141 | 3210.913 | 0.15x | 1.41x | 0.28x | 0.36x |

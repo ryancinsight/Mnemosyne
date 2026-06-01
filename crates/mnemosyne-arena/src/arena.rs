@@ -20,7 +20,7 @@ use mnemosyne_core::validation::is_valid_alloc_request;
 ///   recover the segment header via segment rounding or the metadata slot).
 /// - The returned pointer must be deallocated using `deallocate_large_or_huge`
 ///   with the same memory backend `B`.
-#[inline(never)]
+#[inline(always)]
 fn derive_large_or_huge_layout(size: usize, align: usize) -> Option<(usize, usize)> {
     if !is_valid_alloc_request(size, align) {
         return None;
