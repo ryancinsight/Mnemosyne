@@ -439,7 +439,7 @@ fn test_page_recycling_different_classes() {
         let block = ptr1 as *mut Block;
         (*block).set_next::<StandardPolicy>(page.free, 0);
         page.free = Some(NonNull::new_unchecked(block));
-        page.alloc_count = 0; // Page is now empty
+        page.set_alloc_count(0); // Page is now empty
         let class = page.size_class as usize;
         alloc.unlink_page(page as *mut Page, class);
         alloc.push_empty_page(NonNull::new_unchecked(page as *mut Page));
@@ -725,14 +725,14 @@ fn test_online_defragmentation_page_prioritization() {
 
     // Make seg1 dirty by setting alloc_count on page 1
     unsafe {
-        (*seg1).pages[1].alloc_count = 1;
-        (*seg1).pages[2].alloc_count = 0;
+        (*seg1).pages[1].set_alloc_count(1);
+        (*seg1).pages[2].set_alloc_count(0);
     }
 
     // Make seg2 clean by setting alloc_count on all pages to 0
     unsafe {
         for i in 1..mnemosyne_core::constants::PAGES_PER_SEGMENT {
-            (*seg2).pages[i].alloc_count = 0;
+            (*seg2).pages[i].set_alloc_count(0);
         }
     }
 

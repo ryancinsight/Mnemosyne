@@ -31,6 +31,8 @@ pub struct Segment {
     pub free_list_encrypted: bool,
     /// NUMA node ID where this segment was allocated.
     pub numa_node: u32,
+    /// Mask tracking which pages in this segment have active allocations.
+    pub page_occupied_mask: u32,
     /// Per-page keys for free-list pointer encryption.
     pub keys: [usize; PAGES_PER_SEGMENT],
     /// The pages metadata array. Page 0 is reserved for segment metadata.
@@ -59,6 +61,7 @@ impl Segment {
             segment.next_free_segment = core::ptr::null_mut();
             segment.free_list_encrypted = false;
             segment.numa_node = numa_node;
+            segment.page_occupied_mask = 0;
             for i in 0..PAGES_PER_SEGMENT {
                 segment.keys[i] =
                     (aligned_ptr as usize).wrapping_add(i * PAGE_SIZE) ^ 0x5555555555555555;

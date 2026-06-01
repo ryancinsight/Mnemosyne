@@ -79,6 +79,34 @@ impl Page {
         (self_addr - pages_base) / core::mem::size_of::<Page>()
     }
 
+    /// Sets the active allocation count for this page and updates the parent
+    /// segment's hierarchical `page_occupied_mask` bit vector in-place.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee that the parent segment is a valid Segment mapping.
+    #[inline(always)]
+    pub unsafe fn set_alloc_count(&mut self, count: usize) {
+        let old = self.alloc_count;
+        if old == count {
+            return;
+        }
+        self.alloc_count = count;
+        if (old == 0) != (count == 0) {
+            let self_addr = self as *mut Page as usize;
+            let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
+            let segment = segment_addr as *mut Segment;
+            let idx = self.index_in_segment();
+            unsafe {
+                if count > 0 {
+                    (*segment).page_occupied_mask |= 1 << idx;
+                } else {
+                    (*segment).page_occupied_mask &= !(1 << idx);
+                }
+            }
+        }
+    }
+
     /// Returns the physical start address of this page in memory.
     #[inline(always)]
     pub fn page_start(&self) -> *mut u8 {
@@ -155,7 +183,7 @@ impl Page {
             count,
             self.alloc_count
         );
-        self.alloc_count -= count;
+        unsafe { self.set_alloc_count(self.alloc_count - count) };
 
         if self.free.is_none() {
             self.free = Some(block);
@@ -194,7 +222,7 @@ impl Page {
         page_start: *mut u8,
         random_value: u64,
     ) {
-        self.alloc_count = 0;
+        unsafe { self.set_alloc_count(0) };
         if P::RANDOMIZE_ALLOCATION {
             let n = self.max_blocks();
             if n == 0 {
