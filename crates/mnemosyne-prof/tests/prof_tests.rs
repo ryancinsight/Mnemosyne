@@ -153,6 +153,11 @@ fn test_reentrancy_protection() {
     register_alloc_hook(None);
 }
 
+#[inline(never)]
+fn do_leak_alloc() -> *mut u8 {
+    unsafe { thread_alloc::<StandardPolicy, Backend>(128, 8) }
+}
+
 #[test]
 fn test_leak_detector_and_dump_leaks() {
     let _guard = TEST_LOCK.lock().unwrap();
@@ -165,7 +170,7 @@ fn test_leak_detector_and_dump_leaks() {
 
     // Do some allocations
     let ptr1 = unsafe { thread_alloc::<StandardPolicy, Backend>(64, 8) };
-    let ptr2 = unsafe { thread_alloc::<StandardPolicy, Backend>(128, 8) };
+    let ptr2 = do_leak_alloc();
     assert!(!ptr1.is_null());
     assert!(!ptr2.is_null());
 
@@ -208,8 +213,9 @@ fn test_leak_detector_and_dump_leaks() {
         "Leak size missing or incorrect"
     );
     assert!(
-        content.contains("test_leak_detector_and_dump_leaks"),
-        "Stack trace missing the test function symbol"
+        content.contains("do_leak_alloc"),
+        "Stack trace missing the test function symbol: {}",
+        content
     );
 
     let _ = std::fs::remove_file(leak_path);

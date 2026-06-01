@@ -701,6 +701,12 @@ fn test_cuda_unified_backend() {
     let _ = is_cuda_available();
 }
 
+#[inline(never)]
+fn do_integration_alloc() -> *mut u8 {
+    let layout = Layout::from_size_align(64, 8).expect("valid layout");
+    unsafe { ALLOCATOR.alloc(layout) }
+}
+
 #[test]
 fn test_leak_detector_integration() {
     let _guard = TEST_LOCK
@@ -712,8 +718,7 @@ fn test_leak_detector_integration() {
         enable_leak_detector();
         assert!(is_leak_detector_enabled());
 
-        let layout = Layout::from_size_align(64, 8).expect("valid layout");
-        let ptr = unsafe { ALLOCATOR.alloc(layout) };
+        let ptr = do_integration_alloc();
         assert!(!ptr.is_null());
 
         disable_leak_detector();
@@ -735,12 +740,13 @@ fn test_leak_detector_integration() {
         // Verify the file was created and contains the backtrace info.
         let content = std::fs::read_to_string(&path).expect("failed to read leak report");
         assert!(
-            content.contains("test_leak_detector_integration"),
+            content.contains("do_integration_alloc"),
             "Stack trace missing integration test function symbol: {}",
             content
         );
 
         let _ = std::fs::remove_file(&path);
+        let layout = Layout::from_size_align(64, 8).expect("valid layout");
         unsafe { ALLOCATOR.dealloc(ptr, layout) };
         mnemosyne_prof::reset_profiler_for_testing();
     })

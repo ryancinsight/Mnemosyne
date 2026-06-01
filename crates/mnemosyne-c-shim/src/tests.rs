@@ -29,14 +29,15 @@ fn test_c_shim_profiling_and_hooks() {
         mnemosyne_register_alloc_hook(Some(test_alloc_hook));
         mnemosyne_register_free_hook(Some(test_free_hook));
 
-        let ptr = malloc(32);
+        let ptr = malloc(core::hint::black_box(32));
+        let ptr = core::hint::black_box(ptr);
         assert!(!ptr.is_null());
         assert_eq!(
             ALLOC_HOOK_CALLED.load(core::sync::atomic::Ordering::SeqCst),
             1
         );
 
-        free(ptr);
+        free(core::hint::black_box(ptr));
         assert_eq!(
             FREE_HOOK_CALLED.load(core::sync::atomic::Ordering::SeqCst),
             1
@@ -197,6 +198,11 @@ fn malloc_usable_size_reports_at_least_request() {
     unsafe { free(ptr) };
 }
 
+#[inline(never)]
+unsafe fn do_c_shim_leak_alloc() -> *mut c_void {
+    malloc(core::hint::black_box(64))
+}
+
 #[test]
 fn test_c_shim_leak_detector() {
     let _guard = SHIM_LOCK.lock().expect("shim test lock poisoned");
@@ -205,7 +211,8 @@ fn test_c_shim_leak_detector() {
         mnemosyne_enable_leak_detector();
         assert_eq!(mnemosyne_is_leak_detector_enabled(), 1);
 
-        let ptr = malloc(64);
+        let ptr = do_c_shim_leak_alloc();
+        let ptr = core::hint::black_box(ptr);
         assert!(!ptr.is_null());
 
         mnemosyne_disable_leak_detector();
@@ -226,13 +233,13 @@ fn test_c_shim_leak_detector() {
 
         let content = std::fs::read_to_string(&path).expect("failed to read leak report");
         assert!(
-            content.contains("test_c_shim_leak_detector"),
+            content.contains("do_c_shim_leak_alloc"),
             "Stack trace missing c_shim test function symbol: {}",
             content
         );
 
         let _ = std::fs::remove_file(&path);
-        free(ptr);
+        free(core::hint::black_box(ptr));
         mnemosyne_reset_profiler_for_testing();
     }
 }
