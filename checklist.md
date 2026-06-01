@@ -4,6 +4,8 @@ Target version: 0.1.0
 
 ## Verified
 
+- [x] [arch] Consolidate public heap construction to the scoped `Heap<'brand, P, B>` API, delete the duplicate explicit/branded heap public types, and keep `RawHeap<P, B>` as the single internal allocator implementation.
+- [x] [patch] Remove `MnemosyneHeap`/`BrandedHeap` allocator-comparison columns and regenerate `benchmarks/allocator_comparison.md` with real SnMalloc `huge_2m` rows.
 - [x] [minor] Implement `HardenedPolicy` ZST with XOR-encoded free-list `next` pointers (key per page from a TLS seed). Layer over `SecurePolicy`.
 - [x] [minor] Add unit test coverage for `HardenedPolicy` round-trip and pointer-tamper detection.
 

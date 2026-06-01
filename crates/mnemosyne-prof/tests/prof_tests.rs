@@ -4,7 +4,7 @@ use mnemosyne::{
     StandardPolicy,
 };
 use mnemosyne_backend::MemoryBackendWrapper as Backend;
-use mnemosyne_heap::MnemosyneHeap;
+use mnemosyne_heap::scope;
 use mnemosyne_local::{reset_options_for_testing, thread_alloc, thread_free};
 use std::sync::Mutex;
 
@@ -95,16 +95,15 @@ fn test_custom_trace_hooks() {
     assert_eq!(FREE_COUNT.load(Ordering::SeqCst), 1);
 
     // Test heap allocation
-    let heap = MnemosyneHeap::<StandardPolicy, Backend>::new();
     let layout = std::alloc::Layout::from_size_align(64, 8)
         .expect("64-byte allocation with 8-byte alignment is a valid Layout");
-    let ptr2 = heap.alloc(layout);
-    assert!(!ptr2.is_null());
-    assert_eq!(ALLOC_COUNT.load(Ordering::SeqCst), 2);
-
-    unsafe {
-        heap.free(ptr2);
-    }
+    scope::<StandardPolicy, Backend, _, _>(|heap, mut token| {
+        let block = heap
+            .alloc(&token, layout)
+            .expect("profiled heap allocation failed");
+        assert_eq!(ALLOC_COUNT.load(Ordering::SeqCst), 2);
+        heap.free_uninit(&mut token, block);
+    });
     assert_eq!(FREE_COUNT.load(Ordering::SeqCst), 2);
 }
 

@@ -1,12 +1,12 @@
 use crate::brand::{AllocatorToken, BrandedBlock, BrandedCell, Invariant};
-use crate::BrandedHeap;
+use crate::Heap;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::internal::HasSegmentPool;
 use mnemosyne_local::LocalAllocatorSelector;
 
-/// A uniquely owned, safe pointer to heap-allocated memory of type `T` from a `BrandedHeap`.
+/// A uniquely owned, safe pointer to heap-allocated memory of type `T` from a `Heap`.
 ///
 /// Automatically drops `T` and deallocates the memory back to the heap on drop.
 pub struct BrandedBox<
@@ -17,17 +17,17 @@ pub struct BrandedBox<
     B: HasSegmentPool + LocalAllocatorSelector<B> = mnemosyne_backend::MemoryBackendWrapper,
 > {
     pub(crate) ptr: NonNull<T>,
-    pub(crate) heap: &'heap BrandedHeap<'brand, P, B>,
+    pub(crate) heap: &'heap Heap<'brand, P, B>,
     pub(crate) _non_send_sync: core::marker::PhantomData<*mut ()>,
 }
 
 impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
     BrandedBox<'brand, 'heap, T, P, B>
 {
-    /// Creates a new `BrandedBox` containing `val` allocated from the given `BrandedHeap`.
+    /// Creates a new `BrandedBox` containing `val` allocated from the given `Heap`.
     #[inline(always)]
     pub fn new(
-        heap: &'heap BrandedHeap<'brand, P, B>,
+        heap: &'heap Heap<'brand, P, B>,
         token: &AllocatorToken<'brand>,
         val: T,
     ) -> Option<Self> {
@@ -81,10 +81,7 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     /// The caller must ensure that no other copies of this `BrandedCell` (or pointers derived from it)
     /// are active or will be used.
     #[inline(always)]
-    pub unsafe fn from_cell(
-        heap: &'heap BrandedHeap<'brand, P, B>,
-        cell: BrandedCell<'brand, T>,
-    ) -> Self {
+    pub unsafe fn from_cell(heap: &'heap Heap<'brand, P, B>, cell: BrandedCell<'brand, T>) -> Self {
         Self::from_raw(heap, cell.into_block())
     }
 
@@ -94,7 +91,7 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     /// The memory block must be initialized with a valid value of type `T`.
     #[inline(always)]
     pub unsafe fn from_raw(
-        heap: &'heap BrandedHeap<'brand, P, B>,
+        heap: &'heap Heap<'brand, P, B>,
         block: BrandedBlock<'brand, T>,
     ) -> Self {
         Self {

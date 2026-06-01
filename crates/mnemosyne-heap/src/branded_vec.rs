@@ -1,6 +1,6 @@
 use crate::brand::{AllocatorToken, BrandedBlock, Invariant};
 use crate::branded_box::BrandedBox;
-use crate::BrandedHeap;
+use crate::Heap;
 use core::alloc::Layout;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
@@ -10,7 +10,7 @@ use mnemosyne_local::LocalAllocatorSelector;
 pub mod ops;
 pub mod traits;
 
-/// A dynamically growing array allocated from a `BrandedHeap`.
+/// A dynamically growing array allocated from a `Heap`.
 ///
 /// Automatically handles growth and reallocation, dropping all elements on drop.
 pub struct BrandedVec<
@@ -23,16 +23,16 @@ pub struct BrandedVec<
     pub(crate) ptr: NonNull<T>,
     pub(crate) cap: usize,
     pub(crate) len: usize,
-    pub(crate) heap: &'heap BrandedHeap<'brand, P, B>,
+    pub(crate) heap: &'heap Heap<'brand, P, B>,
     pub(crate) _non_send_sync: core::marker::PhantomData<*mut ()>,
 }
 
 impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
     BrandedVec<'brand, 'heap, T, P, B>
 {
-    /// Creates a new empty `BrandedVec` backed by the given `BrandedHeap`.
+    /// Creates a new empty `BrandedVec` backed by the given `Heap`.
     #[inline(always)]
-    pub fn new(heap: &'heap BrandedHeap<'brand, P, B>) -> Self {
+    pub fn new(heap: &'heap Heap<'brand, P, B>) -> Self {
         Self {
             ptr: NonNull::dangling(),
             cap: if core::mem::size_of::<T>() == 0 {
@@ -49,7 +49,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// Creates a new `BrandedVec` with space for at least `capacity` elements.
     #[inline]
     pub fn with_capacity(
-        heap: &'heap BrandedHeap<'brand, P, B>,
+        heap: &'heap Heap<'brand, P, B>,
         token: &AllocatorToken<'brand>,
         capacity: usize,
     ) -> Option<Self> {

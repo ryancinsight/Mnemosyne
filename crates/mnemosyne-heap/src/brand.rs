@@ -1,5 +1,5 @@
 use crate::raw_heap::RawHeap;
-use crate::BrandedHeap;
+use crate::Heap;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::internal::HasSegmentPool;
@@ -344,9 +344,9 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedCell<'brand, T> {
 /// ```
 pub fn scope<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>, F, R>(f: F) -> R
 where
-    F: for<'brand> FnOnce(BrandedHeap<'brand, P, B>, AllocatorToken<'brand>) -> R,
+    F: for<'brand> FnOnce(Heap<'brand, P, B>, AllocatorToken<'brand>) -> R,
 {
-    let heap = BrandedHeap {
+    let heap = Heap {
         raw: RawHeap::new(),
         _phantom: Invariant::new(),
     };

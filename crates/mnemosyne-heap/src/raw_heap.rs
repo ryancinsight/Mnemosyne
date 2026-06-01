@@ -164,63 +164,6 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
     }
 
     #[inline(always)]
-    pub(crate) unsafe fn free(&self, ptr: *mut u8) {
-        ensure_options_initialized();
-        if ptr.is_null() {
-            return;
-        }
-
-        let ptr_val = ptr as usize;
-        let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
-        let segment = segment_addr as *mut Segment;
-        let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-        let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
-
-        if mnemosyne_prof::is_active() {
-            let size = unsafe { allocation_size(ptr, page, page_index) };
-            mnemosyne_prof::on_free(ptr, size);
-        }
-
-        if page_index == 0 || page.block_size == 0 {
-            unsafe { free_large_or_huge::<P, B>(ptr) };
-            return;
-        }
-
-        if P::ENABLE_POISONING {
-            unsafe { poison_freed_bytes::<P>(ptr, page.block_size) };
-        }
-
-        let block = ptr as *mut Block;
-        let owner = unsafe { (*segment).owner };
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
-        let heap_ptr = self.allocator.get() as *mut ThreadAllocator<B> as *mut core::ffi::c_void;
-
-        #[cfg(all(windows, target_arch = "x86_64"))]
-        let is_owner = {
-            let tid = unsafe {
-                let val: u32;
-                core::arch::asm!(
-                    "mov {0:e}, gs:[0x48]",
-                    out(reg) val,
-                    options(nostack, preserves_flags, readonly)
-                );
-                val
-            };
-            owner.matches_thread_id(tid)
-        };
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
-        let is_owner = owner.matches(heap_ptr);
-
-        if is_owner {
-            unsafe { self.free_owned(block, page, segment, page_index) };
-        } else {
-            unsafe {
-                page.thread_free.push::<P>(NonNull::new_unchecked(block));
-            }
-        }
-    }
-
-    #[inline(always)]
     pub(crate) unsafe fn free_owned_unchecked(&self, ptr: *mut u8) {
         ensure_options_initialized();
         if ptr.is_null() {
@@ -304,36 +247,6 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         }
 
         alloc.is_allocating = false;
-    }
-
-    #[inline(always)]
-    pub(crate) unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ensure_options_initialized();
-        if new_size == 0 {
-            if !ptr.is_null() {
-                unsafe { self.free(ptr) };
-            }
-            return core::ptr::null_mut();
-        }
-        if ptr.is_null() {
-            return self.alloc(Layout::from_size_align(new_size, layout.align()).unwrap_or(layout));
-        }
-
-        if unsafe { self.can_reuse_allocation(ptr, layout, new_size) } {
-            return ptr;
-        }
-
-        let new_ptr =
-            self.alloc(Layout::from_size_align(new_size, layout.align()).unwrap_or(layout));
-        if new_ptr.is_null() {
-            return core::ptr::null_mut();
-        }
-
-        unsafe {
-            core::ptr::copy_nonoverlapping(ptr, new_ptr, core::cmp::min(layout.size(), new_size));
-            self.free(ptr);
-        }
-        new_ptr
     }
 
     #[inline(always)]

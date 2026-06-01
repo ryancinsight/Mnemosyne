@@ -17,6 +17,8 @@
 
 ### Changed
 
+- Consolidated heap APIs to one scoped `mnemosyne_heap::Heap<'brand, P, B>` backed by the single internal `RawHeap<P, B>` implementation. Removed the duplicate `MnemosyneHeap` and `BrandedHeap` public wrapper identities and updated tests/profiler coverage to use scoped branded ownership.
+- Removed `MnemosyneHeap` and `BrandedHeap` from allocator comparison reporting. The benchmark matrix now compares the canonical Mnemosyne allocator against external allocator backends, and SnMalloc `huge_2m` rows are measured instead of reported as `N/A`.
 - Added a value-semantic integration test suite (`mnemosyne-local/tests/hot_path_value_semantics.rs`) hammering the allocate/free/usable_size hot paths: distinct/non-overlapping/round-trip checks across every size class, allocate-free churn that drives page recycling and segment reclaim, and a zero-size-returns-null guard. The distinct/round-trip check catches corruption-class regressions (overlapping or wrong-class blocks from unchecked-indexing or size-mapping optimizations) that pass per-operation but fail end-to-end. Runs under `cargo test` (real backend), complementing the Miri-validated pure-logic unit tests.
 - Completed the per-component complexity review in `complexity_audit.md`: added C-ABI-shim and backend operation tables (all entry points O(1) plus the O(n) inherent work of `calloc` zeroing and cross-class `realloc` copy) and recorded the landed `Page::index_in_segment()` O(1) derivation foundation.
 - Removed a dead `min` branch in the C shim's `realloc`: after the `new_size <= current_usable` early return, the copy length is provably `current_usable`, so the branch was unreachable. No behavioral change (pinned by `realloc_preserves_bytes_across_grow`).

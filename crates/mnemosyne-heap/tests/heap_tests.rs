@@ -1,6 +1,7 @@
 use core::alloc::Layout;
+use mnemosyne_backend::MemoryBackendWrapper;
 use mnemosyne_core::StandardPolicy;
-use mnemosyne_heap::MnemosyneHeap;
+use mnemosyne_heap::scope;
 
 static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -12,57 +13,26 @@ fn test_layout(size: usize, align: usize) -> Layout {
 #[test]
 fn test_multi_heap_basic() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let heap = MnemosyneHeap::<StandardPolicy>::new();
-    let layout = test_layout(32, 8);
-    let ptr = heap.alloc(layout);
-    assert!(!ptr.is_null());
-    unsafe { ptr.write(123) };
-    assert_eq!(unsafe { ptr.read() }, 123);
+    scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+        let layout = test_layout(32, 8);
+        let block = heap.alloc(&token, layout).expect("heap allocation failed");
+        let ptr = block.as_ptr();
+        unsafe { ptr.write(123) };
+        assert_eq!(unsafe { ptr.read() }, 123);
 
-    // Test realloc
-    let ptr2 = unsafe { heap.realloc(ptr, layout, 64) };
-    assert!(!ptr2.is_null());
-    assert_eq!(unsafe { ptr2.read() }, 123);
+        let block = heap
+            .realloc(&mut token, block, layout, 64)
+            .expect("heap realloc failed");
+        assert_eq!(unsafe { block.as_ptr().read() }, 123);
 
-    unsafe {
-        heap.free(ptr2);
-    }
-}
-
-#[test]
-fn test_multi_heap_cross_thread() {
-    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    use std::sync::{Arc, Mutex};
-    use std::thread;
-    let heap = Arc::new(Mutex::new(MnemosyneHeap::<StandardPolicy>::new()));
-
-    let heap_clone = heap.clone();
-    let layout = test_layout(64, 8);
-
-    let handle = thread::spawn(move || {
-        let heap_guard = heap_clone.lock().unwrap_or_else(|e| e.into_inner());
-        let ptr = heap_guard.alloc(layout);
-        assert!(!ptr.is_null());
-        unsafe { ptr.write(42) };
-        ptr as usize
+        heap.free_uninit(&mut token, block);
     });
-
-    let ptr_val = handle
-        .join()
-        .expect("heap cross-thread allocation worker panicked");
-    let ptr = ptr_val as *mut u8;
-
-    // Free the pointer on the main thread
-    unsafe {
-        heap.lock().unwrap_or_else(|e| e.into_inner()).free(ptr);
-    }
 }
 
 #[test]
 fn test_runtime_options_override_default_retention() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     use mnemosyne_arena::HasSegmentPool;
-    use mnemosyne_backend::MemoryBackendWrapper;
 
     // Reset options to default
     mnemosyne_local::reset_options_for_testing();
@@ -76,15 +46,13 @@ fn test_runtime_options_override_default_retention() {
     }
     let initial_retained = pool.retained_count();
 
-    // Do an allocation via MnemosyneHeap to trigger options parsing and then drop it
+    // Do an allocation via Heap to trigger options parsing and then drop it.
     {
-        let heap = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
-        let layout = test_layout(32, 8);
-        let ptr = heap.alloc(layout);
-        assert!(!ptr.is_null());
-        unsafe {
-            heap.free(ptr);
-        }
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let layout = test_layout(32, 8);
+            let block = heap.alloc(&token, layout).expect("heap allocation failed");
+            heap.free_uninit(&mut token, block);
+        });
     }
 
     let final_retained = pool.retained_count();
@@ -100,36 +68,38 @@ fn test_runtime_options_override_default_retention() {
 #[test]
 fn multi_heap_isolates_allocation_streams() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let heap1 = MnemosyneHeap::<StandardPolicy>::new();
-    let heap2 = MnemosyneHeap::<StandardPolicy>::new();
+    scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap1, mut token1| {
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap2, mut token2| {
+            let layout = test_layout(32, 8);
+            let block1 = heap1
+                .alloc(&token1, layout)
+                .expect("heap1 allocation failed");
+            let block2 = heap2
+                .alloc(&token2, layout)
+                .expect("heap2 allocation failed");
+            let ptr1 = block1.as_ptr();
+            let ptr2 = block2.as_ptr();
 
-    let layout = test_layout(32, 8);
+            assert_ne!(ptr1, ptr2);
 
-    // Allocate from both heaps
-    let ptr1 = heap1.alloc(layout);
-    let ptr2 = heap2.alloc(layout);
+            unsafe {
+                ptr1.write(111);
+                ptr2.write(222);
 
-    assert!(!ptr1.is_null());
-    assert!(!ptr2.is_null());
-    assert_ne!(ptr1, ptr2);
+                assert_eq!(ptr1.read(), 111);
+                assert_eq!(ptr2.read(), 222);
+            }
 
-    unsafe {
-        ptr1.write(111);
-        ptr2.write(222);
-
-        assert_eq!(ptr1.read(), 111);
-        assert_eq!(ptr2.read(), 222);
-
-        heap1.free(ptr1);
-        heap2.free(ptr2);
-    }
+            heap1.free_uninit(&mut token1, block1);
+            heap2.free_uninit(&mut token2, block2);
+        });
+    });
 }
 
 #[test]
 fn multi_heap_release_does_not_touch_other_heaps() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     use mnemosyne_arena::HasSegmentPool;
-    use mnemosyne_backend::MemoryBackendWrapper;
 
     // Reset options for testing
     mnemosyne_local::reset_options_for_testing();
@@ -147,46 +117,38 @@ fn multi_heap_release_does_not_touch_other_heaps() {
     }
     let initial_retained = pool.retained_count();
 
-    // 1. Create two separate heaps using MemoryBackendWrapper
-    let heap1 = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
-    let heap2 = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
+    scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap2, mut token2| {
+        let layout = test_layout(32, 8);
+        let block2 = heap2
+            .alloc(&token2, layout)
+            .expect("heap2 allocation failed");
+        unsafe {
+            block2.as_ptr().write(77);
+        }
 
-    let layout = test_layout(32, 8);
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap1, mut token1| {
+            let block1 = heap1
+                .alloc(&token1, layout)
+                .expect("heap1 allocation failed");
+            unsafe {
+                block1.as_ptr().write(55);
+            }
+            heap1.free_uninit(&mut token1, block1);
+        });
 
-    // 2. Allocate blocks
-    let ptr1 = heap1.alloc(layout);
-    let ptr2 = heap2.alloc(layout);
+        // Dropping heap1 with 0 live allocations causes its segment to be returned to the global pool.
+        // Retained segments should increase.
+        let retained_after_heap1 = pool.retained_count();
+        assert!(
+            retained_after_heap1 > initial_retained,
+            "Segment from heap1 should have been returned to global pool"
+        );
 
-    assert!(!ptr1.is_null());
-    assert!(!ptr2.is_null());
+        // Verify heap2 is completely untouched and block2 is still valid.
+        assert_eq!(unsafe { block2.as_ptr().read() }, 77);
 
-    unsafe {
-        ptr1.write(55);
-        ptr2.write(77);
-    }
-
-    // 3. Free ptr1 in heap1, then drop heap1
-    unsafe {
-        heap1.free(ptr1);
-    }
-    drop(heap1);
-
-    // Dropping heap1 with 0 live allocations causes its segment to be returned to the global pool.
-    // Retained segments should increase.
-    let retained_after_heap1 = pool.retained_count();
-    assert!(
-        retained_after_heap1 > initial_retained,
-        "Segment from heap1 should have been returned to global pool"
-    );
-
-    // 4. Verify heap2 is completely untouched and ptr2 is still valid
-    assert_eq!(unsafe { ptr2.read() }, 77);
-
-    // Clean up heap2
-    unsafe {
-        heap2.free(ptr2);
-    }
-    drop(heap2);
+        heap2.free_uninit(&mut token2, block2);
+    });
 
     mnemosyne_local::reset_options_for_testing();
 }
@@ -195,7 +157,6 @@ fn multi_heap_release_does_not_touch_other_heaps() {
 fn test_programmatic_options_configure() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     use mnemosyne_arena::HasSegmentPool;
-    use mnemosyne_backend::MemoryBackendWrapper;
 
     mnemosyne_local::reset_options_for_testing();
 
@@ -221,13 +182,11 @@ fn test_programmatic_options_configure() {
     let initial_retained = pool.retained_count();
 
     {
-        let heap = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
-        let layout = test_layout(32, 8);
-        let ptr = heap.alloc(layout);
-        assert!(!ptr.is_null());
-        unsafe {
-            heap.free(ptr);
-        }
+        scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+            let layout = test_layout(32, 8);
+            let block = heap.alloc(&token, layout).expect("heap allocation failed");
+            heap.free_uninit(&mut token, block);
+        });
     }
 
     let final_retained = pool.retained_count();

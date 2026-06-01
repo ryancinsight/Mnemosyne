@@ -10,8 +10,7 @@ pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
 pub use mnemosyne_core::{options::MnemosyneOptions, AllocPolicy, StandardPolicy};
 pub use mnemosyne_hardened::{HardenedPolicy, SecurePolicy};
 pub use mnemosyne_heap::{
-    scope as branded_scope, AllocatorToken, BrandedBlock, BrandedBox, BrandedCell, BrandedHeap,
-    BrandedVec,
+    scope as branded_scope, AllocatorToken, BrandedBlock, BrandedBox, BrandedCell, BrandedVec, Heap,
 };
 pub use mnemosyne_local::{usable_size, SizeClassOccupancy};
 pub use mnemosyne_prof::{

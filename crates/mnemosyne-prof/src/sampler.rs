@@ -242,7 +242,7 @@ fn dump_profile_inner(path: &str) -> std::io::Result<()> {
                 || sym.contains("sample_alloc")
                 || sym.contains("on_alloc")
                 || sym.contains("thread_alloc")
-                || sym.contains("MnemosyneHeap")
+                || sym.contains("mnemosyne_heap::heap::Heap")
                 || sym.contains("backtrace::")
             {
                 continue;

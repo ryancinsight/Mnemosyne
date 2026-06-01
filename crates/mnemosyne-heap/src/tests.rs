@@ -13,32 +13,41 @@ fn test_layout(size: usize, align: usize) -> Layout {
 
 #[test]
 fn test_heap_allocation_and_free() {
-    let heap = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
-    let layout = test_layout(32, 8);
-    let ptr = heap.alloc(layout);
-    assert!(!ptr.is_null(), "heap allocation failed");
+    scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+        let layout = test_layout(32, 8);
+        let block = heap.alloc(&token, layout).expect("heap allocation failed");
+        let ptr = block.as_ptr();
 
-    unsafe {
-        ptr.write(42);
-        assert_eq!(ptr.read(), 42);
-        heap.free(ptr);
-    }
+        unsafe {
+            ptr.write(42);
+            assert_eq!(ptr.read(), 42);
+        }
+
+        heap.free(&mut token, block);
+    });
 }
 
 #[test]
 fn test_heap_realloc() {
-    let heap = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
-    let layout = test_layout(16, 8);
-    let ptr = heap.alloc(layout);
-    assert!(!ptr.is_null());
+    scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+        let layout = test_layout(16, 8);
+        let block = heap.alloc(&token, layout).expect("heap allocation failed");
+        let ptr = block.as_ptr();
 
-    unsafe {
-        ptr.write(99);
-        let new_ptr = heap.realloc(ptr, layout, 32);
-        assert!(!new_ptr.is_null());
-        assert_eq!(new_ptr.read(), 99);
-        heap.free(new_ptr);
-    }
+        unsafe {
+            ptr.write(99);
+        }
+
+        let new_block = heap
+            .realloc(&mut token, block, layout, 32)
+            .expect("heap realloc failed");
+        let new_ptr = new_block.as_ptr();
+        unsafe {
+            assert_eq!(new_ptr.read(), 99);
+        }
+
+        heap.free_uninit(&mut token, new_block);
+    });
 }
 
 #[test]

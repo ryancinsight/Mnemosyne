@@ -171,8 +171,6 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
         let entry = table.entry((group, sub_bench)).or_default();
         match kind {
             AllocatorKind::Mnemosyne => entry.mnemosyne = Some(row.mean_ns),
-            AllocatorKind::MnemosyneHeap => entry.mnemosyne_heap = Some(row.mean_ns),
-            AllocatorKind::BrandedHeap => entry.branded_heap = Some(row.mean_ns),
             AllocatorKind::System => entry.system = Some(row.mean_ns),
             AllocatorKind::MiMalloc => entry.mimalloc = Some(row.mean_ns),
             AllocatorKind::SnMalloc => entry.snmalloc = Some(row.mean_ns),
@@ -182,9 +180,9 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
 
     let mut markdown = String::new();
     markdown.push_str("# Allocator Performance Comparison\n\n");
-    markdown.push_str("| Benchmark | Mnemosyne (ns) | MnemosyneHeap (ns) | BrandedHeap (ns) | System (ns) | MiMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs System | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc | MnemosyneHeap vs Mnemosyne | BrandedHeap vs Mnemosyne |\n");
+    markdown.push_str("| Benchmark | Mnemosyne (ns) | System (ns) | MiMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs System | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc |\n");
     markdown.push_str(
-        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n",
+        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n",
     );
 
     println!("\nAllocator Comparisons (Current Run):");
@@ -192,11 +190,9 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
         "============================================================================================================================================"
     );
     println!(
-        "{:<45} {:<15} {:<18} {:<18} {:<15} {:<15} {:<15} {:<15}",
+        "{:<45} {:<15} {:<15} {:<15} {:<15} {:<15}",
         "Benchmark",
         "Mnemosyne (ns)",
-        "MnemosyneHeap",
-        "BrandedHeap",
         "System (ns)",
         "MiMalloc (ns)",
         "SnMalloc (ns)",
@@ -216,12 +212,6 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
         let mne_str = comparison
             .mnemosyne
             .map_or("N/A".to_string(), |v| format!("{:.3}", v));
-        let mne_heap_str = comparison
-            .mnemosyne_heap
-            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
-        let branded_heap_str = comparison
-            .branded_heap
-            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
         let sys_str = comparison
             .system
             .map_or("N/A".to_string(), |v| format!("{:.3}", v));
@@ -236,8 +226,8 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
             .map_or("N/A".to_string(), |v| format!("{:.3}", v));
 
         println!(
-            "{:<45} {:<15} {:<18} {:<18} {:<15} {:<15} {:<15} {:<15}",
-            name, mne_str, mne_heap_str, branded_heap_str, sys_str, mi_str, sn_str, je_str
+            "{:<45} {:<15} {:<15} {:<15} {:<15} {:<15}",
+            name, mne_str, sys_str, mi_str, sn_str, je_str
         );
 
         let vs_sys = match (comparison.mnemosyne, comparison.system) {
@@ -256,31 +246,9 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
             (Some(mn_v), Some(je_v)) => format!("{:.2}x", mn_v / je_v),
             _ => "N/A".to_string(),
         };
-        let heap_vs_mne = match (comparison.mnemosyne_heap, comparison.mnemosyne) {
-            (Some(heap_v), Some(mn_v)) => format!("{:.2}x", heap_v / mn_v),
-            _ => "N/A".to_string(),
-        };
-        let branded_vs_mne = match (comparison.branded_heap, comparison.mnemosyne) {
-            (Some(heap_v), Some(mn_v)) => format!("{:.2}x", heap_v / mn_v),
-            _ => "N/A".to_string(),
-        };
-
         markdown.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
-            name,
-            mne_str,
-            mne_heap_str,
-            branded_heap_str,
-            sys_str,
-            mi_str,
-            sn_str,
-            je_str,
-            vs_sys,
-            vs_mi,
-            vs_sn,
-            vs_je,
-            heap_vs_mne,
-            branded_vs_mne
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            name, mne_str, sys_str, mi_str, sn_str, je_str, vs_sys, vs_mi, vs_sn, vs_je
         ));
     }
     println!(
@@ -296,8 +264,6 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AllocatorKind {
     Mnemosyne,
-    MnemosyneHeap,
-    BrandedHeap,
     System,
     MiMalloc,
     SnMalloc,
@@ -307,8 +273,6 @@ enum AllocatorKind {
 fn classify_allocator(allocator: &str) -> Option<AllocatorKind> {
     match allocator {
         "mnemosyne" => Some(AllocatorKind::Mnemosyne),
-        "mnemosyneheap" => Some(AllocatorKind::MnemosyneHeap),
-        "brandedheap" => Some(AllocatorKind::BrandedHeap),
         "system" => Some(AllocatorKind::System),
         "mimalloc" => Some(AllocatorKind::MiMalloc),
         "snmalloc" => Some(AllocatorKind::SnMalloc),
@@ -320,8 +284,6 @@ fn classify_allocator(allocator: &str) -> Option<AllocatorKind> {
 #[derive(Default)]
 struct AllocatorComparison {
     mnemosyne: Option<f64>,
-    mnemosyne_heap: Option<f64>,
-    branded_heap: Option<f64>,
     system: Option<f64>,
     mimalloc: Option<f64>,
     snmalloc: Option<f64>,
@@ -796,14 +758,7 @@ mod tests {
             classify_allocator("mnemosyne"),
             Some(AllocatorKind::Mnemosyne)
         );
-        assert_eq!(
-            classify_allocator("mnemosyneheap"),
-            Some(AllocatorKind::MnemosyneHeap)
-        );
-        assert_eq!(
-            classify_allocator("brandedheap"),
-            Some(AllocatorKind::BrandedHeap)
-        );
+        assert_eq!(classify_allocator("system"), Some(AllocatorKind::System));
         assert_eq!(classify_allocator("notmnemosyne"), None);
     }
 }

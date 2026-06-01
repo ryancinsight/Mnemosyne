@@ -2,6 +2,8 @@
 
 ## Completed
 
+- [arch] Consolidate the two public heap wrapper surfaces into one scoped `Heap<'brand, P, B>` API backed by the single monomorphized `RawHeap<P, B>` implementation.
+- [patch] Supersede the earlier wrapper-column allocator report shape: `MnemosyneHeap` and `BrandedHeap` are no longer classified as allocator comparators, and stale Criterion rows are ignored.
 - [patch] Include SnMalloc `huge_2m` benchmark rows in allocator comparisons instead of hard-coded `N/A` omissions.
 - [patch] Replace remaining Rustdoc example unwraps with contextual allocation diagnostics.
 - [patch] Replace benchmark utility unwraps with explicit full-page handling and contextual layout diagnostics.

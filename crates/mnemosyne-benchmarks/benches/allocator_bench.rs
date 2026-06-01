@@ -2,7 +2,6 @@ use core::alloc::{GlobalAlloc, Layout};
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
-use mnemosyne_heap::MnemosyneHeap;
 use std::alloc::System;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::thread;
@@ -560,47 +559,6 @@ fn bench_allocator_cycles(c: &mut Criterion) {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { alloc_dealloc(&mnemosyne::Mnemosyne, *layout) })
         });
-        group.bench_with_input(
-            BenchmarkId::new("MnemosyneHeap", name),
-            &layout,
-            |b, layout| {
-                let heap = MnemosyneHeap::<
-                    mnemosyne::StandardPolicy,
-                    mnemosyne_backend::MemoryBackendWrapper,
-                >::new();
-                b.iter(|| {
-                    let ptr = heap.alloc(*layout);
-                    if ptr.is_null() {
-                        benchmark_failure("MnemosyneHeap cycle", "heap returned null");
-                    }
-                    black_box(ptr);
-                    unsafe {
-                        heap.free(ptr);
-                    }
-                })
-            },
-        );
-        group.bench_with_input(
-            BenchmarkId::new("BrandedHeap", name),
-            &layout,
-            |b, layout| {
-                mnemosyne_heap::scope::<
-                    mnemosyne::StandardPolicy,
-                    mnemosyne_backend::MemoryBackendWrapper,
-                    _,
-                    _,
-                >(|heap, mut token| {
-                    b.iter(|| {
-                        let block = match heap.alloc(&token, *layout) {
-                            Some(block) => block,
-                            None => benchmark_failure("BrandedHeap cycle", "heap returned null"),
-                        };
-                        black_box(block.as_ptr());
-                        heap.free(&mut token, block);
-                    })
-                })
-            },
-        );
         group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { alloc_dealloc(&System, *layout) })
