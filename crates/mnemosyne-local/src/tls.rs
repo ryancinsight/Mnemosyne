@@ -510,7 +510,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
 
 #[inline(always)]
 fn get_os_tls_key(atomic_key: &AtomicU32) -> u32 {
-    let mut key = atomic_key.load(Ordering::Acquire);
+    let mut key = atomic_key.load(Ordering::Relaxed);
     if key == u32::MAX {
         key = init_os_tls_key(atomic_key);
     }
@@ -531,7 +531,7 @@ fn init_os_tls_key(atomic_key: &AtomicU32) -> u32 {
             if key == u32::MAX {
                 panic!("Failed to allocate Win32 TLS index");
             }
-            match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Acquire) {
+            match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Relaxed) {
                 Ok(_) => key,
                 Err(existing) => {
                     TlsFree(key);
@@ -553,7 +553,7 @@ fn init_os_tls_key(atomic_key: &AtomicU32) -> u32 {
             if res != 0 {
                 panic!("Failed to create pthread TLS key");
             }
-            match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Acquire) {
+            match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Relaxed) {
                 Ok(_) => key,
                 Err(existing) => {
                     pthread_key_delete(key);

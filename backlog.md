@@ -163,7 +163,9 @@
 - [patch] Split page allocation-counter updates into monomorphized increment/decrement helpers and pass known page indices through free paths so occupancy-mask maintenance avoids redundant page-index recovery.
 - [patch] Route same-owner small cross-class realloc through the raw allocator pointer with an explicit re-entrancy flag, avoiding the closure guard overhead while preserving local free semantics.
 - [patch] Bound periodic defragmentation owned-segment counting by the reclaim threshold instead of traversing the whole owned list once four segments are known.
+- [patch] Iterate segment reclaim and defragmentation over the occupied-page bitmask instead of scanning every page in mostly empty segments.
+- [patch] Relax hot TLS-key reads from acquire to relaxed ordering because the key is an immutable OS slot index, not a protected allocator data dependency.
 
 ## Next
 
-- [patch] Close remaining comparator-parity gaps in `allocator_comparison.md`: mimalloc still leads small cycle; jemalloc still leads huge allocation, medium allocation, and large deallocation by current point estimates. Saturated threaded small remains statistically close and should be retested before changing code.
+- [patch] Close remaining comparator-parity gaps in `allocator_comparison.md`: mimalloc still leads small cycle; jemalloc still leads huge allocation, medium allocation, and large deallocation by current point estimates.

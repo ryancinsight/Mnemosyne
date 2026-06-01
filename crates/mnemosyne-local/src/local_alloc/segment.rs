@@ -168,22 +168,23 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // Safety: segment is a valid pointer to a segment owned by us.
         unsafe {
             let dynamic_encrypted = (*segment).free_list_encrypted;
-            if (*segment).page_occupied_mask != 0 {
-                for i in 1..PAGES_PER_SEGMENT {
-                    let pg = &mut (*segment).pages[i];
-
-                    if pg.alloc_count > 0 {
-                        if pg.thread_free.is_empty() {
-                            return false;
-                        }
-                        let reclaimed = pg.reclaim_thread_free_dynamic(dynamic_encrypted);
-                        if reclaimed > 0 {
-                            super::record_cross_thread_reclaimed(reclaimed);
-                        }
-                        if pg.alloc_count > 0 {
-                            return false;
-                        }
-                    }
+            let mut mask = (*segment).page_occupied_mask;
+            while mask != 0 {
+                let i = mask.trailing_zeros() as usize;
+                mask &= mask - 1; // Clear lowest set bit
+                if i == 0 {
+                    continue;
+                }
+                let pg = &mut (*segment).pages[i];
+                if pg.thread_free.is_empty() {
+                    return false;
+                }
+                let reclaimed = pg.reclaim_thread_free_dynamic(dynamic_encrypted);
+                if reclaimed > 0 {
+                    super::record_cross_thread_reclaimed(reclaimed);
+                }
+                if pg.alloc_count > 0 {
+                    return false;
                 }
             }
         }
@@ -239,30 +240,34 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
             if unsafe { (*segment).page_occupied_mask != 0 } {
                 // 1. First pass: drain remote frees on all pages of this segment.
-                for i in 1..PAGES_PER_SEGMENT {
+                let mut mask = unsafe { (*segment).page_occupied_mask };
+                while mask != 0 {
+                    let i = mask.trailing_zeros() as usize;
+                    mask &= mask - 1; // Clear lowest set bit
+                    if i == 0 {
+                        continue;
+                    }
                     let pg = unsafe { &mut (*segment).pages[i] };
-                    if pg.block_size > 0 {
-                        let reclaimed = pg.reclaim_thread_free_dynamic(dynamic_encrypted);
-                        if reclaimed > 0 {
-                            super::record_cross_thread_reclaimed(reclaimed);
-                        }
-                        total_allocations += pg.alloc_count;
+                    let reclaimed = pg.reclaim_thread_free_dynamic(dynamic_encrypted);
+                    if reclaimed > 0 {
+                        super::record_cross_thread_reclaimed(reclaimed);
+                    }
+                    total_allocations += pg.alloc_count;
 
-                        // If page has zero active allocations and is currently linked in active/full lists,
-                        // move it to the empty_pages recycling stack (if it's not the last active page of its class).
-                        if pg.alloc_count == 0 && (pg.list_state == 1 || pg.list_state == 2) {
-                            let class = pg.size_class as usize;
-                            let is_only_active = self.active_pages[class].is_some_and(|head| {
-                                core::ptr::eq(head.as_ptr(), pg)
-                                    && unsafe { (*head.as_ptr()).next_page.is_none() }
-                            });
-                            if !is_only_active {
-                                unsafe {
-                                    self.unlink_page(pg as *mut Page, class);
-                                    self.push_empty_page(core::ptr::NonNull::new_unchecked(
-                                        pg as *mut Page,
-                                    ));
-                                }
+                    // If page has zero active allocations and is currently linked in active/full lists,
+                    // move it to the empty_pages recycling stack (if it's not the last active page of its class).
+                    if pg.alloc_count == 0 && (pg.list_state == 1 || pg.list_state == 2) {
+                        let class = pg.size_class as usize;
+                        let is_only_active = self.active_pages[class].is_some_and(|head| {
+                            core::ptr::eq(head.as_ptr(), pg)
+                                && unsafe { (*head.as_ptr()).next_page.is_none() }
+                        });
+                        if !is_only_active {
+                            unsafe {
+                                self.unlink_page(pg as *mut Page, class);
+                                self.push_empty_page(core::ptr::NonNull::new_unchecked(
+                                    pg as *mut Page,
+                                ));
                             }
                         }
                     }

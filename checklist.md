@@ -338,3 +338,5 @@ Target version: 0.1.0
 - [x] [patch] Refresh stale remaining comparator rows after occupancy-counter specialization; current comparison closes small burst retention (`666.657 ns` vs mimalloc `871.779 ns`) and within-class realloc (`4.228 ns` vs mimalloc `4.483 ns`), while cross-class realloc and public small cycle remain active targets.
 - [x] [patch] Replace same-owner small cross-class realloc's closure guard with raw allocator-pointer routing and explicit `is_allocating` scope; focused Criterion reports cross-class realloc `8.002 ns` vs mimalloc `10.793 ns` and within-class realloc `3.120 ns` vs mimalloc `5.161 ns`.
 - [x] [patch] Bound periodic defragmentation segment-count scans to the four-segment reclaim threshold.
+- [x] [patch] Iterate segment reclaim/defragmentation over `page_occupied_mask`; mostly empty segments now visit only occupied pages.
+- [x] [patch] Relax hot OS TLS-key loads to `Ordering::Relaxed`; focused Criterion reports small cycle `2.951 ns` vs mimalloc `2.734 ns`, cross-class realloc `6.383 ns` vs mimalloc `7.646 ns`, and saturated threaded small `70.191 us` vs mimalloc `79.338 us`.
