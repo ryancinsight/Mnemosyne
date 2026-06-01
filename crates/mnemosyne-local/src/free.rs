@@ -103,7 +103,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
             unsafe {
                 (*block).set_next::<P>(page_free, cookie);
                 page.free = Some(NonNull::new_unchecked(block));
-                page.decrement_alloc_count_for_segment(segment, page_index);
+                page.alloc_count = page_alloc_count - 1;
             }
             return;
         }
