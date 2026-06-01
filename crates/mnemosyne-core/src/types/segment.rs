@@ -76,6 +76,7 @@ impl Segment {
             // down to `SEGMENT_ALIGN`.
             for i in 0..PAGES_PER_SEGMENT {
                 segment.pages[i] = Page::new();
+                segment.pages[i].page_index = i as u32;
             }
         }
     }

@@ -37,6 +37,7 @@ fn test_page_reclaim_thread_free() {
         !segment_ptr.is_null(),
         "alloc_zeroed failed to allocate segment"
     );
+    unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
     let page = unsafe { &mut (*segment_ptr).pages[1] };
     page.block_size = 16;
 
@@ -77,6 +78,7 @@ fn test_page_reclaim_thread_free_hot_path() {
         !segment_ptr.is_null(),
         "alloc_zeroed failed to allocate segment"
     );
+    unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
     let page = unsafe { &mut (*segment_ptr).pages[1] };
     page.block_size = 16;
 
@@ -132,6 +134,7 @@ fn randomized_page_free_list_uses_seeded_permutation() {
         !segment_ptr.is_null(),
         "alloc_zeroed failed to allocate segment"
     );
+    unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
     let page = unsafe { &mut (*segment_ptr).pages[1] };
     page.block_size = 16;
     page.size_class = 0;

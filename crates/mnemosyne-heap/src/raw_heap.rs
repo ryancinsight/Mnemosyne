@@ -94,7 +94,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
                     };
                     unsafe {
                         page.free = (*block.as_ptr()).get_next::<P>(cookie);
-                        page.set_alloc_count(page.alloc_count + 1);
+                        page.increment_alloc_count();
                     }
                     let ptr = block.as_ptr() as *mut u8;
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
@@ -111,7 +111,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
                 } else if page.initialized_blocks < page.max_blocks() {
                     let idx = page.initialized_blocks;
                     page.initialized_blocks += 1;
-                    page.set_alloc_count(page.alloc_count + 1);
+                    unsafe { page.increment_alloc_count() };
                     let page_start = page.page_start();
                     let ptr = unsafe { page_start.add(idx * page.block_size) };
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };

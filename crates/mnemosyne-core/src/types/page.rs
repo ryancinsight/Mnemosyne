@@ -26,9 +26,11 @@ pub struct Page {
     /// Pointer to the previous page in the thread-local size class list.
     pub prev_page: Option<NonNull<Page>>,
     /// The size class index of this page.
-    pub size_class: u32,
+    pub size_class: u8,
     /// Current list state of this page (0=None, 1=Active, 2=Full, 3=Empty).
-    pub list_state: u32,
+    pub list_state: u8,
+    /// Index of this page in its parent segment.
+    pub page_index: u32,
 }
 
 unsafe impl Send for Page {}
@@ -57,6 +59,7 @@ impl Page {
             prev_page: None,
             size_class: 0,
             list_state: 0,
+            page_index: 0,
         }
     }
 }
@@ -69,14 +72,14 @@ impl Default for Page {
 }
 
 impl Page {
-    /// Recovers this page's index within its parent segment's `pages` array
-    /// from the page's own metadata address, in O(1).
-    #[inline]
+    /// Returns this page's index within its parent segment's `pages` array.
+    ///
+    /// `Segment::initialize` assigns this field for every page. Keeping the
+    /// index in metadata avoids repeated address-difference division on hot
+    /// paths that need a segment key or physical page start.
+    #[inline(always)]
     pub fn index_in_segment(&self) -> usize {
-        let self_addr = self as *const Page as usize;
-        let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
-        let pages_base = segment_addr + core::mem::offset_of!(Segment, pages);
-        (self_addr - pages_base) / core::mem::size_of::<Page>()
+        self.page_index as usize
     }
 
     /// Sets the active allocation count for this page and updates the parent
@@ -95,8 +98,7 @@ impl Page {
             let self_addr = self as *mut Page as usize;
             let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
             let segment = segment_addr as *mut Segment;
-            let pages_base = segment_addr + core::mem::offset_of!(Segment, pages);
-            let idx = (self_addr - pages_base) / core::mem::size_of::<Page>();
+            let idx = self.page_index as usize;
             unsafe { self.set_alloc_count_for_segment(segment, idx, count) };
         } else {
             self.alloc_count = count;
@@ -142,8 +144,7 @@ impl Page {
             let self_addr = self as *mut Page as usize;
             let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
             let segment = segment_addr as *mut Segment;
-            let pages_base = segment_addr + core::mem::offset_of!(Segment, pages);
-            let idx = (self_addr - pages_base) / core::mem::size_of::<Page>();
+            let idx = self.page_index as usize;
             unsafe { Self::set_segment_page_occupied(segment, idx, true) };
         }
     }
@@ -184,8 +185,7 @@ impl Page {
             let self_addr = self as *mut Page as usize;
             let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
             let segment = segment_addr as *mut Segment;
-            let pages_base = segment_addr + core::mem::offset_of!(Segment, pages);
-            let idx = (self_addr - pages_base) / core::mem::size_of::<Page>();
+            let idx = self.page_index as usize;
             unsafe { Self::set_segment_page_occupied(segment, idx, false) };
         }
     }
@@ -229,10 +229,7 @@ impl Page {
     pub fn page_start(&self) -> *mut u8 {
         let self_addr = self as *const Page as usize;
         let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
-        let offset = self_addr - segment_addr - core::mem::offset_of!(Segment, pages);
-        let page_offset = offset
-            << (crate::constants::PAGE_SHIFT
-                - core::mem::size_of::<Page>().trailing_zeros() as usize);
+        let page_offset = (self.page_index as usize) << crate::constants::PAGE_SHIFT;
         unsafe { (segment_addr as *mut u8).add(page_offset) }
     }
 

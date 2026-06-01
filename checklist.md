@@ -340,3 +340,7 @@ Target version: 0.1.0
 - [x] [patch] Bound periodic defragmentation segment-count scans to the four-segment reclaim threshold.
 - [x] [patch] Iterate segment reclaim/defragmentation over `page_occupied_mask`; mostly empty segments now visit only occupied pages.
 - [x] [patch] Relax hot OS TLS-key loads to `Ordering::Relaxed`; focused Criterion reports small cycle `2.951 ns` vs mimalloc `2.734 ns`, cross-class realloc `6.383 ns` vs mimalloc `7.646 ns`, and saturated threaded small `70.191 us` vs mimalloc `79.338 us`.
+- [x] [patch] Store initialized page indices in `Page::page_index`, route `index_in_segment` and `page_start` through the stored value, and add const invariants proving `PAGES_PER_SEGMENT` and `NUM_SIZE_CLASSES` fit their metadata fields.
+- [x] [patch] Update standalone core page tests to initialize real `Segment` metadata before using `Page::page_start`, preserving the production page-index invariant in tests.
+- [x] [patch] Replace allocation hot-path `set_alloc_count(page.alloc_count + 1)` calls with `increment_alloc_count()` in local and heap allocation paths.
+- [x] [patch] Regenerate `benchmarks/allocator_comparison.md`; current summary reports saturated threaded small cycles at Mnemosyne `66.851 us` versus mimalloc `70.088 us`, while public small cycle remains `3.018 ns` versus mimalloc `2.724 ns`.

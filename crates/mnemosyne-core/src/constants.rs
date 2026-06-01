@@ -73,6 +73,10 @@ const _: () = assert!(
     PAGES_PER_SEGMENT * PAGE_SIZE == SEGMENT_SIZE,
     "PAGES_PER_SEGMENT must tile SEGMENT_SIZE exactly with PAGE_SIZE strides"
 );
+const _: () = assert!(
+    PAGES_PER_SEGMENT <= (u32::MAX as usize) + 1,
+    "Page::page_index stores segment-local page indices in u32"
+);
 
 /// At least one page must be available for small allocations after Page 0
 /// is reserved for segment metadata.
@@ -102,6 +106,10 @@ const _: () = assert!(
 const _: () = assert!(
     NUM_SIZE_CLASSES > 0,
     "NUM_SIZE_CLASSES must be non-zero so per-class allocator arrays hold at least one entry"
+);
+const _: () = assert!(
+    NUM_SIZE_CLASSES <= (u8::MAX as usize) + 1,
+    "Page::size_class stores size-class indices in u8"
 );
 
 /// `MIN_BLOCK_SIZE` must divide `PAGE_SIZE` exactly so the densest page is

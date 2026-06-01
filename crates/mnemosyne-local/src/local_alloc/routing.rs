@@ -34,7 +34,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 };
                 unsafe {
                     page.free = (*block.as_ptr()).get_next::<P>(cookie);
-                    page.set_alloc_count(page.alloc_count + 1);
+                    page.increment_alloc_count();
                 }
                 return block.as_ptr() as *mut u8;
             }
@@ -43,7 +43,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             if page.initialized_blocks < page.max_blocks() {
                 let idx = page.initialized_blocks;
                 page.initialized_blocks += 1;
-                page.set_alloc_count(page.alloc_count + 1);
+                page.increment_alloc_count();
                 let page_start = page.page_start();
                 let block_ptr = unsafe { page_start.add(idx * page.block_size) };
                 return block_ptr;
@@ -221,7 +221,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                 let page_start = page.page_start();
                 page.block_size = block_size;
-                page.size_class = class as u32;
+                page.size_class = class as u8;
                 page.initialize_free_list::<P>(page_start, random_value);
 
                 self.push_active_page(page_ptr, class);
@@ -288,7 +288,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         };
                         let page = unsafe { &mut *found_page };
                         page.block_size = block_size;
-                        page.size_class = class as u32;
+                        page.size_class = class as u8;
                         let page_start = page.page_start();
                         // Safety: initializing free list for the repurposed page
                         unsafe {
@@ -334,7 +334,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // Safety: page_ptr points to a valid Page inside the segment.
         let page = unsafe { &mut *page_ptr };
         page.block_size = block_size;
-        page.size_class = class as u32;
+        page.size_class = class as u8;
 
         let page_start = page.page_start();
         let random_value = if P::RANDOMIZE_ALLOCATION {
