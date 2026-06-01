@@ -609,12 +609,10 @@ fn bench_allocator_cycles(c: &mut Criterion) {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { alloc_dealloc(&mimalloc::MiMalloc, *layout) })
         });
-        if name != "huge/2m" {
-            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-                // Safety: `layout` comes from the static valid benchmark layout table.
-                b.iter(|| unsafe { alloc_dealloc(&snmalloc_rs::SnMalloc, *layout) })
-            });
-        }
+        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+            // Safety: `layout` comes from the static valid benchmark layout table.
+            b.iter(|| unsafe { alloc_dealloc(&snmalloc_rs::SnMalloc, *layout) })
+        });
         #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
@@ -656,17 +654,13 @@ fn bench_allocator_alloc(c: &mut Criterion) {
                 BatchSize::SmallInput,
             )
         });
-        if name != "huge/2m" {
-            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-                b.iter_batched(
-                    || (),
-                    |_| unsafe {
-                        AllocatedBlock::new(&snmalloc_rs::SnMalloc, *layout, "alloc_only")
-                    },
-                    BatchSize::SmallInput,
-                )
-            });
-        }
+        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+            b.iter_batched(
+                || (),
+                |_| unsafe { AllocatedBlock::new(&snmalloc_rs::SnMalloc, *layout, "alloc_only") },
+                BatchSize::SmallInput,
+            )
+        });
         #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
@@ -715,17 +709,15 @@ fn bench_allocator_dealloc(c: &mut Criterion) {
                 BatchSize::SmallInput,
             )
         });
-        if name != "huge/2m" {
-            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-                b.iter_batched(
-                    || unsafe {
-                        require_allocated(snmalloc_rs::SnMalloc.alloc(*layout), "dealloc_only")
-                    },
-                    |ptr| unsafe { dealloc_only(&snmalloc_rs::SnMalloc, ptr, *layout) },
-                    BatchSize::SmallInput,
-                )
-            });
-        }
+        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+            b.iter_batched(
+                || unsafe {
+                    require_allocated(snmalloc_rs::SnMalloc.alloc(*layout), "dealloc_only")
+                },
+                |ptr| unsafe { dealloc_only(&snmalloc_rs::SnMalloc, ptr, *layout) },
+                BatchSize::SmallInput,
+            )
+        });
         #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
@@ -804,21 +796,17 @@ fn bench_usable_size(c: &mut Criterion) {
                 })
             })
         });
-        if name != "huge/2m" {
-            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-                // Safety: `layout` comes from the static valid benchmark layout table.
-                b.iter(|| unsafe {
-                    alloc_usable_dealloc(&snmalloc_rs::SnMalloc, *layout, |ptr| {
-                        match snmalloc_rs::SnMalloc.usable_size(ptr) {
-                            Some(size) => size,
-                            None => {
-                                benchmark_failure("alloc_usable_dealloc", "snmalloc returned None")
-                            }
-                        }
-                    })
+        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+            // Safety: `layout` comes from the static valid benchmark layout table.
+            b.iter(|| unsafe {
+                alloc_usable_dealloc(&snmalloc_rs::SnMalloc, *layout, |ptr| {
+                    match snmalloc_rs::SnMalloc.usable_size(ptr) {
+                        Some(size) => size,
+                        None => benchmark_failure("alloc_usable_dealloc", "snmalloc returned None"),
+                    }
                 })
-            });
-        }
+            })
+        });
         #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
@@ -868,28 +856,23 @@ fn bench_usable_size_query(c: &mut Criterion) {
         // Safety: pointer was allocated by MiMalloc for `layout` above.
         unsafe { mimalloc::MiMalloc.dealloc(mimalloc_ptr, layout) };
 
-        if name != "huge/2m" {
-            // Safety: `layout` comes from the static valid benchmark layout table.
-            let snmalloc_ptr = unsafe {
-                require_allocated(snmalloc_rs::SnMalloc.alloc(layout), "usable_size_query")
-            };
-            group.bench_with_input(
-                BenchmarkId::new("SnMalloc", name),
-                &snmalloc_ptr,
-                |b, ptr| {
-                    b.iter(
-                        || match snmalloc_rs::SnMalloc.usable_size(black_box(*ptr)) {
-                            Some(size) => size,
-                            None => {
-                                benchmark_failure("usable_size_query", "snmalloc returned None")
-                            }
-                        },
-                    )
-                },
-            );
-            // Safety: pointer was allocated by SnMalloc for `layout` above.
-            unsafe { snmalloc_rs::SnMalloc.dealloc(snmalloc_ptr, layout) };
-        }
+        // Safety: `layout` comes from the static valid benchmark layout table.
+        let snmalloc_ptr =
+            unsafe { require_allocated(snmalloc_rs::SnMalloc.alloc(layout), "usable_size_query") };
+        group.bench_with_input(
+            BenchmarkId::new("SnMalloc", name),
+            &snmalloc_ptr,
+            |b, ptr| {
+                b.iter(
+                    || match snmalloc_rs::SnMalloc.usable_size(black_box(*ptr)) {
+                        Some(size) => size,
+                        None => benchmark_failure("usable_size_query", "snmalloc returned None"),
+                    },
+                )
+            },
+        );
+        // Safety: pointer was allocated by SnMalloc for `layout` above.
+        unsafe { snmalloc_rs::SnMalloc.dealloc(snmalloc_ptr, layout) };
 
         #[cfg(jemalloc_available)]
         {
@@ -1019,13 +1002,11 @@ fn bench_cross_thread_free(c: &mut Criterion) {
         });
         drop(mimalloc_worker);
 
-        if name != "huge/2m" {
-            let snmalloc_worker = HandoffWorker::new(&SNMALLOC);
-            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-                b.iter(|| snmalloc_worker.alloc_then_handoff(*layout, count))
-            });
-            drop(snmalloc_worker);
-        }
+        let snmalloc_worker = HandoffWorker::new(&SNMALLOC);
+        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+            b.iter(|| snmalloc_worker.alloc_then_handoff(*layout, count))
+        });
+        drop(snmalloc_worker);
 
         #[cfg(jemalloc_available)]
         {

@@ -2,6 +2,9 @@
 
 ## Completed
 
+- [patch] Include SnMalloc `huge_2m` benchmark rows in allocator comparisons instead of hard-coded `N/A` omissions.
+- [patch] Replace remaining Rustdoc example unwraps with contextual allocation diagnostics.
+- [patch] Replace benchmark utility unwraps with explicit full-page handling and contextual layout diagnostics.
 - [patch] Replace the local allocator page-saturation test panic with a value assertion carrying segment/page diagnostics.
 - [patch] Replace remaining branded vector shrink and extension unwraps with operation-specific diagnostics.
 - [patch] Replace bare branded container trait-operation unwraps with operation-specific diagnostics.

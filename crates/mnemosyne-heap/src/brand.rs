@@ -251,7 +251,8 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedCell<'brand, T> {
 /// use mnemosyne_heap::scope;
 ///
 /// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
-///     let val = mnemosyne_heap::BrandedBox::new(&heap, &token, 42).unwrap();
+///     let val = mnemosyne_heap::BrandedBox::new(&heap, &token, 42)
+///         .expect("branded box allocation failed");
 ///     assert_eq!(*val, 42);
 /// });
 /// ```
@@ -265,7 +266,8 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedCell<'brand, T> {
 ///
 /// let mut escaped: Option<BrandedBlock<'static, i32>> = None;
 /// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
-///     let block = heap.alloc_init(&token, 42).unwrap();
+///     let block = heap.alloc_init(&token, 42)
+///         .expect("branded block allocation failed");
 ///     // This compile error is expected because the 'brand lifetime cannot escape the closure scope:
 ///     escaped = Some(block);
 /// });
@@ -297,7 +299,8 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedCell<'brand, T> {
 /// use std::thread;
 ///
 /// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
-///     let val = heap.alloc_init(&token, 42).unwrap();
+///     let val = heap.alloc_init(&token, 42)
+///         .expect("branded box send-bound allocation failed");
 ///     let boxed = unsafe { mnemosyne_heap::BrandedBox::from_raw(&heap, val) };
 ///     // BrandedBox is !Send, so sending it to another thread is a compile error:
 ///     thread::spawn(move || {
@@ -332,7 +335,8 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedCell<'brand, T> {
 ///
 /// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap1, mut token1| {
 ///     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap2, mut token2| {
-///         let val = heap1.alloc_init(&token1, 42).unwrap();
+///         let val = heap1.alloc_init(&token1, 42)
+///             .expect("cross-scope branded allocation failed");
 ///         // This fails to compile because token2 has a different 'brand:
 ///         heap2.free(&mut token2, val);
 ///     });

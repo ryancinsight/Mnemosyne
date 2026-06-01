@@ -2,8 +2,10 @@ use std::alloc::{GlobalAlloc, Layout};
 use std::time::Instant;
 
 fn main() {
-    let layout_medium = Layout::from_size_align(1024, 8).unwrap();
-    let layout_large = Layout::from_size_align(8192, 8).unwrap();
+    let layout_medium = Layout::from_size_align(1024, 8)
+        .expect("scratch benchmark medium layout must use a valid power-of-two alignment");
+    let layout_large = Layout::from_size_align(8192, 8)
+        .expect("scratch benchmark large layout must use a valid power-of-two alignment");
 
     println!("--- Medium 1024 Simulation ---");
     // Run setup and routine sequentially like Criterion with batching
@@ -43,7 +45,8 @@ fn main() {
     println!("{:#?}", mnemosyne::memory_stats());
 
     println!("--- Huge 2M Simulation ---");
-    let layout_huge = Layout::from_size_align(2 * 1024 * 1024, 8).unwrap();
+    let layout_huge = Layout::from_size_align(2 * 1024 * 1024, 8)
+        .expect("scratch benchmark huge layout must use a valid power-of-two alignment");
     // Use smaller count for huge to avoid virtual address space exhaustion in 32-bit (though we are 64-bit)
     let n_huge = 10;
     let mut ptrs_huge = vec![std::ptr::null_mut(); n_huge];

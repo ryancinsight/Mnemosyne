@@ -51,7 +51,10 @@ unsafe fn free_linear(page: &mut Page, page_start: *mut u8, layout: &BitmapLayou
 // 2. Hint-based allocation
 unsafe fn alloc_hint(page: &mut Page, page_start: *mut u8, layout: &BitmapLayout) -> *mut u8 {
     let page_start_u64 = page_start as *mut u64;
-    let hint_ptr = page.free.unwrap().as_ptr() as *mut u64;
+    let Some(free_hint) = page.free else {
+        return std::ptr::null_mut();
+    };
+    let hint_ptr = free_hint.as_ptr() as *mut u64;
     let offset = hint_ptr as usize - page_start as usize;
     let mut hint_idx = offset / 8;
 

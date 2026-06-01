@@ -87,35 +87,33 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     let slot_ptr = B::get_allocator_ptr_raw();
     if !slot_ptr.is_null() {
         let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
-        if !alloc.is_allocating {
-            if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
-                let page = unsafe { page_ptr.as_mut() };
-                if let Some(block) = page.free {
-                    let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-                        let self_addr = page as *const Page as usize;
-                        let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
-                        let segment = segment_addr as *mut Segment;
-                        let page_index = page.index_in_segment();
-                        unsafe { (*segment).keys[page_index] }
-                    } else {
-                        0
-                    };
-                    unsafe {
-                        page.free = (*block.as_ptr()).get_next::<P>(cookie);
-                        page.increment_alloc_count();
-                    }
-                    let ptr = block.as_ptr() as *mut u8;
-                    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-                    return ptr;
-                } else if page.initialized_blocks < page.max_blocks() {
-                    let idx = page.initialized_blocks;
-                    page.initialized_blocks += 1;
+        if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
+            let page = unsafe { page_ptr.as_mut() };
+            if let Some(block) = page.free {
+                let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+                    let self_addr = page as *const Page as usize;
+                    let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
+                    let segment = segment_addr as *mut Segment;
+                    let page_index = page.index_in_segment();
+                    unsafe { (*segment).keys[page_index] }
+                } else {
+                    0
+                };
+                unsafe {
+                    page.free = (*block.as_ptr()).get_next::<P>(cookie);
                     page.increment_alloc_count();
-                    let page_start = page.page_start();
-                    let ptr = unsafe { page_start.add(idx * page.block_size) };
-                    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-                    return ptr;
                 }
+                let ptr = block.as_ptr() as *mut u8;
+                unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+                return ptr;
+            } else if page.initialized_blocks < page.max_blocks() {
+                let idx = page.initialized_blocks;
+                page.initialized_blocks += 1;
+                page.increment_alloc_count();
+                let page_start = page.page_start();
+                let ptr = unsafe { page_start.add(idx * page.block_size) };
+                unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+                return ptr;
             }
         }
     }
