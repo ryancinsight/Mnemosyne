@@ -116,13 +116,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         }
 
         if page_index == 0 || page.block_size == 0 {
-            if P::ENABLE_POISONING {
-                let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-                let size = unsafe { huge_or_large_size(ptr, segment) };
-                unsafe { poison_freed_bytes::<P>(ptr, size) };
-            }
-            let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-            let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
+            unsafe { free_large_or_huge::<P, B>(ptr) };
             return;
         }
 
@@ -179,13 +173,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         }
 
         if page_index == 0 || page.block_size == 0 {
-            if P::ENABLE_POISONING {
-                let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-                let size = unsafe { huge_or_large_size(ptr, segment) };
-                unsafe { poison_freed_bytes::<P>(ptr, size) };
-            }
-            let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-            let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
+            unsafe { free_large_or_huge::<P, B>(ptr) };
             return;
         }
 
@@ -329,6 +317,17 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         let current_usable = unsafe { mnemosyne_local::usable_size(ptr) };
         new_size <= current_usable
     }
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn free_large_or_huge<P: AllocPolicy, B: HasSegmentPool>(ptr: *mut u8) {
+    let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+    if P::ENABLE_POISONING {
+        let size = unsafe { huge_or_large_size(ptr, segment) };
+        unsafe { poison_freed_bytes::<P>(ptr, size) };
+    }
+    let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
 }
 
 #[inline(always)]

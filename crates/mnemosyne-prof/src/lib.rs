@@ -118,7 +118,8 @@ std::thread_local! {
 }
 
 #[cfg(not(feature = "nightly_tls"))]
-static PROFILER_TLS_KEY: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(u32::MAX);
+static PROFILER_TLS_KEY: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(u32::MAX);
 
 #[cfg(not(feature = "nightly_tls"))]
 #[inline(always)]

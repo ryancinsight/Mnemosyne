@@ -11,6 +11,7 @@
 - [patch] Convert the remaining `BrandedHeap` benchmark allocation failure from `expect` panic to explicit benchmark failure diagnostics.
 - [patch] Consolidate explicit and branded heap mechanics behind a shared monomorphized `RawHeap<P, B>`.
 - [patch] Keep `MnemosyneHeap` available from `mnemosyne_heap` while removing it from the top-level `mnemosyne` shell re-export.
+- [patch] Keep `RawHeap` large/huge deallocation code in one cold helper shared by explicit and branded free paths.
 - [patch] Preserve profiler sample memory efficiency with exact captured stack slices while retaining sharded active-sample maps.
 - [patch] Retain the active thread-local segment during local frees so hot allocate/free cycles reuse page free lists instead of scanning and recycling the segment.
 - [patch] Replace single-shape allocator benchmarks with Criterion cycle, burst-retention, and threaded comparison groups for Mnemosyne, mimalloc, and snmalloc.
