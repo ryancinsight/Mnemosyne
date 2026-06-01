@@ -292,14 +292,15 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         }
 
         alloc.is_allocating = true;
-        unsafe {
-            do_local_free_internal::<P, B>(alloc, block, page, segment, page_index);
-        }
+        let became_empty =
+            unsafe { do_local_free_internal::<P, B>(alloc, block, page, segment, page_index) };
 
-        alloc.defrag_counter += 1;
-        if alloc.defrag_counter >= 1024 {
-            alloc.defrag_counter = 0;
-            unsafe { alloc.periodic_defragmentation_sweep::<P>() };
+        if became_empty {
+            alloc.defrag_counter += 1;
+            if alloc.defrag_counter >= 1024 {
+                alloc.defrag_counter = 0;
+                unsafe { alloc.periodic_defragmentation_sweep::<P>() };
+            }
         }
 
         alloc.is_allocating = false;

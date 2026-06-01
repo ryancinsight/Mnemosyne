@@ -344,3 +344,6 @@ Target version: 0.1.0
 - [x] [patch] Update standalone core page tests to initialize real `Segment` metadata before using `Page::page_start`, preserving the production page-index invariant in tests.
 - [x] [patch] Replace allocation hot-path `set_alloc_count(page.alloc_count + 1)` calls with `increment_alloc_count()` in local and heap allocation paths.
 - [x] [patch] Regenerate `benchmarks/allocator_comparison.md`; current summary reports saturated threaded small cycles at Mnemosyne `66.851 us` versus mimalloc `70.088 us`, while public small cycle remains `3.018 ns` versus mimalloc `2.724 ns`.
+- [x] [patch] Narrow local-free defrag accounting to `became_empty` transitions so full-page-to-active deallocations do not pay periodic-sweep cadence; focused Criterion improved `allocator deallocation latency/Mnemosyne/large_8192` from about `70.679 ns` in the retained table to `29.550 ns`.
+- [x] [patch] Reject a guard-free full-page-to-active local-free split after it failed to improve `allocator deallocation latency/Mnemosyne/large_8192` and regressed small/medium/large cycle rows.
+- [x] [patch] Reject deferred empty-page migration after focused benchmarking showed no material `large_8192` deallocation improvement.

@@ -113,10 +113,12 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
             let alloc = unsafe { &mut *(current_allocator as *mut ThreadAllocator<B>) };
             if !alloc.is_allocating {
                 alloc.is_allocating = true;
-                do_local_free_internal::<P, B>(alloc, block, page, segment, page_index);
+                let became_empty =
+                    do_local_free_internal::<P, B>(alloc, block, page, segment, page_index);
 
-                // Track defrag counter and run sweeps on the cold path
-                unsafe { alloc.record_defrag_operation::<P>() };
+                if became_empty {
+                    unsafe { alloc.record_defrag_operation::<P>() };
+                }
 
                 alloc.is_allocating = false;
                 return;
@@ -162,7 +164,7 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     page: &mut Page,
     segment: *mut Segment,
     page_index: usize,
-) {
+) -> bool {
     let was_full = page.list_state == 2;
     let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
         unsafe { (*segment).keys[page_index] }
@@ -199,4 +201,5 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
             }
         }
     }
+    becomes_empty
 }

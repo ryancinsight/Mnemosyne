@@ -168,7 +168,8 @@
 - [patch] Store each page's segment-local index in metadata and route `page_start` plus occupancy-mask transitions through that stored index, avoiding repeated page-address subtraction/division while keeping `Page` within one cache line.
 - [patch] Use page allocation-counter increment helpers on local and heap allocation hot paths so occupancy-mask maintenance does not reload and compare an already-derived target count.
 - [patch] Refresh allocator comparison rows after stored page-index routing; current saturated threaded small cycles measure Mnemosyne `66.851 us` versus mimalloc `70.088 us`.
+- [patch] Charge periodic defragmentation cadence only when local free transitions actually make a page empty, removing sweep accounting from full-page-to-active transitions and closing `allocator deallocation latency/large_8192` versus jemalloc.
 
 ## Next
 
-- [patch] Close remaining comparator-parity gaps in `allocator_comparison.md`: mimalloc still leads public small cycle and combined small usable-size latency; jemalloc still leads large deallocation by current point estimates.
+- [patch] Close remaining comparator-parity gaps in `allocator_comparison.md`: mimalloc still leads public small cycle and combined small usable-size latency by current point estimates.
