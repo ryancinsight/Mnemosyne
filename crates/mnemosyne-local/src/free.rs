@@ -103,7 +103,7 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
             unsafe {
                 (*block).set_next::<P>(page_free, cookie);
                 page.free = Some(NonNull::new_unchecked(block));
-                page.alloc_count = page_alloc_count - 1;
+                page.set_alloc_count(page_alloc_count - 1);
             }
             let current_allocator = B::get_allocator_ptr_raw();
             if !current_allocator.is_null() {
@@ -183,7 +183,9 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     }
     page.free = Some(NonNull::new_unchecked(block));
 
-    page.alloc_count -= 1;
+    unsafe {
+        page.set_alloc_count(page.alloc_count - 1);
+    }
     let becomes_empty = page.alloc_count == 0;
 
     if was_full {

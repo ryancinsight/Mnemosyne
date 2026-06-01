@@ -102,8 +102,8 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                     };
                     unsafe {
                         page.free = (*block.as_ptr()).get_next::<P>(cookie);
+                        page.set_alloc_count(page.alloc_count + 1);
                     }
-                    page.alloc_count += 1;
                     let ptr = block.as_ptr() as *mut u8;
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
 
@@ -119,7 +119,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                 } else if page.initialized_blocks < page.max_blocks() {
                     let idx = page.initialized_blocks;
                     page.initialized_blocks += 1;
-                    page.alloc_count += 1;
+                    page.set_alloc_count(page.alloc_count + 1);
                     let page_start = page.page_start();
                     let ptr = unsafe { page_start.add(idx * page.block_size) };
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
