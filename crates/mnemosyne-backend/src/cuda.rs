@@ -35,7 +35,8 @@ const CUDA_INITIALIZED: u8 = 2;
 const MAX_TRACKED_CUDA_ALLOCATIONS: usize = 256;
 type CudaAllocationRegistry = [core::sync::atomic::AtomicPtr<u8>; MAX_TRACKED_CUDA_ALLOCATIONS];
 static CUDA_ALLOCATIONS: CudaAllocationRegistry =
-    [const { core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()) }; MAX_TRACKED_CUDA_ALLOCATIONS];
+    [const { core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()) };
+        MAX_TRACKED_CUDA_ALLOCATIONS];
 
 /// Exact count of active CUDA allocations inside the registry.
 static CUDA_ALLOCATION_COUNT: core::sync::atomic::AtomicUsize =

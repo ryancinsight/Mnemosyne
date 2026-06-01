@@ -12,13 +12,13 @@ static TEST_LOCK: Mutex<()> = Mutex::new(());
 static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
 static FREE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-fn custom_alloc_hook(ptr: *mut u8, size: usize) {
+unsafe extern "C" fn custom_alloc_hook(ptr: *mut core::ffi::c_void, size: usize) {
     if !ptr.is_null() && size > 0 {
         ALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
     }
 }
 
-fn custom_free_hook(ptr: *mut u8, size: usize) {
+unsafe extern "C" fn custom_free_hook(ptr: *mut core::ffi::c_void, size: usize) {
     if !ptr.is_null() && size > 0 {
         FREE_COUNT.fetch_add(1, Ordering::SeqCst);
     }
@@ -51,7 +51,9 @@ fn test_custom_trace_hooks() {
     assert!(!ptr2.is_null());
     assert_eq!(ALLOC_COUNT.load(Ordering::SeqCst), 2);
 
-    unsafe { heap.free(ptr2); }
+    unsafe {
+        heap.free(ptr2);
+    }
     assert_eq!(FREE_COUNT.load(Ordering::SeqCst), 2);
 
     // Unregister hooks
@@ -110,7 +112,7 @@ fn test_poisson_sampler_and_dump_profile() {
 
 static RECURSIVE_ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-fn reentrant_alloc_hook(ptr: *mut u8, size: usize) {
+unsafe extern "C" fn reentrant_alloc_hook(ptr: *mut core::ffi::c_void, size: usize) {
     if !ptr.is_null() && size > 0 {
         RECURSIVE_ALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
         // Trigger a recursive allocation inside the hook!

@@ -133,14 +133,15 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(
         }
     };
 
-    let (user_ptr, aligned_addr, tail_slack_start, mapping_end) =
-        match unsafe { initialize_large_or_huge_segment(raw_ptr, block_size, alignment, size, is_cache_hit) } {
-            Some(val) => val,
-            None => {
-                let _released = unsafe { B::deallocate(raw_ptr, block_size) };
-                return core::ptr::null_mut();
-            }
-        };
+    let (user_ptr, aligned_addr, tail_slack_start, mapping_end) = match unsafe {
+        initialize_large_or_huge_segment(raw_ptr, block_size, alignment, size, is_cache_hit)
+    } {
+        Some(val) => val,
+        None => {
+            let _released = unsafe { B::deallocate(raw_ptr, block_size) };
+            return core::ptr::null_mut();
+        }
+    };
 
     // Only decommit slack on newly allocated blocks from the OS to save syscalls
     if !is_cache_hit && B::SUPPORTS_DECOMMIT && decommit_slack {
@@ -228,7 +229,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use crate::segment::{GlobalSegmentPool, GlobalHugePool};
+    use crate::segment::{GlobalHugePool, GlobalSegmentPool};
     use core::sync::atomic::{AtomicUsize, Ordering};
     use mnemosyne_core::constants::SEGMENT_SIZE;
     use mnemosyne_core::MemoryBackend;
@@ -280,7 +281,8 @@ mod tests {
         for &align in &[1usize, 2, 4, 8, 16, 64, 4096, 64 * 1024, 1024 * 1024] {
             let size = 4 * 1024 * 1024;
             // Safety: size is non-zero and align is a power of two.
-            let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align, true) };
+            let user_ptr =
+                unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align, true) };
             assert!(!user_ptr.is_null(), "allocation failed for align {align}");
             assert_eq!(
                 (user_ptr as usize) % align,
@@ -337,7 +339,8 @@ mod tests {
         for &align in &[0usize, 3, 6, 12, 24, 48, 96] {
             // Safety: this verifies local validation rejects invalid alignments
             // before any backend allocation can be observed by callers.
-            let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(4096, align, true) };
+            let user_ptr =
+                unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(4096, align, true) };
             assert!(
                 user_ptr.is_null(),
                 "invalid alignment {align} should be rejected"
@@ -422,7 +425,8 @@ mod tests {
         // Safety: this verifies local validation rejects payloads whose
         // required mapping would exceed the pointer-offset-safe allocation
         // bound before any backend allocation attempt.
-        let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(MAX_ALLOC_SIZE, 8, true) };
+        let user_ptr =
+            unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(MAX_ALLOC_SIZE, 8, true) };
         assert!(
             user_ptr.is_null(),
             "MAX_ALLOC_SIZE huge allocation reached backend and returned {user_ptr:?}"
@@ -452,7 +456,8 @@ mod tests {
 
     static DECOMMIT_HUGE_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
     static DECOMMIT_HUGE_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-    static DECOMMIT_HUGE_HUGE_POOL: crate::segment::GlobalHugePool = crate::segment::GlobalHugePool::new();
+    static DECOMMIT_HUGE_HUGE_POOL: crate::segment::GlobalHugePool =
+        crate::segment::GlobalHugePool::new();
     static DECOMMIT_HUGE_CALLS: AtomicUsize = AtomicUsize::new(0);
     static DECOMMIT_HUGE_BYTES: AtomicUsize = AtomicUsize::new(0);
 
@@ -562,19 +567,28 @@ mod tests {
         assert!(released1);
 
         let stats_dealloc1 = backend_memory_stats();
-        assert_eq!(stats_dealloc1.current_mapped_bytes, stats_alloc1.current_mapped_bytes);
+        assert_eq!(
+            stats_dealloc1.current_mapped_bytes,
+            stats_alloc1.current_mapped_bytes
+        );
 
         // 2. Second allocation: should reuse the cached block (mapped bytes should NOT increase)
         let ptr2 = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align, false) };
         assert!(!ptr2.is_null());
 
         let stats_alloc2 = backend_memory_stats();
-        assert_eq!(stats_alloc2.current_mapped_bytes, stats_alloc1.current_mapped_bytes);
+        assert_eq!(
+            stats_alloc2.current_mapped_bytes,
+            stats_alloc1.current_mapped_bytes
+        );
 
         let segment2 = unsafe { *((ptr2 as *mut *mut Segment).sub(1)) };
         let raw_ptr2 = unsafe { (*segment2).raw_alloc_ptr };
 
-        assert_eq!(raw_ptr2, raw_ptr1, "Second allocation did not reuse the cached block");
+        assert_eq!(
+            raw_ptr2, raw_ptr1,
+            "Second allocation did not reuse the cached block"
+        );
 
         // Deallocate again
         let released2 = unsafe { deallocate_large_or_huge::<MemoryBackendWrapper>(ptr2, segment2) };
@@ -586,7 +600,10 @@ mod tests {
         }
 
         let stats_purged = backend_memory_stats();
-        assert_eq!(stats_purged.current_mapped_bytes, stats_start.current_mapped_bytes);
+        assert_eq!(
+            stats_purged.current_mapped_bytes,
+            stats_start.current_mapped_bytes
+        );
 
         // 4. Third allocation: should be a fresh OS allocation
         let ptr3 = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align, false) };

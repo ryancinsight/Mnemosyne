@@ -7,7 +7,10 @@
 /// `align` must be a non-zero power of two.
 #[inline(always)]
 pub const fn checked_align_up(addr: usize, align: usize) -> Option<usize> {
-    debug_assert!(align == 0 || align.is_power_of_two(), "align must be a power of two");
+    debug_assert!(
+        align == 0 || align.is_power_of_two(),
+        "align must be a power of two"
+    );
     if align == 0 {
         return Some(addr);
     }

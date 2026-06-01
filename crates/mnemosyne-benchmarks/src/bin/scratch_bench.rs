@@ -1,4 +1,4 @@
-use std::alloc::{Layout, GlobalAlloc};
+use std::alloc::{GlobalAlloc, Layout};
 use std::time::Instant;
 
 fn main() {
@@ -60,4 +60,3 @@ fn main() {
     println!("Time for 1,000 huge alloc/free: {:?}", elapsed);
     println!("{:#?}", mnemosyne::memory_stats());
 }
-

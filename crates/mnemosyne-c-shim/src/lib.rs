@@ -216,6 +216,83 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
     unsafe { usable_size(ptr as *mut u8) }
 }
 
+/// Registers a custom user allocation tracing hook.
+///
+/// # Safety
+///
+/// `hook` must be a valid function pointer adhering to the C calling convention,
+/// or `None` to unregister. The hook is invoked on every allocation.
+#[no_mangle]
+pub unsafe extern "C" fn mnemosyne_register_alloc_hook(
+    hook: Option<unsafe extern "C" fn(*mut c_void, usize)>,
+) {
+    mnemosyne_prof::register_alloc_hook(hook);
+}
+
+/// Registers a custom user deallocation tracing hook.
+///
+/// # Safety
+///
+/// `hook` must be a valid function pointer adhering to the C calling convention,
+/// or `None` to unregister. The hook is invoked on every deallocation.
+#[no_mangle]
+pub unsafe extern "C" fn mnemosyne_register_free_hook(
+    hook: Option<unsafe extern "C" fn(*mut c_void, usize)>,
+) {
+    mnemosyne_prof::register_free_hook(hook);
+}
+
+/// Enables the built-in Poisson heap sampler.
+#[no_mangle]
+pub extern "C" fn mnemosyne_enable_profiling(sample_interval: usize) {
+    mnemosyne_prof::enable_profiling(sample_interval);
+}
+
+/// Disables the built-in Poisson heap sampler.
+#[no_mangle]
+pub extern "C" fn mnemosyne_disable_profiling() {
+    mnemosyne_prof::disable_profiling();
+}
+
+/// Returns whether the built-in heap sampler is currently active.
+#[no_mangle]
+pub extern "C" fn mnemosyne_is_profiling_enabled() -> i32 {
+    if mnemosyne_prof::is_profiling_enabled() {
+        1
+    } else {
+        0
+    }
+}
+
+/// Dumps a folded stack profile of active memory allocations to a file.
+///
+/// Returns 0 on success, or -1 on error.
+///
+/// # Safety
+///
+/// `path` must be a valid null-terminated UTF-8 C string.
+#[no_mangle]
+pub unsafe extern "C" fn mnemosyne_dump_profile(path: *const core::ffi::c_char) -> i32 {
+    if path.is_null() {
+        return -1;
+    }
+    // Safety: path must be a valid null-terminated C string.
+    let c_str = unsafe { core::ffi::CStr::from_ptr(path) };
+    let Ok(str_slice) = c_str.to_str() else {
+        return -1;
+    };
+    match mnemosyne_prof::dump_profile(str_slice) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// Resets the profiler state, trace hooks, and sampled data. Intended for testing.
+#[no_mangle]
+pub extern "C" fn mnemosyne_reset_profiler_for_testing() {
+    mnemosyne_prof::reset_profiler_for_testing();
+}
+
 #[cfg(test)]
 extern crate std;
 
@@ -223,6 +300,44 @@ extern crate std;
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    static ALLOC_HOOK_CALLED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+    static FREE_HOOK_CALLED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+    unsafe extern "C" fn test_alloc_hook(ptr: *mut c_void, size: usize) {
+        if !ptr.is_null() && size > 0 {
+            ALLOC_HOOK_CALLED.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    unsafe extern "C" fn test_free_hook(ptr: *mut c_void, size: usize) {
+        if !ptr.is_null() && size > 0 {
+            FREE_HOOK_CALLED.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn test_c_shim_profiling_and_hooks() {
+        let _guard = SHIM_LOCK.lock().expect("shim test lock poisoned");
+        unsafe {
+            mnemosyne_reset_profiler_for_testing();
+            ALLOC_HOOK_CALLED.store(0, core::sync::atomic::Ordering::SeqCst);
+            FREE_HOOK_CALLED.store(0, core::sync::atomic::Ordering::SeqCst);
+
+            mnemosyne_register_alloc_hook(Some(test_alloc_hook));
+            mnemosyne_register_free_hook(Some(test_free_hook));
+
+            let ptr = malloc(32);
+            assert!(!ptr.is_null());
+            assert_eq!(ALLOC_HOOK_CALLED.load(core::sync::atomic::Ordering::SeqCst), 1);
+
+            free(ptr);
+            assert_eq!(FREE_HOOK_CALLED.load(core::sync::atomic::Ordering::SeqCst), 1);
+
+            mnemosyne_register_alloc_hook(None);
+            mnemosyne_register_free_hook(None);
+        }
+    }
 
     // The shim shares process-wide allocator state with every other test
     // in the workspace; serialize the shim tests among themselves so their
@@ -284,7 +399,12 @@ mod tests {
     #[test]
     fn realloc_null_acts_as_malloc() {
         let _guard = SHIM_LOCK.lock().expect("shim test lock poisoned");
-        let ptr = unsafe { realloc(core::hint::black_box(core::ptr::null_mut()), core::hint::black_box(32)) };
+        let ptr = unsafe {
+            realloc(
+                core::hint::black_box(core::ptr::null_mut()),
+                core::hint::black_box(32),
+            )
+        };
         assert!(!ptr.is_null());
         unsafe { free(ptr) };
     }

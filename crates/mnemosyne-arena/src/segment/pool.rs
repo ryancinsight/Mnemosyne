@@ -570,7 +570,9 @@ impl GlobalHugePool {
                 core::sync::atomic::Ordering::Relaxed,
             ) {
                 Ok(_) => {
-                    bucket.count.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    bucket
+                        .count
+                        .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     return true;
                 }
                 Err(actual) => head = actual,
@@ -583,10 +585,14 @@ impl GlobalHugePool {
     /// # Safety
     ///
     /// The returned segment is exclusively owned by the caller.
-    pub unsafe fn pop<B: mnemosyne_core::MemoryBackend>(&self, size: usize, numa_node: usize) -> Option<*mut Segment> {
+    pub unsafe fn pop<B: mnemosyne_core::MemoryBackend>(
+        &self,
+        size: usize,
+        numa_node: usize,
+    ) -> Option<*mut Segment> {
         let start_node = numa_node % 16;
         let bucket_idx = huge_bucket_index(size);
-        
+
         // 1. Try local NUMA node first
         if let Some(res) = self.pop_from_node::<B>(size, start_node, bucket_idx) {
             return Some(res);
@@ -629,7 +635,9 @@ impl GlobalHugePool {
                         core::sync::atomic::Ordering::Acquire,
                     ) {
                         Ok(_) => {
-                            bucket.count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+                            bucket
+                                .count
+                                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
                             return Some(head);
                         }
                         Err(actual) => head = actual,
@@ -643,7 +651,9 @@ impl GlobalHugePool {
                         core::sync::atomic::Ordering::Acquire,
                     ) {
                         Ok(_) => {
-                            bucket.count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+                            bucket
+                                .count
+                                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
                             let raw_ptr = unsafe { (*head).raw_alloc_ptr };
                             let _ = unsafe { B::deallocate(raw_ptr, block_size) };
                             head = bucket.head.load(core::sync::atomic::Ordering::Acquire);
@@ -667,9 +677,11 @@ impl GlobalHugePool {
             let pool_node = &self.nodes[node];
             for bucket_idx in 0..16 {
                 let bucket = &pool_node.buckets[bucket_idx];
-                let mut head = bucket.head.swap(core::ptr::null_mut(), core::sync::atomic::Ordering::Acquire);
+                let mut head = bucket
+                    .head
+                    .swap(core::ptr::null_mut(), core::sync::atomic::Ordering::Acquire);
                 bucket.count.store(0, core::sync::atomic::Ordering::Relaxed);
-                
+
                 while !head.is_null() {
                     let next = unsafe { (*head).next_free_segment };
                     let raw_ptr = unsafe { (*head).raw_alloc_ptr };
@@ -768,4 +780,3 @@ impl HasSegmentPool for mnemosyne_backend::CudaUnifiedBackend {
         &CUDA_BACKEND_HUGE_POOL
     }
 }
-

@@ -1,11 +1,11 @@
 #![cfg_attr(feature = "nightly_tls", feature(thread_local))]
 #![allow(clippy::missing_const_for_thread_local)]
 
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use core::ffi::c_void;
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::io::Write;
+use std::sync::Mutex;
 
 static ALLOC_HOOK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 static FREE_HOOK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
@@ -42,7 +42,7 @@ fn update_active_flag() {
 }
 
 /// Registers a custom user allocation tracing hook.
-pub fn register_alloc_hook(hook: Option<fn(*mut u8, usize)>) {
+pub fn register_alloc_hook(hook: Option<unsafe extern "C" fn(*mut core::ffi::c_void, usize)>) {
     let ptr = match hook {
         Some(f) => f as *mut c_void,
         None => core::ptr::null_mut(),
@@ -52,7 +52,7 @@ pub fn register_alloc_hook(hook: Option<fn(*mut u8, usize)>) {
 }
 
 /// Registers a custom user deallocation tracing hook.
-pub fn register_free_hook(hook: Option<fn(*mut u8, usize)>) {
+pub fn register_free_hook(hook: Option<unsafe extern "C" fn(*mut core::ffi::c_void, usize)>) {
     let ptr = match hook {
         Some(f) => f as *mut c_void,
         None => core::ptr::null_mut(),
@@ -159,8 +159,8 @@ fn on_alloc_cold(ptr: *mut u8, size: usize) {
     }
 
     if !hook_ptr.is_null() {
-        let hook: fn(*mut u8, usize) = unsafe { core::mem::transmute(hook_ptr) };
-        hook(ptr, size);
+        let hook: unsafe extern "C" fn(*mut core::ffi::c_void, usize) = unsafe { core::mem::transmute(hook_ptr) };
+        unsafe { hook(ptr as *mut core::ffi::c_void, size) };
     }
 
     if active {
@@ -168,7 +168,9 @@ fn on_alloc_cold(ptr: *mut u8, size: usize) {
     }
 
     #[cfg(feature = "nightly_tls")]
-    unsafe { IN_HOOK = false; }
+    unsafe {
+        IN_HOOK = false;
+    }
     #[cfg(not(feature = "nightly_tls"))]
     IN_HOOK.with(|cell| cell.set(false));
 }
@@ -220,8 +222,8 @@ fn on_free_cold(ptr: *mut u8, size: usize) {
     }
 
     if !hook_ptr.is_null() {
-        let hook: fn(*mut u8, usize) = unsafe { core::mem::transmute(hook_ptr) };
-        hook(ptr, size);
+        let hook: unsafe extern "C" fn(*mut core::ffi::c_void, usize) = unsafe { core::mem::transmute(hook_ptr) };
+        unsafe { hook(ptr as *mut core::ffi::c_void, size) };
     }
 
     if active {
@@ -229,7 +231,9 @@ fn on_free_cold(ptr: *mut u8, size: usize) {
     }
 
     #[cfg(feature = "nightly_tls")]
-    unsafe { IN_HOOK = false; }
+    unsafe {
+        IN_HOOK = false;
+    }
     #[cfg(not(feature = "nightly_tls"))]
     IN_HOOK.with(|cell| cell.set(false));
 }
@@ -301,10 +305,11 @@ fn next_sample_interval(mean: usize) -> usize {
     RNG.with(|rng_state| {
         let mut state = rng_state.get();
         if state == 0 {
-            state = 0x123456789abcdef ^ (std::time::SystemTime::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos() as u64);
+            state = 0x123456789abcdef
+                ^ (std::time::SystemTime::now()
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos() as u64);
         }
         state ^= state << 13;
         state ^= state >> 7;
@@ -347,7 +352,9 @@ pub fn dump_profile(path: &str) -> std::io::Result<()> {
     let result = dump_profile_inner(path);
 
     #[cfg(feature = "nightly_tls")]
-    unsafe { IN_HOOK = false; }
+    unsafe {
+        IN_HOOK = false;
+    }
     #[cfg(not(feature = "nightly_tls"))]
     IN_HOOK.with(|cell| cell.set(false));
     result

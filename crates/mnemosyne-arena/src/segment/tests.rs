@@ -7,7 +7,7 @@ use super::alloc::{
     allocate_segment, deallocate_segment, purge_segment_pool, release_segment_mapping,
     reset_segment_pool, SEGMENT_MAPPING_SIZE, SEGMENT_TAIL_GUARD_SIZE,
 };
-use super::pool::{GlobalSegmentPool, GlobalHugePool, HasSegmentPool};
+use super::pool::{GlobalHugePool, GlobalSegmentPool, HasSegmentPool};
 use super::stats::{arena_memory_stats, SegmentRelease};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::constants::{SEGMENT_ALIGN, SEGMENT_SIZE};
@@ -416,8 +416,14 @@ fn test_reset_segment_pool_propagates_correct_bounds() {
     let last_size = LAST_RESET_SIZE.load(Ordering::Relaxed);
 
     assert_eq!(calls, 1, "expected exactly 1 page_reset call");
-    assert_eq!(last_ptr, segment as usize, "expected page_reset pointer to match segment pointer");
-    assert_eq!(last_size, SEGMENT_SIZE, "expected page_reset size to match SEGMENT_SIZE");
+    assert_eq!(
+        last_ptr, segment as usize,
+        "expected page_reset pointer to match segment pointer"
+    );
+    assert_eq!(
+        last_size, SEGMENT_SIZE,
+        "expected page_reset size to match SEGMENT_SIZE"
+    );
 
     // Clean up
     let popped = RESET_POOL.pop().expect("segment must be in the pool");

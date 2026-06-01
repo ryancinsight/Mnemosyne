@@ -413,6 +413,7 @@ dependencies = [
  "mnemosyne-backend",
  "mnemosyne-core",
  "mnemosyne-local",
+ "mnemosyne-prof",
 ]
 
 [[package]]

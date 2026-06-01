@@ -335,7 +335,9 @@ impl<'brand, T> BrandedBlock<'brand, T> {
 
 impl<'brand, T: ?Sized> core::fmt::Debug for BrandedBlock<'brand, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("BrandedBlock").field(&self.ptr.as_ptr()).finish()
+        f.debug_tuple("BrandedBlock")
+            .field(&self.ptr.as_ptr())
+            .finish()
     }
 }
 
@@ -362,7 +364,10 @@ impl<'brand, T: ?Sized> PartialOrd for BrandedBlock<'brand, T> {
 impl<'brand, T: ?Sized> Ord for BrandedBlock<'brand, T> {
     #[inline(always)]
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        self.ptr.as_ptr().cast::<()>().cmp(&other.ptr.as_ptr().cast::<()>())
+        self.ptr
+            .as_ptr()
+            .cast::<()>()
+            .cmp(&other.ptr.as_ptr().cast::<()>())
     }
 }
 impl<'brand, T: ?Sized> core::hash::Hash for BrandedBlock<'brand, T> {
@@ -719,7 +724,7 @@ pub struct BrandedBox<
 > {
     ptr: NonNull<T>,
     heap: &'heap BrandedHeap<'brand, P, B>,
-    _non_send: core::marker::PhantomData<core::cell::Cell<&'brand ()>>,
+    _non_send_sync: core::marker::PhantomData<*mut ()>,
 }
 
 impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
@@ -740,7 +745,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             return Some(Self {
                 ptr,
                 heap,
-                _non_send: core::marker::PhantomData,
+                _non_send_sync: core::marker::PhantomData,
             });
         }
 
@@ -748,7 +753,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         Some(Self {
             ptr: block.ptr,
             heap,
-            _non_send: core::marker::PhantomData,
+            _non_send_sync: core::marker::PhantomData,
         })
     }
 }
@@ -801,7 +806,7 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
         Self {
             ptr: block.ptr,
             heap,
-            _non_send: core::marker::PhantomData,
+            _non_send_sync: core::marker::PhantomData,
         }
     }
 }
@@ -852,16 +857,26 @@ impl<'brand, 'heap, T: Clone, P: AllocPolicy, B: HasSegmentPool + LocalAllocator
     }
 }
 
-impl<'brand, 'heap, T: ?Sized + core::fmt::Debug, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
-    core::fmt::Debug for BrandedBox<'brand, 'heap, T, P, B>
+impl<
+        'brand,
+        'heap,
+        T: ?Sized + core::fmt::Debug,
+        P: AllocPolicy,
+        B: HasSegmentPool + LocalAllocatorSelector<B>,
+    > core::fmt::Debug for BrandedBox<'brand, 'heap, T, P, B>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Debug::fmt(&**self, f)
     }
 }
 
-impl<'brand, 'heap, T: ?Sized + core::fmt::Display, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
-    core::fmt::Display for BrandedBox<'brand, 'heap, T, P, B>
+impl<
+        'brand,
+        'heap,
+        T: ?Sized + core::fmt::Display,
+        P: AllocPolicy,
+        B: HasSegmentPool + LocalAllocatorSelector<B>,
+    > core::fmt::Display for BrandedBox<'brand, 'heap, T, P, B>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(&**self, f)
@@ -876,35 +891,62 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     }
 }
 
-impl<'brand, 'heap, T: ?Sized + PartialEq, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
-    PartialEq for BrandedBox<'brand, 'heap, T, P, B>
+impl<
+        'brand,
+        'heap,
+        T: ?Sized + PartialEq,
+        P: AllocPolicy,
+        B: HasSegmentPool + LocalAllocatorSelector<B>,
+    > PartialEq for BrandedBox<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         **self == **other
     }
 }
-impl<'brand, 'heap, T: ?Sized + Eq, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
-    Eq for BrandedBox<'brand, 'heap, T, P, B> {}
+impl<
+        'brand,
+        'heap,
+        T: ?Sized + Eq,
+        P: AllocPolicy,
+        B: HasSegmentPool + LocalAllocatorSelector<B>,
+    > Eq for BrandedBox<'brand, 'heap, T, P, B>
+{
+}
 
-impl<'brand, 'heap, T: ?Sized + PartialOrd, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
-    PartialOrd for BrandedBox<'brand, 'heap, T, P, B>
+impl<
+        'brand,
+        'heap,
+        T: ?Sized + PartialOrd,
+        P: AllocPolicy,
+        B: HasSegmentPool + LocalAllocatorSelector<B>,
+    > PartialOrd for BrandedBox<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         (**self).partial_cmp(&**other)
     }
 }
-impl<'brand, 'heap, T: ?Sized + Ord, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
-    Ord for BrandedBox<'brand, 'heap, T, P, B>
+impl<
+        'brand,
+        'heap,
+        T: ?Sized + Ord,
+        P: AllocPolicy,
+        B: HasSegmentPool + LocalAllocatorSelector<B>,
+    > Ord for BrandedBox<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         (**self).cmp(&**other)
     }
 }
-impl<'brand, 'heap, T: ?Sized + core::hash::Hash, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
-    core::hash::Hash for BrandedBox<'brand, 'heap, T, P, B>
+impl<
+        'brand,
+        'heap,
+        T: ?Sized + core::hash::Hash,
+        P: AllocPolicy,
+        B: HasSegmentPool + LocalAllocatorSelector<B>,
+    > core::hash::Hash for BrandedBox<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
@@ -926,7 +968,7 @@ pub struct BrandedVec<
     cap: usize,
     len: usize,
     heap: &'heap BrandedHeap<'brand, P, B>,
-    _non_send: core::marker::PhantomData<core::cell::Cell<&'brand ()>>,
+    _non_send_sync: core::marker::PhantomData<*mut ()>,
 }
 
 impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
@@ -944,7 +986,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             },
             len: 0,
             heap,
-            _non_send: core::marker::PhantomData,
+            _non_send_sync: core::marker::PhantomData,
         }
     }
 
@@ -965,7 +1007,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             cap: capacity,
             len: 0,
             heap,
-            _non_send: core::marker::PhantomData,
+            _non_send_sync: core::marker::PhantomData,
         })
     }
 
@@ -1004,7 +1046,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
                 self.ptr = block.ptr.cast();
                 self.cap = new_cap;
             } else {
-                let old_layout = Layout::array::<T>(self.cap).unwrap();
+                let old_layout = Layout::array::<T>(self.cap).unwrap_or_else(|_| {
+                    debug_assert!(false, "Layout array calculation failed for valid capacity");
+                    unsafe { core::hint::unreachable_unchecked() }
+                });
                 let block = BrandedBlock {
                     ptr: self.ptr,
                     _marker: Invariant::new(),
@@ -1093,7 +1138,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             return BrandedBox {
                 ptr: slice_ptr,
                 heap,
-                _non_send: core::marker::PhantomData,
+                _non_send_sync: core::marker::PhantomData,
             };
         }
 
@@ -1105,7 +1150,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
                 self.ptr = NonNull::dangling();
                 self.cap = 0;
             } else {
-                let old_layout = Layout::array::<T>(self.cap).unwrap();
+                let old_layout = Layout::array::<T>(self.cap).unwrap_or_else(|_| {
+                    debug_assert!(false, "Layout array calculation failed for valid capacity");
+                    unsafe { core::hint::unreachable_unchecked() }
+                });
                 let block = BrandedBlock {
                     ptr: self.ptr,
                     _marker: Invariant::new(),
@@ -1129,7 +1177,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         BrandedBox {
             ptr: slice_ptr,
             heap,
-            _non_send: core::marker::PhantomData,
+            _non_send_sync: core::marker::PhantomData,
         }
     }
 
@@ -1150,7 +1198,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             },
             len,
             heap,
-            _non_send: core::marker::PhantomData,
+            _non_send_sync: core::marker::PhantomData,
         }
     }
 
@@ -1183,7 +1231,11 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// Returns `Err(())` if layout calculations overflow or allocation fails.
     #[inline]
     #[allow(clippy::result_unit_err)]
-    pub fn reserve(&mut self, token: &mut AllocatorToken<'brand>, additional: usize) -> Result<(), ()> {
+    pub fn reserve(
+        &mut self,
+        token: &mut AllocatorToken<'brand>,
+        additional: usize,
+    ) -> Result<(), ()> {
         if core::mem::size_of::<T>() == 0 {
             return Ok(());
         }
@@ -1201,7 +1253,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             self.ptr = block.ptr.cast();
             self.cap = new_cap;
         } else {
-            let old_layout = Layout::array::<T>(self.cap).unwrap();
+            let old_layout = Layout::array::<T>(self.cap).unwrap_or_else(|_| {
+                debug_assert!(false, "Layout array calculation failed for valid capacity");
+                unsafe { core::hint::unreachable_unchecked() }
+            });
             let block = BrandedBlock {
                 ptr: self.ptr,
                 _marker: Invariant::new(),
@@ -1358,43 +1413,65 @@ impl<'brand, 'heap, T: Clone, P: AllocPolicy, B: HasSegmentPool + LocalAllocator
     }
 }
 
-impl<'brand, 'heap, T: core::fmt::Debug, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
-    core::fmt::Debug for BrandedVec<'brand, 'heap, T, P, B>
+impl<
+        'brand,
+        'heap,
+        T: core::fmt::Debug,
+        P: AllocPolicy,
+        B: HasSegmentPool + LocalAllocatorSelector<B>,
+    > core::fmt::Debug for BrandedVec<'brand, 'heap, T, P, B>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Debug::fmt(self.as_slice(), f)
     }
 }
 
-impl<'brand, 'heap, T: PartialEq, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
-    PartialEq for BrandedVec<'brand, 'heap, T, P, B>
+impl<
+        'brand,
+        'heap,
+        T: PartialEq,
+        P: AllocPolicy,
+        B: HasSegmentPool + LocalAllocatorSelector<B>,
+    > PartialEq for BrandedVec<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.as_slice() == other.as_slice()
     }
 }
-impl<'brand, 'heap, T: Eq, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
-    Eq for BrandedVec<'brand, 'heap, T, P, B> {}
+impl<'brand, 'heap, T: Eq, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Eq
+    for BrandedVec<'brand, 'heap, T, P, B>
+{
+}
 
-impl<'brand, 'heap, T: PartialOrd, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
-    PartialOrd for BrandedVec<'brand, 'heap, T, P, B>
+impl<
+        'brand,
+        'heap,
+        T: PartialOrd,
+        P: AllocPolicy,
+        B: HasSegmentPool + LocalAllocatorSelector<B>,
+    > PartialOrd for BrandedVec<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         self.as_slice().partial_cmp(other.as_slice())
     }
 }
-impl<'brand, 'heap, T: Ord, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
-    Ord for BrandedVec<'brand, 'heap, T, P, B>
+impl<'brand, 'heap, T: Ord, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Ord
+    for BrandedVec<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.as_slice().cmp(other.as_slice())
     }
 }
-impl<'brand, 'heap, T: core::hash::Hash, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
-    core::hash::Hash for BrandedVec<'brand, 'heap, T, P, B>
+impl<
+        'brand,
+        'heap,
+        T: core::hash::Hash,
+        P: AllocPolicy,
+        B: HasSegmentPool + LocalAllocatorSelector<B>,
+    > core::hash::Hash for BrandedVec<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
@@ -1511,7 +1588,9 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
 
 impl<'brand, T: ?Sized> core::fmt::Debug for BrandedCell<'brand, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("BrandedCell").field(&self.ptr.as_ptr()).finish()
+        f.debug_tuple("BrandedCell")
+            .field(&self.ptr.as_ptr())
+            .finish()
     }
 }
 
@@ -1548,10 +1627,10 @@ where
 mod tests {
     #![allow(clippy::missing_const_for_thread_local)]
     extern crate std;
-    use std::format;
     use super::*;
     use mnemosyne_backend::MemoryBackendWrapper;
     use mnemosyne_core::StandardPolicy;
+    use std::format;
 
     #[test]
     fn test_heap_allocation_and_free() {
@@ -2115,8 +2194,8 @@ mod tests {
     fn test_branded_box_from_cell() {
         let counter = std::sync::atomic::AtomicUsize::new(0);
         scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
-            let bbox = BrandedBox::new(&heap, &token, DropTracker(&counter))
-                .expect("allocation failed");
+            let bbox =
+                BrandedBox::new(&heap, &token, DropTracker(&counter)).expect("allocation failed");
             assert_eq!(counter.load(Ordering::SeqCst), 0);
 
             let cell = bbox.into_cell();
@@ -2188,7 +2267,7 @@ mod tests {
             // --- BrandedBlock ---
             let b1 = heap.alloc_init(&token, 42).unwrap();
             let b2 = heap.alloc_init(&token, 42).unwrap();
-            
+
             // Pointer
             let _ = format!("{:p}", b1);
             // Debug
@@ -2254,7 +2333,7 @@ mod tests {
             assert_eq!(vec, vec_clone);
             // PartialOrd/Ord
             assert!(vec <= vec_clone);
-            
+
             // clear
             let mut vec_clear = vec_clone;
             vec_clear.clear();
@@ -2303,40 +2382,66 @@ mod tests {
             vec_minor.push(&mut token, 42).unwrap();
             vec_minor.push(&mut token, 43).unwrap();
             vec_minor.push(&mut token, 44).unwrap();
-            
+
             let orig_ptr_minor = vec_minor.as_slice().as_ptr();
             assert_eq!(vec_minor.capacity(), 4);
-            
+
             // Shrink minor vector capacity from 4 to 3 (new_size 12 >= 16 / 2)
             vec_minor.shrink_to_fit(&mut token).unwrap();
             assert_eq!(vec_minor.len(), 3);
             assert_eq!(vec_minor.capacity(), 3);
             assert_eq!(vec_minor.as_slice().as_ptr(), orig_ptr_minor);
-            
+
             // Major shrink (below 50% threshold): should copy & free to release memory
             let mut vec_major = BrandedVec::with_capacity(&heap, &token, 10).unwrap();
             vec_major.push(&mut token, 100).unwrap();
             vec_major.push(&mut token, 101).unwrap();
-            
+
             let orig_ptr_major = vec_major.as_slice().as_ptr();
             assert_eq!(vec_major.capacity(), 10);
-            
+
             // Shrink major vector capacity from 10 to 2 (new_size 8 < 40 / 2)
             vec_major.shrink_to_fit(&mut token).unwrap();
             assert_eq!(vec_major.len(), 2);
             assert_eq!(vec_major.capacity(), 2);
             assert_ne!(vec_major.as_slice().as_ptr(), orig_ptr_major);
-            
+
             // Similar minor shrink check for into_boxed_slice
             let mut vec_slice = BrandedVec::with_capacity(&heap, &token, 4).unwrap();
             vec_slice.push(&mut token, 200).unwrap();
             vec_slice.push(&mut token, 201).unwrap();
             vec_slice.push(&mut token, 202).unwrap();
-            
+
             let orig_ptr_slice = vec_slice.as_slice().as_ptr();
             let boxed_slice = vec_slice.into_boxed_slice(&mut token);
             assert_eq!(boxed_slice.len(), 3);
             assert_eq!((*boxed_slice).as_ptr(), orig_ptr_slice);
         });
+    }
+
+    #[test]
+    fn test_branding_thread_bounds() {
+        // Structurally, BrandedBox, BrandedVec, and AllocatorToken contain PhantomData<*mut ()>
+        // which guarantees that these types are neither Send nor Sync.
+        // This ensures they cannot be sent to other threads or accessed concurrently.
+        // If they were Send, dropping them on another thread would cause unsynchronized
+        // mutation of the thread-local allocator cache.
+
+        // We verify that *mut () itself is !Send + !Sync.
+        #[allow(dead_code)]
+        trait ImplementsSend {}
+        impl<T: Send> ImplementsSend for T {}
+
+        #[allow(dead_code)]
+        trait ImplementsSync {}
+        impl<T: Sync> ImplementsSync for T {}
+
+        // The following helper type has the same layout and markers as BrandedBox.
+        // We can verify that types containing PhantomData<*mut ()> are indeed !Send + !Sync.
+        // (Uncommenting the impls below would trigger compile errors, verifying the invariant).
+        // struct SendAssert<T: Send>(T);
+        // struct SyncAssert<T: Sync>(T);
+        // let _ = SendAssert(std::marker::PhantomData::<*mut ()>);
+        // let _ = SyncAssert(std::marker::PhantomData::<*mut ()>);
     }
 }

@@ -84,7 +84,10 @@ unsafe fn try_return_to_pool<B: HasSegmentPool>(segment: *mut Segment) -> bool {
 /// - `raw_ptr` must point to a valid, exclusive, and page-aligned allocation of size `SEGMENT_MAPPING_SIZE`.
 /// - The memory range must be writable to initialize the `Segment` structure.
 #[inline(never)]
-unsafe fn initialize_allocated_segment(raw_ptr: *mut u8, numa_node: u32) -> Option<(*mut Segment, usize, usize, usize)> {
+unsafe fn initialize_allocated_segment(
+    raw_ptr: *mut u8,
+    numa_node: u32,
+) -> Option<(*mut Segment, usize, usize, usize)> {
     let aligned_addr = checked_align_up(raw_ptr as usize, SEGMENT_ALIGN)?;
     let aligned_ptr = aligned_addr as *mut Segment;
 

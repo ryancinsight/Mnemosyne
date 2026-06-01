@@ -88,8 +88,10 @@ extern "C" {
 unsafe fn hint_hugepage(ptr: *mut u8, length: usize) {
     #[cfg(target_os = "linux")]
     {
-        if length >= SEGMENT_SIZE && length % SEGMENT_SIZE == 0 {
-            if mnemosyne_core::options::ENABLE_HUGEPAGE_HINT.load(core::sync::atomic::Ordering::Relaxed) {
+        if length >= SEGMENT_SIZE {
+            if mnemosyne_core::options::ENABLE_HUGEPAGE_HINT
+                .load(core::sync::atomic::Ordering::Relaxed)
+            {
                 // Safety: caller guarantees the mapping covers `length` bytes; madvise
                 // is advisory and never invalidates the mapping on failure.
                 let _ = unsafe { madvise(ptr as *mut c_void, length, MADV_HUGEPAGE) };
@@ -109,9 +111,17 @@ unsafe fn hint_hugepage(ptr: *mut u8, length: usize) {
 pub struct UnixBackend;
 
 impl mnemosyne_core::MemoryBackend for UnixBackend {
-    const SUPPORTS_PAGE_RESET: bool = cfg!(any(target_os = "linux", target_os = "macos", target_os = "freebsd"));
+    const SUPPORTS_PAGE_RESET: bool = cfg!(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd"
+    ));
     const SUPPORTS_MAKE_GUARD: bool = true;
-    const SUPPORTS_DECOMMIT: bool = cfg!(any(target_os = "linux", target_os = "macos", target_os = "freebsd"));
+    const SUPPORTS_DECOMMIT: bool = cfg!(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd"
+    ));
 
     /// Allocates virtual memory pages of the given size.
     ///
@@ -299,6 +309,30 @@ mod tests {
 
         let released = unsafe { UnixBackend::deallocate(ptr, size) };
         assert!(released);
+    }
+
+    #[test]
+    fn large_non_multiple_allocation_receives_hugepage_hint() {
+        // Mappings larger than or equal to SEGMENT_SIZE that are not multiples of
+        // SEGMENT_SIZE must receive the hint and round-trip correctly.
+        // We use 3 MiB (which is 1.5 * SEGMENT_SIZE).
+        let size = 3 * 1024 * 1024;
+        // Safety: size is a non-zero multiple of the system page size.
+        let ptr = unsafe { UnixBackend::allocate(size) };
+        assert!(!ptr.is_null(), "large mapping must succeed");
+
+        unsafe {
+            ptr.write_volatile(0xAA);
+            ptr.add(size - 1).write_volatile(0x55);
+            assert_eq!(ptr.read_volatile(), 0xAA);
+            assert_eq!(ptr.add(size - 1).read_volatile(), 0x55);
+        }
+
+        let released = unsafe { UnixBackend::deallocate(ptr, size) };
+        assert!(
+            released,
+            "munmap reported failure for large non-multiple mapping"
+        );
     }
 
     /// 4 KiB is the system page size on every Linux configuration this test

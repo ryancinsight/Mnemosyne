@@ -40,6 +40,15 @@ void *aligned_alloc(size_t alignment, size_t size);
 int posix_memalign(void **memptr, size_t alignment, size_t size);
 size_t malloc_usable_size(void *ptr);
 
+/* Mnemosyne Custom Tracing and Profiling APIs */
+void mnemosyne_register_alloc_hook(void (*hook)(void *ptr, size_t size));
+void mnemosyne_register_free_hook(void (*hook)(void *ptr, size_t size));
+void mnemosyne_enable_profiling(size_t sample_interval);
+void mnemosyne_disable_profiling(void);
+int mnemosyne_is_profiling_enabled(void);
+int mnemosyne_dump_profile(const char *path);
+void mnemosyne_reset_profiler_for_testing(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

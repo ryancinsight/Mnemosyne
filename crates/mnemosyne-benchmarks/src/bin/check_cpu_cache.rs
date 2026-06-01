@@ -1,5 +1,5 @@
-use std::time::Instant;
 use std::ptr::NonNull;
+use std::time::Instant;
 
 struct Page {
     free: Option<NonNull<u8>>,
@@ -54,7 +54,7 @@ unsafe fn alloc_hint(page: &mut Page, page_start: *mut u8, layout: &BitmapLayout
     let hint_ptr = page.free.unwrap().as_ptr() as *mut u64;
     let offset = hint_ptr as usize - page_start as usize;
     let mut hint_idx = offset / 8;
-    
+
     if hint_idx >= layout.num_u64s {
         hint_idx = 0;
     }
@@ -66,21 +66,23 @@ unsafe fn alloc_hint(page: &mut Page, page_start: *mut u8, layout: &BitmapLayout
             let block_idx = i * 64 + bit_idx;
             let new_val = val & !(1u64 << bit_idx);
             page_start_u64.add(i).write(new_val);
-            
+
             if new_val == 0 {
                 let mut next_hint = i + 1;
                 while next_hint < layout.num_u64s && *page_start_u64.add(next_hint) == 0 {
                     next_hint += 1;
                 }
                 if next_hint < layout.num_u64s {
-                    page.free = Some(NonNull::new_unchecked(page_start_u64.add(next_hint) as *mut u8));
+                    page.free = Some(NonNull::new_unchecked(
+                        page_start_u64.add(next_hint) as *mut u8
+                    ));
                 } else {
                     page.free = Some(NonNull::dangling());
                 }
             } else {
                 page.free = Some(NonNull::new_unchecked(page_start_u64.add(i) as *mut u8));
             }
-            
+
             page.alloc_count += 1;
             if page.alloc_count == page.max_blocks {
                 page.free = None;
@@ -99,21 +101,27 @@ unsafe fn free_hint(page: &mut Page, page_start: *mut u8, layout: &BitmapLayout,
     let bit_mask = 1u64 << bit_idx;
     let old_val = page_start_u64.add(u64_idx).read();
     page_start_u64.add(u64_idx).write(old_val | bit_mask);
-    
+
     let was_full = page.free.is_none();
     page.alloc_count -= 1;
-    
+
     if was_full {
-        page.free = Some(NonNull::new_unchecked(page_start_u64.add(u64_idx) as *mut u8));
+        page.free = Some(NonNull::new_unchecked(
+            page_start_u64.add(u64_idx) as *mut u8
+        ));
     } else if let Some(current_hint) = page.free {
         if current_hint != NonNull::dangling() {
             let hint_offset = current_hint.as_ptr() as usize - page_start as usize;
             let current_hint_idx = hint_offset / 8;
             if u64_idx < current_hint_idx {
-                page.free = Some(NonNull::new_unchecked(page_start_u64.add(u64_idx) as *mut u8));
+                page.free = Some(NonNull::new_unchecked(
+                    page_start_u64.add(u64_idx) as *mut u8
+                ));
             }
         } else {
-            page.free = Some(NonNull::new_unchecked(page_start_u64.add(u64_idx) as *mut u8));
+            page.free = Some(NonNull::new_unchecked(
+                page_start_u64.add(u64_idx) as *mut u8
+            ));
         }
     }
 }
@@ -125,10 +133,10 @@ fn main() {
         reserved_blocks: 8,
         block_size: 32,
     };
-    
+
     let mut storage = vec![0u8; 65536];
     let page_start = storage.as_mut_ptr();
-    
+
     // Initialize storage: set bitmap bits to 1 (except reserved)
     let bitmap_ptr = page_start as *mut u64;
     unsafe {
@@ -137,7 +145,7 @@ fn main() {
             bitmap_ptr.add(i).write(u64::MAX);
         }
     }
-    
+
     let mut page = Page {
         free: Some(NonNull::dangling()),
         alloc_count: 0,
@@ -154,7 +162,10 @@ fn main() {
         }
     }
     let elapsed_linear = start.elapsed();
-    println!("Linear scan: {:.3} ns/cycle", elapsed_linear.as_nanos() as f64 / n as f64);
+    println!(
+        "Linear scan: {:.3} ns/cycle",
+        elapsed_linear.as_nanos() as f64 / n as f64
+    );
 
     // Re-initialize storage
     unsafe {
@@ -163,7 +174,7 @@ fn main() {
             bitmap_ptr.add(i).write(u64::MAX);
         }
     }
-    
+
     page = Page {
         free: unsafe { Some(NonNull::new_unchecked(page_start)) },
         alloc_count: 0,
@@ -179,5 +190,8 @@ fn main() {
         }
     }
     let elapsed_hint = start.elapsed();
-    println!("Hint-based: {:.3} ns/cycle", elapsed_hint.as_nanos() as f64 / n as f64);
+    println!(
+        "Hint-based: {:.3} ns/cycle",
+        elapsed_hint.as_nanos() as f64 / n as f64
+    );
 }

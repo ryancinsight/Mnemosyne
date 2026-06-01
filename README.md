@@ -189,6 +189,54 @@ fn main() {
 }
 ```
 
+To programmatically configure the allocator runtime options (e.g., to control background decay and segment retention):
+
+```rust
+use mnemosyne::{configure, get_options, MnemosyneOptions};
+
+fn main() {
+    // Configure options at runtime
+    configure(MnemosyneOptions {
+        max_retained_segments: 128,
+        purge_cadence_ms: 100,
+        enable_hugepage_hint: true,
+    });
+
+    let opt = get_options();
+    assert_eq!(opt.max_retained_segments, 128);
+}
+```
+
+To use scoped lifetime-branded memory allocation (GhostCell-style permission and data separation with `BrandedHeap`, `BrandedBox`, `BrandedVec`, and `BrandedCell`):
+
+```rust
+use mnemosyne::{branded_scope, StandardPolicy};
+
+fn main() {
+    branded_scope::<StandardPolicy, _, _, _>(|heap, mut token| {
+        // Allocate and initialize a single value
+        let bbox = heap.alloc_init(&token, 42).unwrap();
+        assert_eq!(*bbox, 42);
+
+        // Or create a branded vector
+        let mut vec = mnemosyne::BrandedVec::new(&heap);
+        vec.push(&mut token, 10).unwrap();
+        vec.push(&mut token, 20).unwrap();
+
+        // Convert the vector to a shared cell for interior mutability
+        let cell = vec.into_cell(&mut token);
+        assert_eq!(cell.borrow(&token), &[10, 20]);
+        
+        // Mutate inside a borrow
+        cell.borrow_mut(&mut token)[1] = 99;
+        assert_eq!(cell.borrow(&token), &[10, 99]);
+
+        // Reclaim memory safely
+        heap.free(&mut token, unsafe { cell.into_block() });
+    });
+}
+```
+
 ---
 
 ## Verification & Benchmarks

@@ -92,7 +92,9 @@ fn decay_purger_reaches_steady_state() {
     let handle = thread::spawn(|| {
         let ptr = unsafe { thread_alloc::<Policy, Backend>(32, 16) };
         assert!(!ptr.is_null());
-        unsafe { thread_free::<Policy, Backend>(ptr); }
+        unsafe {
+            thread_free::<Policy, Backend>(ptr);
+        }
     });
     handle.join().expect("first allocation thread panicked");
 
@@ -112,7 +114,10 @@ fn decay_purger_reaches_steady_state() {
         }
         thread::sleep(Duration::from_millis(5));
     }
-    assert!(steady, "Purger failed to reach steady state of zero retained segments");
+    assert!(
+        steady,
+        "Purger failed to reach steady state of zero retained segments"
+    );
 
     // 4. Shutdown purger by setting cadence to 0
     PURGE_CADENCE_MS.store(0, Ordering::Release);
@@ -125,7 +130,9 @@ fn decay_purger_reaches_steady_state() {
     let handle2 = thread::spawn(|| {
         let ptr2 = unsafe { thread_alloc::<Policy, Backend>(32, 16) };
         assert!(!ptr2.is_null());
-        unsafe { thread_free::<Policy, Backend>(ptr2); }
+        unsafe {
+            thread_free::<Policy, Backend>(ptr2);
+        }
     });
     handle2.join().expect("second allocation thread panicked");
 

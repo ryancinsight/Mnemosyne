@@ -60,7 +60,9 @@ impl TlsSlotAccess<MemoryBackendWrapper> for BenchSlotAccess {
     #[cfg(feature = "nightly_tls")]
     #[inline(always)]
     fn set_quick_allocator_ptr(ptr: *mut core::ffi::c_void) {
-        unsafe { BENCH_QUICK_PTR = ptr; }
+        unsafe {
+            BENCH_QUICK_PTR = ptr;
+        }
     }
 }
 
