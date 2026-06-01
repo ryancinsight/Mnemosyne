@@ -2,6 +2,7 @@
 
 ## Closed
 
+- [patch] Branded vector transition tests still used bare `push(...).unwrap()` calls across growth, boxed-slice conversion, ZST boxed-slice conversion, and cell conversion paths. Replaced them with operation-specific diagnostics while preserving the existing value-semantic drop-count and length assertions. Verified by `cargo test -p mnemosyne-heap --lib -- --test-threads=1`.
 - [patch] `mnemosyne-heap` unit tests repeated bare `Layout::from_size_align(...).unwrap()` calls for static heap and branded-heap layouts. Added one contextual `test_layout` helper and routed those contracts through it. Verified by `cargo test -p mnemosyne-heap --lib -- --test-threads=1`.
 - [patch] `mnemosyne-heap` integration tests still used bare layout and thread-join unwraps. Added a single contextual layout helper and a worker panic diagnostic, preserving the same static layout contracts while making synchronization failures source-specific. Verified by `cargo test -p mnemosyne-heap --test heap_tests -- --test-threads=1`.
 - [patch] The global allocator leak-detector integration test used a bare `dump_leaks(...).unwrap()` and manually reset profiler/allocation state at the end of the spawned thread. A failing assertion before cleanup could leave profiler state or the test allocation live. Added `ProfilerIntegrationGuard` and `GlobalAllocationGuard`, and replaced the bare unwrap with contextual diagnostics. Verified by `cargo test -p mnemosyne --test global_alloc_tests -- --test-threads=1`.

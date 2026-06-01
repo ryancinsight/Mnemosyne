@@ -2,6 +2,7 @@
 
 ## Completed
 
+- [patch] Replace bare branded-vector transition push unwraps with operation-specific diagnostics.
 - [patch] Replace bare heap unit-test layout unwraps with a shared contextual layout helper.
 - [patch] Replace bare heap integration test layout and worker-join unwraps with contextual diagnostics.
 - [patch] Harden global allocator leak-detector integration test with guarded profiler/allocation cleanup and contextual dump diagnostics.

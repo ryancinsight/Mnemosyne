@@ -234,7 +234,8 @@ fn test_branded_vec_growth_and_drop() {
 
         // Push elements to trigger growth
         for _ in 0..10 {
-            vec.push(&mut token, DropTracker(&counter)).unwrap();
+            vec.push(&mut token, DropTracker(&counter))
+                .expect("branded vector growth push failed");
         }
         assert_eq!(vec.len(), 10);
         assert!(vec.capacity() >= 10);
@@ -366,7 +367,8 @@ fn test_branded_box_unsized_slice_and_drop() {
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
         let mut vec = BrandedVec::new(&heap);
         for _ in 0..5 {
-            vec.push(&mut token, DropTracker(&counter)).unwrap();
+            vec.push(&mut token, DropTracker(&counter))
+                .expect("branded vector push before boxed-slice conversion failed");
         }
         assert_eq!(counter.load(Ordering::SeqCst), 0);
 
@@ -561,8 +563,10 @@ fn test_branded_vec_from_boxed_slice_transitions() {
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
         // Sized types test
         let mut vec = BrandedVec::new(&heap);
-        vec.push(&mut token, DropTracker(&counter)).unwrap();
-        vec.push(&mut token, DropTracker(&counter)).unwrap();
+        vec.push(&mut token, DropTracker(&counter))
+            .expect("first sized vector push before boxed-slice transition failed");
+        vec.push(&mut token, DropTracker(&counter))
+            .expect("second sized vector push before boxed-slice transition failed");
 
         let boxed = vec.into_boxed_slice(&mut token);
         assert_eq!(boxed.len(), 2);
@@ -577,8 +581,12 @@ fn test_branded_vec_from_boxed_slice_transitions() {
 
         // ZST test
         let mut zst_vec = BrandedVec::new(&heap);
-        zst_vec.push(&mut token, ()).unwrap();
-        zst_vec.push(&mut token, ()).unwrap();
+        zst_vec
+            .push(&mut token, ())
+            .expect("first ZST vector push before boxed-slice transition failed");
+        zst_vec
+            .push(&mut token, ())
+            .expect("second ZST vector push before boxed-slice transition failed");
 
         let zst_boxed = zst_vec.into_boxed_slice(&mut token);
         assert_eq!(zst_boxed.len(), 2);
@@ -594,8 +602,10 @@ fn test_branded_vec_into_cell() {
     let counter = std::sync::atomic::AtomicUsize::new(0);
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
         let mut vec = BrandedVec::new(&heap);
-        vec.push(&mut token, DropTracker(&counter)).unwrap();
-        vec.push(&mut token, DropTracker(&counter)).unwrap();
+        vec.push(&mut token, DropTracker(&counter))
+            .expect("first vector push before cell conversion failed");
+        vec.push(&mut token, DropTracker(&counter))
+            .expect("second vector push before cell conversion failed");
 
         let cell = vec.into_cell(&mut token);
         assert_eq!(cell.borrow(&token).len(), 2);

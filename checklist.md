@@ -361,3 +361,4 @@ Target version: 0.1.0
 - [x] [patch] Reject deferred empty-page migration after focused benchmarking showed no material `large_8192` deallocation improvement.
 - [x] [patch] Replace bare heap integration test layout and worker-join unwraps with contextual diagnostics.
 - [x] [patch] Replace bare heap unit-test layout unwraps with a shared contextual layout helper.
+- [x] [patch] Replace bare branded-vector transition push unwraps with operation-specific diagnostics.

@@ -96,14 +96,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             if let Some(block) = try_reclaim_and_allocate::<P>(active_page) {
                 return block.as_ptr() as *mut u8;
             }
-            if active_page.free.is_none()
-                && active_page.initialized_blocks == active_page.max_blocks()
-            {
-                // The page is truly full! Move it to full_pages.
-                unsafe {
-                    unlink_page_from_list(self.active_pages.get_unchecked_mut(class), active_ptr);
-                    self.push_full_page(active_ptr, class);
-                }
+            // The page is truly full! Move it to full_pages.
+            unsafe {
+                unlink_page_from_list(self.active_pages.get_unchecked_mut(class), active_ptr);
+                self.push_full_page(active_ptr, class);
             }
         }
 
