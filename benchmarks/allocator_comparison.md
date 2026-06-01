@@ -27,7 +27,8 @@
 | realloc latency/within_class_24_to_32 | 3.236 | 42.669 | 4.389 | 17.414 | 15.253 | 0.08x | 0.74x | 0.19x | 0.21x |
 | realloc latency/within_class_6k_to_8k | 24.402 | 101.866 | 56.046 | 94.799 | 52.248 | 0.24x | 0.44x | 0.26x | 0.47x |
 | segment cache eviction | 209668.554 | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
-| threaded saturated small allocation cycles | 53721.147 | 377404.211 | 62868.801 | 267770.397 | 128288.271 | 0.14x | 0.85x | 0.20x | 0.42x |
+| threaded medium allocation cycles | 5087.120 | 32773.935 | 17397.895 | 27756.298 | 18411.964 | 0.16x | 0.29x | 0.18x | 0.28x |
+| threaded saturated small allocation cycles | 53411.722 | 357572.062 | 60751.906 | 260772.048 | 128288.271 | 0.15x | 0.88x | 0.20x | 0.42x |
 | threaded small allocation cycles | 11690.604 | 32201.059 | 13498.955 | 26839.314 | 17486.846 | 0.36x | 0.87x | 0.44x | 0.67x |
 | usable size latency/huge_2m | 22.341 | N/A | 7926.451 | N/A | 116.998 | N/A | 0.00x | N/A | 0.19x |
 | usable size latency/large_8192 | 2.473 | N/A | 16.477 | 17.474 | 17.806 | N/A | 0.15x | 0.14x | 0.14x |

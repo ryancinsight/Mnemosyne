@@ -4,9 +4,8 @@ use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::internal::{
     allocate_large_or_huge, deallocate_large_or_huge, do_local_free_internal,
     ensure_options_initialized, initialize_allocated_bytes, is_valid_layout_alloc_request,
-    poison_freed_bytes, size_to_class_nonzero, Block, HasSegmentPool, Segment,
-    ThreadAllocator, MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT,
-    SEGMENT_SIZE,
+    poison_freed_bytes, size_to_class_nonzero, Block, HasSegmentPool, Segment, ThreadAllocator,
+    MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT, SEGMENT_SIZE,
 };
 
 /// An explicit custom memory heap.

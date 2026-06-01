@@ -1,8 +1,8 @@
+use crate::BrandedHeap;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::internal::{HasSegmentPool, ThreadAllocator};
 use mnemosyne_local::LocalAllocatorSelector;
-use crate::BrandedHeap;
 
 /// A helper type representing a compile-time invariant brand lifetime.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

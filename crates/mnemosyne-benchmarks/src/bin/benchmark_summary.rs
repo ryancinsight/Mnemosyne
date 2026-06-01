@@ -12,7 +12,7 @@ const METADATA_PATH: &str = "target/criterion/benchmark_metadata.json";
 const BASELINE_PATH: &str = "benchmarks/allocator_baseline_excerpt.csv";
 const REFRESH_BASELINE_FLAG: &str = "--refresh-baseline";
 const ENFORCE_THRESHOLDS_FLAG: &str = "--enforce-thresholds";
-const ACTIVE_GROUPS: [&str; 11] = [
+const ACTIVE_GROUPS: [&str; 12] = [
     "allocator allocation latency/",
     "allocator deallocation latency/",
     "allocator burst retention/",
@@ -20,6 +20,7 @@ const ACTIVE_GROUPS: [&str; 11] = [
     "cross-thread free handoff/",
     "realloc latency/",
     "segment cache eviction/",
+    "threaded medium allocation cycles/",
     "threaded small allocation cycles/",
     "threaded saturated small allocation cycles/",
     "usable size query latency/",
@@ -48,11 +49,7 @@ fn main() -> io::Result<()> {
     let previous_baseline = read_summary(&baseline_content)?;
     let mut rows = Vec::new();
     collect_estimates(root, &mut rows)?;
-    rows.retain(|row| {
-        ACTIVE_GROUPS
-            .iter()
-            .any(|group| row.benchmark.starts_with(group))
-    });
+    rows.retain(|row| is_active_benchmark(&row.benchmark));
     rows.sort_by(|a, b| a.benchmark.cmp(&b.benchmark));
 
     write_summary(SUMMARY_PATH, &rows)?;
@@ -120,6 +117,12 @@ fn get_regression_threshold(benchmark: &str) -> f64 {
         "segment cache eviction/mnemosyne" => 1.15,
         _ => 1.15,
     }
+}
+
+fn is_active_benchmark(benchmark: &str) -> bool {
+    ACTIVE_GROUPS
+        .iter()
+        .any(|group| benchmark.starts_with(group))
 }
 
 fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
@@ -640,6 +643,41 @@ mod tests {
         assert_eq!(
             variance_threshold("allocator cycle latency/mnemosyne/small_32"),
             0.15
+        );
+    }
+
+    #[test]
+    fn active_filter_keeps_every_allocator_benchmark_group() {
+        const EXPECTED_GROUPS: [&str; 12] = [
+            "allocator allocation latency/",
+            "allocator deallocation latency/",
+            "allocator burst retention/",
+            "allocator cycle latency/",
+            "cross-thread free handoff/",
+            "realloc latency/",
+            "segment cache eviction/",
+            "threaded medium allocation cycles/",
+            "threaded small allocation cycles/",
+            "threaded saturated small allocation cycles/",
+            "usable size query latency/",
+            "usable size latency/",
+        ];
+
+        assert_eq!(ACTIVE_GROUPS, EXPECTED_GROUPS);
+        for group in EXPECTED_GROUPS {
+            let benchmark = format!("{group}mnemosyne/smoke");
+            assert!(
+                is_active_benchmark(&benchmark),
+                "active benchmark filter dropped {benchmark}"
+            );
+        }
+    }
+
+    #[test]
+    fn active_filter_rejects_untracked_benchmark_groups() {
+        assert!(
+            !is_active_benchmark("tls lookup overhead/standardtls"),
+            "TLS exploratory benchmark rows must not enter allocator comparison summaries"
         );
     }
 }

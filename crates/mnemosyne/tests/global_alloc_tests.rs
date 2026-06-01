@@ -2,11 +2,9 @@ use core::alloc::{GlobalAlloc, Layout};
 use std::thread;
 
 use mnemosyne::{
-    enable_leak_detector, disable_leak_detector, is_leak_detector_enabled, dump_leaks,
-    is_cuda_available, CudaUnifiedBackend,
-    memory_stats, memory_stats_generic, purge, reset,
-    Mnemosyne, MnemosyneAllocator, StandardPolicy, SecurePolicy,
-    usable_size,
+    disable_leak_detector, dump_leaks, enable_leak_detector, is_cuda_available,
+    is_leak_detector_enabled, memory_stats, memory_stats_generic, purge, reset, usable_size,
+    CudaUnifiedBackend, Mnemosyne, MnemosyneAllocator, SecurePolicy, StandardPolicy,
 };
 
 #[global_allocator]
@@ -78,8 +76,7 @@ fn test_zero_size_allocation_returns_null() {
     let _guard = TEST_LOCK
         .lock()
         .expect("global allocator test lock was poisoned");
-    let layout =
-        Layout::from_size_align(0, 8).expect("zero-size 8-byte aligned Layout is valid");
+    let layout = Layout::from_size_align(0, 8).expect("zero-size 8-byte aligned Layout is valid");
 
     let ptr = unsafe { ALLOCATOR.alloc(layout) };
     assert!(ptr.is_null(), "zero-size Mnemosyne alloc returned {ptr:?}");
@@ -170,8 +167,7 @@ fn realloc_zero_size_returns_null_without_allocating() {
     let _guard = TEST_LOCK
         .lock()
         .expect("global allocator test lock was poisoned");
-    let layout =
-        Layout::from_size_align(24, 8).expect("24-byte 8-byte aligned Layout is valid");
+    let layout = Layout::from_size_align(24, 8).expect("24-byte 8-byte aligned Layout is valid");
     let ptr = unsafe { ALLOCATOR.alloc(layout) };
     assert!(!ptr.is_null(), "zero-size realloc setup allocation failed");
     let new_ptr = unsafe { ALLOCATOR.realloc(ptr, layout, 0) };
@@ -219,9 +215,9 @@ fn test_memory_stats_retention_bound() {
         .lock()
         .expect("global allocator test lock was poisoned");
     const SIZES: [usize; 40] = [
-        8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 160, 192, 224, 256,
-        288, 320, 352, 384, 416, 448, 480, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536,
-        1664, 1792, 1920, 2048,
+        8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 160, 192, 224, 256, 288,
+        320, 352, 384, 416, 448, 480, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792,
+        1920, 2048,
     ];
     let empty_layout =
         Layout::from_size_align(8, 8).expect("8-byte size and alignment is a valid Layout");

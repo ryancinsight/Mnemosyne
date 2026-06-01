@@ -130,6 +130,9 @@ Target version: 0.1.0
 
 ## Open
 
+- [x] [patch] Add `threaded medium allocation cycles/` to the benchmark-summary active group filter so Criterion rows from `allocator_bench.rs` are retained in generated summaries and comparison reports.
+- [x] [patch] Add benchmark-summary unit coverage pinning active allocator benchmark groups and rejecting exploratory TLS rows from allocator comparison summaries.
+
 - [x] [patch] Audit generated benchmark artifact freshness and documentation references for the current allocator comparison set.
 - [x] [patch] Document the source-controlled baseline versus generated `target/criterion` artifact boundary.
 - [x] [patch] Update benchmark metadata wording for the active `--enforce-thresholds` gate and current saturated threaded comparator sample.
@@ -302,7 +305,8 @@ Target version: 0.1.0
 - [x] [patch] Copy only `min(layout.size(), new_size)` bytes on `thread_realloc` replacement paths; pin secure shrink preservation with `test_realloc_shrink_replacement_copies_only_new_size`.
 - [x] [patch] Refresh `realloc latency/Mnemosyne/huge_shrink_4m_to_2m` after the half-shrink fast path; current focused row is `22.405 ns`.
 - [x] [patch] Refresh `usable size latency/Mnemosyne/small_32` after the current hot-path stack; current focused row is `2.479 ns`, ahead of the retained mimalloc row.
-- [x] [patch] Reduce `mnemosyne-prof` leak/profiling sample stack memory overhead by replacing 32-frame preallocated vectors with fixed-stack capture plus exact-capacity retained vectors.
+- [x] [patch] Reduce `mnemosyne-prof` leak/profiling sample stack memory overhead by replacing 32-frame preallocated vectors with fixed-stack capture plus exact-length boxed stack slices.
+- [x] [arch] Split `mnemosyne-core` allocator types, `mnemosyne-arena` segment pools/tests, `mnemosyne-local` top-level allocation/free/realloc/TLS/options helpers, `mnemosyne-prof` sampling/reporting, `mnemosyne-c-shim` tests, and `BrandedVec` operations/trait impls into cohesive leaf modules while preserving public re-exports and monomorphized APIs.
 - [x] [patch] Refresh `usable size latency/Mnemosyne/small_32` after the leak-detector stack-storage change; current focused row is `2.487 ns` versus mimalloc `2.879 ns`.
 - [x] [patch] Stabilize `test_memory_stats_retention_bound` after leak-detector integration by asserting the live-allocation delta created and released by the test, not an absolute baseline invalidated by orphan adoption.
 - [x] [arch] Split `mnemosyne-heap` into `heap`, `brand`, `branded_heap`, `branded_box`, `branded_vec`, and test modules; preserve the existing public re-export surface.

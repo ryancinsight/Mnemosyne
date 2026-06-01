@@ -1,7 +1,7 @@
 #![allow(clippy::missing_const_for_thread_local)]
 extern crate std;
-use core::alloc::Layout;
 use super::*;
+use core::alloc::Layout;
 use mnemosyne_backend::MemoryBackendWrapper;
 use mnemosyne_core::StandardPolicy;
 use std::format;
@@ -85,8 +85,7 @@ fn test_branded_heap_realloc_zst_to_nonzero_skips_source_free() {
         let after_zst_alloc = unsafe { (&*heap.allocator.get()).stats() };
 
         assert_eq!(
-            after_zst_alloc.current_thread_live_allocations,
-            before.current_thread_live_allocations,
+            after_zst_alloc.current_thread_live_allocations, before.current_thread_live_allocations,
             "ZST source construction must not create a live allocator block"
         );
 
@@ -301,8 +300,8 @@ fn test_branded_vec_zst_uses_sentinel_capacity_and_drops_elements() {
                 .stats()
                 .current_thread_owned_segments
         };
-        let mut vec = BrandedVec::with_capacity(&heap, &token, 8)
-            .expect("ZST vector construction failed");
+        let mut vec =
+            BrandedVec::with_capacity(&heap, &token, 8).expect("ZST vector construction failed");
         assert_eq!(vec.capacity(), usize::MAX);
         assert_eq!(
             unsafe {
@@ -419,8 +418,7 @@ fn test_branded_vec_into_boxed_slice_shrinks_storage_to_len() {
 
         let before_usable = unsafe { mnemosyne_local::usable_size(vec.as_ptr() as *mut u8) };
         let boxed_slice = vec.into_boxed_slice(&mut token);
-        let after_usable =
-            unsafe { mnemosyne_local::usable_size(boxed_slice.as_ptr() as *mut u8) };
+        let after_usable = unsafe { mnemosyne_local::usable_size(boxed_slice.as_ptr() as *mut u8) };
 
         assert_eq!(boxed_slice.len(), 1);
         assert_eq!(boxed_slice[0], 0xCAFE_BABE);

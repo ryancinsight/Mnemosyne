@@ -1,10 +1,10 @@
-use core::ptr::NonNull;
+use crate::brand::{AllocatorToken, BrandedBlock, BrandedCell, Invariant};
+use crate::BrandedHeap;
 use core::ops::{Deref, DerefMut};
+use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::internal::HasSegmentPool;
 use mnemosyne_local::LocalAllocatorSelector;
-use crate::brand::{Invariant, AllocatorToken, BrandedBlock, BrandedCell};
-use crate::BrandedHeap;
 
 /// A uniquely owned, safe pointer to heap-allocated memory of type `T` from a `BrandedHeap`.
 ///

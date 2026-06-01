@@ -2,6 +2,8 @@
 
 ## Completed
 
+- [patch] Include the `Threaded medium allocation cycles` Criterion group in benchmark-summary extraction and generated allocator comparison reports.
+- [patch] Pin benchmark-summary active-group filtering with unit tests so all allocator benchmark groups are retained and exploratory TLS benchmark rows stay out of allocator comparison summaries.
 - [patch] Retain the active thread-local segment during local frees so hot allocate/free cycles reuse page free lists instead of scanning and recycling the segment.
 - [patch] Replace single-shape allocator benchmarks with Criterion cycle, burst-retention, and threaded comparison groups for Mnemosyne, mimalloc, and snmalloc.
 - [patch] Fix Unix backend constant typing so Rustfmt can parse all target modules.
@@ -134,10 +136,12 @@
 - [patch] Route heap-local small allocation through `ThreadAllocator::alloc_class` as the single active-page pop/bump implementation.
 - [patch] Restore same-pointer shrink behavior in `thread_realloc` through the existing small-realloc size-class proof.
 - [patch] Avoid allocate-copy-free churn for standard-policy large/huge half-shrink reallocs and bound all replacement realloc copies to `min(layout.size(), new_size)`.
-- [patch] Reduce leak/profiling stack-sample memory by capturing into fixed stack storage and retaining only exact frame capacity.
+- [patch] Reduce leak/profiling stack-sample memory by capturing into fixed stack storage and retaining only exact-length boxed stack slices.
+- [arch] Split `mnemosyne-core` allocator types, `mnemosyne-arena` segment pools/tests, `mnemosyne-local` top-level allocation/free/realloc/TLS/options helpers, `mnemosyne-prof` sampling/reporting, `mnemosyne-c-shim` tests, and `BrandedVec` operations/trait impls into cohesive leaf modules while preserving public re-exports and monomorphized APIs.
 - [patch] Stabilize memory-stat tests after leak-detector thread-exit orphan adoption by asserting allocation-count deltas instead of a false absolute baseline.
 - [arch] Split heap, branded-container, local-allocation page/routing/segment, and global allocator test surfaces into cohesive modules while preserving monomorphized hot-path APIs and public re-exports.
 - [patch] Remove stale imports from split local allocator modules so warning output stays clean and real allocator regressions remain visible.
+- [patch] Retain `threaded medium allocation cycles/` in generated benchmark summaries and comparison reports.
 - [patch] Use `benchmark_variance.csv` to retest remaining within-class realloc and historical threaded-row optimizations before accepting allocator changes.
 - [patch] Investigate cross-thread handoff batching or owner-token routing without increasing saturated threaded cycles.
 - [patch] Investigate mimalloc's remaining within-class realloc, historical threaded-row, saturated threaded-row, cross-thread handoff, and usable-size combined-cycle advantages after the unified TLS slot narrowed saturated threaded disparity.
