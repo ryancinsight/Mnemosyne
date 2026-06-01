@@ -32,7 +32,7 @@
 | usable size latency/huge_2m | 22.341 | N/A | 7926.451 | N/A | 116.998 | N/A | 0.00x | N/A | 0.19x |
 | usable size latency/large_8192 | 2.473 | N/A | 16.477 | 17.474 | 17.806 | N/A | 0.15x | 0.14x | 0.14x |
 | usable size latency/medium_1024 | 3.388 | N/A | 5.968 | 17.281 | 10.254 | N/A | 0.57x | 0.20x | 0.33x |
-| usable size latency/small_32 | 3.405 | N/A | 2.819 | 16.401 | 9.912 | N/A | 1.21x | 0.21x | 0.34x |
+| usable size latency/small_32 | 2.487 | N/A | 2.879 | 16.401 | 9.912 | N/A | 0.86x | 0.15x | 0.25x |
 | usable size query latency/huge_2m | 0.349 | N/A | 0.529 | N/A | 3.199 | N/A | 0.66x | N/A | 0.11x |
 | usable size query latency/large_8192 | 0.286 | N/A | 0.533 | 0.456 | 3.198 | N/A | 0.54x | 0.63x | 0.09x |
 | usable size query latency/medium_1024 | 0.302 | N/A | 0.532 | 0.455 | 3.200 | N/A | 0.57x | 0.67x | 0.09x |

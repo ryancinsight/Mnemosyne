@@ -177,7 +177,11 @@ fn test_leak_detector_and_dump_leaks() {
     let leak_path_str = leak_path.to_str().unwrap();
 
     let leak_count_res = mnemosyne_prof::dump_leaks(leak_path_str);
-    assert!(leak_count_res.is_ok(), "dump_leaks failed: {:?}", leak_count_res.err());
+    assert!(
+        leak_count_res.is_ok(),
+        "dump_leaks failed: {:?}",
+        leak_count_res.err()
+    );
     let leak_count = leak_count_res.unwrap();
 
     // Clean up leak before asserting to avoid polluting subsequent tests
@@ -185,14 +189,27 @@ fn test_leak_detector_and_dump_leaks() {
     mnemosyne_prof::disable_leak_detector();
 
     // Verify report details
-    assert_eq!(leak_count, 1, "expected exactly 1 leak, found {}", leak_count);
+    assert_eq!(
+        leak_count, 1,
+        "expected exactly 1 leak, found {}",
+        leak_count
+    );
 
     let content = std::fs::read_to_string(leak_path_str).expect("Failed to read leak report file");
     println!("Leak Report Content:\n{}", content);
 
-    assert!(content.contains("Mnemosyne Leak Report:"), "Report header missing");
-    assert!(content.contains("Leak of 128 bytes"), "Leak size missing or incorrect");
-    assert!(content.contains("test_leak_detector_and_dump_leaks"), "Stack trace missing the test function symbol");
+    assert!(
+        content.contains("Mnemosyne Leak Report:"),
+        "Report header missing"
+    );
+    assert!(
+        content.contains("Leak of 128 bytes"),
+        "Leak size missing or incorrect"
+    );
+    assert!(
+        content.contains("test_leak_detector_and_dump_leaks"),
+        "Stack trace missing the test function symbol"
+    );
 
     let _ = std::fs::remove_file(leak_path);
 }

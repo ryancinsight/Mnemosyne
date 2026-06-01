@@ -15,9 +15,9 @@ pub use mnemosyne_heap::{
 };
 pub use mnemosyne_local::{usable_size, SizeClassOccupancy};
 pub use mnemosyne_prof::{
-    disable_profiling, dump_profile, enable_profiling, is_profiling_enabled, register_alloc_hook,
-    register_free_hook, enable_leak_detector, disable_leak_detector, is_leak_detector_enabled,
-    dump_leaks,
+    disable_leak_detector, disable_profiling, dump_leaks, dump_profile, enable_leak_detector,
+    enable_profiling, is_leak_detector_enabled, is_profiling_enabled, register_alloc_hook,
+    register_free_hook,
 };
 
 /// Returns the current allocator configuration options snapshot.
@@ -556,6 +556,9 @@ mod tests {
         let empty_layout =
             Layout::from_size_align(8, 8).expect("8-byte size and alignment is a valid Layout");
         let mut allocations = [(core::ptr::null_mut(), empty_layout); SIZES.len()];
+        let warmup = unsafe { ALLOCATOR.alloc(empty_layout) };
+        assert!(!warmup.is_null(), "memory-stats warm-up allocation failed");
+        unsafe { ALLOCATOR.dealloc(warmup, empty_layout) };
         let baseline_live_allocations = memory_stats().current_thread_live_allocations;
 
         for (index, size) in SIZES.into_iter().enumerate() {
@@ -569,9 +572,13 @@ mod tests {
             allocations[index] = (ptr, layout);
         }
 
+        let after_alloc_live_allocations = memory_stats().current_thread_live_allocations;
         assert!(
-            memory_stats().current_thread_live_allocations
-                >= baseline_live_allocations + SIZES.len()
+            after_alloc_live_allocations >= baseline_live_allocations + SIZES.len(),
+            "live allocation count did not increase by at least the test allocation count: baseline={} after_alloc={} test_allocations={}",
+            baseline_live_allocations,
+            after_alloc_live_allocations,
+            SIZES.len()
         );
 
         for (ptr, layout) in allocations {
@@ -591,9 +598,12 @@ mod tests {
             stats.retained_free_segments,
             stats.max_retained_free_segments
         );
-        assert_eq!(
+        assert!(
+            stats.current_thread_live_allocations <= after_alloc_live_allocations - SIZES.len(),
+            "live allocation count did not drop by the test allocation count: after_alloc={} after_free={} test_allocations={}",
+            after_alloc_live_allocations,
             stats.current_thread_live_allocations,
-            baseline_live_allocations
+            SIZES.len()
         );
         assert!(stats
             .size_class_occupancy
@@ -1031,35 +1041,44 @@ mod tests {
             .expect("global allocator test lock was poisoned");
         mnemosyne_prof::reset_profiler_for_testing();
 
-        enable_leak_detector();
-        assert!(is_leak_detector_enabled());
+        thread::spawn(|| {
+            enable_leak_detector();
+            assert!(is_leak_detector_enabled());
 
-        let layout = Layout::from_size_align(64, 8).expect("valid layout");
-        let ptr = unsafe { ALLOCATOR.alloc(layout) };
-        assert!(!ptr.is_null());
+            let layout = Layout::from_size_align(64, 8).expect("valid layout");
+            let ptr = unsafe { ALLOCATOR.alloc(layout) };
+            assert!(!ptr.is_null());
 
-        disable_leak_detector();
-        assert!(!is_leak_detector_enabled());
+            disable_leak_detector();
+            assert!(!is_leak_detector_enabled());
 
-        let temp_dir = std::env::temp_dir();
-        let path = temp_dir.join("mnemosyne_integration_leaks.txt");
-        let path_str = path.to_str().expect("valid temp path");
+            let temp_dir = std::env::temp_dir();
+            let path = temp_dir.join("mnemosyne_integration_leaks.txt");
+            let path_str = path.to_str().expect("valid temp path");
 
-        let dump_res = dump_leaks(path_str);
-        assert!(dump_res.is_ok(), "dump_leaks failed: {:?}", dump_res.err());
-        let count = dump_res.unwrap();
-        assert!(count >= 1, "Expected at least 1 leak captured (got {})", count);
+            let dump_res = dump_leaks(path_str);
+            assert!(dump_res.is_ok(), "dump_leaks failed: {:?}", dump_res.err());
+            let count = dump_res.unwrap();
+            assert!(
+                count >= 1,
+                "Expected at least 1 leak captured (got {})",
+                count
+            );
 
-        // Verify the file was created and contains the backtrace info
-        let content = std::fs::read_to_string(&path).expect("failed to read leak report");
-        assert!(
-            content.contains("test_leak_detector_integration"),
-            "Stack trace missing integration test function symbol: {}",
-            content
-        );
+            // Verify the file was created and contains the backtrace info.
+            let content = std::fs::read_to_string(&path).expect("failed to read leak report");
+            assert!(
+                content.contains("test_leak_detector_integration"),
+                "Stack trace missing integration test function symbol: {}",
+                content
+            );
 
-        let _ = std::fs::remove_file(&path);
-        unsafe { ALLOCATOR.dealloc(ptr, layout) };
+            let _ = std::fs::remove_file(&path);
+            unsafe { ALLOCATOR.dealloc(ptr, layout) };
+            mnemosyne_prof::reset_profiler_for_testing();
+        })
+        .join()
+        .expect("leak detector integration thread panicked");
         mnemosyne_prof::reset_profiler_for_testing();
     }
 }

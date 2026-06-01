@@ -180,7 +180,8 @@ fn on_alloc_cold(ptr: *mut u8, size: usize) {
     }
 
     if !hook_ptr.is_null() {
-        let hook: unsafe extern "C" fn(*mut core::ffi::c_void, usize) = unsafe { core::mem::transmute(hook_ptr) };
+        let hook: unsafe extern "C" fn(*mut core::ffi::c_void, usize) =
+            unsafe { core::mem::transmute(hook_ptr) };
         unsafe { hook(ptr as *mut core::ffi::c_void, size) };
     }
 
@@ -244,7 +245,8 @@ fn on_free_cold(ptr: *mut u8, size: usize) {
     }
 
     if !hook_ptr.is_null() {
-        let hook: unsafe extern "C" fn(*mut core::ffi::c_void, usize) = unsafe { core::mem::transmute(hook_ptr) };
+        let hook: unsafe extern "C" fn(*mut core::ffi::c_void, usize) =
+            unsafe { core::mem::transmute(hook_ptr) };
         unsafe { hook(ptr as *mut core::ffi::c_void, size) };
     }
 
@@ -270,14 +272,7 @@ fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
                 val = next_sample_interval(mean) as isize;
             }
 
-            let mut stack = Vec::with_capacity(32);
-            backtrace::trace(|frame| {
-                let ip = frame.ip() as usize;
-                if ip != 0 {
-                    stack.push(ip);
-                }
-                stack.len() < 32
-            });
+            let stack = capture_stack();
 
             let shard = (ptr as usize >> 6) % SHARDS;
             let mut lock = get_map(shard);
@@ -299,14 +294,7 @@ fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
                 val = next_sample_interval(mean) as isize;
             }
 
-            let mut stack = Vec::with_capacity(32);
-            backtrace::trace(|frame| {
-                let ip = frame.ip() as usize;
-                if ip != 0 {
-                    stack.push(ip);
-                }
-                stack.len() < 32
-            });
+            let stack = capture_stack();
 
             let shard = (ptr as usize >> 6) % SHARDS;
             let mut lock = get_map(shard);
@@ -318,6 +306,23 @@ fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
             cell.set(val - size as isize);
         }
     });
+}
+
+fn capture_stack() -> Vec<usize> {
+    const MAX_STACK_FRAMES: usize = 32;
+    let mut frames = [0usize; MAX_STACK_FRAMES];
+    let mut len = 0usize;
+
+    backtrace::trace(|frame| {
+        let ip = frame.ip() as usize;
+        if ip != 0 {
+            frames[len] = ip;
+            len += 1;
+        }
+        len < MAX_STACK_FRAMES
+    });
+
+    frames[..len].to_vec()
 }
 
 fn sample_free_inner(ptr: *mut u8) {
@@ -480,7 +485,9 @@ pub fn dump_leaks(path: &str) -> std::io::Result<usize> {
     let result = dump_leaks_inner(path);
 
     #[cfg(feature = "nightly_tls")]
-    unsafe { IN_HOOK = false; }
+    unsafe {
+        IN_HOOK = false;
+    }
     #[cfg(not(feature = "nightly_tls"))]
     IN_HOOK.with(|cell| cell.set(false));
     result
@@ -540,4 +547,22 @@ fn dump_leaks_inner(path: &str) -> std::io::Result<usize> {
     }
 
     Ok(total_leaks)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn capture_stack_stores_exact_retained_capacity() {
+        let stack = super::capture_stack();
+        assert!(
+            stack.len() <= 32,
+            "captured stack retained more than 32 frames: {}",
+            stack.len()
+        );
+        assert_eq!(
+            stack.capacity(),
+            stack.len(),
+            "captured stack must not retain unused frame capacity"
+        );
+    }
 }

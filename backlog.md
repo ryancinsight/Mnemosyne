@@ -134,6 +134,8 @@
 - [patch] Route heap-local small allocation through `ThreadAllocator::alloc_class` as the single active-page pop/bump implementation.
 - [patch] Restore same-pointer shrink behavior in `thread_realloc` through the existing small-realloc size-class proof.
 - [patch] Avoid allocate-copy-free churn for standard-policy large/huge half-shrink reallocs and bound all replacement realloc copies to `min(layout.size(), new_size)`.
+- [patch] Reduce leak/profiling stack-sample memory by capturing into fixed stack storage and retaining only exact frame capacity.
+- [patch] Stabilize memory-stat tests after leak-detector thread-exit orphan adoption by asserting allocation-count deltas instead of a false absolute baseline.
 - [patch] Use `benchmark_variance.csv` to retest remaining within-class realloc and historical threaded-row optimizations before accepting allocator changes.
 - [patch] Investigate cross-thread handoff batching or owner-token routing without increasing saturated threaded cycles.
 - [patch] Investigate mimalloc's remaining within-class realloc, historical threaded-row, saturated threaded-row, cross-thread handoff, and usable-size combined-cycle advantages after the unified TLS slot narrowed saturated threaded disparity.
