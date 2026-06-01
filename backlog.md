@@ -164,4 +164,4 @@
 
 ## Next
 
-- [patch] Close remaining comparator-parity gaps in `allocator_comparison.md`: mimalloc still leads small cycle, small burst, cross-class realloc, within-class realloc, and threaded saturated small; jemalloc still leads huge allocation, medium allocation, and large deallocation by current point estimates.
+- [patch] Close remaining comparator-parity gaps in `allocator_comparison.md`: mimalloc still leads small cycle and cross-class realloc; jemalloc still leads huge allocation, medium allocation, and large deallocation by current point estimates. Saturated threaded small remains statistically close and should be retested before changing code.
