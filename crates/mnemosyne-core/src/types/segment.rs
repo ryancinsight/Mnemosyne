@@ -67,11 +67,6 @@ impl Segment {
             segment.free_list_encrypted = false;
             segment.numa_node = numa_node;
             segment.page_occupied_mask = 0;
-            for i in 0..PAGES_PER_SEGMENT {
-                segment.keys[i] =
-                    (aligned_ptr as usize).wrapping_add(i * PAGE_SIZE) ^ 0x5555555555555555;
-            }
-
             // Page 0 holds segment metadata and is never allocated from;
             // only pages 1..PAGES_PER_SEGMENT need explicit free-list state.
             // We still initialize page 0 with `Page::new()` so debugging and
@@ -80,8 +75,10 @@ impl Segment {
             // because every caller recovers it by rounding the page address
             // down to `SEGMENT_ALIGN`.
             for i in 0..PAGES_PER_SEGMENT {
+                segment.keys[i] =
+                    (aligned_ptr as usize).wrapping_add(i * PAGE_SIZE) ^ 0x5555555555555555;
                 segment.pages[i] = Page::new();
-                segment.pages[i].page_index = i as u32;
+                segment.pages[i].page_index = i as u8;
             }
         }
     }

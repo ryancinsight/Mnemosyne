@@ -30,7 +30,7 @@ pub struct Page {
     /// Current list state of this page (0=None, 1=Active, 2=Full, 3=Empty).
     pub list_state: u8,
     /// Index of this page in its parent segment.
-    pub page_index: u32,
+    pub page_index: u8,
 }
 
 unsafe impl Send for Page {}

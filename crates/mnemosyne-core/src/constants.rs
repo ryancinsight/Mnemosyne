@@ -74,8 +74,8 @@ const _: () = assert!(
     "PAGES_PER_SEGMENT must tile SEGMENT_SIZE exactly with PAGE_SIZE strides"
 );
 const _: () = assert!(
-    PAGES_PER_SEGMENT <= (u32::MAX as usize) + 1,
-    "Page::page_index stores segment-local page indices in u32"
+    PAGES_PER_SEGMENT <= (u8::MAX as usize) + 1,
+    "Page::page_index stores segment-local page indices in u8"
 );
 
 /// At least one page must be available for small allocations after Page 0

@@ -104,6 +104,9 @@ pub const fn size_to_class_nonzero(size: usize) -> Option<usize> {
     ];
 
     let bits = usize::BITS - (size - 1).leading_zeros();
+    if bits >= 14 {
+        unsafe { core::hint::unreachable_unchecked() }
+    }
     let entry = &LOOKUP[bits as usize];
     Some(entry.base as usize + ((size - entry.sub as usize) >> entry.shift))
 }
