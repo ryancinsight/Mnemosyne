@@ -62,6 +62,7 @@ fn main() -> io::Result<()> {
         .filter_map(|benchmark| rows.iter().find(|row| row.benchmark == *benchmark))
         .cloned()
         .collect::<Vec<_>>();
+    let missing_baseline_rows = missing_selected_benchmarks(&rows);
     write_summary(CURRENT_EXCERPT_PATH, &current_excerpt_rows)?;
     if refresh_baseline {
         fs::create_dir_all("benchmarks")?;
@@ -97,6 +98,13 @@ fn main() -> io::Result<()> {
         }
     }
 
+    if enforce_thresholds && !refresh_baseline && !missing_baseline_rows.is_empty() {
+        return Err(io::Error::other(format!(
+            "Missing selected benchmark rows for threshold enforcement: {}",
+            missing_baseline_rows.join(", ")
+        )));
+    }
+
     if regression_detected && enforce_thresholds && !refresh_baseline {
         return Err(io::Error::other(
             "Performance regression detected. Gating threshold exceeded.",
@@ -125,6 +133,14 @@ fn is_active_benchmark(benchmark: &str) -> bool {
         .any(|group| benchmark.starts_with(group))
 }
 
+fn missing_selected_benchmarks(rows: &[SummaryRow]) -> Vec<&'static str> {
+    BASELINE_BENCHMARKS
+        .iter()
+        .copied()
+        .filter(|benchmark| !rows.iter().any(|row| row.benchmark == *benchmark))
+        .collect()
+}
+
 fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
     use std::collections::BTreeMap;
 
@@ -148,39 +164,47 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
             continue;
         };
 
+        let Some(kind) = classify_allocator(&allocator) else {
+            continue;
+        };
+
         let entry = table.entry((group, sub_bench)).or_default();
-        if allocator.contains("mnemosyne") {
-            entry.mnemosyne = Some(row.mean_ns);
-        } else if allocator.contains("system") {
-            entry.system = Some(row.mean_ns);
-        } else if allocator.contains("mimalloc") {
-            entry.mimalloc = Some(row.mean_ns);
-        } else if allocator.contains("snmalloc") {
-            entry.snmalloc = Some(row.mean_ns);
-        } else if allocator.contains("jemalloc") {
-            entry.jemalloc = Some(row.mean_ns);
+        match kind {
+            AllocatorKind::Mnemosyne => entry.mnemosyne = Some(row.mean_ns),
+            AllocatorKind::MnemosyneHeap => entry.mnemosyne_heap = Some(row.mean_ns),
+            AllocatorKind::BrandedHeap => entry.branded_heap = Some(row.mean_ns),
+            AllocatorKind::System => entry.system = Some(row.mean_ns),
+            AllocatorKind::MiMalloc => entry.mimalloc = Some(row.mean_ns),
+            AllocatorKind::SnMalloc => entry.snmalloc = Some(row.mean_ns),
+            AllocatorKind::Jemalloc => entry.jemalloc = Some(row.mean_ns),
         }
     }
 
     let mut markdown = String::new();
     markdown.push_str("# Allocator Performance Comparison\n\n");
-    markdown.push_str("| Benchmark | Mnemosyne (ns) | System (ns) | MiMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs System | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc |\n");
+    markdown.push_str("| Benchmark | Mnemosyne (ns) | MnemosyneHeap (ns) | BrandedHeap (ns) | System (ns) | MiMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs System | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc | MnemosyneHeap vs Mnemosyne | BrandedHeap vs Mnemosyne |\n");
     markdown.push_str(
-        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n",
+        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n",
     );
 
     println!("\nAllocator Comparisons (Current Run):");
-    println!("==========================================================================================================");
     println!(
-        "{:<45} {:<15} {:<15} {:<15} {:<15} {:<15}",
+        "============================================================================================================================================"
+    );
+    println!(
+        "{:<45} {:<15} {:<18} {:<18} {:<15} {:<15} {:<15} {:<15}",
         "Benchmark",
         "Mnemosyne (ns)",
+        "MnemosyneHeap",
+        "BrandedHeap",
         "System (ns)",
         "MiMalloc (ns)",
         "SnMalloc (ns)",
         "Jemalloc (ns)"
     );
-    println!("----------------------------------------------------------------------------------------------------------");
+    println!(
+        "--------------------------------------------------------------------------------------------------------------------------------------------"
+    );
 
     for ((group, sub_bench), comparison) in &table {
         let name = if sub_bench.is_empty() {
@@ -191,6 +215,12 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
 
         let mne_str = comparison
             .mnemosyne
+            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
+        let mne_heap_str = comparison
+            .mnemosyne_heap
+            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
+        let branded_heap_str = comparison
+            .branded_heap
             .map_or("N/A".to_string(), |v| format!("{:.3}", v));
         let sys_str = comparison
             .system
@@ -206,8 +236,8 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
             .map_or("N/A".to_string(), |v| format!("{:.3}", v));
 
         println!(
-            "{:<45} {:<15} {:<15} {:<15} {:<15} {:<15}",
-            name, mne_str, sys_str, mi_str, sn_str, je_str
+            "{:<45} {:<15} {:<18} {:<18} {:<15} {:<15} {:<15} {:<15}",
+            name, mne_str, mne_heap_str, branded_heap_str, sys_str, mi_str, sn_str, je_str
         );
 
         let vs_sys = match (comparison.mnemosyne, comparison.system) {
@@ -226,13 +256,36 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
             (Some(mn_v), Some(je_v)) => format!("{:.2}x", mn_v / je_v),
             _ => "N/A".to_string(),
         };
+        let heap_vs_mne = match (comparison.mnemosyne_heap, comparison.mnemosyne) {
+            (Some(heap_v), Some(mn_v)) => format!("{:.2}x", heap_v / mn_v),
+            _ => "N/A".to_string(),
+        };
+        let branded_vs_mne = match (comparison.branded_heap, comparison.mnemosyne) {
+            (Some(heap_v), Some(mn_v)) => format!("{:.2}x", heap_v / mn_v),
+            _ => "N/A".to_string(),
+        };
 
         markdown.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
-            name, mne_str, sys_str, mi_str, sn_str, je_str, vs_sys, vs_mi, vs_sn, vs_je
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            name,
+            mne_str,
+            mne_heap_str,
+            branded_heap_str,
+            sys_str,
+            mi_str,
+            sn_str,
+            je_str,
+            vs_sys,
+            vs_mi,
+            vs_sn,
+            vs_je,
+            heap_vs_mne,
+            branded_vs_mne
         ));
     }
-    println!("==========================================================================================================\n");
+    println!(
+        "============================================================================================================================================\n"
+    );
 
     fs::create_dir_all("benchmarks")?;
     fs::write("benchmarks/allocator_comparison.md", markdown)?;
@@ -240,9 +293,35 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AllocatorKind {
+    Mnemosyne,
+    MnemosyneHeap,
+    BrandedHeap,
+    System,
+    MiMalloc,
+    SnMalloc,
+    Jemalloc,
+}
+
+fn classify_allocator(allocator: &str) -> Option<AllocatorKind> {
+    match allocator {
+        "mnemosyne" => Some(AllocatorKind::Mnemosyne),
+        "mnemosyneheap" => Some(AllocatorKind::MnemosyneHeap),
+        "brandedheap" => Some(AllocatorKind::BrandedHeap),
+        "system" => Some(AllocatorKind::System),
+        "mimalloc" => Some(AllocatorKind::MiMalloc),
+        "snmalloc" => Some(AllocatorKind::SnMalloc),
+        "jemalloc" => Some(AllocatorKind::Jemalloc),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 struct AllocatorComparison {
     mnemosyne: Option<f64>,
+    mnemosyne_heap: Option<f64>,
+    branded_heap: Option<f64>,
     system: Option<f64>,
     mimalloc: Option<f64>,
     snmalloc: Option<f64>,
@@ -446,6 +525,7 @@ fn write_variance_report(path: &str, rows: &[SummaryRow]) -> io::Result<()> {
 
 fn variance_threshold(benchmark: &str) -> f64 {
     if benchmark.starts_with("threaded small allocation cycles/")
+        || benchmark.starts_with("threaded medium allocation cycles/")
         || benchmark.starts_with("threaded saturated small allocation cycles/")
         || benchmark.starts_with("cross-thread free handoff/")
     {
@@ -623,11 +703,36 @@ mod tests {
     }
 
     #[test]
+    fn reports_missing_selected_baseline_rows() {
+        let current = [SummaryRow {
+            benchmark: std::borrow::Cow::Borrowed("allocator cycle latency/mnemosyne/small_32"),
+            mean_ns: 10.0,
+            median_ns: 10.0,
+            mean_ci_lower_ns: None,
+            mean_ci_upper_ns: None,
+        }];
+
+        let missing = missing_selected_benchmarks(&current);
+
+        assert!(
+            missing.contains(&"threaded saturated small allocation cycles/mnemosyne"),
+            "missing selected rows must include absent threshold-gated threaded benchmark"
+        );
+        assert!(
+            !missing.contains(&"allocator cycle latency/mnemosyne/small_32"),
+            "present selected rows must not be reported missing"
+        );
+    }
+
+    #[test]
     fn saturated_threaded_row_is_the_gated_threaded_baseline() {
         assert!(
             BASELINE_BENCHMARKS.contains(&"threaded saturated small allocation cycles/mnemosyne")
         );
-        assert!(!BASELINE_BENCHMARKS.contains(&"threaded small allocation cycles/mnemosyne"));
+        assert!(
+            !BASELINE_BENCHMARKS.contains(&"threaded small allocation cycles/mnemosyne"),
+            "scheduler-sensitive historical threaded row must not be threshold-gated"
+        );
         assert_eq!(
             get_regression_threshold("threaded saturated small allocation cycles/mnemosyne"),
             1.25
@@ -636,6 +741,10 @@ mod tests {
 
     #[test]
     fn variance_threshold_is_wider_for_threaded_rows() {
+        assert_eq!(
+            variance_threshold("threaded medium allocation cycles/mnemosyne"),
+            0.25
+        );
         assert_eq!(
             variance_threshold("threaded saturated small allocation cycles/mnemosyne"),
             0.25
@@ -679,5 +788,22 @@ mod tests {
             !is_active_benchmark("tls lookup overhead/standardtls"),
             "TLS exploratory benchmark rows must not enter allocator comparison summaries"
         );
+    }
+
+    #[test]
+    fn allocator_classification_is_exact_not_substring_based() {
+        assert_eq!(
+            classify_allocator("mnemosyne"),
+            Some(AllocatorKind::Mnemosyne)
+        );
+        assert_eq!(
+            classify_allocator("mnemosyneheap"),
+            Some(AllocatorKind::MnemosyneHeap)
+        );
+        assert_eq!(
+            classify_allocator("brandedheap"),
+            Some(AllocatorKind::BrandedHeap)
+        );
+        assert_eq!(classify_allocator("notmnemosyne"), None);
     }
 }

@@ -132,6 +132,11 @@ Target version: 0.1.0
 
 - [x] [patch] Add `threaded medium allocation cycles/` to the benchmark-summary active group filter so Criterion rows from `allocator_bench.rs` are retained in generated summaries and comparison reports.
 - [x] [patch] Add benchmark-summary unit coverage pinning active allocator benchmark groups and rejecting exploratory TLS rows from allocator comparison summaries.
+- [x] [patch] Make `benchmark_summary -- --enforce-thresholds` fail when any selected baseline row is missing from current Criterion data.
+- [x] [patch] Document `benchmark_variance.csv` and the selected-row completeness gate in the benchmark workflow.
+- [x] [patch] Treat `threaded medium allocation cycles/` as a threaded variance row so scheduler-width classification matches the retained benchmark group.
+- [x] [patch] Make allocator comparison classification exact so `MnemosyneHeap` and `BrandedHeap` rows cannot overwrite the public `Mnemosyne` row.
+- [x] [patch] Replace the remaining benchmark harness `expect` in the `BrandedHeap` cycle row with explicit `benchmark failure` diagnostics.
 
 - [x] [patch] Audit generated benchmark artifact freshness and documentation references for the current allocator comparison set.
 - [x] [patch] Document the source-controlled baseline versus generated `target/criterion` artifact boundary.

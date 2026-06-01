@@ -3,6 +3,9 @@
 ## Closed
 
 - [patch] `allocator_bench.rs` measured `Threaded medium allocation cycles`, but `benchmark_summary.rs` did not include `threaded medium allocation cycles/` in `ACTIVE_GROUPS`, so generated summaries and allocator comparison reports dropped a valid Criterion group. Added the active prefix and unit tests that pin every allocator benchmark group while excluding exploratory TLS rows.
+- [patch] `benchmark_summary -- --enforce-thresholds` compared only selected baseline rows present in current Criterion data, so a missing threshold-gated row could reduce the comparison set and still pass. Added selected-row completeness detection and fail threshold enforcement when any configured baseline row is absent; pinned by `reports_missing_selected_baseline_rows`.
+- [patch] `threaded medium allocation cycles/mnemosyne` is now a retained threaded comparator row, but the variance report still classified it with the scalar-latency `0.15` CI-width threshold. Added it to the scheduler-aware `0.25` threshold set and pinned the classifier in `variance_threshold_is_wider_for_threaded_rows`.
+- [patch] The allocator comparison report classified allocator IDs by substring, so `mnemosyneheap` matched the `mnemosyne` branch and could overwrite the top-level public allocator row. Replaced substring matching with exact allocator classification, added `MnemosyneHeap` and `BrandedHeap` columns, and pinned the distinction with `allocator_classification_is_exact_not_substring_based`.
 - [patch] `ThreadAllocator::try_reclaim_segment` reclaimed the current segment after local frees, forcing the next small allocation to rebuild page metadata instead of using the retained free list.
 - [patch] The allocator benchmark compared immediate alloc/dealloc only and did not include burst retention or threaded comparison groups.
 - [patch] The Unix backend had an untyped `PROT_WRITE` constant that blocked Rustfmt parsing.

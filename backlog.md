@@ -4,6 +4,11 @@
 
 - [patch] Include the `Threaded medium allocation cycles` Criterion group in benchmark-summary extraction and generated allocator comparison reports.
 - [patch] Pin benchmark-summary active-group filtering with unit tests so all allocator benchmark groups are retained and exploratory TLS benchmark rows stay out of allocator comparison summaries.
+- [patch] Make benchmark threshold enforcement reject incomplete current Criterion data when any selected baseline row is absent.
+- [patch] Document the generated variance report and selected-row completeness requirement in the benchmark workflow.
+- [patch] Apply the scheduler-aware variance threshold to retained medium-threaded allocation rows.
+- [patch] Report `Mnemosyne`, `MnemosyneHeap`, and `BrandedHeap` as distinct allocator comparison rows using exact allocator classification.
+- [patch] Convert the remaining `BrandedHeap` benchmark allocation failure from `expect` panic to explicit benchmark failure diagnostics.
 - [patch] Retain the active thread-local segment during local frees so hot allocate/free cycles reuse page free lists instead of scanning and recycling the segment.
 - [patch] Replace single-shape allocator benchmarks with Criterion cycle, burst-retention, and threaded comparison groups for Mnemosyne, mimalloc, and snmalloc.
 - [patch] Fix Unix backend constant typing so Rustfmt can parse all target modules.

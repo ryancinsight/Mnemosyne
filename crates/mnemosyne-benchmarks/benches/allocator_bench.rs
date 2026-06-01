@@ -591,9 +591,10 @@ fn bench_allocator_cycles(c: &mut Criterion) {
                     _,
                 >(|heap, mut token| {
                     b.iter(|| {
-                        let block = heap
-                            .alloc(&token, *layout)
-                            .expect("BrandedHeap alloc failed");
+                        let block = match heap.alloc(&token, *layout) {
+                            Some(block) => block,
+                            None => benchmark_failure("BrandedHeap cycle", "heap returned null"),
+                        };
                         black_box(block.as_ptr());
                         heap.free(&mut token, block);
                     })
