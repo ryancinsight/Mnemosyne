@@ -360,3 +360,4 @@ Target version: 0.1.0
 - [x] [patch] Reject a guard-free full-page-to-active local-free split after it failed to improve `allocator deallocation latency/Mnemosyne/large_8192` and regressed small/medium/large cycle rows.
 - [x] [patch] Reject deferred empty-page migration after focused benchmarking showed no material `large_8192` deallocation improvement.
 - [x] [patch] Replace bare heap integration test layout and worker-join unwraps with contextual diagnostics.
+- [x] [patch] Replace bare heap unit-test layout unwraps with a shared contextual layout helper.

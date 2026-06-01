@@ -6,10 +6,15 @@ use mnemosyne_backend::MemoryBackendWrapper;
 use mnemosyne_core::StandardPolicy;
 use std::format;
 
+fn test_layout(size: usize, align: usize) -> Layout {
+    Layout::from_size_align(size, align)
+        .expect("heap unit test layout must use a nonzero power-of-two alignment")
+}
+
 #[test]
 fn test_heap_allocation_and_free() {
     let heap = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
-    let layout = Layout::from_size_align(32, 8).unwrap();
+    let layout = test_layout(32, 8);
     let ptr = heap.alloc(layout);
     assert!(!ptr.is_null(), "heap allocation failed");
 
@@ -23,7 +28,7 @@ fn test_heap_allocation_and_free() {
 #[test]
 fn test_heap_realloc() {
     let heap = MnemosyneHeap::<StandardPolicy, MemoryBackendWrapper>::new();
-    let layout = Layout::from_size_align(16, 8).unwrap();
+    let layout = test_layout(16, 8);
     let ptr = heap.alloc(layout);
     assert!(!ptr.is_null());
 
@@ -39,7 +44,7 @@ fn test_heap_realloc() {
 #[test]
 fn test_branded_heap_allocation_and_free() {
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
-        let layout = Layout::from_size_align(32, 8).unwrap();
+        let layout = test_layout(32, 8);
         let block = heap
             .alloc(&token, layout)
             .expect("branded allocation failed");
@@ -56,7 +61,7 @@ fn test_branded_heap_allocation_and_free() {
 #[test]
 fn test_branded_heap_realloc() {
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
-        let layout = Layout::from_size_align(16, 8).unwrap();
+        let layout = test_layout(16, 8);
         let block = heap
             .alloc(&token, layout)
             .expect("branded allocation failed");
@@ -145,7 +150,7 @@ fn test_branded_heap_realloc_zst_to_zero_drops_without_allocating() {
 #[test]
 fn test_branded_heap_generic_and_cast() {
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
-        let layout = Layout::from_size_align(32, 8).unwrap();
+        let layout = test_layout(32, 8);
         let block: BrandedBlock<'_, u8> = heap
             .alloc(&token, layout)
             .expect("branded allocation failed");
