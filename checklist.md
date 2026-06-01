@@ -128,6 +128,7 @@ Target version: 0.1.0
 - [x] [patch] Document the no-back-pointer rationale and drop the per-page `segment` write loop from `Segment::initialize`.
 - [x] [patch] Add `page_struct_size_stays_within_one_cache_line` to pin `size_of::<Page>() <= 64`.
 - [x] [patch] Keep current-segment occupancy-mask bits conservative after local frees and pin the contract with `current_segment_free_keeps_occupancy_mask_conservative`.
+- [x] [patch] Replace the shifted-mask page-index derivation in `usable_size` with an offset-from-segment-base derivation and refresh the small usable-size comparator row.
 
 ## Open
 

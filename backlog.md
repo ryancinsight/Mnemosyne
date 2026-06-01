@@ -170,7 +170,8 @@
 - [patch] Refresh allocator comparison rows after stored page-index routing; current saturated threaded small cycles measure Mnemosyne `66.851 us` versus mimalloc `70.088 us`.
 - [patch] Charge periodic defragmentation cadence only when local free transitions actually make a page empty, removing sweep accounting from full-page-to-active transitions and closing `allocator deallocation latency/large_8192` versus jemalloc.
 - [patch] Keep current-segment occupancy-mask bits conservative across local frees, removing repeated mask clear/set traffic from hot small alloc/free reuse while preserving exact `alloc_count` authority.
+- [patch] Derive `usable_size` page indices from the already-computed segment base, removing the shifted-mask index path and refreshing the small usable-size comparator row.
 
 ## Next
 
-- [patch] Close remaining comparator-parity gaps in `allocator_comparison.md`: mimalloc still leads public small cycle and combined small usable-size latency by current point estimates, but current-segment conservative occupancy narrowed `usable size latency/small_32` from `3.070 ns` to `2.853 ns`.
+- [patch] Close remaining comparator-parity gaps in `allocator_comparison.md`: mimalloc still narrowly leads public small cycle by current point estimate (`2.799 ns` vs `2.744 ns`), while combined small usable-size latency now measures ahead of mimalloc (`2.848 ns` vs `2.987 ns`).

@@ -1,6 +1,6 @@
 use crate::{LocalAllocatorSelector, ThreadAllocator, ThreadAllocatorStats};
 use mnemosyne_arena::HasSegmentPool;
-use mnemosyne_core::constants::{PAGES_PER_SEGMENT, PAGE_SHIFT, SEGMENT_SIZE};
+use mnemosyne_core::constants::{PAGE_SHIFT, SEGMENT_SIZE};
 use mnemosyne_core::types::Segment;
 
 /// Returns the actual usable byte count of the allocation at `ptr`.
@@ -34,7 +34,7 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
     let ptr_val = ptr as usize;
     let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
     let segment = segment_addr as *mut Segment;
-    let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+    let page_index = (ptr_val - segment_addr) >> PAGE_SHIFT;
 
     // Safety: for small allocations, page_index is in [1, PAGES_PER_SEGMENT)
     // and the target page records the size-class block size. If page_index is
