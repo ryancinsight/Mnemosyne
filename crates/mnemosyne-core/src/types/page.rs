@@ -126,7 +126,9 @@ impl Page {
         }
         self.alloc_count = count;
         if (old == 0) != (count == 0) {
-            unsafe { Self::set_segment_page_occupied(segment, page_index, count > 0) };
+            if count > 0 || unsafe { !(*segment).is_current } {
+                unsafe { Self::set_segment_page_occupied(segment, page_index, count > 0) };
+            }
         }
     }
 
@@ -186,7 +188,9 @@ impl Page {
             let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
             let segment = segment_addr as *mut Segment;
             let idx = self.page_index as usize;
-            unsafe { Self::set_segment_page_occupied(segment, idx, false) };
+            if unsafe { !(*segment).is_current } {
+                unsafe { Self::set_segment_page_occupied(segment, idx, false) };
+            }
         }
     }
 
@@ -207,7 +211,7 @@ impl Page {
         debug_assert!(self.alloc_count > 0);
         let count = self.alloc_count - 1;
         self.alloc_count = count;
-        if count == 0 {
+        if count == 0 && unsafe { !(*segment).is_current } {
             unsafe { Self::set_segment_page_occupied(segment, page_index, false) };
         }
     }

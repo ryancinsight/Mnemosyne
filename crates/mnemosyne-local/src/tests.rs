@@ -248,6 +248,37 @@ fn reentrant_current_segment_local_free_uses_metadata_fast_path() {
 }
 
 #[test]
+fn current_segment_free_keeps_occupancy_mask_conservative() {
+    let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(32, 8) };
+    assert!(!ptr.is_null(), "current-segment mask allocation failed");
+
+    let ptr_val = ptr as usize;
+    let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
+    let segment = segment_addr as *mut Segment;
+    let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+    let mask = 1u32 << page_index;
+
+    assert!(
+        unsafe { (*segment).is_current },
+        "test allocation must come from the current slicing segment"
+    );
+    assert_ne!(
+        unsafe { (*segment).page_occupied_mask } & mask,
+        0,
+        "allocation must mark the owning page occupied"
+    );
+
+    unsafe { thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr) };
+
+    assert_eq!(unsafe { (*segment).pages[page_index].alloc_count }, 0);
+    assert_ne!(
+        unsafe { (*segment).page_occupied_mask } & mask,
+        0,
+        "current-segment free keeps a conservative mask bit for hot reuse"
+    );
+}
+
+#[test]
 fn thread_alloc_rejects_invalid_alignment_requests() {
     for &align in &[0usize, 3, 6, 12, SEGMENT_SIZE * 2] {
         let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(64, align) };

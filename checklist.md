@@ -127,6 +127,7 @@ Target version: 0.1.0
 - [x] [patch] Remove the dead `Page::segment` back-pointer field and unused `Page::is_empty` helper.
 - [x] [patch] Document the no-back-pointer rationale and drop the per-page `segment` write loop from `Segment::initialize`.
 - [x] [patch] Add `page_struct_size_stays_within_one_cache_line` to pin `size_of::<Page>() <= 64`.
+- [x] [patch] Keep current-segment occupancy-mask bits conservative after local frees and pin the contract with `current_segment_free_keeps_occupancy_mask_conservative`.
 
 ## Open
 
