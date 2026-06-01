@@ -109,12 +109,202 @@ static mut THREAD_STATE: ThreadState = ThreadState {
 
 #[cfg(not(feature = "nightly_tls"))]
 std::thread_local! {
-    static THREAD_STATE: core::cell::Cell<ThreadState> = const {
-        core::cell::Cell::new(ThreadState {
+    static THREAD_STATE: core::cell::UnsafeCell<ThreadState> = const {
+        core::cell::UnsafeCell::new(ThreadState {
             bytes_until_sample: 0,
             in_hook: false,
         })
     };
+}
+
+#[cfg(not(feature = "nightly_tls"))]
+static PROFILER_TLS_KEY: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(u32::MAX);
+
+#[cfg(not(feature = "nightly_tls"))]
+#[inline(always)]
+fn get_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> u32 {
+    let mut key = atomic_key.load(Ordering::Acquire);
+    if key == u32::MAX {
+        key = init_os_tls_key(atomic_key);
+    }
+    key
+}
+
+#[cfg(not(feature = "nightly_tls"))]
+#[cold]
+#[inline(never)]
+fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> u32 {
+    unsafe {
+        #[cfg(windows)]
+        {
+            extern "system" {
+                fn TlsAlloc() -> u32;
+                fn TlsFree(dwTlsIndex: u32) -> i32;
+            }
+            let key = TlsAlloc();
+            if key == u32::MAX {
+                panic!("Failed to allocate Win32 TLS index");
+            }
+            match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => key,
+                Err(existing) => {
+                    TlsFree(key);
+                    existing
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            extern "C" {
+                fn pthread_key_create(
+                    key: *mut u32,
+                    destructor: Option<unsafe extern "C" fn(*mut core::ffi::c_void)>,
+                ) -> i32;
+                fn pthread_key_delete(key: u32) -> i32;
+            }
+            let mut key = 0u32;
+            let res = pthread_key_create(&mut key, core::ptr::null_mut());
+            if res != 0 {
+                panic!("Failed to create pthread TLS key");
+            }
+            match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => key,
+                Err(existing) => {
+                    pthread_key_delete(key);
+                    existing
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "nightly_tls"))]
+#[allow(dead_code)]
+#[inline(always)]
+fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
+    unsafe {
+        #[cfg(windows)]
+        {
+            extern "system" {
+                fn TlsGetValue(dwTlsIndex: u32) -> *mut core::ffi::c_void;
+            }
+            TlsGetValue(key)
+        }
+        #[cfg(not(windows))]
+        {
+            extern "C" {
+                fn pthread_getspecific(key: u32) -> *mut core::ffi::c_void;
+            }
+            pthread_getspecific(key)
+        }
+    }
+}
+
+#[cfg(not(feature = "nightly_tls"))]
+#[allow(dead_code)]
+#[inline(always)]
+fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
+    unsafe {
+        #[cfg(windows)]
+        {
+            extern "system" {
+                fn TlsSetValue(dwTlsIndex: u32, lpTlsValue: *mut core::ffi::c_void) -> i32;
+            }
+            TlsSetValue(key, value);
+        }
+        #[cfg(not(windows))]
+        {
+            extern "C" {
+                fn pthread_setspecific(key: u32, value: *const core::ffi::c_void) -> i32;
+            }
+            pthread_setspecific(key, value);
+        }
+    }
+}
+
+#[cfg(all(not(feature = "nightly_tls"), all(windows, target_arch = "x86_64")))]
+#[inline(always)]
+unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
+    if index < 64 {
+        let val: *mut core::ffi::c_void;
+        core::arch::asm!(
+            "mov {}, gs:[0x1480 + {} * 8]",
+            out(reg) val,
+            in(reg) index as usize,
+            options(nostack, preserves_flags, readonly)
+        );
+        val
+    } else {
+        let teb: *mut u8;
+        core::arch::asm!(
+            "mov {}, gs:[0x30]",
+            out(reg) teb,
+            options(nostack, preserves_flags, readonly)
+        );
+        let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
+        if expansion_slots.is_null() {
+            core::ptr::null_mut()
+        } else {
+            *expansion_slots.add(index as usize - 64)
+        }
+    }
+}
+
+#[cfg(all(not(feature = "nightly_tls"), all(windows, target_arch = "x86_64")))]
+#[inline(always)]
+unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
+    if index < 64 {
+        core::arch::asm!(
+            "mov gs:[0x1480 + {} * 8], {}",
+            in(reg) index as usize,
+            in(reg) value,
+            options(nostack, preserves_flags)
+        );
+    } else {
+        let teb: *mut u8;
+        core::arch::asm!(
+            "mov {}, gs:[0x30]",
+            out(reg) teb,
+            options(nostack, preserves_flags, readonly)
+        );
+        let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
+        if !expansion_slots.is_null() {
+            *expansion_slots.add(index as usize - 64) = value;
+        }
+    }
+}
+
+#[cfg(not(feature = "nightly_tls"))]
+#[inline(always)]
+pub(crate) fn get_profiler_state() -> *mut ThreadState {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        let key = get_os_tls_key(&PROFILER_TLS_KEY);
+        let ptr = unsafe { get_teb_tls_slot(key) } as *mut ThreadState;
+        if !ptr.is_null() {
+            ptr
+        } else {
+            THREAD_STATE.with(|cell| {
+                let p = cell.get();
+                unsafe { set_teb_tls_slot(key, p as *mut core::ffi::c_void) };
+                p
+            })
+        }
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    {
+        let key = get_os_tls_key(&PROFILER_TLS_KEY);
+        let ptr = get_os_tls_value(key) as *mut ThreadState;
+        if !ptr.is_null() {
+            ptr
+        } else {
+            THREAD_STATE.with(|cell| {
+                let p = cell.get();
+                set_os_tls_value(key, p as *mut core::ffi::c_void);
+                p
+            })
+        }
+    }
 }
 
 #[inline(always)]
@@ -129,16 +319,15 @@ pub(crate) fn enter_hook() -> bool {
         }
     }
     #[cfg(not(feature = "nightly_tls"))]
-    THREAD_STATE.with(|cell| {
-        let mut state = cell.get();
+    unsafe {
+        let state = &mut *get_profiler_state();
         if state.in_hook {
             true
         } else {
             state.in_hook = true;
-            cell.set(state);
             false
         }
-    })
+    }
 }
 
 #[inline(always)]
@@ -148,11 +337,9 @@ pub(crate) fn exit_hook() {
         THREAD_STATE.in_hook = false;
     }
     #[cfg(not(feature = "nightly_tls"))]
-    THREAD_STATE.with(|cell| {
-        let mut state = cell.get();
-        state.in_hook = false;
-        cell.set(state);
-    });
+    unsafe {
+        (*get_profiler_state()).in_hook = false;
+    }
 }
 
 #[cfg(feature = "nightly_tls")]
@@ -167,12 +354,6 @@ pub(crate) fn set_bytes_until_sample(val: isize) {
     unsafe {
         THREAD_STATE.bytes_until_sample = val;
     }
-}
-
-#[cfg(not(feature = "nightly_tls"))]
-#[inline(always)]
-pub(crate) fn with_bytes_until_sample<R>(f: impl FnOnce(&core::cell::Cell<ThreadState>) -> R) -> R {
-    THREAD_STATE.with(f)
 }
 
 /// Returns whether any tracing hooks or profiling sessions are currently active.
@@ -208,26 +389,19 @@ pub fn on_alloc(ptr: *mut u8, size: usize) {
     }
 
     #[cfg(not(feature = "nightly_tls"))]
-    {
-        let is_fast = THREAD_STATE.with(|cell| {
-            let mut state = cell.get();
-            if state.in_hook {
-                return true;
-            }
-            let hook_ptr = ALLOC_HOOK.load(Ordering::Relaxed);
-            let leak_active = LEAK_DETECTOR_ACTIVE.load(Ordering::Relaxed);
-            if hook_ptr.is_null() && !leak_active {
-                let val = state.bytes_until_sample;
-                if val > size as isize {
-                    state.bytes_until_sample = val - size as isize;
-                    cell.set(state);
-                    return true;
-                }
-            }
-            false
-        });
-        if is_fast {
+    unsafe {
+        let state = &mut *get_profiler_state();
+        if state.in_hook {
             return;
+        }
+        let hook_ptr = ALLOC_HOOK.load(Ordering::Relaxed);
+        let leak_active = LEAK_DETECTOR_ACTIVE.load(Ordering::Relaxed);
+        if hook_ptr.is_null() && !leak_active {
+            let val = state.bytes_until_sample;
+            if val > size as isize {
+                state.bytes_until_sample = val - size as isize;
+                return;
+            }
         }
     }
 
