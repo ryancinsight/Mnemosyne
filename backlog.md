@@ -160,4 +160,4 @@
 
 ## Next
 
-- [patch] Continue reducing the remaining mimalloc disparity in `usable size latency/small_32` and `threaded small allocation cycles` without moving selected benchmark baselines.
+- [patch] Continue reducing the remaining mimalloc disparity in allocator rows that remain above parity after focused reruns, without moving selected benchmark baselines.

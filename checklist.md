@@ -266,6 +266,7 @@ Target version: 0.1.0
 
 - [x] [patch] Re-run selected baseline Criterion rows and `benchmark_summary -- --enforce-thresholds` under a quiescent benchmark environment; current public `Mnemosyne` selected rows now pass the retained threshold gate against the source-controlled baseline.
 - [x] [patch] Preserve profiler sample memory efficiency by retaining exact captured stack slices instead of fixed 32-frame arrays while keeping sharded active-sample maps.
+- [x] [patch] Re-run `usable size latency/small_32` after the profiler/heap consolidation cycle; the focused row now measures Mnemosyne `2.450 ns` versus mimalloc `3.342 ns`.
 - [x] [patch] Continue variance-aware investigation of `realloc latency/within_class_24_to_32`.
 - [x] [patch] Continue variance-aware investigation of `threaded small allocation cycles`, `cross-thread free handoff/small_32`, and combined usable-size latency without reintroducing rejected local-free, layout-aware deallocation, forced atomic-queue inlining, const TLS initialization, or separate owner-token TLS paths.
 - [x] [patch] Run target-gated jemalloc comparator refresh on a platform where `tikv-jemallocator` links.
