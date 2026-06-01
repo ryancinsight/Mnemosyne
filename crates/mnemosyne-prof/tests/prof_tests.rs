@@ -1,9 +1,10 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne::{
     disable_profiling, dump_profile, enable_profiling, register_alloc_hook, register_free_hook,
-    MnemosyneHeap, StandardPolicy,
+    StandardPolicy,
 };
 use mnemosyne_backend::MemoryBackendWrapper as Backend;
+use mnemosyne_heap::MnemosyneHeap;
 use mnemosyne_local::{reset_options_for_testing, thread_alloc, thread_free};
 use std::sync::Mutex;
 

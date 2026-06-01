@@ -6,23 +6,67 @@ use std::sync::Mutex;
 
 use crate::{ACTIVE_SAMPLES_COUNT, SAMPLE_INTERVAL};
 
+use core::hash::{BuildHasher, Hasher};
+
+#[derive(Default, Clone, Copy)]
+pub struct FastHasher(u64);
+
+impl Hasher for FastHasher {
+    #[inline(always)]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    #[inline(always)]
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u8(byte);
+        }
+    }
+
+    #[inline(always)]
+    fn write_usize(&mut self, i: usize) {
+        let mut x = i as u64;
+        x ^= x >> 30;
+        x = x.wrapping_mul(0xbf58476d1ce4e5b9);
+        x ^= x >> 27;
+        x = x.wrapping_mul(0x94d049bb133111eb);
+        x ^= x >> 31;
+        self.0 = x;
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct FastBuildHasher;
+
+impl BuildHasher for FastBuildHasher {
+    type Hasher = FastHasher;
+
+    #[inline(always)]
+    fn build_hasher(&self) -> Self::Hasher {
+        FastHasher(0)
+    }
+}
+
 /// Representation of a sampled memory allocation.
 #[derive(Clone)]
 pub struct Sample {
     /// Allocated size of the block in bytes.
     pub size: usize,
-    /// Stack trace represented as instruction pointers.
+    /// Exact retained stack trace represented as instruction pointers.
     pub stack: Box<[usize]>,
 }
 
 const SHARDS: usize = 64;
-static ACTIVE_SAMPLES: [Mutex<Option<HashMap<usize, Sample>>>; SHARDS] =
+static ACTIVE_SAMPLES: [Mutex<Option<HashMap<usize, Sample, FastBuildHasher>>>; SHARDS] =
     [const { Mutex::new(None) }; SHARDS];
 
-fn get_map(shard: usize) -> std::sync::MutexGuard<'static, Option<HashMap<usize, Sample>>> {
+fn get_map(
+    shard: usize,
+) -> std::sync::MutexGuard<'static, Option<HashMap<usize, Sample, FastBuildHasher>>> {
     let mut lock = ACTIVE_SAMPLES[shard].lock().unwrap();
     if lock.is_none() {
-        *lock = Some(HashMap::new());
+        *lock = Some(HashMap::with_hasher(FastBuildHasher));
     }
     lock
 }
@@ -37,7 +81,7 @@ pub(crate) fn reset_sampler_state() {
 
 pub(crate) fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
     #[cfg(feature = "nightly_tls")]
-    {
+    unsafe {
         let mut val = crate::get_bytes_until_sample();
         if leak_active || val <= size as isize {
             if !leak_active {
@@ -62,7 +106,8 @@ pub(crate) fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
 
     #[cfg(not(feature = "nightly_tls"))]
     crate::with_bytes_until_sample(|cell| {
-        let mut val = cell.get();
+        let mut state = cell.get();
+        let mut val = state.bytes_until_sample;
         if leak_active || val <= size as isize {
             if !leak_active {
                 let mean = SAMPLE_INTERVAL.load(Ordering::Relaxed);
@@ -80,7 +125,8 @@ pub(crate) fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
             }
         }
         if !leak_active {
-            cell.set(val - size as isize);
+            state.bytes_until_sample = val - size as isize;
+            cell.set(state);
         }
     });
 }
@@ -166,7 +212,7 @@ fn dump_profile_inner(path: &str) -> std::io::Result<()> {
     let mut folded: HashMap<String, usize> = HashMap::new();
     for sample in samples {
         let mut symbol_names = Vec::new();
-        for &ip in &sample.stack {
+        for &ip in sample.stack.iter() {
             let mut name_opt = None;
             backtrace::resolve(ip as *mut c_void, |symbol| {
                 if let Some(name) = symbol.name() {

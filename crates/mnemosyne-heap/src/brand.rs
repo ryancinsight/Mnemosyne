@@ -1,7 +1,8 @@
+use crate::raw_heap::RawHeap;
 use crate::BrandedHeap;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
-use mnemosyne_local::internal::{HasSegmentPool, ThreadAllocator};
+use mnemosyne_local::internal::HasSegmentPool;
 use mnemosyne_local::LocalAllocatorSelector;
 
 /// A helper type representing a compile-time invariant brand lifetime.
@@ -342,9 +343,8 @@ where
     F: for<'brand> FnOnce(BrandedHeap<'brand, P, B>, AllocatorToken<'brand>) -> R,
 {
     let heap = BrandedHeap {
-        allocator: core::cell::UnsafeCell::new(ThreadAllocator::new()),
+        raw: RawHeap::new(),
         _phantom: Invariant::new(),
-        _policy: core::marker::PhantomData,
     };
     let token = unsafe { AllocatorToken::new() };
     f(heap, token)

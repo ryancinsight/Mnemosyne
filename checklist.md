@@ -137,6 +137,9 @@ Target version: 0.1.0
 - [x] [patch] Treat `threaded medium allocation cycles/` as a threaded variance row so scheduler-width classification matches the retained benchmark group.
 - [x] [patch] Make allocator comparison classification exact so `MnemosyneHeap` and `BrandedHeap` rows cannot overwrite the public `Mnemosyne` row.
 - [x] [patch] Replace the remaining benchmark harness `expect` in the `BrandedHeap` cycle row with explicit `benchmark failure` diagnostics.
+- [x] [patch] Consolidate `MnemosyneHeap` and `BrandedHeap` allocation/free/realloc mechanics behind one internal `RawHeap<P, B>` implementation.
+- [x] [patch] Keep branding as type-level ownership evidence around shared heap mechanics instead of a second allocator algorithm.
+- [x] [patch] Remove the top-level `mnemosyne::MnemosyneHeap` re-export so explicit heaps live at the `mnemosyne_heap` boundary.
 
 - [x] [patch] Audit generated benchmark artifact freshness and documentation references for the current allocator comparison set.
 - [x] [patch] Document the source-controlled baseline versus generated `target/criterion` artifact boundary.
@@ -261,6 +264,8 @@ Target version: 0.1.0
 
 ## Next
 
+- [x] [patch] Re-run selected baseline Criterion rows and `benchmark_summary -- --enforce-thresholds` under a quiescent benchmark environment; current public `Mnemosyne` selected rows now pass the retained threshold gate against the source-controlled baseline.
+- [x] [patch] Preserve profiler sample memory efficiency by retaining exact captured stack slices instead of fixed 32-frame arrays while keeping sharded active-sample maps.
 - [x] [patch] Continue variance-aware investigation of `realloc latency/within_class_24_to_32`.
 - [x] [patch] Continue variance-aware investigation of `threaded small allocation cycles`, `cross-thread free handoff/small_32`, and combined usable-size latency without reintroducing rejected local-free, layout-aware deallocation, forced atomic-queue inlining, const TLS initialization, or separate owner-token TLS paths.
 - [x] [patch] Run target-gated jemalloc comparator refresh on a platform where `tikv-jemallocator` links.

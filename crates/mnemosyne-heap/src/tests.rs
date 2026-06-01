@@ -80,9 +80,9 @@ fn test_branded_heap_realloc_zst_to_nonzero_skips_source_free() {
     struct Marker;
 
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
-        let before = unsafe { (&*heap.allocator.get()).stats() };
+        let before = heap.stats();
         let block = heap.alloc_init(&token, Marker).expect("ZST alloc failed");
-        let after_zst_alloc = unsafe { (&*heap.allocator.get()).stats() };
+        let after_zst_alloc = heap.stats();
 
         assert_eq!(
             after_zst_alloc.current_thread_live_allocations, before.current_thread_live_allocations,
@@ -92,7 +92,7 @@ fn test_branded_heap_realloc_zst_to_nonzero_skips_source_free() {
         let new_block = heap
             .realloc(&mut token, block, Layout::new::<Marker>(), 16)
             .expect("ZST-to-nonzero realloc failed");
-        let after_alloc = unsafe { (&*heap.allocator.get()).stats() };
+        let after_alloc = heap.stats();
 
         assert!(
             !new_block.as_ptr().is_null(),
@@ -105,7 +105,7 @@ fn test_branded_heap_realloc_zst_to_nonzero_skips_source_free() {
         );
 
         heap.free_uninit(&mut token, new_block);
-        let after_free = unsafe { (&*heap.allocator.get()).stats() };
+        let after_free = heap.stats();
         assert!(
             after_free.current_thread_live_allocations
                 < after_alloc.current_thread_live_allocations,
@@ -118,13 +118,13 @@ fn test_branded_heap_realloc_zst_to_nonzero_skips_source_free() {
 fn test_branded_heap_realloc_zst_to_zero_drops_without_allocating() {
     ZST_DROP_COUNT.with(|c| c.set(0));
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
-        let before = unsafe { (&*heap.allocator.get()).stats() };
+        let before = heap.stats();
         let block = heap
             .alloc_init(&token, ZstDrop)
             .expect("ZST alloc_init failed");
 
         let result = heap.realloc(&mut token, block, Layout::new::<ZstDrop>(), 0);
-        let after = unsafe { (&*heap.allocator.get()).stats() };
+        let after = heap.stats();
 
         assert!(
             result.is_none(),
@@ -204,20 +204,12 @@ fn test_branded_heap_free_drops_value() {
 fn test_branded_heap_alloc_init_zst_drops_without_allocating() {
     ZST_DROP_COUNT.with(|c| c.set(0));
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
-        let before = unsafe {
-            (&*heap.allocator.get())
-                .stats()
-                .current_thread_owned_segments
-        };
+        let before = heap.stats().current_thread_owned_segments;
         let block = heap
             .alloc_init(&token, ZstDrop)
             .expect("ZST alloc_init failed");
         assert_eq!(
-            unsafe {
-                (&*heap.allocator.get())
-                    .stats()
-                    .current_thread_owned_segments
-            },
+            heap.stats().current_thread_owned_segments,
             before,
             "ZST alloc_init must not allocate a segment"
         );
@@ -274,17 +266,9 @@ impl Drop for ZstDrop {
 fn test_branded_box_zst_drops_without_allocating() {
     ZST_DROP_COUNT.with(|c| c.set(0));
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
-        let before = unsafe {
-            (&*heap.allocator.get())
-                .stats()
-                .current_thread_owned_segments
-        };
+        let before = heap.stats().current_thread_owned_segments;
         let bbox = BrandedBox::new(&heap, &token, ZstDrop).expect("ZST box allocation failed");
-        let after_new = unsafe {
-            (&*heap.allocator.get())
-                .stats()
-                .current_thread_owned_segments
-        };
+        let after_new = heap.stats().current_thread_owned_segments;
         assert_eq!(after_new, before, "ZST box must not allocate a segment");
         drop(bbox);
         assert_eq!(ZST_DROP_COUNT.with(|c| c.get()), 1);
@@ -295,20 +279,12 @@ fn test_branded_box_zst_drops_without_allocating() {
 fn test_branded_vec_zst_uses_sentinel_capacity_and_drops_elements() {
     ZST_DROP_COUNT.with(|c| c.set(0));
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
-        let before = unsafe {
-            (&*heap.allocator.get())
-                .stats()
-                .current_thread_owned_segments
-        };
+        let before = heap.stats().current_thread_owned_segments;
         let mut vec =
             BrandedVec::with_capacity(&heap, &token, 8).expect("ZST vector construction failed");
         assert_eq!(vec.capacity(), usize::MAX);
         assert_eq!(
-            unsafe {
-                (&*heap.allocator.get())
-                    .stats()
-                    .current_thread_owned_segments
-            },
+            heap.stats().current_thread_owned_segments,
             before,
             "ZST vector capacity must not allocate a segment"
         );
@@ -328,11 +304,7 @@ fn test_branded_vec_zst_uses_sentinel_capacity_and_drops_elements() {
 fn test_branded_vec_new_zst_preserves_capacity_invariant() {
     ZST_DROP_COUNT.with(|c| c.set(0));
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
-        let before = unsafe {
-            (&*heap.allocator.get())
-                .stats()
-                .current_thread_owned_segments
-        };
+        let before = heap.stats().current_thread_owned_segments;
         let mut vec = BrandedVec::new(&heap);
 
         assert_eq!(
@@ -347,11 +319,7 @@ fn test_branded_vec_new_zst_preserves_capacity_invariant() {
             "successful push must preserve len <= capacity"
         );
         assert_eq!(
-            unsafe {
-                (&*heap.allocator.get())
-                    .stats()
-                    .current_thread_owned_segments
-            },
+            heap.stats().current_thread_owned_segments,
             before,
             "ZST vector constructed with new must not allocate a segment"
         );

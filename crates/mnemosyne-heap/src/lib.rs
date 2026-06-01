@@ -7,6 +7,7 @@ pub mod branded_box;
 pub mod branded_heap;
 pub mod branded_vec;
 pub mod heap;
+pub(crate) mod raw_heap;
 
 #[cfg(test)]
 mod tests;
