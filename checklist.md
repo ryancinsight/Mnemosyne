@@ -305,6 +305,10 @@ Target version: 0.1.0
 - [x] [patch] Reduce `mnemosyne-prof` leak/profiling sample stack memory overhead by replacing 32-frame preallocated vectors with fixed-stack capture plus exact-capacity retained vectors.
 - [x] [patch] Refresh `usable size latency/Mnemosyne/small_32` after the leak-detector stack-storage change; current focused row is `2.487 ns` versus mimalloc `2.879 ns`.
 - [x] [patch] Stabilize `test_memory_stats_retention_bound` after leak-detector integration by asserting the live-allocation delta created and released by the test, not an absolute baseline invalidated by orphan adoption.
+- [x] [arch] Split `mnemosyne-heap` into `heap`, `brand`, `branded_heap`, `branded_box`, `branded_vec`, and test modules; preserve the existing public re-export surface.
+- [x] [arch] Split `mnemosyne-local::local_alloc` into `page`, `routing`, `segment`, and test modules without changing the monomorphized `ThreadAllocator` API.
+- [x] [patch] Move global allocator tests from `mnemosyne/src/lib.rs` into `crates/mnemosyne/tests/global_alloc_tests.rs`.
+- [x] [patch] Remove stale imports introduced by local allocator module splitting; verify `cargo check --workspace` warning-clean for touched allocator modules.
 - [x] [patch] Fix decay engine thread-spawning shadowing bug and add `decay_purger_reaches_steady_state` integration test.
 - [x] [patch] Expose `get_options` and `configure` in the top-level `mnemosyne` crate and verify via programmatic configuration tests.
 - [x] [patch] Add `multi_heap_isolates_allocation_streams` and `multi_heap_release_does_not_touch_other_heaps` integration tests.

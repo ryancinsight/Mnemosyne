@@ -136,6 +136,8 @@
 - [patch] Avoid allocate-copy-free churn for standard-policy large/huge half-shrink reallocs and bound all replacement realloc copies to `min(layout.size(), new_size)`.
 - [patch] Reduce leak/profiling stack-sample memory by capturing into fixed stack storage and retaining only exact frame capacity.
 - [patch] Stabilize memory-stat tests after leak-detector thread-exit orphan adoption by asserting allocation-count deltas instead of a false absolute baseline.
+- [arch] Split heap, branded-container, local-allocation page/routing/segment, and global allocator test surfaces into cohesive modules while preserving monomorphized hot-path APIs and public re-exports.
+- [patch] Remove stale imports from split local allocator modules so warning output stays clean and real allocator regressions remain visible.
 - [patch] Use `benchmark_variance.csv` to retest remaining within-class realloc and historical threaded-row optimizations before accepting allocator changes.
 - [patch] Investigate cross-thread handoff batching or owner-token routing without increasing saturated threaded cycles.
 - [patch] Investigate mimalloc's remaining within-class realloc, historical threaded-row, saturated threaded-row, cross-thread handoff, and usable-size combined-cycle advantages after the unified TLS slot narrowed saturated threaded disparity.

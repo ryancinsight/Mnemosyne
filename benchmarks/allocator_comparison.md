@@ -12,7 +12,7 @@
 | allocator cycle latency/huge_2m | 22.085 | 7632.146 | 8505.168 | N/A | 115.016 | 0.00x | 0.00x | N/A | 0.19x |
 | allocator cycle latency/large_8192 | 2.320 | 20.501 | 16.502 | 17.393 | 15.418 | 0.11x | 0.14x | 0.13x | 0.15x |
 | allocator cycle latency/medium_1024 | 2.373 | 20.453 | 5.707 | 16.583 | 7.242 | 0.12x | 0.42x | 0.14x | 0.33x |
-| allocator cycle latency/small_32 | 2.298 | 20.499 | 2.767 | 16.245 | 6.815 | 0.11x | 0.83x | 0.14x | 0.34x |
+| allocator cycle latency/small_32 | 2.306 | 20.499 | 2.767 | 16.245 | 6.815 | 0.11x | 0.83x | 0.14x | 0.34x |
 | allocator deallocation latency/huge_2m | 1301.133 | 4082.617 | 4502.410 | N/A | 3030.860 | 0.32x | 0.29x | N/A | 0.43x |
 | allocator deallocation latency/large_8192 | 19.835 | 64.247 | 511.049 | 175.696 | 46.348 | 0.31x | 0.04x | 0.11x | 0.43x |
 | allocator deallocation latency/medium_1024 | 8.472 | 22.337 | 113.286 | 56.564 | 16.857 | 0.38x | 0.07x | 0.15x | 0.50x |
