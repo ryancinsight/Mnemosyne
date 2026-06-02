@@ -3,11 +3,13 @@ use super::*;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_arena::{allocate_segment, deallocate_segment};
-use mnemosyne_core::constants::PAGE_SHIFT;
+use mnemosyne_core::constants::{PAGES_PER_SEGMENT, PAGE_SHIFT};
 use mnemosyne_core::policy::StandardPolicy;
 use mnemosyne_core::size_class::{class_to_size, size_to_class};
 use mnemosyne_core::types::Block;
 use mnemosyne_core::MemoryBackend;
+
+use crate::LocalAllocatorSelector;
 
 // A mock tracking memory backend to verify custom backend injection.
 struct MockBackend;
@@ -217,6 +219,11 @@ fn owned_segment_list_is_doubly_linked_and_unlinks_in_place() {
             alloc.push_owned_segment::<StandardPolicy>(ptr);
         }
         seg[i] = ptr;
+        assert_eq!(
+            alloc.owned_segment_count,
+            i + 1,
+            "owned_segment_count must track each owned-list insertion"
+        );
     }
 
     // Pushing seg0, seg1, seg2 yields head: seg2 -> seg1 -> seg0.
@@ -238,6 +245,10 @@ fn owned_segment_list_is_doubly_linked_and_unlinks_in_place() {
     // predecessor search.
     // Safety: seg1 is a live node in this list.
     unsafe { alloc.unlink_owned_segment(seg[1]) };
+    assert_eq!(
+        alloc.owned_segment_count, 2,
+        "unlinking the middle segment must decrement owned_segment_count"
+    );
     assert_eq!(alloc.owned_segments_head, seg[2]);
     // Safety: pointers remain live (storage outlives this scope).
     unsafe {
@@ -251,6 +262,10 @@ fn owned_segment_list_is_doubly_linked_and_unlinks_in_place() {
     // Unlink the HEAD node (seg2): list becomes seg0.
     // Safety: seg2 is the live head node.
     unsafe { alloc.unlink_owned_segment(seg[2]) };
+    assert_eq!(
+        alloc.owned_segment_count, 1,
+        "unlinking the head segment must decrement owned_segment_count"
+    );
     assert_eq!(alloc.owned_segments_head, seg[0]);
     // Safety: seg0 is the sole remaining live node.
     unsafe { assert!((*seg[0]).prev_owned_segment.is_null()) };
@@ -258,6 +273,10 @@ fn owned_segment_list_is_doubly_linked_and_unlinks_in_place() {
     // Unlink the TAIL/only node (seg0): list becomes empty.
     // Safety: seg0 is the live sole node.
     unsafe { alloc.unlink_owned_segment(seg[0]) };
+    assert_eq!(
+        alloc.owned_segment_count, 0,
+        "unlinking the final segment must clear owned_segment_count"
+    );
     assert!(alloc.owned_segments_head.is_null(), "list must be empty");
 
     // `alloc` now owns no segments; its `Drop` reclamation is a no-op, so
@@ -298,6 +317,58 @@ fn page_address_derivation_index_in_segment() {
 
     // Safety: `seg` was returned by `allocate_segment` and is unaliased.
     unsafe { deallocate_segment::<DefaultBackend>(seg) };
+}
+
+#[test]
+fn stats_snapshot_counts_active_and_empty_page_lists() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("local allocator test lock was poisoned");
+    let mut alloc = ThreadAllocator::<MockBackend>::new();
+    let class = size_to_class(16).expect("16 bytes is a small allocation");
+
+    // Safety: `alloc` is initialized and the request is a valid small allocation.
+    let ptr = unsafe { alloc.alloc::<StandardPolicy>(16) };
+    assert!(!ptr.is_null(), "initial 16-byte allocation failed");
+
+    let live_stats = alloc.stats();
+    assert_eq!(live_stats.current_thread_live_allocations, 1);
+    assert_eq!(live_stats.current_thread_owned_segments, 1);
+    assert_eq!(live_stats.size_class_occupancy[class].active_pages, 1);
+    assert_eq!(live_stats.size_class_occupancy[class].empty_pages, 0);
+    assert_eq!(live_stats.size_class_occupancy[class].live_allocations, 1);
+    assert_eq!(
+        live_stats.size_class_occupancy[class].total_slots,
+        mnemosyne_core::constants::PAGE_SIZE / mnemosyne_core::constants::MIN_BLOCK_SIZE
+    );
+
+    let ptr_val = ptr as usize;
+    let segment_addr = ptr_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+    let segment = segment_addr as *mut Segment;
+    let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+    let page = unsafe { &mut (*segment).pages[page_index] };
+
+    // Move the page from active to empty using the same intrusive list helpers
+    // the allocator uses when a non-current page becomes empty.
+    unsafe {
+        let block = ptr as *mut Block;
+        (*block).set_next::<StandardPolicy>(page.free, 0);
+        page.free = Some(NonNull::new_unchecked(block));
+        page.set_alloc_count(0);
+        alloc.unlink_page(page as *mut Page, class);
+        alloc.push_empty_page(NonNull::new_unchecked(page as *mut Page));
+    }
+
+    let empty_stats = alloc.stats();
+    assert_eq!(empty_stats.current_thread_live_allocations, 0);
+    assert_eq!(empty_stats.current_thread_owned_segments, 1);
+    assert_eq!(empty_stats.size_class_occupancy[class].active_pages, 1);
+    assert_eq!(empty_stats.size_class_occupancy[class].empty_pages, 1);
+    assert_eq!(empty_stats.size_class_occupancy[class].live_allocations, 0);
+    assert_eq!(
+        empty_stats.size_class_occupancy[class].total_slots,
+        live_stats.size_class_occupancy[class].total_slots
+    );
 }
 
 /// Validates the singly-linked page-list splice helper `unlink_page_from_list`
@@ -648,6 +719,72 @@ fn test_snmalloc_message_passing() {
     for _ in 0..max_blocks {
         // Safety: alloc_a is valid.
         let ptr2 = unsafe { alloc_a.alloc::<StandardPolicy>(32) };
+        assert!(
+            !ptr2.is_null(),
+            "reclaim probe allocation failed before reclaiming remote free"
+        );
+        if ptr2 == ptr {
+            reclaimed_remote_free = true;
+            break;
+        }
+    }
+
+    assert!(
+        reclaimed_remote_free,
+        "cross-thread freed block was not reclaimed after {} small allocations",
+        max_blocks
+    );
+}
+
+#[test]
+fn cross_thread_free_does_not_charge_non_owner_defrag_counter() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("local allocator test lock was poisoned");
+    use std::thread;
+
+    let mut owner = ThreadAllocator::<DefaultBackend>::new();
+    // Safety: owner is initialized and valid.
+    let ptr = unsafe { owner.alloc::<StandardPolicy>(32) };
+    assert!(
+        !ptr.is_null(),
+        "producer allocation for cross-thread free failed"
+    );
+
+    let ptr_usize = ptr as usize;
+    let handle = thread::spawn(move || {
+        DefaultBackend::with_allocator(|alloc| {
+            assert_eq!(alloc.defrag_counter, 0);
+        })
+        .expect("worker allocator slot unavailable before remote free");
+
+        // Safety: freeing block allocated by owner; this thread does not own
+        // the target page and must only enqueue it for owner-side reclamation.
+        unsafe {
+            crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(
+                ptr_usize as *mut u8,
+            );
+        }
+
+        DefaultBackend::with_allocator(|alloc| {
+            assert_eq!(
+                alloc.defrag_counter, 0,
+                "remote free charged defrag work to the non-owner allocator"
+            );
+        })
+        .expect("worker allocator slot unavailable after remote free");
+    });
+    handle.join().expect("cross-thread free worker panicked");
+
+    let mut reclaimed_remote_free = false;
+    let ptr_val = ptr as usize;
+    let segment_addr = ptr_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+    let segment = segment_addr as *mut Segment;
+    let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+    let max_blocks = unsafe { (*segment).pages[page_index].max_blocks() };
+    for _ in 0..max_blocks {
+        // Safety: owner is valid.
+        let ptr2 = unsafe { owner.alloc::<StandardPolicy>(32) };
         assert!(
             !ptr2.is_null(),
             "reclaim probe allocation failed before reclaiming remote free"

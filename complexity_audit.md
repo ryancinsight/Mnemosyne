@@ -61,6 +61,10 @@ Consequences:
   `try_reclaim_segment` and defrag.
 - **Iterating occupied pages** uses `mask.trailing_zeros()` to visit only set
   bits — O(popcount(mask)) instead of O(P).
+- **"Can this allocator release a spare segment?"** is now a single
+  `owned_segment_count >= 4` check maintained by the intrusive owned-list
+  insert/remove paths, replacing the prior bounded scan on each reclaim
+  candidate.
 
 ## Management / cold path
 
@@ -68,11 +72,11 @@ Consequences:
 | :--- | :--- | :---: | :--- |
 | `unlink_owned_segment` | `local::local_alloc::segment` | O(1) | intrusive **doubly-linked** owned-segments list |
 | page list `list_push` / unlink | `local::local_alloc` | O(1) | intrusive **doubly-linked** page lists (`prev`/`next`) |
-| `try_reclaim_segment` | `local::local_alloc::segment` | O(P) | P-page scan, but `mask != 0` short-circuits and `trailing_zeros` skips empties; P constant |
+| `try_reclaim_segment` | `local::local_alloc::segment` | O(popcount(mask)) | O(1) owned-count threshold check, then occupied-page walk using `trailing_zeros`; P remains a compile-time upper bound |
 | `alloc_cold` full-list reclaim sweep | `local::local_alloc::routing` | O(1) | bounded to 128 probes (documented latency cap) |
 | `get_new_page` (empty reuse / fresh slice) | `local::local_alloc::routing` | O(1) | pop empty list / append fresh page |
 | `get_new_page` orphan adoption | `local::local_alloc::routing` | O(P) | one pass over a segment's pages; P constant |
-| `stats` | `local::local_alloc` | O(n_s · P) | diagnostic snapshot; not on any allocation path |
+| `stats` | `local::local_alloc::stats` | O(n_listed_pages) | diagnostic snapshot walks active/full/empty page lists and uses `owned_segment_count`; not on any allocation path |
 | `reclaim_owned_segments` (thread exit) | `local::local_alloc::segment` | O(n_s · P) | once per thread teardown |
 | `allocate_large_or_huge` / `deallocate` | `arena` | O(1)* | *direct backend mmap/munmap; head-slack `decommit` |
 | `GlobalSegmentPool::{push,pop}` | `arena::segment::pool` | O(1) | lock-free CAS stack |
@@ -82,11 +86,12 @@ Consequences:
 
 ## Remaining super-constant operations (runtime-variable input)
 
-1. `stats` / `reclaim_owned_segments` / `decay_step` — O(n_s · P) or
-   O(orphan · P). Diagnostic / teardown / background only; not optimization
-   targets (running counters would push maintenance onto the hot path, a
-   previously rejected trade — see `gap_audit.md`). The occupancy mask already
-   lets these skip empty pages.
+1. `reclaim_owned_segments` / `decay_step` — O(n_s · P) or O(orphan · P).
+   Teardown / background only; not optimization targets (running counters
+   would push maintenance onto the hot path, a previously rejected trade — see
+   `gap_audit.md`). The occupancy mask already lets these skip empty pages
+   where reclamation semantics permit it. `stats` no longer scans every page in
+   every owned segment; it walks the active/full/empty page lists.
 
 ## Zero-cost / ZST / monomorphization posture
 

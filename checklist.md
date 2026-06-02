@@ -4,6 +4,13 @@ Target version: 0.1.0
 
 ## Verified
 
+- [x] [patch] Maintain `ThreadAllocator::owned_segment_count` through owned-segment insert/remove/reclaim paths, replacing repeated cold-path threshold scans with O(1) metadata. Verified by owned-list invariant assertions and workspace tests.
+- [x] [patch] Split `local_alloc::segment` into `segment::ownership` and `segment::reclaim` leaf modules while preserving the existing allocator API surface.
+- [x] [patch] Replace cross-thread handoff benchmark per-iteration `Vec` allocation with a fixed per-worker buffer, run the `system-jemalloc` comparison, and refresh the selected benchmark baseline. Verified by full Criterion run, detached-`HEAD` comparison, and threshold enforcement.
+- [x] [patch] Remove remote-free defrag counter charging from the non-owner allocator. Verified by `cross_thread_free_does_not_charge_non_owner_defrag_counter`, owner-side remote-free reclamation, and `cross-thread free handoff/mnemosyne/small_32` at `0.525x` of baseline.
+- [x] [patch] Replace threaded allocation-cycle worker vectors with fixed arrays. Verified by `threaded small allocation cycles/mnemosyne` at `4.529 us` with stable variance and the jemalloc-enabled threshold gate.
+- [x] [patch] Optimize `usable_size` small-allocation page-index derivation. Verified by focused usable-size tests, `usable size latency/mnemosyne/small_32` at `2.821 ns`, and stable variance.
+- [x] [patch] Move thread-local allocator telemetry into `local_alloc::stats` and compute snapshots from active/full/empty page lists instead of scanning every page in every owned segment. Verified by focused stats-list invariants and local allocator tests.
 - [x] [arch] Consolidate public heap construction to the scoped `Heap<'brand, P, B>` API, delete the duplicate explicit/branded heap public types, and keep `RawHeap<P, B>` as the single internal allocator implementation.
 - [x] [patch] Remove `MnemosyneHeap`/`BrandedHeap` allocator-comparison columns and regenerate `benchmarks/allocator_comparison.md` with real SnMalloc `huge_2m` rows.
 - [x] [minor] Implement `HardenedPolicy` ZST with XOR-encoded free-list `next` pointers (key per page from a TLS seed). Layer over `SecurePolicy`.

@@ -143,13 +143,6 @@ unsafe fn thread_free_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
     unsafe {
         page.thread_free.push::<P>(NonNull::new_unchecked(block));
     }
-
-    // Trigger defrag check on remote free (cold path)
-    let current_allocator = B::get_allocator_ptr_raw();
-    if !current_allocator.is_null() {
-        let alloc = unsafe { &mut *(current_allocator as *mut ThreadAllocator<B>) };
-        unsafe { alloc.record_defrag_operation::<P>() };
-    }
 }
 
 /// Internal implementation of local deallocation.
