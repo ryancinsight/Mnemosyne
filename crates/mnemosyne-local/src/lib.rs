@@ -1,10 +1,10 @@
 //! Thread-local cache allocation and deallocation routing.
 
 #![no_std]
-// The `nightly_tls` feature swaps the portable `std::thread_local!` accessor for
-// an ELF/PE `#[thread_local]` static, which the unstable `thread_local` language
-// feature provides. The default build never enables this and stays on stable.
-#![cfg_attr(feature = "nightly_tls", feature(thread_local))]
+// The `nightly_tls` feature requests the ELF/PE `#[thread_local]` accessor.
+// The unstable path is compiled only when the active compiler is nightly;
+// stable builds, including `--all-features`, use the portable TLS provider.
+#![cfg_attr(nightly_tls_active, feature(thread_local))]
 
 extern crate std;
 
@@ -30,7 +30,7 @@ pub use options::{
     ensure_options_initialized, mark_options_initialized, reset_options_for_testing,
 };
 pub use realloc::thread_realloc;
-#[cfg(feature = "nightly_tls")]
+#[cfg(nightly_tls_active)]
 pub use tls_slot::{arm_thread_exit, ThreadExitReclaim};
 pub use tls_slot::{LocalAllocatorSelector, LocalAllocatorSlot};
 pub use usable_size::{thread_allocator_stats, usable_size};
@@ -68,14 +68,14 @@ pub mod internal {
 macro_rules! impl_local_allocator_selector {
     ($backend:ty) => {
         const _: () = {
-            // Under nightly_tls, we declare ALLOCATOR_SLOT with #[thread_local]
-            #[cfg(feature = "nightly_tls")]
+            // Under nightly `nightly_tls`, declare ALLOCATOR_SLOT with #[thread_local].
+            #[cfg(nightly_tls_active)]
             #[thread_local]
             static ALLOCATOR_SLOT: $crate::LocalAllocatorSlot<$backend> =
                 $crate::LocalAllocatorSlot::new();
 
-            // Under standard (not nightly_tls), we declare ALLOCATOR_SLOT via std::thread_local!
-            #[cfg(not(feature = "nightly_tls"))]
+            // Under stable or non-nightly_tls, declare ALLOCATOR_SLOT via std::thread_local!.
+            #[cfg(not(nightly_tls_active))]
             std::thread_local! {
                 static ALLOCATOR_SLOT: $crate::LocalAllocatorSlot<$backend> = const {
                     $crate::LocalAllocatorSlot::new()
@@ -88,13 +88,13 @@ macro_rules! impl_local_allocator_selector {
                     core::cell::Cell::new(core::ptr::null_mut())
                 };
 
-                #[cfg(feature = "nightly_tls")]
+                #[cfg(nightly_tls_active)]
                 static ALLOCATOR_EXIT_GUARD: $crate::ThreadExitReclaim<$backend> = const {
                     $crate::ThreadExitReclaim::new()
                 };
             }
 
-            #[cfg(feature = "nightly_tls")]
+            #[cfg(nightly_tls_active)]
             #[thread_local]
             static mut QUICK_ALLOCATOR_PTR: *mut core::ffi::c_void = core::ptr::null_mut();
 
@@ -104,12 +104,12 @@ macro_rules! impl_local_allocator_selector {
             impl $crate::tls::TlsSlotAccess<$backend> for SlotAccess {
                 #[inline(always)]
                 fn get_slot_standard<R>(f: impl FnOnce(&$crate::LocalAllocatorSlot<$backend>) -> R) -> R {
-                    #[cfg(feature = "nightly_tls")]
+                    #[cfg(nightly_tls_active)]
                     {
-                        // In nightly_tls, get_slot_standard falls back to the static reference
+                        // In nightly `nightly_tls`, get_slot_standard falls back to the static reference.
                         f(&ALLOCATOR_SLOT)
                     }
-                    #[cfg(not(feature = "nightly_tls"))]
+                    #[cfg(not(nightly_tls_active))]
                     {
                         ALLOCATOR_SLOT.with(f)
                     }
@@ -122,11 +122,11 @@ macro_rules! impl_local_allocator_selector {
 
                 #[inline(always)]
                 fn arm_thread_exit(slot: &$crate::LocalAllocatorSlot<$backend>) {
-                    #[cfg(feature = "nightly_tls")]
+                    #[cfg(nightly_tls_active)]
                     {
                         $crate::arm_thread_exit(slot, &ALLOCATOR_EXIT_GUARD);
                     }
-                    #[cfg(not(feature = "nightly_tls"))]
+                    #[cfg(not(nightly_tls_active))]
                     {
                         // No-op for stable path: LocalAllocatorSlot is registered automatically by standard thread_local!.
                         let _ = slot;
@@ -138,19 +138,19 @@ macro_rules! impl_local_allocator_selector {
                     &OS_TLS_KEY
                 }
 
-                #[cfg(feature = "nightly_tls")]
+                #[cfg(nightly_tls_active)]
                 #[inline(always)]
                 fn get_slot_nightly<R>(f: impl FnOnce(&$crate::LocalAllocatorSlot<$backend>) -> R) -> R {
                     f(&ALLOCATOR_SLOT)
                 }
 
-                #[cfg(feature = "nightly_tls")]
+                #[cfg(nightly_tls_active)]
                 #[inline(always)]
                 fn get_quick_allocator_ptr() -> *mut core::ffi::c_void {
                     unsafe { QUICK_ALLOCATOR_PTR }
                 }
 
-                #[cfg(feature = "nightly_tls")]
+                #[cfg(nightly_tls_active)]
                 #[inline(always)]
                 fn set_quick_allocator_ptr(ptr: *mut core::ffi::c_void) {
                     unsafe { QUICK_ALLOCATOR_PTR = ptr; }
@@ -158,13 +158,13 @@ macro_rules! impl_local_allocator_selector {
             }
 
             // Statically select the best TLS provider based on compile target and features.
-            #[cfg(feature = "nightly_tls")]
+            #[cfg(nightly_tls_active)]
             type SelectedTls = $crate::tls::NightlyTls<$backend, SlotAccess>;
 
-            #[cfg(all(not(feature = "nightly_tls"), all(windows, target_arch = "x86_64")))]
+            #[cfg(all(not(nightly_tls_active), all(windows, target_arch = "x86_64")))]
             type SelectedTls = $crate::tls::AsmTls<$backend, SlotAccess>;
 
-            #[cfg(all(not(feature = "nightly_tls"), not(all(windows, target_arch = "x86_64"))))]
+            #[cfg(all(not(nightly_tls_active), not(all(windows, target_arch = "x86_64"))))]
             type SelectedTls = $crate::tls::NativeOsTls<$backend, SlotAccess>;
 
             impl $crate::LocalAllocatorSelector<$backend> for $backend {

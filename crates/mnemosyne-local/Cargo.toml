@@ -8,7 +8,8 @@ edition = "2021"
 # `#[thread_local]` static, which lowers to a single segment-register-relative
 # load (the mechanism mimalloc uses for `mi_heap_default`). This eliminates the
 # `LocalKey::with` call and lazy-init guard from the small-allocation hot path.
-# Requires a nightly compiler because `#![feature(thread_local)]` is unstable.
+# Activates only on a nightly compiler; stable `--all-features` builds fall back
+# to the portable TLS provider because `#![feature(thread_local)]` is unstable.
 # Thread-exit segment reclamation is preserved via a `Drop` sentinel because a
 # `#[thread_local]` static is not dropped automatically on thread teardown.
 nightly_tls = []

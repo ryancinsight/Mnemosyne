@@ -19,15 +19,15 @@ pub trait TlsSlotAccess<B: HasSegmentPool>: 'static {
     fn get_os_tls_key() -> &'static AtomicU32;
 
     /// Executes the closure with a reference to the nightly `#[thread_local]` static.
-    #[cfg(feature = "nightly_tls")]
+    #[cfg(nightly_tls_active)]
     fn get_slot_nightly<R>(f: impl FnOnce(&LocalAllocatorSlot<B>) -> R) -> R;
 
     /// Returns the raw thread-local pointer to the allocator cache without closure overhead.
-    #[cfg(feature = "nightly_tls")]
+    #[cfg(nightly_tls_active)]
     fn get_quick_allocator_ptr() -> *mut core::ffi::c_void;
 
     /// Sets the raw thread-local pointer to the allocator cache.
-    #[cfg(feature = "nightly_tls")]
+    #[cfg(nightly_tls_active)]
     fn set_quick_allocator_ptr(ptr: *mut core::ffi::c_void);
 }
 
@@ -460,14 +460,14 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
 
     #[inline(always)]
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
-        #[cfg(feature = "nightly_tls")]
+        #[cfg(nightly_tls_active)]
         {
             S::get_slot_nightly(|slot| {
                 S::arm_thread_exit(slot);
                 slot.with_allocator(f)
             })
         }
-        #[cfg(not(feature = "nightly_tls"))]
+        #[cfg(not(nightly_tls_active))]
         {
             let _ = f;
             None
@@ -476,14 +476,14 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
 
     #[inline(always)]
     fn with_allocator_guard<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
-        #[cfg(feature = "nightly_tls")]
+        #[cfg(nightly_tls_active)]
         {
             S::get_slot_nightly(|slot| {
                 S::arm_thread_exit(slot);
                 slot.with_allocator(f)
             })
         }
-        #[cfg(not(feature = "nightly_tls"))]
+        #[cfg(not(nightly_tls_active))]
         {
             let _ = f;
             None
@@ -494,11 +494,11 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
     unsafe fn with_allocator_unguarded<R>(
         f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
     ) -> Option<R> {
-        #[cfg(feature = "nightly_tls")]
+        #[cfg(nightly_tls_active)]
         {
             S::get_slot_nightly(|slot| unsafe { slot.with_allocator_unguarded(f) })
         }
-        #[cfg(not(feature = "nightly_tls"))]
+        #[cfg(not(nightly_tls_active))]
         {
             let _ = f;
             None
@@ -507,7 +507,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
 
     #[inline(always)]
     fn get_allocator_ptr() -> *mut core::ffi::c_void {
-        #[cfg(feature = "nightly_tls")]
+        #[cfg(nightly_tls_active)]
         {
             let ptr = S::get_quick_allocator_ptr();
             if !ptr.is_null() {
@@ -521,7 +521,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
                 })
             }
         }
-        #[cfg(not(feature = "nightly_tls"))]
+        #[cfg(not(nightly_tls_active))]
         {
             core::ptr::null_mut()
         }
@@ -529,11 +529,11 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
 
     #[inline(always)]
     fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
-        #[cfg(feature = "nightly_tls")]
+        #[cfg(nightly_tls_active)]
         {
             S::get_quick_allocator_ptr()
         }
-        #[cfg(not(feature = "nightly_tls"))]
+        #[cfg(not(nightly_tls_active))]
         {
             core::ptr::null_mut()
         }

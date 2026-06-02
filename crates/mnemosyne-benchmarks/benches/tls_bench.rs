@@ -1,4 +1,4 @@
-#![cfg_attr(feature = "nightly_tls", feature(thread_local))]
+#![cfg_attr(nightly_tls_active, feature(thread_local))]
 #![allow(clippy::missing_const_for_thread_local)]
 
 use core::sync::atomic::AtomicU32;
@@ -18,7 +18,7 @@ std::thread_local! {
 
 static DUMMY_OS_TLS_KEY: AtomicU32 = AtomicU32::new(u32::MAX);
 
-#[cfg(feature = "nightly_tls")]
+#[cfg(nightly_tls_active)]
 #[thread_local]
 static mut BENCH_QUICK_PTR: *mut core::ffi::c_void = core::ptr::null_mut();
 
@@ -45,19 +45,19 @@ impl TlsSlotAccess<MemoryBackendWrapper> for BenchSlotAccess {
         &DUMMY_OS_TLS_KEY
     }
 
-    #[cfg(feature = "nightly_tls")]
+    #[cfg(nightly_tls_active)]
     #[inline(always)]
     fn get_slot_nightly<R>(f: impl FnOnce(&LocalAllocatorSlot<MemoryBackendWrapper>) -> R) -> R {
         DUMMY_SLOT.with(f)
     }
 
-    #[cfg(feature = "nightly_tls")]
+    #[cfg(nightly_tls_active)]
     #[inline(always)]
     fn get_quick_allocator_ptr() -> *mut core::ffi::c_void {
         unsafe { BENCH_QUICK_PTR }
     }
 
-    #[cfg(feature = "nightly_tls")]
+    #[cfg(nightly_tls_active)]
     #[inline(always)]
     fn set_quick_allocator_ptr(ptr: *mut core::ffi::c_void) {
         unsafe {

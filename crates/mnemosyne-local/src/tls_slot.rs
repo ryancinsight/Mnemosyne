@@ -15,7 +15,7 @@ pub struct LocalAllocatorSlot<B: HasSegmentPool> {
     /// has been registered. Only the `#[thread_local]` fast path needs it: a
     /// `#[thread_local]` static is not dropped on thread teardown, so the first
     /// hot-path access arms a `std::thread_local!` `Drop` sentinel exactly once.
-    #[cfg(feature = "nightly_tls")]
+    #[cfg(nightly_tls_active)]
     pub(crate) exit_armed: core::cell::Cell<bool>,
 }
 
@@ -31,7 +31,7 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
     pub const fn new() -> Self {
         Self {
             allocator: core::cell::UnsafeCell::new(ThreadAllocator::new()),
-            #[cfg(feature = "nightly_tls")]
+            #[cfg(nightly_tls_active)]
             exit_armed: core::cell::Cell::new(false),
         }
     }
@@ -98,7 +98,7 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
     }
 
     /// Returns the typed cache pointer for thread-exit reclamation binding.
-    #[cfg(feature = "nightly_tls")]
+    #[cfg(nightly_tls_active)]
     #[inline(always)]
     pub fn cache_ptr(&self) -> *mut ThreadAllocator<B> {
         self.allocator.get()
@@ -114,13 +114,13 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
 /// value (which *is* dropped at thread exit) holding a raw pointer to the
 /// thread's `#[thread_local]` allocator cache. The first hot-path access binds
 /// the pointer; thread teardown invokes `Drop`, which reclaims the segments.
-#[cfg(feature = "nightly_tls")]
+#[cfg(nightly_tls_active)]
 #[doc(hidden)]
 pub struct ThreadExitReclaim<B: HasSegmentPool> {
     cache: core::cell::Cell<*mut ThreadAllocator<B>>,
 }
 
-#[cfg(feature = "nightly_tls")]
+#[cfg(nightly_tls_active)]
 impl<B: HasSegmentPool> ThreadExitReclaim<B> {
     /// Creates an unbound sentinel.
     pub const fn new() -> Self {
@@ -135,14 +135,14 @@ impl<B: HasSegmentPool> ThreadExitReclaim<B> {
     }
 }
 
-#[cfg(feature = "nightly_tls")]
+#[cfg(nightly_tls_active)]
 impl<B: HasSegmentPool> Default for ThreadExitReclaim<B> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(feature = "nightly_tls")]
+#[cfg(nightly_tls_active)]
 impl<B: HasSegmentPool> Drop for ThreadExitReclaim<B> {
     fn drop(&mut self) {
         let cache = self.cache.get();
@@ -164,7 +164,7 @@ impl<B: HasSegmentPool> Drop for ThreadExitReclaim<B> {
 /// The check reads a flag inside the `#[thread_local]` slot itself (a single
 /// segment-relative load), so the steady-state hot path never touches the
 /// `std::thread_local!` accessor that backs the sentinel.
-#[cfg(feature = "nightly_tls")]
+#[cfg(nightly_tls_active)]
 #[inline(always)]
 pub fn arm_thread_exit<B: HasSegmentPool>(
     slot: &LocalAllocatorSlot<B>,
@@ -175,7 +175,7 @@ pub fn arm_thread_exit<B: HasSegmentPool>(
     }
 }
 
-#[cfg(feature = "nightly_tls")]
+#[cfg(nightly_tls_active)]
 #[cold]
 #[inline(never)]
 fn cold_arm_thread_exit<B: HasSegmentPool>(

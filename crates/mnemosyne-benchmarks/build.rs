@@ -12,6 +12,7 @@
 
 use std::env;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn find_jemalloc_lib_dir() -> Option<PathBuf> {
     if let Ok(dir) = env::var("MNEMOSYNE_JEMALLOC_LIB_DIR") {
@@ -38,8 +39,14 @@ fn find_jemalloc_lib_dir() -> Option<PathBuf> {
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(jemalloc_available)");
+    println!("cargo::rustc-check-cfg=cfg(nightly_tls_active)");
     println!("cargo::rerun-if-env-changed=MNEMOSYNE_JEMALLOC_LIB_DIR");
+    println!("cargo::rerun-if-env-changed=RUSTC");
     println!("cargo::rerun-if-changed=build.rs");
+
+    if env::var_os("CARGO_FEATURE_NIGHTLY_TLS").is_some() && rustc_is_nightly() {
+        println!("cargo::rustc-cfg=nightly_tls_active");
+    }
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os != "windows" {
@@ -67,4 +74,19 @@ fn main() {
             );
         }
     }
+}
+
+fn rustc_is_nightly() -> bool {
+    let rustc = env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let Ok(output) = Command::new(rustc).arg("-vV").output() else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+
+    String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+        line.strip_prefix("release: ")
+            .is_some_and(|release| release.contains("nightly"))
+    })
 }

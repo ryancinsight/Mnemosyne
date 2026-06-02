@@ -4,6 +4,8 @@ Target version: 0.1.0
 
 ## Verified
 
+- [x] [patch] Gate `nightly_tls` on the active compiler channel so stable `--all-features` builds do not enable unstable `#[thread_local]`.
+- [x] [patch] Add `RUSTC` as a build-script rerun input for every `nightly_tls_active` cfg generator.
 - [x] [arch] Consolidate public heap construction to the scoped `Heap<'brand, P, B>` API, delete the duplicate explicit/branded heap public types, and keep `RawHeap<P, B>` as the single internal allocator implementation.
 - [x] [patch] Remove `MnemosyneHeap`/`BrandedHeap` allocator-comparison columns and regenerate `benchmarks/allocator_comparison.md` with real SnMalloc `huge_2m` rows.
 - [x] [minor] Implement `HardenedPolicy` ZST with XOR-encoded free-list `next` pointers (key per page from a TLS seed). Layer over `SecurePolicy`.
@@ -371,3 +373,4 @@ Target version: 0.1.0
 - [x] [patch] Replace benchmark utility unwraps with explicit full-page handling and contextual layout diagnostics.
 - [x] [patch] Replace remaining Rustdoc example unwraps with contextual allocation diagnostics.
 - [x] [patch] Include SnMalloc `huge_2m` benchmark rows in allocator comparisons instead of hard-coded `N/A` omissions.
+- [x] [patch] Relax profiler OS TLS-key hot reads and one-time publication CAS to `Ordering::Relaxed`, matching the allocator TLS-key invariant.

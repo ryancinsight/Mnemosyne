@@ -2,6 +2,8 @@
 
 ## Completed
 
+- [patch] Make `nightly_tls` compiler-channel-aware so stable all-feature gates use the portable TLS provider and nightly compilers retain the `#[thread_local]` fast path.
+- [patch] Make `nightly_tls_active` build-script cfg generation rerun when `RUSTC` changes, preventing stale compiler-channel detection.
 - [arch] Consolidate the two public heap wrapper surfaces into one scoped `Heap<'brand, P, B>` API backed by the single monomorphized `RawHeap<P, B>` implementation.
 - [patch] Supersede the earlier wrapper-column allocator report shape: `MnemosyneHeap` and `BrandedHeap` are no longer classified as allocator comparators, and stale Criterion rows are ignored.
 - [patch] Include SnMalloc `huge_2m` benchmark rows in allocator comparisons instead of hard-coded `N/A` omissions.
@@ -22,6 +24,7 @@
 - [patch] Replace bare segment-layout unwraps in `mnemosyne-core::types` tests with a single contextual layout helper.
 - [patch] Harden `mnemosyne-prof` integration tests with contextual diagnostics and RAII cleanup for global profiler state and live thread allocations.
 - [patch] Remove production panic paths from OS TLS key initialization; native TLS failure now falls back to standard thread-local state for allocator and profiler access.
+- [patch] Relax profiler OS TLS-key publication to relaxed atomic ordering; the key is an immutable slot index and protects no Rust memory dependency.
 - [patch] Harden profiler sample storage against poisoned shard locks and bounded stack-capture overflow while preserving exact retained stack slices.
 - [patch] Clean up the clippy-reported nested occupancy-mask branch in `Page::set_alloc_count_for_segment`.
 - [patch] Include the `Threaded medium allocation cycles` Criterion group in benchmark-summary extraction and generated allocator comparison reports.

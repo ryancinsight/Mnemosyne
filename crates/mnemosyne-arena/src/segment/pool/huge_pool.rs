@@ -180,7 +180,11 @@ impl GlobalHugePool {
         let bucket_idx = huge_bucket_index(size);
 
         // 1. Try local NUMA node first
-        if self.nodes[start_node].total_count.load(core::sync::atomic::Ordering::Relaxed) > 0 {
+        if self.nodes[start_node]
+            .total_count
+            .load(core::sync::atomic::Ordering::Relaxed)
+            > 0
+        {
             if let Some(res) = self.pop_from_node::<B>(size, start_node, bucket_idx) {
                 return Some(res);
             }
@@ -189,7 +193,11 @@ impl GlobalHugePool {
         // 2. Steal from other nodes
         for i in 1..16 {
             let other_node = (start_node + i) % 16;
-            if self.nodes[other_node].total_count.load(core::sync::atomic::Ordering::Relaxed) > 0 {
+            if self.nodes[other_node]
+                .total_count
+                .load(core::sync::atomic::Ordering::Relaxed)
+                > 0
+            {
                 if let Some(res) = self.pop_from_node::<B>(size, other_node, bucket_idx) {
                     return Some(res);
                 }
@@ -207,7 +215,11 @@ impl GlobalHugePool {
         start_bucket: usize,
     ) -> Option<*mut Segment> {
         let pool_node = &self.nodes[node];
-        if pool_node.total_count.load(core::sync::atomic::Ordering::Relaxed) == 0 {
+        if pool_node
+            .total_count
+            .load(core::sync::atomic::Ordering::Relaxed)
+            == 0
+        {
             return None;
         }
 
@@ -276,7 +288,9 @@ impl GlobalHugePool {
     pub unsafe fn purge<B: mnemosyne_core::MemoryBackend>(&self) {
         for node in 0..16 {
             let pool_node = &self.nodes[node];
-            pool_node.total_count.store(0, core::sync::atomic::Ordering::Relaxed);
+            pool_node
+                .total_count
+                .store(0, core::sync::atomic::Ordering::Relaxed);
             for bucket_idx in 0..16 {
                 let bucket = &pool_node.buckets[bucket_idx];
                 let mut head = bucket

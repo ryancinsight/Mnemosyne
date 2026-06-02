@@ -1,4 +1,4 @@
-#![cfg_attr(feature = "nightly_tls", feature(thread_local))]
+#![cfg_attr(nightly_tls_active, feature(thread_local))]
 #![allow(clippy::missing_const_for_thread_local)]
 
 use core::ffi::c_void;
@@ -100,14 +100,14 @@ pub(crate) struct ThreadState {
     pub(crate) in_hook: bool,
 }
 
-#[cfg(feature = "nightly_tls")]
+#[cfg(nightly_tls_active)]
 #[thread_local]
 static mut THREAD_STATE: ThreadState = ThreadState {
     bytes_until_sample: 0,
     in_hook: false,
 };
 
-#[cfg(not(feature = "nightly_tls"))]
+#[cfg(not(nightly_tls_active))]
 std::thread_local! {
     static THREAD_STATE: core::cell::UnsafeCell<ThreadState> = const {
         core::cell::UnsafeCell::new(ThreadState {
@@ -117,21 +117,23 @@ std::thread_local! {
     };
 }
 
-#[cfg(not(feature = "nightly_tls"))]
+#[cfg(not(nightly_tls_active))]
 static PROFILER_TLS_KEY: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(u32::MAX);
 
-#[cfg(not(feature = "nightly_tls"))]
+#[cfg(not(nightly_tls_active))]
 #[inline(always)]
 fn get_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
-    let mut key = atomic_key.load(Ordering::Acquire);
+    // The atomic publishes an immutable OS TLS slot index only. It does not
+    // protect any Rust memory dependency, so relaxed ordering is sufficient.
+    let mut key = atomic_key.load(Ordering::Relaxed);
     if key == u32::MAX {
         key = init_os_tls_key(atomic_key)?;
     }
     Some(key)
 }
 
-#[cfg(not(feature = "nightly_tls"))]
+#[cfg(not(nightly_tls_active))]
 #[cold]
 #[inline(never)]
 fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
@@ -146,7 +148,7 @@ fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
             if key == u32::MAX {
                 return None;
             }
-            match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Acquire) {
+            match atomic_key.compare_exchange(u32::MAX, key, Ordering::Relaxed, Ordering::Relaxed) {
                 Ok(_) => Some(key),
                 Err(existing) => {
                     TlsFree(key);
@@ -168,7 +170,7 @@ fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
             if res != 0 {
                 return None;
             }
-            match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Acquire) {
+            match atomic_key.compare_exchange(u32::MAX, key, Ordering::Relaxed, Ordering::Relaxed) {
                 Ok(_) => Some(key),
                 Err(existing) => {
                     pthread_key_delete(key);
@@ -179,7 +181,7 @@ fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
     }
 }
 
-#[cfg(not(feature = "nightly_tls"))]
+#[cfg(not(nightly_tls_active))]
 #[allow(dead_code)]
 #[inline(always)]
 fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
@@ -201,7 +203,7 @@ fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
     }
 }
 
-#[cfg(not(feature = "nightly_tls"))]
+#[cfg(not(nightly_tls_active))]
 #[allow(dead_code)]
 #[inline(always)]
 fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
@@ -223,7 +225,7 @@ fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
     }
 }
 
-#[cfg(all(not(feature = "nightly_tls"), all(windows, target_arch = "x86_64")))]
+#[cfg(all(not(nightly_tls_active), all(windows, target_arch = "x86_64")))]
 #[inline(always)]
 unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
     if index < 64 {
@@ -251,7 +253,7 @@ unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
     }
 }
 
-#[cfg(all(not(feature = "nightly_tls"), all(windows, target_arch = "x86_64")))]
+#[cfg(all(not(nightly_tls_active), all(windows, target_arch = "x86_64")))]
 #[inline(always)]
 unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
     if index < 64 {
@@ -275,7 +277,7 @@ unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
     }
 }
 
-#[cfg(not(feature = "nightly_tls"))]
+#[cfg(not(nightly_tls_active))]
 #[inline(always)]
 pub(crate) fn get_profiler_state() -> *mut ThreadState {
     #[cfg(all(windows, target_arch = "x86_64"))]
@@ -314,7 +316,7 @@ pub(crate) fn get_profiler_state() -> *mut ThreadState {
 
 #[inline(always)]
 pub(crate) fn enter_hook() -> bool {
-    #[cfg(feature = "nightly_tls")]
+    #[cfg(nightly_tls_active)]
     unsafe {
         if THREAD_STATE.in_hook {
             true
@@ -323,7 +325,7 @@ pub(crate) fn enter_hook() -> bool {
             false
         }
     }
-    #[cfg(not(feature = "nightly_tls"))]
+    #[cfg(not(nightly_tls_active))]
     unsafe {
         let state = &mut *get_profiler_state();
         if state.in_hook {
@@ -337,23 +339,23 @@ pub(crate) fn enter_hook() -> bool {
 
 #[inline(always)]
 pub(crate) fn exit_hook() {
-    #[cfg(feature = "nightly_tls")]
+    #[cfg(nightly_tls_active)]
     unsafe {
         THREAD_STATE.in_hook = false;
     }
-    #[cfg(not(feature = "nightly_tls"))]
+    #[cfg(not(nightly_tls_active))]
     unsafe {
         (*get_profiler_state()).in_hook = false;
     }
 }
 
-#[cfg(feature = "nightly_tls")]
+#[cfg(nightly_tls_active)]
 #[inline(always)]
 pub(crate) fn get_bytes_until_sample() -> isize {
     unsafe { THREAD_STATE.bytes_until_sample }
 }
 
-#[cfg(feature = "nightly_tls")]
+#[cfg(nightly_tls_active)]
 #[inline(always)]
 pub(crate) fn set_bytes_until_sample(val: isize) {
     unsafe {
@@ -377,7 +379,7 @@ pub fn on_alloc(ptr: *mut u8, size: usize) {
         return;
     }
 
-    #[cfg(feature = "nightly_tls")]
+    #[cfg(nightly_tls_active)]
     unsafe {
         if THREAD_STATE.in_hook {
             return;
@@ -393,7 +395,7 @@ pub fn on_alloc(ptr: *mut u8, size: usize) {
         }
     }
 
-    #[cfg(not(feature = "nightly_tls"))]
+    #[cfg(not(nightly_tls_active))]
     unsafe {
         let state = &mut *get_profiler_state();
         if state.in_hook {

@@ -105,7 +105,7 @@ fn test_custom_backend_injection() {
 /// segment must therefore be orphaned into `MOCK_ORPHAN_POOL`. If the
 /// sentinel failed to fire the segment would leak and the pool would stay
 /// empty, failing the value-semantic assertion below.
-#[cfg(feature = "nightly_tls")]
+#[cfg(nightly_tls_active)]
 #[test]
 fn thread_exit_sentinel_reclaims_owned_segments_on_fast_tls_path() {
     let _guard = TEST_LOCK

@@ -84,7 +84,7 @@ pub(crate) fn reset_sampler_state() {
 }
 
 pub(crate) fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
-    #[cfg(feature = "nightly_tls")]
+    #[cfg(nightly_tls_active)]
     {
         let mut val = crate::get_bytes_until_sample();
         if leak_active || val <= size as isize {
@@ -108,7 +108,7 @@ pub(crate) fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
         }
     }
 
-    #[cfg(not(feature = "nightly_tls"))]
+    #[cfg(not(nightly_tls_active))]
     unsafe {
         let state = &mut *crate::get_profiler_state();
         let mut val = state.bytes_until_sample;
