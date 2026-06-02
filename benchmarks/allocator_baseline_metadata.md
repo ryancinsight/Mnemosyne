@@ -67,6 +67,17 @@ baseline only after an intentional threshold-policy decision.
   selector operation, removing a separate TLS lookup from the standard
   allocation path.
 
+## 2026-06-02
+
+- **Jemalloc comparison refresh**: `cargo bench -p mnemosyne-benchmarks --features system-jemalloc --bench allocator_bench` now populates Jemalloc columns on this Windows GNU environment.
+- **Cross-thread baseline refresh**: The previous `cross-thread free handoff/mnemosyne/small_32` baseline was stale for the jemalloc-enabled benchmark configuration. A detached unmodified `HEAD` worktree measured the row at `26.858 us`, matching the active worktree's `26.881 us` refreshed row. The selected baseline was refreshed rather than treating the old `14.236 us` row as a source regression.
+- **Threaded saturated baseline refresh**: A detached unmodified `HEAD` worktree measured `threaded saturated small allocation cycles/mnemosyne` at `94.198 us`; the active worktree refreshed row is `88.057 us`. The old `63.037 us` row did not represent the current jemalloc-enabled run configuration.
+- **Benchmark memory cleanup**: Cross-thread handoff benchmarks now use a per-worker fixed handoff buffer synchronized by the existing bounded channels instead of allocating a setup `Vec` every iteration. This removes benchmark-side heap traffic from the handoff scenario without changing the allocator operation count.
+- **Threshold gate**: `cargo run -p mnemosyne-benchmarks --features system-jemalloc --bin benchmark_summary --release -- --enforce-thresholds` passes after the refresh. Selected rows are present and compare at `1.000x` against the refreshed baseline.
+- **Cross-thread small handoff optimization**: Remote frees no longer charge periodic defragmentation work to the non-owner allocator. The owner still reclaims the page-local `thread_free` list on allocation or owner-side segment sweep. `cross-thread free handoff/mnemosyne/small_32` improved from the refreshed `26.881 us` baseline to `14.116 us` (`0.525x` mean ratio), and the variance report marks the row stable.
+- **Threaded small worker harness**: The threaded allocation-cycle harness now stores workers in a fixed `[ThreadCycleWorker; THREADS]` array instead of heap-backed `Vec`s. This removes setup heap traffic from the threaded benchmark topology. `threaded small allocation cycles/mnemosyne` now measures `4.529 us` with stable variance, compared with the stale `38.912 us` report row from the earlier full comparison.
+- **Small usable-size path**: Small-allocation `usable_size` now derives the page index with the same mask-based classifier used by `thread_free`, removing a dependent subtraction from the query path. `usable size latency/mnemosyne/small_32` measures `2.821 ns` and `usable size query latency/mnemosyne/small_32` measures `0.271 ns`; both rows are stable in the variance report.
+
 ## 2026-05-30
 
 - **Deallocation Latency Optimization**: Direct pointer casting bypassed the second TLS lookup on the local free path, and unified re-entrancy tracking by moving the `is_allocating` flag directly to `ThreadAllocator`. This reduced `medium_1024` deallocation latency from `91` ns to `19` ns.

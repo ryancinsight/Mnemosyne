@@ -4,6 +4,13 @@
 
 - [patch] Make `nightly_tls` compiler-channel-aware so stable all-feature gates use the portable TLS provider and nightly compilers retain the `#[thread_local]` fast path.
 - [patch] Make `nightly_tls_active` build-script cfg generation rerun when `RUSTC` changes, preventing stale compiler-channel detection.
+- [patch] Maintain an allocator-local owned-segment count so segment reclaim and defragmentation threshold checks no longer rescan the owned list.
+- [patch] Split thread-local segment ownership and reclamation into `local_alloc/segment/ownership.rs` and `local_alloc/segment/reclaim.rs`.
+- [patch] Remove per-iteration heap allocation from the cross-thread handoff benchmark, run the jemalloc-enabled allocator comparison, and refresh the threshold-gated benchmark baseline after verifying stale cross-thread and saturated-threaded rows against unmodified `HEAD`.
+- [patch] Remove non-owner defragmentation accounting from remote-free enqueue, resolving the `cross-thread free handoff/mnemosyne/small_32` regression while preserving owner-side reclamation.
+- [patch] Replace threaded allocation-cycle worker `Vec` storage with fixed arrays and regenerate the jemalloc-enabled comparison, resolving the stale `threaded small allocation cycles/mnemosyne` regression row.
+- [patch] Align small-allocation `usable_size` page-index derivation with the deallocation classifier and regenerate stable usable-size comparison rows.
+- [patch] Move thread-local allocator statistics into a dedicated leaf module and compute diagnostic snapshots from active/full/empty page lists instead of segment-wide page scans.
 - [arch] Consolidate the two public heap wrapper surfaces into one scoped `Heap<'brand, P, B>` API backed by the single monomorphized `RawHeap<P, B>` implementation.
 - [patch] Supersede the earlier wrapper-column allocator report shape: `MnemosyneHeap` and `BrandedHeap` are no longer classified as allocator comparators, and stale Criterion rows are ignored.
 - [patch] Include SnMalloc `huge_2m` benchmark rows in allocator comparisons instead of hard-coded `N/A` omissions.

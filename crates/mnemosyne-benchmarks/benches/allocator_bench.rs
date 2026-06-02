@@ -3,7 +3,9 @@ use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
 };
 use std::alloc::System;
+use std::cell::UnsafeCell;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -365,12 +367,42 @@ unsafe fn alloc_realloc_dealloc<A: GlobalAlloc>(
 }
 
 struct HandoffBatch {
-    ptrs: Vec<usize>,
     layout: Layout,
+    count: usize,
+}
+
+struct HandoffBuffer {
+    slots: UnsafeCell<[usize; CROSS_THREAD_ALLOCS]>,
+}
+
+unsafe impl Sync for HandoffBuffer {}
+
+impl HandoffBuffer {
+    #[inline]
+    fn new() -> Self {
+        Self {
+            slots: UnsafeCell::new([0; CROSS_THREAD_ALLOCS]),
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn write(&self, index: usize, ptr: usize) {
+        debug_assert!(index < CROSS_THREAD_ALLOCS);
+        unsafe {
+            (*self.slots.get())[index] = ptr;
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn read(&self, index: usize) -> usize {
+        debug_assert!(index < CROSS_THREAD_ALLOCS);
+        unsafe { (*self.slots.get())[index] }
+    }
 }
 
 struct HandoffWorker<A: GlobalAlloc + Send + Sync + 'static> {
     allocator: &'static A,
+    buffer: Arc<HandoffBuffer>,
     sender: SyncSender<Option<HandoffBatch>>,
     done: Receiver<()>,
     handle: Option<thread::JoinHandle<()>>,
@@ -378,11 +410,17 @@ struct HandoffWorker<A: GlobalAlloc + Send + Sync + 'static> {
 
 impl<A: GlobalAlloc + Send + Sync + 'static> HandoffWorker<A> {
     fn new(allocator: &'static A) -> Self {
+        let buffer = Arc::new(HandoffBuffer::new());
+        let worker_buffer = Arc::clone(&buffer);
         let (sender, receiver) = sync_channel::<Option<HandoffBatch>>(CROSS_THREAD_QUEUE_BOUND);
         let (done_sender, done) = sync_channel::<()>(CROSS_THREAD_QUEUE_BOUND);
         let handle = thread::spawn(move || {
             while let Ok(Some(batch)) = receiver.recv() {
-                for ptr in batch.ptrs {
+                for index in 0..batch.count {
+                    // Safety: the producer writes exactly `batch.count`
+                    // initialized slots before sending this command, and waits
+                    // for `done` before reusing the buffer.
+                    let ptr = unsafe { worker_buffer.read(index) };
                     // Safety: each pointer in the batch was allocated by the
                     // same allocator with `batch.layout` before handoff.
                     unsafe {
@@ -397,6 +435,7 @@ impl<A: GlobalAlloc + Send + Sync + 'static> HandoffWorker<A> {
 
         Self {
             allocator,
+            buffer,
             sender,
             done,
             handle: Some(handle),
@@ -404,17 +443,19 @@ impl<A: GlobalAlloc + Send + Sync + 'static> HandoffWorker<A> {
     }
 
     fn alloc_then_handoff(&self, layout: Layout, count: usize) {
-        let mut ptrs = Vec::with_capacity(count);
-        for _ in 0..count {
+        debug_assert!(count <= CROSS_THREAD_ALLOCS);
+        for index in 0..count {
             // Safety: `layout` is one of the static benchmark layouts.
             let allocated = unsafe { self.allocator.alloc(black_box(layout)) };
             require_allocated(allocated, "cross-thread handoff allocation");
-            ptrs.push(allocated as usize);
+            // Safety: `index < count <= CROSS_THREAD_ALLOCS`, and the worker
+            // cannot read this buffer until the command is sent below.
+            unsafe { self.buffer.write(index, allocated as usize) };
         }
-        black_box(&ptrs);
+        black_box(&self.buffer);
         if self
             .sender
-            .send(Some(HandoffBatch { ptrs, layout }))
+            .send(Some(HandoffBatch { layout, count }))
             .is_err()
         {
             benchmark_failure("cross-thread handoff", "worker command channel closed");
@@ -438,19 +479,21 @@ impl<A: GlobalAlloc + Send + Sync + 'static> Drop for HandoffWorker<A> {
     }
 }
 
+struct ThreadCycleWorker {
+    sender: SyncSender<Option<usize>>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
 struct ThreadCycleWorkers<A: GlobalAlloc + Send + Sync + 'static> {
-    senders: Vec<SyncSender<Option<usize>>>,
+    workers: [ThreadCycleWorker; THREADS],
     done: Receiver<()>,
-    handles: Vec<thread::JoinHandle<()>>,
     _allocator: &'static A,
 }
 
 impl<A: GlobalAlloc + Send + Sync + 'static> ThreadCycleWorkers<A> {
     fn new(allocator: &'static A, layout: Layout) -> Self {
         let (done_sender, done) = sync_channel::<()>(THREAD_WORK_QUEUE_BOUND);
-        let mut senders = Vec::with_capacity(THREADS);
-        let mut handles = Vec::with_capacity(THREADS);
-        for _ in 0..THREADS {
+        let workers = std::array::from_fn(|_| {
             let (sender, receiver) = sync_channel::<Option<usize>>(THREAD_WORK_QUEUE_BOUND);
             let worker_done = done_sender.clone();
             let handle_allocator = allocator;
@@ -468,14 +511,15 @@ impl<A: GlobalAlloc + Send + Sync + 'static> ThreadCycleWorkers<A> {
                     }
                 }
             });
-            senders.push(sender);
-            handles.push(handle);
-        }
+            ThreadCycleWorker {
+                sender,
+                handle: Some(handle),
+            }
+        });
 
         Self {
-            senders,
+            workers,
             done,
-            handles,
             _allocator: allocator,
         }
     }
@@ -485,8 +529,8 @@ impl<A: GlobalAlloc + Send + Sync + 'static> ThreadCycleWorkers<A> {
     }
 
     fn run_with_iterations(&self, iterations: usize) {
-        for sender in &self.senders {
-            if sender.send(Some(iterations)).is_err() {
+        for worker in &self.workers {
+            if worker.sender.send(Some(iterations)).is_err() {
                 benchmark_failure("threaded allocation cycle", "worker command channel closed");
             }
         }
@@ -503,12 +547,16 @@ impl<A: GlobalAlloc + Send + Sync + 'static> ThreadCycleWorkers<A> {
 
 impl<A: GlobalAlloc + Send + Sync + 'static> Drop for ThreadCycleWorkers<A> {
     fn drop(&mut self) {
-        for sender in &self.senders {
-            let _ = sender.send(None);
+        for worker in &self.workers {
+            let _ = worker.sender.send(None);
         }
-        for handle in self.handles.drain(..) {
-            if handle.join().is_err() {
-                eprintln!("benchmark failure: allocation-cycle worker panicked during shutdown");
+        for worker in &mut self.workers {
+            if let Some(handle) = worker.handle.take() {
+                if handle.join().is_err() {
+                    eprintln!(
+                        "benchmark failure: allocation-cycle worker panicked during shutdown"
+                    );
+                }
             }
         }
     }

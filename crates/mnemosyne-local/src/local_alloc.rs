@@ -6,8 +6,10 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_backend::DefaultBackend;
-use mnemosyne_core::constants::{NUM_SIZE_CLASSES, PAGES_PER_SEGMENT};
+use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::types::{Page, Segment};
+
+pub use stats::{SizeClassOccupancy, ThreadAllocatorStats};
 
 std::thread_local! {
     static TLS_SEED: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
@@ -36,47 +38,6 @@ pub(crate) fn get_tls_seed() -> usize {
 
 static CROSS_THREAD_RECLAIMED_BLOCKS: AtomicUsize = AtomicUsize::new(0);
 
-/// Occupancy counters for a single size class in the current thread allocator.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct SizeClassOccupancy {
-    pub active_pages: usize,
-    pub empty_pages: usize,
-    pub live_allocations: usize,
-    pub total_slots: usize,
-}
-
-/// Snapshot of the current thread-local allocator state.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ThreadAllocatorStats {
-    pub current_thread_live_allocations: usize,
-    pub current_thread_owned_segments: usize,
-    pub cross_thread_reclaimed_blocks: usize,
-    pub page_refills: usize,
-    pub recycled_pages: usize,
-    pub fresh_pages: usize,
-    pub fresh_segments: usize,
-    pub orphan_segments_adopted: usize,
-    pub recycle_sweeps: usize,
-    pub size_class_occupancy: [SizeClassOccupancy; NUM_SIZE_CLASSES],
-}
-
-impl Default for ThreadAllocatorStats {
-    fn default() -> Self {
-        Self {
-            current_thread_live_allocations: 0,
-            current_thread_owned_segments: 0,
-            cross_thread_reclaimed_blocks: 0,
-            page_refills: 0,
-            recycled_pages: 0,
-            fresh_pages: 0,
-            fresh_segments: 0,
-            orphan_segments_adopted: 0,
-            recycle_sweeps: 0,
-            size_class_occupancy: [SizeClassOccupancy::default(); NUM_SIZE_CLASSES],
-        }
-    }
-}
-
 #[inline]
 pub(crate) fn record_cross_thread_reclaimed(count: usize) {
     CROSS_THREAD_RECLAIMED_BLOCKS.fetch_add(count, Ordering::Relaxed);
@@ -96,6 +57,8 @@ pub struct ThreadAllocator<B: HasSegmentPool = DefaultBackend> {
     pub next_page_index: usize,
     /// Head of the linked list of segments owned by this thread.
     pub owned_segments_head: *mut Segment,
+    /// Number of nodes linked in `owned_segments_head`.
+    pub owned_segment_count: usize,
     /// Number of successful cold-path page refills.
     pub page_refills: usize,
     /// Number of refills served by recycling an initialized empty page.
@@ -135,6 +98,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             current_segment: None,
             next_page_index: 0,
             owned_segments_head: core::ptr::null_mut(),
+            owned_segment_count: 0,
             page_refills: 0,
             recycled_pages: 0,
             fresh_pages: 0,
@@ -232,49 +196,6 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         }
         self.current_segment = segment;
     }
-
-    /// Returns a statistics snapshot for this thread allocator.
-    pub fn stats(&self) -> ThreadAllocatorStats {
-        let mut live_allocations = 0;
-        let mut owned_segments = 0;
-        let mut size_class_occupancy = [SizeClassOccupancy::default(); NUM_SIZE_CLASSES];
-        let mut segment = self.owned_segments_head;
-        while !segment.is_null() {
-            owned_segments += 1;
-            // Safety: segment points to a valid initialized segment owned by this thread.
-            // We traverse the pages inside it to collect allocations statistics.
-            unsafe {
-                for page_index in 1..PAGES_PER_SEGMENT {
-                    let page = &(*segment).pages[page_index];
-                    live_allocations += page.alloc_count;
-                    if page.block_size > 0 {
-                        let class = page.size_class as usize;
-                        let occupancy = &mut size_class_occupancy[class];
-                        occupancy.active_pages += 1;
-                        if page.alloc_count == 0 {
-                            occupancy.empty_pages += 1;
-                        }
-                        occupancy.live_allocations += page.alloc_count;
-                        occupancy.total_slots += page.max_blocks();
-                    }
-                }
-                segment = (*segment).next_owned_segment;
-            }
-        }
-
-        ThreadAllocatorStats {
-            current_thread_live_allocations: live_allocations,
-            current_thread_owned_segments: owned_segments,
-            cross_thread_reclaimed_blocks: CROSS_THREAD_RECLAIMED_BLOCKS.load(Ordering::Relaxed),
-            page_refills: self.page_refills,
-            recycled_pages: self.recycled_pages,
-            fresh_pages: self.fresh_pages,
-            fresh_segments: self.fresh_segments,
-            orphan_segments_adopted: self.orphan_segments_adopted,
-            recycle_sweeps: self.recycle_sweeps,
-            size_class_occupancy,
-        }
-    }
 }
 
 impl<B: HasSegmentPool> Drop for ThreadAllocator<B> {
@@ -291,5 +212,6 @@ pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub(crate) mod page;
 pub(crate) mod routing;
 pub(crate) mod segment;
+mod stats;
 #[cfg(test)]
 mod tests;
