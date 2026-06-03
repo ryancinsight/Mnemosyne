@@ -1,4 +1,5 @@
-use crate::brand::{AllocatorToken, BrandedBlock, BrandedCell, Invariant};
+use crate::brand::{BrandedBlock, BrandedCell, ThreadLocalToken};
+use core::marker::PhantomData;
 use crate::Heap;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
@@ -28,7 +29,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     #[inline(always)]
     pub fn new(
         heap: &'heap Heap<'brand, P, B>,
-        token: &AllocatorToken<'brand>,
+        token: &ThreadLocalToken<'brand>,
         val: T,
     ) -> Option<Self> {
         if core::mem::size_of::<T>() == 0 {
@@ -60,7 +61,7 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     pub fn into_raw(self) -> BrandedBlock<'brand, T> {
         let block = BrandedBlock {
             ptr: self.ptr,
-            _marker: Invariant::new(),
+            _marker: PhantomData,
         };
         core::mem::forget(self);
         block
@@ -143,7 +144,7 @@ impl<'brand, 'heap, T: Clone, P: AllocPolicy, B: HasSegmentPool + LocalAllocator
     ///
     /// Returns `None` if allocation fails.
     #[inline]
-    pub fn clone_in(&self, token: &AllocatorToken<'brand>) -> Option<Self> {
+    pub fn clone_in(&self, token: &ThreadLocalToken<'brand>) -> Option<Self> {
         Self::new(self.heap, token, (**self).clone())
     }
 }

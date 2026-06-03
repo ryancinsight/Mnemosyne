@@ -1,4 +1,5 @@
-use crate::brand::{AllocatorToken, BrandedBlock, Invariant};
+use crate::brand::{BrandedBlock, InvariantLifetime, ThreadLocalToken};
+use core::marker::PhantomData;
 use crate::raw_heap::RawHeap;
 use core::alloc::Layout;
 use core::ptr::NonNull;
@@ -14,7 +15,7 @@ use mnemosyne_local::LocalAllocatorSelector;
 pub struct Heap<'brand, P: AllocPolicy, B: HasSegmentPool = mnemosyne_backend::MemoryBackendWrapper>
 {
     pub(crate) raw: RawHeap<P, B>,
-    pub(crate) _phantom: Invariant<'brand>,
+    pub(crate) _phantom: InvariantLifetime<'brand>,
 }
 
 unsafe impl<'brand, P: AllocPolicy, B: HasSegmentPool> Send for Heap<'brand, P, B> {}
@@ -27,13 +28,13 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
     #[inline(always)]
     pub fn alloc(
         &self,
-        _token: &AllocatorToken<'brand>,
+        _token: &ThreadLocalToken<'brand>,
         layout: Layout,
     ) -> Option<BrandedBlock<'brand, u8>> {
         let ptr = self.raw.alloc(layout);
         NonNull::new(ptr).map(|ptr| BrandedBlock {
             ptr,
-            _marker: Invariant::new(),
+            _marker: PhantomData,
         })
     }
 
@@ -56,7 +57,7 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
     #[inline(always)]
     pub fn free<T: ?Sized>(
         &self,
-        _token: &mut AllocatorToken<'brand>,
+        _token: &mut ThreadLocalToken<'brand>,
         block: BrandedBlock<'brand, T>,
     ) {
         let ptr = block.ptr.as_ptr();
@@ -74,7 +75,7 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
     #[inline(always)]
     pub fn free_uninit<T: ?Sized>(
         &self,
-        _token: &mut AllocatorToken<'brand>,
+        _token: &mut ThreadLocalToken<'brand>,
         block: BrandedBlock<'brand, T>,
     ) {
         let ptr = block.ptr.as_ptr();
@@ -91,7 +92,7 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
     #[inline(always)]
     pub fn alloc_init<T>(
         &self,
-        token: &AllocatorToken<'brand>,
+        token: &ThreadLocalToken<'brand>,
         val: T,
     ) -> Option<BrandedBlock<'brand, T>> {
         if core::mem::size_of::<T>() == 0 {
@@ -101,7 +102,7 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
             }
             return Some(BrandedBlock {
                 ptr,
-                _marker: Invariant::new(),
+                _marker: PhantomData,
             });
         }
 
@@ -117,7 +118,7 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
     #[inline(always)]
     pub fn realloc<T: ?Sized>(
         &self,
-        token: &mut AllocatorToken<'brand>,
+        token: &mut ThreadLocalToken<'brand>,
         block: BrandedBlock<'brand, T>,
         layout: Layout,
         new_size: usize,

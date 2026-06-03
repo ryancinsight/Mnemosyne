@@ -212,7 +212,7 @@ fn main() {
 }
 ```
 
-To use scoped lifetime-branded memory allocation (GhostCell-style permission and data separation with `BrandedHeap`, `BrandedBox`, `BrandedVec`, and `BrandedCell`):
+To use scoped lifetime-branded memory allocation (GhostCell-style permission and data separation with `BrandedHeap`, `BrandedBox`, `BrandedVec`, and `BrandedCell`). The brand identity and the thread-confined capability token are provided by the [`melinoe`](https://github.com/ryancinsight/melinoe) crate — its `InvariantLifetime` marker and `ThreadLocalToken` are the single source of brand machinery for the Mnemosyne ecosystem:
 
 ```rust
 use mnemosyne::{branded_scope, StandardPolicy};

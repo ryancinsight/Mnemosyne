@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Brand machinery (invariant-lifetime marker + thread-confined capability token)
+# is sourced from melinoe, the ecosystem's branding crate. Tracks `main` (no rev
+# pin) so the heap always builds against the latest published brand semantics;
+# `default-features = false` keeps this `#![no_std]` crate free of std/alloc.
+melinoe = { git = "https://github.com/ryancinsight/melinoe.git", branch = "main", default-features = false }
 mnemosyne-core = { path = "../mnemosyne-core" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-arena = { path = "../mnemosyne-arena" }

@@ -1,4 +1,5 @@
-use crate::brand::{AllocatorToken, BrandedCell};
+use crate::brand::{BrandedCell, ThreadLocalToken};
+use core::marker::PhantomData;
 use crate::BrandedVec;
 use core::alloc::Layout;
 use mnemosyne_core::AllocPolicy;
@@ -10,7 +11,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
 {
     /// Pushes an element onto the back of the vector, growing it if necessary.
     #[inline]
-    pub fn push(&mut self, token: &mut AllocatorToken<'brand>, val: T) -> Result<(), T> {
+    pub fn push(&mut self, token: &mut ThreadLocalToken<'brand>, val: T) -> Result<(), T> {
         if core::mem::size_of::<T>() == 0 {
             self.len = match self.len.checked_add(1) {
                 Some(len) => len,
@@ -49,7 +50,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
                 });
                 let block = crate::brand::BrandedBlock {
                     ptr: self.ptr,
-                    _marker: crate::brand::Invariant::new(),
+                    _marker: PhantomData,
                 };
                 let new_block = match self
                     .heap
@@ -149,7 +150,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     #[allow(clippy::result_unit_err)] // Preserve the existing allocation-failure API.
     pub fn extend_from_slice(
         &mut self,
-        token: &mut AllocatorToken<'brand>,
+        token: &mut ThreadLocalToken<'brand>,
         other: &[T],
     ) -> Result<(), ()>
     where
@@ -174,7 +175,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     #[allow(clippy::result_unit_err)] // Preserve the existing allocation-failure API.
     pub fn resize(
         &mut self,
-        token: &mut AllocatorToken<'brand>,
+        token: &mut ThreadLocalToken<'brand>,
         new_len: usize,
         value: T,
     ) -> Result<(), ()>
@@ -198,7 +199,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// Returns `Err(())` if allocation fails.
     #[inline]
     #[allow(clippy::result_unit_err)] // Preserve the existing allocation-failure API.
-    pub fn extend<I>(&mut self, token: &mut AllocatorToken<'brand>, iter: I) -> Result<(), ()>
+    pub fn extend<I>(&mut self, token: &mut ThreadLocalToken<'brand>, iter: I) -> Result<(), ()>
     where
         I: IntoIterator<Item = T>,
     {
@@ -223,7 +224,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     #[inline]
     pub fn insert(
         &mut self,
-        token: &mut AllocatorToken<'brand>,
+        token: &mut ThreadLocalToken<'brand>,
         index: usize,
         element: T,
     ) -> Result<(), T> {
@@ -264,7 +265,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     ///
     /// The memory is shrunk to fit and remains allocated until manually reclaimed.
     #[inline(always)]
-    pub fn into_cell(self, token: &mut AllocatorToken<'brand>) -> BrandedCell<'brand, [T]> {
+    pub fn into_cell(self, token: &mut ThreadLocalToken<'brand>) -> BrandedCell<'brand, [T]> {
         self.into_boxed_slice(token).into_cell()
     }
 }
@@ -276,7 +277,7 @@ impl<'brand, 'heap, T: Clone, P: AllocPolicy, B: HasSegmentPool + LocalAllocator
     ///
     /// Returns `None` if allocation fails.
     #[inline]
-    pub fn clone_in(&self, token: &mut AllocatorToken<'brand>) -> Option<Self> {
+    pub fn clone_in(&self, token: &mut ThreadLocalToken<'brand>) -> Option<Self> {
         let mut new_vec = Self::with_capacity(self.heap, token, self.len())?;
         for item in self.as_slice() {
             if new_vec.push(token, item.clone()).is_err() {

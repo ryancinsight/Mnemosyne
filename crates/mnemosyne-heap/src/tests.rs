@@ -846,7 +846,8 @@ fn test_branded_vec_in_place_shrink() {
 
 #[test]
 fn test_branding_thread_bounds() {
-    // Structurally, BrandedBox, BrandedVec, and AllocatorToken contain PhantomData<*mut ()>
+    // Structurally, BrandedBox and BrandedVec contain PhantomData<*mut ()>; the melinoe
+    // ThreadLocalToken contains PhantomData<*const ()> (both !Send + !Sync)
     // which guarantees that these types are neither Send nor Sync.
     // This ensures they cannot be sent to other threads or accessed concurrently.
     // If they were Send, dropping them on another thread would cause unsynchronized

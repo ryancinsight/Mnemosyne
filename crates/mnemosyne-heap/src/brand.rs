@@ -1,51 +1,22 @@
 use crate::raw_heap::RawHeap;
 use crate::Heap;
+use core::marker::PhantomData;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::internal::HasSegmentPool;
 use mnemosyne_local::LocalAllocatorSelector;
 
-/// A helper type representing a compile-time invariant brand lifetime.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Invariant<'brand>(pub(crate) core::marker::PhantomData<fn(&'brand ()) -> &'brand ()>);
+use melinoe::sync::thread_local_scope;
 
-impl<'brand> Default for Invariant<'brand> {
-    #[inline(always)]
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<'brand> Invariant<'brand> {
-    #[inline(always)]
-    pub const fn new() -> Self {
-        Self(core::marker::PhantomData)
-    }
-}
-
-/// A compile-time unique allocator token representing deallocation permissions.
-///
-/// This token is `!Send` and `!Sync`, binding it exclusively to the thread
-/// that initialized the scoped brand.
-pub struct AllocatorToken<'brand> {
-    pub(crate) _marker: Invariant<'brand>,
-    pub(crate) _non_send_sync: core::marker::PhantomData<*mut ()>,
-}
-
-impl<'brand> AllocatorToken<'brand> {
-    #[inline(always)]
-    pub(crate) unsafe fn new() -> Self {
-        Self {
-            _marker: Invariant::new(),
-            _non_send_sync: core::marker::PhantomData,
-        }
-    }
-}
+// Brand vocabulary re-exported from melinoe so the heap's branded containers and
+// their consumers share one authoritative token + marker definition.
+pub use melinoe::sync::ThreadLocalToken;
+pub use melinoe::InvariantLifetime;
 
 /// A wrapper representing a heap block branded with a compile-time unique lifetime.
 pub struct BrandedBlock<'brand, T: ?Sized> {
     pub(crate) ptr: NonNull<T>,
-    pub(crate) _marker: Invariant<'brand>,
+    pub(crate) _marker: InvariantLifetime<'brand>,
 }
 
 impl<'brand, T: ?Sized> BrandedBlock<'brand, T> {
@@ -113,10 +84,11 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedBlock<'brand, T> {
 
 /// A GhostCell-style shared container allowing interior mutability.
 ///
-/// Permits shared read access and exclusive write access mediated by the `AllocatorToken`.
+/// Permits shared read access and exclusive write access mediated by the
+/// melinoe [`ThreadLocalToken`].
 pub struct BrandedCell<'brand, T: ?Sized> {
     pub(crate) ptr: NonNull<T>,
-    pub(crate) _marker: Invariant<'brand>,
+    pub(crate) _marker: InvariantLifetime<'brand>,
 }
 
 impl<'brand, T: ?Sized> Clone for BrandedCell<'brand, T> {
@@ -162,13 +134,13 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
 
     /// Accesses the value immutably using the allocator token.
     #[inline(always)]
-    pub fn borrow<'a>(&self, _token: &'a AllocatorToken<'brand>) -> &'a T {
+    pub fn borrow<'a>(&self, _token: &'a ThreadLocalToken<'brand>) -> &'a T {
         unsafe { self.ptr.as_ref() }
     }
 
     /// Accesses the value mutably using the allocator token.
     #[inline(always)]
-    pub fn borrow_mut<'a>(&self, _token: &'a mut AllocatorToken<'brand>) -> &'a mut T {
+    pub fn borrow_mut<'a>(&self, _token: &'a mut ThreadLocalToken<'brand>) -> &'a mut T {
         unsafe { &mut *self.ptr.as_ptr() }
     }
 
@@ -180,7 +152,7 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
     pub fn borrow_mut_2<'a, U: ?Sized>(
         cell1: &'a Self,
         cell2: &'a BrandedCell<'brand, U>,
-        _token: &'a mut AllocatorToken<'brand>,
+        _token: &'a mut ThreadLocalToken<'brand>,
     ) -> (&'a mut T, &'a mut U) {
         assert_ne!(
             cell1.ptr.as_ptr() as *const (),
@@ -199,7 +171,7 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
         cell1: &'a Self,
         cell2: &'a BrandedCell<'brand, U>,
         cell3: &'a BrandedCell<'brand, V>,
-        _token: &'a mut AllocatorToken<'brand>,
+        _token: &'a mut ThreadLocalToken<'brand>,
     ) -> (&'a mut T, &'a mut U, &'a mut V) {
         let p1 = cell1.ptr.as_ptr() as *const ();
         let p2 = cell2.ptr.as_ptr() as *const ();
@@ -274,7 +246,7 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedCell<'brand, T> {
 /// ```
 ///
 /// Proving that thread-exclusivity bounds are enforced at compile time.
-/// Since `AllocatorToken` is `!Send` and `!Sync`, the following fails to compile:
+/// Since the melinoe `ThreadLocalToken` is `!Send` and `!Sync`, the following fails to compile:
 ///
 /// ```compile_fail
 /// use mnemosyne_core::StandardPolicy;
@@ -283,7 +255,7 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedCell<'brand, T> {
 /// use std::thread;
 ///
 /// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
-///     // AllocatorToken is !Send, so sending it to another thread is a compile error:
+///     // ThreadLocalToken is !Send, so sending it to another thread is a compile error:
 ///     thread::spawn(move || {
 ///         let _t = token;
 ///     });
@@ -344,12 +316,17 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedCell<'brand, T> {
 /// ```
 pub fn scope<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>, F, R>(f: F) -> R
 where
-    F: for<'brand> FnOnce(Heap<'brand, P, B>, AllocatorToken<'brand>) -> R,
+    F: for<'brand> FnOnce(Heap<'brand, P, B>, ThreadLocalToken<'brand>) -> R,
 {
-    let heap = Heap {
-        raw: RawHeap::new(),
-        _phantom: Invariant::new(),
-    };
-    let token = unsafe { AllocatorToken::new() };
-    f(heap, token)
+    // The brand identity, uniqueness, and thread-confined capability token are
+    // minted by melinoe. The higher-ranked `'brand` from `thread_local_scope`
+    // is shared with the `Heap` constructed under it, so the heap and its token
+    // are provably the only pair for this brand and cannot escape the closure.
+    thread_local_scope(|token| {
+        let heap = Heap {
+            raw: RawHeap::new(),
+            _phantom: PhantomData,
+        };
+        f(heap, token)
+    })
 }

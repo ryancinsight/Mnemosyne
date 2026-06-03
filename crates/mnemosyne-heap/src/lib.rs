@@ -11,7 +11,7 @@ pub(crate) mod raw_heap;
 #[cfg(test)]
 mod tests;
 
-pub use brand::{scope, AllocatorToken, BrandedBlock, BrandedCell, Invariant};
+pub use brand::{scope, BrandedBlock, BrandedCell, InvariantLifetime, ThreadLocalToken};
 pub use branded_box::BrandedBox;
 pub use branded_vec::BrandedVec;
 pub use heap::Heap;

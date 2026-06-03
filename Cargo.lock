@@ -335,6 +335,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "melinoe"
+version = "0.1.0"
+source = "git+https://github.com/ryancinsight/melinoe.git?branch=main#a6a87388dd77da7766fba0eaf1648efcd30533aa"
+
+[[package]]
 name = "memchr"
 version = "2.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -441,6 +446,7 @@ dependencies = [
 name = "mnemosyne-heap"
 version = "0.1.0"
 dependencies = [
+ "melinoe",
  "mnemosyne",
  "mnemosyne-arena",
  "mnemosyne-backend",

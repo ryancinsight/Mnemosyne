@@ -1,4 +1,5 @@
-use crate::brand::{AllocatorToken, BrandedBlock, Invariant};
+use crate::brand::{BrandedBlock, ThreadLocalToken};
+use core::marker::PhantomData;
 use crate::branded_box::BrandedBox;
 use crate::Heap;
 use core::alloc::Layout;
@@ -50,7 +51,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     #[inline]
     pub fn with_capacity(
         heap: &'heap Heap<'brand, P, B>,
-        token: &AllocatorToken<'brand>,
+        token: &ThreadLocalToken<'brand>,
         capacity: usize,
     ) -> Option<Self> {
         if capacity == 0 || core::mem::size_of::<T>() == 0 {
@@ -71,7 +72,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     #[inline]
     pub fn into_boxed_slice(
         mut self,
-        token: &mut AllocatorToken<'brand>,
+        token: &mut ThreadLocalToken<'brand>,
     ) -> BrandedBox<'brand, 'heap, [T], P, B> {
         if core::mem::size_of::<T>() == 0 {
             let slice_ptr = unsafe {
@@ -102,7 +103,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
                 });
                 let block = BrandedBlock {
                     ptr: self.ptr,
-                    _marker: Invariant::new(),
+                    _marker: PhantomData,
                 };
                 let new_size = core::mem::size_of::<T>() * self.len;
                 if let Some(new_block) = self.heap.realloc(token, block, old_layout, new_size) {
@@ -156,7 +157,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     #[allow(clippy::result_unit_err)]
     pub fn reserve(
         &mut self,
-        token: &mut AllocatorToken<'brand>,
+        token: &mut ThreadLocalToken<'brand>,
         additional: usize,
     ) -> Result<(), ()> {
         if core::mem::size_of::<T>() == 0 {
@@ -182,7 +183,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             });
             let block = BrandedBlock {
                 ptr: self.ptr,
-                _marker: Invariant::new(),
+                _marker: PhantomData,
             };
             let new_block = self
                 .heap
@@ -200,7 +201,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// Returns `Err(())` if allocation fails.
     #[inline]
     #[allow(clippy::result_unit_err)]
-    pub fn shrink_to_fit(&mut self, token: &mut AllocatorToken<'brand>) -> Result<(), ()> {
+    pub fn shrink_to_fit(&mut self, token: &mut ThreadLocalToken<'brand>) -> Result<(), ()> {
         if core::mem::size_of::<T>() == 0 || self.cap <= self.len {
             return Ok(());
         }
@@ -215,7 +216,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         let old_layout = Layout::array::<T>(self.cap).map_err(|_| ())?;
         let block = BrandedBlock {
             ptr: self.ptr,
-            _marker: Invariant::new(),
+            _marker: PhantomData,
         };
         let new_size = core::mem::size_of::<T>() * self.len;
         if let Some(new_block) = self.heap.realloc(token, block, old_layout, new_size) {

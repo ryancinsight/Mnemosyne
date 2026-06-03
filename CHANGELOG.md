@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+- Sourced all brand machinery from the [`melinoe`](https://github.com/ryancinsight/melinoe) crate, making it the single source of truth for the ecosystem's brand identity and capability tokens. `mnemosyne-heap` no longer defines its own `Invariant<'brand>` marker or `AllocatorToken<'brand>`; the heap's `scope`, `BrandedBlock`, `BrandedCell`, `BrandedBox`, and `BrandedVec` now use melinoe's `InvariantLifetime<'brand>` marker and `ThreadLocalToken<'brand>` (minted by melinoe's `thread_local_scope`). Public renames: `AllocatorToken` → `ThreadLocalToken`, `Invariant` → `InvariantLifetime` (re-exported from `mnemosyne` and `mnemosyne-heap`). Both `ThreadLocalToken` (`PhantomData<*const ()>`) and the former `AllocatorToken` (`PhantomData<*mut ()>`) are `!Send + !Sync`, so all thread-confinement and brand-uniqueness proofs are preserved — verified by the unchanged `compile_fail` doctests (token `!Send`, `BrandedBox`/`BrandedVec` `!Send`, brand cannot escape its scope, cross-scope tokens/heaps cannot mix) plus the full heap unit/integration suite.
+- The `melinoe` dependency tracks `main` with no pinned rev (`branch = "main"`, `default-features = false`), so the heap always builds against the latest published brand semantics.
+
+### Migration
+
+- Replace references to `mnemosyne::AllocatorToken` / `mnemosyne_heap::AllocatorToken` with `ThreadLocalToken`, and `Invariant` with `InvariantLifetime`. Code that obtains its token from the `branded_scope`/`scope` closure parameter needs no change (the token type is inferred).
+
 ## 0.1.0
 
 ### Fixed
