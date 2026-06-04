@@ -21,7 +21,33 @@ pub const fn size_to_class(size: usize) -> Option<usize> {
 /// Maps a non-zero allocation size to its corresponding size class index.
 #[inline(always)]
 pub const fn size_to_class_nonzero(size: usize) -> Option<usize> {
-    if size > 8192 {
+    if size > MAX_SMALL_ALLOC_SIZE {
+        return None;
+    }
+    let class = SIZE_TO_CLASS[size];
+    if class == u8::MAX {
+        None
+    } else {
+        Some(class as usize)
+    }
+}
+
+const SIZE_TO_CLASS: [u8; MAX_SMALL_ALLOC_SIZE + 1] = {
+    let mut arr = [u8::MAX; MAX_SMALL_ALLOC_SIZE + 1];
+    arr[0] = 0;
+    let mut size = 1;
+    while size <= MAX_SMALL_ALLOC_SIZE {
+        arr[size] = match size_to_class_nonzero_arithmetic(size) {
+            Some(class) => class as u8,
+            None => u8::MAX,
+        };
+        size += 1;
+    }
+    arr
+};
+
+const fn size_to_class_nonzero_arithmetic(size: usize) -> Option<usize> {
+    if size > MAX_SMALL_ALLOC_SIZE {
         return None;
     }
     struct SizeClassLookup {

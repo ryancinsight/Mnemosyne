@@ -1,6 +1,6 @@
 use crate::brand::{BrandedBlock, BrandedCell, ThreadLocalToken};
-use core::marker::PhantomData;
 use crate::Heap;
+use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;

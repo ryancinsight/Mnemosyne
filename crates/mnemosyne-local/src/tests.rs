@@ -326,6 +326,46 @@ fn thread_alloc_layout_uses_layout_validated_fast_entry() {
 }
 
 #[test]
+fn thread_alloc_cold_charges_one_defrag_operation_per_page_refill() {
+    let _guard = crate::local_alloc::TEST_LOCK
+        .lock()
+        .expect("local allocator test lock was poisoned");
+
+    let worker = std::thread::spawn(|| {
+        let before = MemoryBackendWrapper::with_allocator(|alloc| {
+            assert_eq!(
+                alloc.page_refills, 0,
+                "fresh worker allocator should start with no page refills"
+            );
+            alloc.defrag_counter
+        })
+        .expect("fresh worker allocator slot must initialize");
+
+        let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(8192, 8) };
+        assert!(!ptr.is_null(), "8192-byte allocation failed");
+
+        let after = MemoryBackendWrapper::with_allocator(|alloc| {
+            (alloc.defrag_counter, alloc.page_refills)
+        })
+        .expect("worker allocator slot must remain accessible");
+
+        unsafe { thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr) };
+
+        (before, after.0, after.1)
+    });
+
+    let (before, after, refills) = worker
+        .join()
+        .expect("defrag accounting worker thread panicked");
+    assert_eq!(refills, 1, "single cold allocation should refill one page");
+    assert_eq!(
+        after,
+        before + 1,
+        "single page refill should charge exactly one defrag operation"
+    );
+}
+
+#[test]
 fn hardened_policy_round_trip_alloc_free() {
     use mnemosyne_hardened::HardenedPolicy;
 

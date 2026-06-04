@@ -1,8 +1,8 @@
 use crate::brand::{BrandedBlock, ThreadLocalToken};
-use core::marker::PhantomData;
 use crate::branded_box::BrandedBox;
 use crate::Heap;
 use core::alloc::Layout;
+use core::marker::PhantomData;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::internal::HasSegmentPool;

@@ -20,7 +20,7 @@ mimalloc = { version = "0.1", features = ["extended"] }
 snmalloc-rs = { version = "0.3", features = ["win8compat"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 serde_json = "1"
-mnemosyne = { path = "../mnemosyne" }
+mnemosyne = { path = "../mnemosyne", default-features = false }
 mnemosyne-arena = { path = "../mnemosyne-arena" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-core = { path = "../mnemosyne-core" }

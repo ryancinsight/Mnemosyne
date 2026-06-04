@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 mnemosyne-local = { path = "../mnemosyne-local" }
-mnemosyne-heap = { path = "../mnemosyne-heap" }
+mnemosyne-heap = { path = "../mnemosyne-heap", optional = true }
 mnemosyne-arena = { path = "../mnemosyne-arena" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-core = { path = "../mnemosyne-core" }
@@ -14,4 +14,6 @@ mnemosyne-decay = { path = "../mnemosyne-decay" }
 mnemosyne-prof = { path = "../mnemosyne-prof" }
 
 [features]
+default = ["branded"]
+branded = ["dep:mnemosyne-heap"]
 nightly_tls = ["mnemosyne-local/nightly_tls", "mnemosyne-prof/nightly_tls"]

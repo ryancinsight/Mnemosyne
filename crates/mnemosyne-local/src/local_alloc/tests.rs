@@ -1,4 +1,4 @@
-use super::page::unlink_page_from_list;
+use super::page::{unlink_page_from_list, with_page_list_token};
 use super::*;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -403,10 +403,12 @@ fn unlink_page_from_list_splices_and_reports_membership() {
     let mut head = Some(n0);
 
     // Unlink the MIDDLE node: head -> p0 -> p2, p1 detached.
-    // Safety: all nodes live; `p1` is in the list.
-    unsafe {
-        unlink_page_from_list(&mut head, n1);
-    }
+    // Safety: all nodes live and are treated as belonging to this test's
+    // branded page-list permission.
+    with_page_list_token::<MockBackend, _>(|mut token| unsafe {
+        let page = token.page(n1);
+        unlink_page_from_list(&mut token, &mut head, page);
+    });
     assert_eq!(head, Some(n0));
     // Safety: nodes remain live.
     unsafe {
@@ -419,10 +421,11 @@ fn unlink_page_from_list_splices_and_reports_membership() {
     }
 
     // Unlink the HEAD node: head -> p2.
-    // Safety: `p0` is the head.
-    unsafe {
-        unlink_page_from_list(&mut head, n0);
-    }
+    // Safety: `p0` is the head and belongs to the same branded test list.
+    with_page_list_token::<MockBackend, _>(|mut token| unsafe {
+        let page = token.page(n0);
+        unlink_page_from_list(&mut token, &mut head, page);
+    });
     assert_eq!(head, Some(n2));
     unsafe {
         assert_eq!((*p2).prev_page, None);
@@ -432,10 +435,11 @@ fn unlink_page_from_list_splices_and_reports_membership() {
     }
 
     // Unlink the TAIL/only node: list empties.
-    // Safety: `p2` is the sole node.
-    unsafe {
-        unlink_page_from_list(&mut head, n2);
-    }
+    // Safety: `p2` is the sole node and belongs to the same branded test list.
+    with_page_list_token::<MockBackend, _>(|mut token| unsafe {
+        let page = token.page(n2);
+        unlink_page_from_list(&mut token, &mut head, page);
+    });
     assert!(head.is_none());
 
     // Reclaim the raw allocations.

@@ -158,10 +158,6 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
     let ptr = unsafe { alloc.alloc_cold::<P>(class) };
     alloc.is_allocating = false;
 
-    if !ptr.is_null() {
-        unsafe { alloc.record_defrag_operation::<P>() };
-    }
-
     let final_ptr = if ptr.is_null() {
         unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) }
     } else {

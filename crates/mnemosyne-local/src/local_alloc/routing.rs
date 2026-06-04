@@ -1,4 +1,4 @@
-use super::page::{pop_page_free_block, try_reclaim_and_allocate, unlink_page_from_list};
+use super::page::{pop_page_free_block, try_reclaim_and_allocate};
 use crate::local_alloc::ThreadAllocator;
 use core::ptr::NonNull;
 use mnemosyne_arena::{allocate_segment, HasSegmentPool};
@@ -98,7 +98,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
             // The page is truly full! Move it to full_pages.
             unsafe {
-                unlink_page_from_list(self.active_pages.get_unchecked_mut(class), active_ptr);
+                self.unlink_page(active_ptr.as_ptr(), class);
                 self.push_full_page(active_ptr, class);
             }
         }
@@ -156,10 +156,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         // Page is no longer full! Move it back to active list.
                         // Safety: page_ptr and class are valid.
                         unsafe {
-                            unlink_page_from_list(
-                                self.full_pages.get_unchecked_mut(class),
-                                page_ptr,
-                            );
+                            let _removed = self.unlink_full_page(page_ptr.as_ptr(), class);
                             self.push_active_page(page_ptr, class);
                         }
                     }
@@ -190,7 +187,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // Safety: new_page_ptr and class are valid.
             unsafe {
                 let ptr = NonNull::new_unchecked(new_page_ptr);
-                unlink_page_from_list(self.active_pages.get_unchecked_mut(class), ptr);
+                self.unlink_page(ptr.as_ptr(), class);
                 self.push_full_page(ptr, class);
             }
         }

@@ -9,6 +9,7 @@ use mnemosyne_local::{thread_alloc_layout, thread_free, thread_realloc, LocalAll
 pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
 pub use mnemosyne_core::{options::MnemosyneOptions, AllocPolicy, StandardPolicy};
 pub use mnemosyne_hardened::{HardenedPolicy, SecurePolicy};
+#[cfg(feature = "branded")]
 pub use mnemosyne_heap::{
     scope as branded_scope, BrandedBlock, BrandedBox, BrandedCell, BrandedVec, Heap,
     InvariantLifetime, ThreadLocalToken,

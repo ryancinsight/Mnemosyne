@@ -2,6 +2,16 @@
 
 ## Completed
 
+- [patch] Remove duplicate public cold-allocation defrag cadence charging after `ThreadAllocator::alloc_cold`; the cold refill now charges once at the owning allocator boundary.
+- [patch] Add GhostCell-style branded page-list mutation tokens for intrusive active/full/empty page lists, keeping page-list splice and push helpers zero-sized and allocator-permission-gated.
+- [patch] Add GhostCell-style branded owned-segment mutation tokens for the intrusive owned-segments list and a Miri-only owner-token fallback that avoids unsupported Windows inline assembly.
+- [patch] Carry one branded page-list token through empty-page recycling selection and unlink, preserving dirty-segment prioritization while reducing repeated token/unlink setup on `pop_best_empty_page`.
+- [patch] Reject page-local pop/bump helper consolidation in `alloc_class`/cold active-head retry because the monomorphized helper perturbed allocation-cycle codegen and exceeded selected cycle thresholds.
+- [patch] Reject current-segment minimum-block free shortcut because focused deallocation-only rows regressed despite improving one noisy small-cycle sample.
+- [patch] Reject skipping `initialize_free_list` for never-used fresh pages because the refill-row improvement regressed all selected allocation-cycle gates.
+- [patch] Reject direct full-page relink and layout-aware small-free experiments after measurement or invariant checks failed to support retaining them.
+- [patch] Restore first-class RpMalloc columns in `allocator_comparison.md` generation so rpmalloc benchmark rows are visible in the comparator table.
+- [patch] Reject active-page empty-`thread_free` guards after threshold enforcement showed cycle-latency regressions; keep the existing unconditional active-page reclaim path.
 - [patch] Make `nightly_tls` compiler-channel-aware so stable all-feature gates use the portable TLS provider and nightly compilers retain the `#[thread_local]` fast path.
 - [patch] Make `nightly_tls_active` build-script cfg generation rerun when `RUSTC` changes, preventing stale compiler-channel detection.
 - [patch] Maintain an allocator-local owned-segment count so segment reclaim and defragmentation threshold checks no longer rescan the owned list.
@@ -203,7 +213,12 @@
 - [patch] Charge periodic defragmentation cadence only when local free transitions actually make a page empty, removing sweep accounting from full-page-to-active transitions and closing `allocator deallocation latency/large_8192` versus jemalloc.
 - [patch] Keep current-segment occupancy-mask bits conservative across local frees, removing repeated mask clear/set traffic from hot small alloc/free reuse while preserving exact `alloc_count` authority.
 - [patch] Derive `usable_size` page indices from the already-computed segment base, removing the shifted-mask index path and refreshing the small usable-size comparator row.
+- [patch] Reject the `MAX_SMALL_ALLOC_SIZE` size-class boundary shortcut after the benchmark-summary threshold gate still reported `allocator cycle latency/small_32` above the retained 1.05 ratio despite large-cycle improvement.
+- [patch] Replace runtime size-class leading-zero arithmetic with a compile-time-generated `u8` table covering every small allocation size, reducing allocator cycle latency without adding type-specific APIs.
+- [patch] Update `melinoe` to the latest `main` commit resolved by Cargo (`85d498bb`, crate version `0.5.0`) and verify `mnemosyne-heap` against the current branded-token API.
+- [patch] Remove per-row `Vec` construction and allocator-name lowercase allocation from `benchmark_summary` allocator comparison generation by splitting benchmark names with borrowed `&str` slices and classifying allocators case-insensitively without allocation.
+- [minor] Make the top-level `mnemosyne` branded heap re-export an additive default feature and build allocator benchmarks with `default-features = false`, keeping the default public API unchanged while isolating global allocator latency runs from branded-heap dependency code layout.
 
 ## Next
 
-- [patch] Re-run focused Criterion rows for `usable size latency/small_32`, `threaded small allocation cycles`, and `threaded saturated small allocation cycles` under a quiescent environment; current summary extraction shows selected thresholds passing, public small cycle ahead of mimalloc, and remaining point-estimate gaps in combined usable-size and threaded rows.
+- [patch] Audit burst-retention memory behavior against RpMalloc after branded empty-page recycling reduced Mnemosyne burst rows; target the remaining `large_8192` allocation/deallocation disparity without touching small cycle hot paths.

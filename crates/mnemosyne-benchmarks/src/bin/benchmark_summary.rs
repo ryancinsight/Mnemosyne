@@ -147,32 +147,22 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
     let mut table: BTreeMap<(String, String), AllocatorComparison> = BTreeMap::new();
 
     for row in rows {
-        let parts: Vec<&str> = row.benchmark.split('/').collect();
-        let (group, allocator, sub_bench) = if parts.len() == 3 {
-            (
-                parts[0].to_string(),
-                parts[1].to_lowercase(),
-                parts[2].to_string(),
-            )
-        } else if parts.len() == 2 {
-            (
-                parts[0].to_string(),
-                parts[1].to_lowercase(),
-                "".to_string(),
-            )
-        } else {
+        let Some((group, allocator, sub_bench)) = split_allocator_benchmark(&row.benchmark) else {
             continue;
         };
 
-        let Some(kind) = classify_allocator(&allocator) else {
+        let Some(kind) = classify_allocator(allocator) else {
             continue;
         };
 
-        let entry = table.entry((group, sub_bench)).or_default();
+        let entry = table
+            .entry((group.to_owned(), sub_bench.to_owned()))
+            .or_default();
         match kind {
             AllocatorKind::Mnemosyne => entry.mnemosyne = Some(row.mean_ns),
             AllocatorKind::System => entry.system = Some(row.mean_ns),
             AllocatorKind::MiMalloc => entry.mimalloc = Some(row.mean_ns),
+            AllocatorKind::RpMalloc => entry.rpmalloc = Some(row.mean_ns),
             AllocatorKind::SnMalloc => entry.snmalloc = Some(row.mean_ns),
             AllocatorKind::Jemalloc => entry.jemalloc = Some(row.mean_ns),
         }
@@ -180,9 +170,9 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
 
     let mut markdown = String::new();
     markdown.push_str("# Allocator Performance Comparison\n\n");
-    markdown.push_str("| Benchmark | Mnemosyne (ns) | System (ns) | MiMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs System | Mnemosyne vs MiMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc |\n");
+    markdown.push_str("| Benchmark | Mnemosyne (ns) | System (ns) | MiMalloc (ns) | RpMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs System | Mnemosyne vs MiMalloc | Mnemosyne vs RpMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc |\n");
     markdown.push_str(
-        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n",
+        "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |\n",
     );
 
     println!("\nAllocator Comparisons (Current Run):");
@@ -190,11 +180,12 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
         "============================================================================================================================================"
     );
     println!(
-        "{:<45} {:<15} {:<15} {:<15} {:<15} {:<15}",
+        "{:<45} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15}",
         "Benchmark",
         "Mnemosyne (ns)",
         "System (ns)",
         "MiMalloc (ns)",
+        "RpMalloc (ns)",
         "SnMalloc (ns)",
         "Jemalloc (ns)"
     );
@@ -218,6 +209,9 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
         let mi_str = comparison
             .mimalloc
             .map_or("N/A".to_string(), |v| format!("{:.3}", v));
+        let rpm_str = comparison
+            .rpmalloc
+            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
         let sn_str = comparison
             .snmalloc
             .map_or("N/A".to_string(), |v| format!("{:.3}", v));
@@ -226,8 +220,8 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
             .map_or("N/A".to_string(), |v| format!("{:.3}", v));
 
         println!(
-            "{:<45} {:<15} {:<15} {:<15} {:<15} {:<15}",
-            name, mne_str, sys_str, mi_str, sn_str, je_str
+            "{:<45} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15}",
+            name, mne_str, sys_str, mi_str, rpm_str, sn_str, je_str
         );
 
         let vs_sys = match (comparison.mnemosyne, comparison.system) {
@@ -236,6 +230,10 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
         };
         let vs_mi = match (comparison.mnemosyne, comparison.mimalloc) {
             (Some(mn_v), Some(mi_v)) => format!("{:.2}x", mn_v / mi_v),
+            _ => "N/A".to_string(),
+        };
+        let vs_rpm = match (comparison.mnemosyne, comparison.rpmalloc) {
+            (Some(mn_v), Some(rpm_v)) => format!("{:.2}x", mn_v / rpm_v),
             _ => "N/A".to_string(),
         };
         let vs_sn = match (comparison.mnemosyne, comparison.snmalloc) {
@@ -247,8 +245,19 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
             _ => "N/A".to_string(),
         };
         markdown.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
-            name, mne_str, sys_str, mi_str, sn_str, je_str, vs_sys, vs_mi, vs_sn, vs_je
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            name,
+            mne_str,
+            sys_str,
+            mi_str,
+            rpm_str,
+            sn_str,
+            je_str,
+            vs_sys,
+            vs_mi,
+            vs_rpm,
+            vs_sn,
+            vs_je
         ));
     }
     println!(
@@ -261,23 +270,39 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
     Ok(())
 }
 
+fn split_allocator_benchmark(benchmark: &str) -> Option<(&str, &str, &str)> {
+    let (group, tail) = benchmark.split_once('/')?;
+    match tail.split_once('/') {
+        Some((allocator, sub_bench)) => Some((group, allocator, sub_bench)),
+        None => Some((group, tail, "")),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AllocatorKind {
     Mnemosyne,
     System,
     MiMalloc,
+    RpMalloc,
     SnMalloc,
     Jemalloc,
 }
 
 fn classify_allocator(allocator: &str) -> Option<AllocatorKind> {
-    match allocator {
-        "mnemosyne" => Some(AllocatorKind::Mnemosyne),
-        "system" => Some(AllocatorKind::System),
-        "mimalloc" => Some(AllocatorKind::MiMalloc),
-        "snmalloc" => Some(AllocatorKind::SnMalloc),
-        "jemalloc" => Some(AllocatorKind::Jemalloc),
-        _ => None,
+    if allocator.eq_ignore_ascii_case("mnemosyne") {
+        Some(AllocatorKind::Mnemosyne)
+    } else if allocator.eq_ignore_ascii_case("system") {
+        Some(AllocatorKind::System)
+    } else if allocator.eq_ignore_ascii_case("mimalloc") {
+        Some(AllocatorKind::MiMalloc)
+    } else if allocator.eq_ignore_ascii_case("rpmalloc") {
+        Some(AllocatorKind::RpMalloc)
+    } else if allocator.eq_ignore_ascii_case("snmalloc") {
+        Some(AllocatorKind::SnMalloc)
+    } else if allocator.eq_ignore_ascii_case("jemalloc") {
+        Some(AllocatorKind::Jemalloc)
+    } else {
+        None
     }
 }
 
@@ -286,6 +311,7 @@ struct AllocatorComparison {
     mnemosyne: Option<f64>,
     system: Option<f64>,
     mimalloc: Option<f64>,
+    rpmalloc: Option<f64>,
     snmalloc: Option<f64>,
     jemalloc: Option<f64>,
 }
@@ -753,12 +779,34 @@ mod tests {
     }
 
     #[test]
+    fn allocator_benchmark_split_handles_optional_sub_benchmark_without_vec() {
+        assert_eq!(
+            split_allocator_benchmark("allocator cycle latency/mnemosyne/small_32"),
+            Some(("allocator cycle latency", "mnemosyne", "small_32"))
+        );
+        assert_eq!(
+            split_allocator_benchmark("segment cache eviction/mnemosyne"),
+            Some(("segment cache eviction", "mnemosyne", ""))
+        );
+        assert_eq!(split_allocator_benchmark("malformed"), None);
+    }
+
+    #[test]
     fn allocator_classification_is_exact_not_substring_based() {
         assert_eq!(
             classify_allocator("mnemosyne"),
             Some(AllocatorKind::Mnemosyne)
         );
+        assert_eq!(
+            classify_allocator("Mnemosyne"),
+            Some(AllocatorKind::Mnemosyne)
+        );
         assert_eq!(classify_allocator("system"), Some(AllocatorKind::System));
+        assert_eq!(
+            classify_allocator("rpmalloc"),
+            Some(AllocatorKind::RpMalloc)
+        );
         assert_eq!(classify_allocator("notmnemosyne"), None);
+        assert_eq!(classify_allocator("notrpmalloc"), None);
     }
 }

@@ -11,6 +11,13 @@
 
 - Replace references to `mnemosyne::AllocatorToken` / `mnemosyne_heap::AllocatorToken` with `ThreadLocalToken`, and `Invariant` with `InvariantLifetime`. Code that obtains its token from the `branded_scope`/`scope` closure parameter needs no change (the token type is inferred).
 
+### Changed
+
+- Updated the `melinoe` lockfile resolution to `85d498bb` (`0.5.0`) and kept `mnemosyne-heap` as the single branded-token consumer.
+- Made top-level branded heap re-exports an optional default `mnemosyne/branded` feature. Default users keep the same API; allocator-only builds can disable default features to avoid linking unused branded heap machinery.
+- Replaced runtime size-class leading-zero arithmetic with a compile-time-generated `u8` lookup table for every small allocation size.
+- Removed per-row allocator-name `Vec` and lowercase allocations from `benchmark_summary` comparison generation by parsing benchmark names as borrowed slices and classifying allocators case-insensitively without allocation.
+
 ## 0.1.0
 
 ### Fixed

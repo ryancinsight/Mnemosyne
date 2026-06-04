@@ -1,7 +1,7 @@
 use crate::brand::{BrandedCell, ThreadLocalToken};
-use core::marker::PhantomData;
 use crate::BrandedVec;
 use core::alloc::Layout;
+use core::marker::PhantomData;
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::internal::HasSegmentPool;
 use mnemosyne_local::LocalAllocatorSelector;
