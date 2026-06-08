@@ -375,6 +375,7 @@ dependencies = [
  "mnemosyne-heap",
  "mnemosyne-local",
  "mnemosyne-prof",
+ "num-complex",
 ]
 
 [[package]]

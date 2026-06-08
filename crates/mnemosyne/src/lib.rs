@@ -340,3 +340,8 @@ unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
         unsafe { thread_realloc::<P, B>(ptr, layout, new_size) }
     }
 }
+
+/// Aligned scratch pool for temporary buffers.
+pub mod scratch {
+    pub use mnemosyne_arena::scratch::*;
+}

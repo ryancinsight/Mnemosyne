@@ -12,8 +12,10 @@ mnemosyne-core = { path = "../mnemosyne-core" }
 mnemosyne-hardened = { path = "../mnemosyne-hardened" }
 mnemosyne-decay = { path = "../mnemosyne-decay" }
 mnemosyne-prof = { path = "../mnemosyne-prof" }
+num-complex = { version = "0.4", optional = true }
 
 [features]
 default = ["branded"]
 branded = ["dep:mnemosyne-heap"]
 nightly_tls = ["mnemosyne-local/nightly_tls", "mnemosyne-prof/nightly_tls"]
+num-complex = ["dep:num-complex", "mnemosyne-arena/num-complex"]
