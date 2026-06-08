@@ -13,10 +13,14 @@
 
 ### Changed
 
+- Routed Rust `GlobalAlloc::dealloc` through a layout-aware small-free entry point that removes the large/huge classifier branch when the original `Layout` proves a small allocation; pointer-only `thread_free` remains the classifier-backed API for unknown-layout callers.
+- Fixed the combined usable-size benchmark harness so the fresh allocation pointer is consumed through `black_box` before `usable_size` and before `dealloc`. The prior helper let LLVM cross-optimize the allocation/query/free sequence and produced an inverted Mnemosyne row (`large_8192` faster than small/medium). Focused Criterion now reports `small/32` and `medium/1024` near `2.3 ns`, with `large/8192` near `5.2 ns`.
+- Added active RpMalloc benchmark coverage and reduced full-page local-free transition overhead by storing the proved owner allocator cache pointer on segments, avoiding redundant busy-bit writes for first frees from full pages, and moving full pages back to active pages with one branded list-token operation.
 - Updated the `melinoe` lockfile resolution to `85d498bb` (`0.5.0`) and kept `mnemosyne-heap` as the single branded-token consumer.
 - Made top-level branded heap re-exports an optional default `mnemosyne/branded` feature. Default users keep the same API; allocator-only builds can disable default features to avoid linking unused branded heap machinery.
 - Replaced runtime size-class leading-zero arithmetic with a compile-time-generated `u8` lookup table for every small allocation size.
-- Removed per-row allocator-name `Vec` and lowercase allocations from `benchmark_summary` comparison generation by parsing benchmark names as borrowed slices and classifying allocators case-insensitively without allocation.
+- Removed per-row allocator-name `Vec`, owned comparison-key, formatted-cell, lowercase, and Criterion path-normalization allocations from `benchmark_summary` by using borrowed slices, copy-sized display adapters, and direct writes into existing output buffers.
+- Removed profiler dump snapshot clones and intermediate symbol vectors: `dump_profile` and `dump_leaks` now borrow active samples shard-by-shard, reuse exact retained stack slices, and stream report output directly.
 
 ## 0.1.0
 

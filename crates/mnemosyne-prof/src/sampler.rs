@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 use std::collections::HashMap;
+use std::fmt::Write as FmtWrite;
 use std::io::Write;
 use std::sync::Mutex;
 
@@ -205,54 +206,15 @@ pub fn dump_profile(path: &str) -> std::io::Result<()> {
 }
 
 fn dump_profile_inner(path: &str) -> std::io::Result<()> {
-    let mut samples = Vec::new();
+    let mut folded: HashMap<String, usize> = HashMap::new();
     for shard in &ACTIVE_SAMPLES {
         let lock = shard
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(ref map) = *lock {
             for (_, sample) in map.iter() {
-                samples.push(sample.clone());
+                fold_sample_stack(sample, &mut folded);
             }
-        }
-    }
-
-    let mut folded: HashMap<String, usize> = HashMap::new();
-    for sample in samples {
-        let mut symbol_names = Vec::new();
-        for &ip in sample.stack.iter() {
-            let mut name_opt = None;
-            backtrace::resolve(ip as *mut c_void, |symbol| {
-                if let Some(name) = symbol.name() {
-                    name_opt = Some(name.to_string());
-                }
-            });
-            let name_str = match name_opt {
-                Some(name) => name,
-                None => format!("{:#x}", ip),
-            };
-            symbol_names.push(name_str);
-        }
-
-        symbol_names.reverse();
-
-        let mut filtered_symbols = Vec::new();
-        for sym in symbol_names {
-            if sym.contains("mnemosyne_prof")
-                || sym.contains("sample_alloc")
-                || sym.contains("on_alloc")
-                || sym.contains("thread_alloc")
-                || sym.contains("mnemosyne_heap::heap::Heap")
-                || sym.contains("backtrace::")
-            {
-                continue;
-            }
-            filtered_symbols.push(sym);
-        }
-
-        if !filtered_symbols.is_empty() {
-            let stack_str = filtered_symbols.join(";");
-            *folded.entry(stack_str).or_insert(0) += sample.size;
         }
     }
 
@@ -262,6 +224,42 @@ fn dump_profile_inner(path: &str) -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+fn fold_sample_stack(sample: &Sample, folded: &mut HashMap<String, usize>) {
+    let mut stack = String::new();
+    for &ip in sample.stack.iter().rev() {
+        let mut symbol = String::new();
+        backtrace::resolve(ip as *mut c_void, |resolved| {
+            if let Some(name) = resolved.name() {
+                let _ = write!(symbol, "{name}");
+            }
+        });
+        if symbol.is_empty() {
+            let _ = write!(symbol, "{ip:#x}");
+        }
+        if is_profiler_internal_symbol(&symbol) {
+            continue;
+        }
+        if !stack.is_empty() {
+            stack.push(';');
+        }
+        stack.push_str(&symbol);
+    }
+
+    if !stack.is_empty() {
+        *folded.entry(stack).or_insert(0) += sample.size;
+    }
+}
+
+#[inline]
+fn is_profiler_internal_symbol(symbol: &str) -> bool {
+    symbol.contains("mnemosyne_prof")
+        || symbol.contains("sample_alloc")
+        || symbol.contains("on_alloc")
+        || symbol.contains("thread_alloc")
+        || symbol.contains("mnemosyne_heap::heap::Heap")
+        || symbol.contains("backtrace::")
 }
 
 /// Dumps all active allocations (representing leaks) with their resolved stacks to a file.
@@ -280,59 +278,70 @@ pub fn dump_leaks(path: &str) -> std::io::Result<usize> {
 }
 
 fn dump_leaks_inner(path: &str) -> std::io::Result<usize> {
-    let mut samples = Vec::new();
+    let mut file = None;
+    let mut total_leaks = 0usize;
     for shard in &ACTIVE_SAMPLES {
         let lock = shard
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(ref map) = *lock {
             for (&ptr, sample) in map.iter() {
-                samples.push((ptr, sample.clone()));
-            }
-        }
-    }
-
-    if samples.is_empty() {
-        return Ok(0);
-    }
-
-    let mut file = std::fs::File::create(path)?;
-    writeln!(file, "Mnemosyne Leak Report:")?;
-    writeln!(file, "======================")?;
-
-    let total_leaks = samples.len();
-    for (ptr, sample) in &samples {
-        writeln!(file, "\nLeak of {} bytes at {:#x}:", sample.size, ptr)?;
-        for (idx, &ip) in sample.stack.iter().enumerate() {
-            let mut name_opt = None;
-            let mut filename_opt = None;
-            let mut line_opt = None;
-            backtrace::resolve(ip as *mut c_void, |symbol| {
-                if let Some(name) = symbol.name() {
-                    name_opt = Some(name.to_string());
-                }
-                if let Some(path_buf) = symbol.filename() {
-                    filename_opt = Some(path_buf.to_string_lossy().into_owned());
-                }
-                if let Some(line) = symbol.lineno() {
-                    line_opt = Some(line);
-                }
-            });
-
-            let name = name_opt.unwrap_or_else(|| format!("{:#x}", ip));
-            match (filename_opt, line_opt) {
-                (Some(file_path), Some(line)) => {
-                    writeln!(file, "  #{}: {} ({}:{})", idx, name, file_path, line)?;
-                }
-                (Some(file_path), None) => {
-                    writeln!(file, "  #{}: {} ({})", idx, name, file_path)?;
-                }
-                _ => {
-                    writeln!(file, "  #{}: {}", idx, name)?;
-                }
+                let file = leak_report_file(path, &mut file)?;
+                write_leak_sample(file, ptr, sample)?;
+                total_leaks += 1;
             }
         }
     }
 
     Ok(total_leaks)
+}
+
+fn leak_report_file<'a>(
+    path: &str,
+    file: &'a mut Option<std::fs::File>,
+) -> std::io::Result<&'a mut std::fs::File> {
+    if file.is_none() {
+        let mut created = std::fs::File::create(path)?;
+        write_leak_report_header(&mut created)?;
+        *file = Some(created);
+    }
+    match file.as_mut() {
+        Some(file) => Ok(file),
+        None => Err(std::io::Error::other(
+            "leak report file was not initialized",
+        )),
+    }
+}
+
+fn write_leak_report_header(file: &mut std::fs::File) -> std::io::Result<()> {
+    writeln!(file, "Mnemosyne Leak Report:")?;
+    writeln!(file, "======================")
+}
+
+fn write_leak_sample(file: &mut std::fs::File, ptr: usize, sample: &Sample) -> std::io::Result<()> {
+    writeln!(file, "\nLeak of {} bytes at {:#x}:", sample.size, ptr)?;
+    for (idx, &ip) in sample.stack.iter().enumerate() {
+        let mut name = String::new();
+        let mut file_path = String::new();
+        let mut line_opt = None;
+        backtrace::resolve(ip as *mut c_void, |symbol| {
+            if let Some(symbol_name) = symbol.name() {
+                let _ = write!(name, "{symbol_name}");
+            }
+            if let Some(path_buf) = symbol.filename() {
+                let _ = write!(file_path, "{}", path_buf.to_string_lossy());
+            }
+            line_opt = symbol.lineno();
+        });
+        if name.is_empty() {
+            let _ = write!(name, "{ip:#x}");
+        }
+
+        match (file_path.is_empty(), line_opt) {
+            (false, Some(line)) => writeln!(file, "  #{}: {} ({}:{})", idx, name, file_path, line)?,
+            (false, None) => writeln!(file, "  #{}: {} ({})", idx, name, file_path)?,
+            (true, _) => writeln!(file, "  #{}: {}", idx, name)?,
+        }
+    }
+    Ok(())
 }

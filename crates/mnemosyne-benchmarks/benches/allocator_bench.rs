@@ -266,7 +266,7 @@ unsafe fn alloc_dealloc<A: GlobalAlloc>(allocator: &A, layout: Layout) {
     // Safety: benchmark callers provide a valid `Layout`; null allocation
     // results are rejected before the pointer is handed back to `dealloc`.
     let ptr = require_allocated(allocator.alloc(black_box(layout)), "alloc_dealloc");
-    black_box(ptr);
+    let ptr = black_box(ptr);
     // Safety: `ptr` was returned by the same allocator for `layout` above.
     allocator.dealloc(ptr, layout);
 }
@@ -321,6 +321,7 @@ where
     // Safety: benchmark callers provide a valid `Layout`; null allocation
     // results are rejected before either usable-size probing or deallocation.
     let ptr = require_allocated(allocator.alloc(black_box(layout)), "alloc_usable_dealloc");
+    let ptr = black_box(ptr);
     let size = usable_size(ptr);
     if size < layout.size() {
         benchmark_failure(
@@ -330,7 +331,7 @@ where
     }
     black_box(size);
     // Safety: `ptr` was returned by the same allocator for `layout` above.
-    allocator.dealloc(ptr, layout);
+    allocator.dealloc(black_box(ptr), layout);
 }
 
 #[inline(always)]
@@ -615,6 +616,10 @@ fn bench_allocator_cycles(c: &mut Criterion) {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { alloc_dealloc(&mimalloc::MiMalloc, *layout) })
         });
+        group.bench_with_input(BenchmarkId::new("RpMalloc", name), &layout, |b, layout| {
+            // Safety: `layout` comes from the static valid benchmark layout table.
+            b.iter(|| unsafe { alloc_dealloc(&rpmalloc::RpMalloc, *layout) })
+        });
         group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { alloc_dealloc(&snmalloc_rs::SnMalloc, *layout) })
@@ -657,6 +662,13 @@ fn bench_allocator_alloc(c: &mut Criterion) {
             b.iter_batched(
                 || (),
                 |_| unsafe { AllocatedBlock::new(&mimalloc::MiMalloc, *layout, "alloc_only") },
+                BatchSize::SmallInput,
+            )
+        });
+        group.bench_with_input(BenchmarkId::new("RpMalloc", name), &layout, |b, layout| {
+            b.iter_batched(
+                || (),
+                |_| unsafe { AllocatedBlock::new(&rpmalloc::RpMalloc, *layout, "alloc_only") },
                 BatchSize::SmallInput,
             )
         });
@@ -715,6 +727,13 @@ fn bench_allocator_dealloc(c: &mut Criterion) {
                 BatchSize::SmallInput,
             )
         });
+        group.bench_with_input(BenchmarkId::new("RpMalloc", name), &layout, |b, layout| {
+            b.iter_batched(
+                || unsafe { require_allocated(rpmalloc::RpMalloc.alloc(*layout), "dealloc_only") },
+                |ptr| unsafe { dealloc_only(&rpmalloc::RpMalloc, ptr, *layout) },
+                BatchSize::SmallInput,
+            )
+        });
         group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
             b.iter_batched(
                 || unsafe {
@@ -759,6 +778,10 @@ fn bench_allocator_bursts(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("MiMalloc", name), &layout, |b, layout| {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { burst_alloc_dealloc(&mimalloc::MiMalloc, *layout) })
+        });
+        group.bench_with_input(BenchmarkId::new("RpMalloc", name), &layout, |b, layout| {
+            // Safety: `layout` comes from the static valid benchmark layout table.
+            b.iter(|| unsafe { burst_alloc_dealloc(&rpmalloc::RpMalloc, *layout) })
         });
         group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
             // Safety: `layout` comes from the static valid benchmark layout table.
@@ -943,6 +966,14 @@ fn bench_realloc(c: &mut Criterion) {
             },
         );
         group.bench_with_input(
+            BenchmarkId::new("RpMalloc", name),
+            &(layout, new_size),
+            |b, (layout, new_size)| {
+                // Safety: inputs come from the static valid benchmark layout table.
+                b.iter(|| unsafe { alloc_realloc_dealloc(&rpmalloc::RpMalloc, *layout, *new_size) })
+            },
+        );
+        group.bench_with_input(
             BenchmarkId::new("SnMalloc", name),
             &(layout, new_size),
             |b, (layout, new_size)| {
@@ -973,6 +1004,7 @@ fn bench_cross_thread_free(c: &mut Criterion) {
     static MNEMOSYNE: mnemosyne::Mnemosyne = mnemosyne::Mnemosyne;
     static SYSTEM: System = System;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+    static RPMALLOC: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
     #[cfg(jemalloc_available)]
     static JEMALLOC: bench_jemalloc::Jemalloc = bench_jemalloc::Jemalloc;
@@ -1008,6 +1040,12 @@ fn bench_cross_thread_free(c: &mut Criterion) {
         });
         drop(mimalloc_worker);
 
+        let rpmalloc_worker = HandoffWorker::new(&RPMALLOC);
+        group.bench_with_input(BenchmarkId::new("RpMalloc", name), &layout, |b, layout| {
+            b.iter(|| rpmalloc_worker.alloc_then_handoff(*layout, count))
+        });
+        drop(rpmalloc_worker);
+
         let snmalloc_worker = HandoffWorker::new(&SNMALLOC);
         group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
             b.iter(|| snmalloc_worker.alloc_then_handoff(*layout, count))
@@ -1039,6 +1077,7 @@ fn bench_multithreaded_alloc(c: &mut Criterion) {
     static MNEMOSYNE: mnemosyne::Mnemosyne = mnemosyne::Mnemosyne;
     static SYSTEM: System = System;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+    static RPMALLOC: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
     #[cfg(jemalloc_available)]
     static JEMALLOC: bench_jemalloc::Jemalloc = bench_jemalloc::Jemalloc;
@@ -1058,6 +1097,10 @@ fn bench_multithreaded_alloc(c: &mut Criterion) {
         let mimalloc_workers = ThreadCycleWorkers::new(&MIMALLOC, SMALL_LAYOUT);
         group.bench_function("MiMalloc", |b| b.iter(|| mimalloc_workers.run()));
         drop(mimalloc_workers);
+
+        let rpmalloc_workers = ThreadCycleWorkers::new(&RPMALLOC, SMALL_LAYOUT);
+        group.bench_function("RpMalloc", |b| b.iter(|| rpmalloc_workers.run()));
+        drop(rpmalloc_workers);
 
         let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, SMALL_LAYOUT);
         group.bench_function("SnMalloc", |b| b.iter(|| snmalloc_workers.run()));
@@ -1088,6 +1131,10 @@ fn bench_multithreaded_alloc(c: &mut Criterion) {
         group.bench_function("MiMalloc", |b| b.iter(|| mimalloc_workers.run()));
         drop(mimalloc_workers);
 
+        let rpmalloc_workers = ThreadCycleWorkers::new(&RPMALLOC, MEDIUM_LAYOUT);
+        group.bench_function("RpMalloc", |b| b.iter(|| rpmalloc_workers.run()));
+        drop(rpmalloc_workers);
+
         let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, MEDIUM_LAYOUT);
         group.bench_function("SnMalloc", |b| b.iter(|| snmalloc_workers.run()));
         drop(snmalloc_workers);
@@ -1106,6 +1153,7 @@ fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
     static MNEMOSYNE: mnemosyne::Mnemosyne = mnemosyne::Mnemosyne;
     static SYSTEM: System = System;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+    static RPMALLOC: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
     #[cfg(jemalloc_available)]
     static JEMALLOC: bench_jemalloc::Jemalloc = bench_jemalloc::Jemalloc;
@@ -1132,6 +1180,12 @@ fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
         b.iter(|| mimalloc_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
     });
     drop(mimalloc_workers);
+
+    let rpmalloc_workers = ThreadCycleWorkers::new(&RPMALLOC, SMALL_LAYOUT);
+    group.bench_function("RpMalloc", |b| {
+        b.iter(|| rpmalloc_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
+    });
+    drop(rpmalloc_workers);
 
     let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, SMALL_LAYOUT);
     group.bench_function("SnMalloc", |b| {

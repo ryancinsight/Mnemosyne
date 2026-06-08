@@ -2,6 +2,10 @@
 
 ## Completed
 
+- [patch] Prevent combined usable-size benchmark cross-optimization by consuming the allocated pointer through `black_box` before size query and deallocation, resolving the stale inverted small/medium/large ordering in `usable size latency`.
+- [patch] Add layout-proven `GlobalAlloc::dealloc` routing so Rust callers with the original `Layout` monomorphize out the large/huge free classifier for small allocations while preserving the pointer-only `thread_free` classifier for C-style and unknown-layout callers.
+- [patch] Outline active-profiler free-size accounting behind a cold helper so disabled profiling leaves the hot free path with only the existing activity guard.
+- [patch] Add active `rpmalloc::RpMalloc` benchmark coverage and reduce the `large_8192` deallocation row by stamping owner allocator cache pointers, bypassing the busy-bit write pair for first frees from full pages, and moving full pages back to active pages with one branded list token.
 - [patch] Remove duplicate public cold-allocation defrag cadence charging after `ThreadAllocator::alloc_cold`; the cold refill now charges once at the owning allocator boundary.
 - [patch] Add GhostCell-style branded page-list mutation tokens for intrusive active/full/empty page lists, keeping page-list splice and push helpers zero-sized and allocator-permission-gated.
 - [patch] Add GhostCell-style branded owned-segment mutation tokens for the intrusive owned-segments list and a Miri-only owner-token fallback that avoids unsupported Windows inline assembly.
@@ -216,9 +220,14 @@
 - [patch] Reject the `MAX_SMALL_ALLOC_SIZE` size-class boundary shortcut after the benchmark-summary threshold gate still reported `allocator cycle latency/small_32` above the retained 1.05 ratio despite large-cycle improvement.
 - [patch] Replace runtime size-class leading-zero arithmetic with a compile-time-generated `u8` table covering every small allocation size, reducing allocator cycle latency without adding type-specific APIs.
 - [patch] Update `melinoe` to the latest `main` commit resolved by Cargo (`85d498bb`, crate version `0.5.0`) and verify `mnemosyne-heap` against the current branded-token API.
-- [patch] Remove per-row `Vec` construction and allocator-name lowercase allocation from `benchmark_summary` allocator comparison generation by splitting benchmark names with borrowed `&str` slices and classifying allocators case-insensitively without allocation.
+- [patch] Remove per-row `Vec`, owned key, formatted-cell, and allocator-name lowercase allocations from `benchmark_summary` allocator comparison generation by splitting benchmark names with borrowed `&str` slices, keeping comparison keys borrowed, streaming cells through `Display`, and classifying allocators case-insensitively without allocation.
+- [patch] Remove profiler dump snapshot clones and intermediate symbol vectors by processing active sample maps under shard locks, borrowing exact boxed stack slices, streaming leak samples directly to the report file, and using scoped `Path::to_string_lossy` `Cow` values only at the output boundary.
 - [minor] Make the top-level `mnemosyne` branded heap re-export an additive default feature and build allocator benchmarks with `default-features = false`, keeping the default public API unchanged while isolating global allocator latency runs from branded-heap dependency code layout.
+
+## Open
+
+- [patch] Investigate the remaining `allocator deallocation latency/large_8192` gap to RpMalloc. Current retained comparison is Mnemosyne `40.909 ns` versus RpMalloc `6.871 ns` (`5.95x`); the residual work is in same-owner small-page full/active page-list transition cost and benchmark-row variance, not large/huge unmapping.
 
 ## Next
 
-- [patch] Audit burst-retention memory behavior against RpMalloc after branded empty-page recycling reduced Mnemosyne burst rows; target the remaining `large_8192` allocation/deallocation disparity without touching small cycle hot paths.
+- [patch] Reduce the remaining `allocator deallocation latency/large_8192` gap to RpMalloc by isolating owner-validation and page-state transition costs in the same-owner 8 KiB small-page free path without weakening cross-thread free handoff or cycle-latency thresholds.

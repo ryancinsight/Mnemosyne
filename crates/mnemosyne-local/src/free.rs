@@ -2,7 +2,9 @@ use crate::per_cpu;
 use crate::{poison_freed_bytes, LocalAllocatorSelector, ThreadAllocator};
 use core::ptr::NonNull;
 use mnemosyne_arena::{deallocate_large_or_huge, HasSegmentPool};
-use mnemosyne_core::constants::{PAGES_PER_SEGMENT, PAGE_SHIFT, PAGE_SIZE, SEGMENT_SIZE};
+use mnemosyne_core::constants::{
+    MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT, PAGE_SIZE, SEGMENT_SIZE,
+};
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::types::{Block, Page, Segment};
 
@@ -13,6 +15,40 @@ use mnemosyne_core::types::{Block, Page, Segment};
 /// The ptr must be valid and must have been returned by a previous allocation.
 #[inline(always)]
 pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+    ptr: *mut u8,
+) {
+    unsafe { thread_free_classified::<P, B, false>(ptr) }
+}
+
+/// Frees a memory block when the caller has a valid Rust `Layout`.
+///
+/// The layout-proven small path monomorphizes out the large/huge classifier
+/// branch while retaining the raw `thread_free` fallback for large, huge, or
+/// unusual-alignment allocations.
+///
+/// # Safety
+///
+/// Same contract as [`thread_free`], and `size`/`align` must come from the
+/// original allocation layout.
+#[inline(always)]
+pub unsafe fn thread_free_layout<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+    ptr: *mut u8,
+    size: usize,
+    align: usize,
+) {
+    if size != 0 && size <= MAX_SMALL_ALLOC_SIZE && align <= MIN_BLOCK_SIZE {
+        unsafe { thread_free_classified::<P, B, true>(ptr) };
+    } else {
+        unsafe { thread_free_classified::<P, B, false>(ptr) };
+    }
+}
+
+#[inline(always)]
+unsafe fn thread_free_classified<
+    P: AllocPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+    const LAYOUT_PROVES_SMALL: bool,
+>(
     ptr: *mut u8,
 ) {
     if ptr.is_null() {
@@ -27,21 +63,10 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
 
     let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
     if mnemosyne_prof::is_active() {
-        let size = if page_index == 0 || page.block_size == 0 {
-            let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-            let size = unsafe { (*segment).pages[0].alloc_count };
-            if size > 0 {
-                size
-            } else {
-                unsafe { (*segment).huge_mapping_suffix_from(ptr) }
-            }
-        } else {
-            page.block_size
-        };
-        mnemosyne_prof::on_free(ptr, size);
+        unsafe { record_free_profile(ptr, page, page_index) };
     }
 
-    if page.block_size == 0 {
+    if !LAYOUT_PROVES_SMALL && page.block_size == 0 {
         if P::ENABLE_POISONING {
             let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
             let size = unsafe { (*segment).pages[0].alloc_count };
@@ -98,8 +123,12 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
         } else {
             0
         };
-        let is_not_full = page.list_state != 2;
-        if is_not_full && (page_alloc_count != 1 || unsafe { (*segment).is_current }) {
+        let can_free_in_place = if page_alloc_count == 1 {
+            unsafe { (*segment).is_current }
+        } else {
+            page.list_state != 2
+        };
+        if can_free_in_place {
             unsafe {
                 (*block).set_next::<P>(page_free, cookie);
                 page.free = Some(NonNull::new_unchecked(block));
@@ -108,9 +137,13 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
             return;
         }
 
-        let current_allocator = B::get_allocator_ptr_raw();
-        if !current_allocator.is_null() {
-            let alloc = unsafe { &mut *(current_allocator as *mut ThreadAllocator<B>) };
+        let owner_allocator = unsafe { (*segment).owner_allocator };
+        if !owner_allocator.is_null() {
+            let alloc = unsafe { &mut *(owner_allocator as *mut ThreadAllocator<B>) };
+            if page.list_state == 2 && page_alloc_count != 1 && !alloc.is_allocating {
+                do_local_free_internal::<P, B>(alloc, block, page, segment, page_index);
+                return;
+            }
             if !alloc.is_allocating {
                 alloc.is_allocating = true;
                 let became_empty =
@@ -127,6 +160,23 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
     }
 
     unsafe { thread_free_cold::<P, B>(ptr, page, block) };
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn record_free_profile(ptr: *mut u8, page: &Page, page_index: usize) {
+    let size = if page_index == 0 || page.block_size == 0 {
+        let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+        let size = unsafe { (*segment).pages[0].alloc_count };
+        if size > 0 {
+            size
+        } else {
+            unsafe { (*segment).huge_mapping_suffix_from(ptr) }
+        }
+    } else {
+        page.block_size
+    };
+    mnemosyne_prof::on_free(ptr, size);
 }
 
 #[cold]
@@ -174,10 +224,9 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
 
     if was_full {
         let class = page.size_class as usize;
-        if alloc.unlink_full_page(page as *mut Page, class) {
-            unsafe {
-                alloc.push_active_page(NonNull::new_unchecked(page as *mut Page), class);
-            }
+        let page_ptr = unsafe { NonNull::new_unchecked(page as *mut Page) };
+        unsafe {
+            let _ = alloc.move_full_page_to_active(page_ptr, class);
         }
     }
     if becomes_empty && !alloc.is_current_segment(segment) {

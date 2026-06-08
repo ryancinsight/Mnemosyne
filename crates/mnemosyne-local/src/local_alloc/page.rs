@@ -220,6 +220,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     }
 
     /// Helper to unlink a page specifically from the full pages list of a class.
+    #[cfg(test)]
     #[inline]
     #[must_use]
     pub(crate) unsafe fn unlink_full_page(&mut self, page_ptr: *mut Page, class: usize) -> bool {
@@ -242,6 +243,40 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         } else {
             false
         }
+    }
+
+    /// Moves a linked full page back to the active list for `class`.
+    ///
+    /// This is the same metadata transition as `unlink_full_page` followed by
+    /// `push_active_page`, but it carries one page-list token through both
+    /// operations. The caller must already have allocator-list authority.
+    #[inline(always)]
+    #[must_use]
+    pub(crate) unsafe fn move_full_page_to_active(
+        &mut self,
+        page_ptr: NonNull<Page>,
+        class: usize,
+    ) -> bool {
+        debug_assert!(class < NUM_SIZE_CLASSES);
+        if page_ptr.as_ref().list_state != 2 {
+            return false;
+        }
+        with_page_list_token::<B, _>(|mut token| {
+            let page = unsafe { token.page(page_ptr) };
+            unsafe {
+                unlink_page_from_list(&mut token, self.full_pages.get_unchecked_mut(class), page)
+            };
+            let page = unsafe { token.page(page_ptr) };
+            unsafe {
+                push_page_front(
+                    &mut token,
+                    self.active_pages.get_unchecked_mut(class),
+                    page,
+                    1,
+                )
+            };
+        });
+        true
     }
 
     /// Helper to unlink a page from the active pages or full pages list of a class.

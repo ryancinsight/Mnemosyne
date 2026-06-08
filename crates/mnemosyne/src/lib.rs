@@ -4,7 +4,9 @@
 
 use core::alloc::{GlobalAlloc, Layout};
 use mnemosyne_core::NUM_SIZE_CLASSES;
-use mnemosyne_local::{thread_alloc_layout, thread_free, thread_realloc, LocalAllocatorSelector};
+use mnemosyne_local::{
+    thread_alloc_layout, thread_free_layout, thread_realloc, LocalAllocatorSelector,
+};
 
 pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
 pub use mnemosyne_core::{options::MnemosyneOptions, AllocPolicy, StandardPolicy};
@@ -229,10 +231,16 @@ unsafe impl GlobalAlloc for Mnemosyne {
     // Safety: The ptr must be valid and previously returned by alloc.
     // thread_free determines the owner segment/page and returns blocks safely.
     #[inline(always)]
-    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         // Safety: thread_free is safe because ptr is guaranteed by the GlobalAlloc
         // contract to be a valid pointer allocated by this allocator.
-        unsafe { thread_free::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(ptr) }
+        unsafe {
+            thread_free_layout::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
+                ptr,
+                layout.size(),
+                layout.align(),
+            )
+        }
     }
 
     /// In-place `realloc` shortcut for within-class size changes.
@@ -312,10 +320,10 @@ unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
     // Safety: The ptr must be valid and previously returned by alloc.
     // thread_free determines the owner segment/page and returns blocks safely.
     #[inline(always)]
-    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         // Safety: thread_free is safe because ptr is guaranteed by the GlobalAlloc
         // contract to be a valid pointer allocated by this allocator.
-        unsafe { thread_free::<P, B>(ptr) }
+        unsafe { thread_free_layout::<P, B>(ptr, layout.size(), layout.align()) }
     }
 
     /// In-place `realloc` shortcut. See `Mnemosyne::realloc` for the

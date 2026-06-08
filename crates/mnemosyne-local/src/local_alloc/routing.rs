@@ -156,8 +156,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         // Page is no longer full! Move it back to active list.
                         // Safety: page_ptr and class are valid.
                         unsafe {
-                            let _removed = self.unlink_full_page(page_ptr.as_ptr(), class);
-                            self.push_active_page(page_ptr, class);
+                            let _ = self.move_full_page_to_active(page_ptr, class);
                         }
                     }
                     return block.as_ptr() as *mut u8;

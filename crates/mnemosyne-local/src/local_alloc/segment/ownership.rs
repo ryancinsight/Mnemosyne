@@ -140,12 +140,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             };
             unsafe {
                 (*segment).owner = SegmentOwner::from_thread_id(tid);
+                (*segment).owner_allocator = (self as *mut ThreadAllocator<B>).cast();
             }
         }
         #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
         {
             unsafe {
                 (*segment).owner = SegmentOwner::from_ptr(self as *mut ThreadAllocator<B>);
+                (*segment).owner_allocator = (self as *mut ThreadAllocator<B>).cast();
             }
         }
         with_owned_segment_token::<B, _>(|mut token| {

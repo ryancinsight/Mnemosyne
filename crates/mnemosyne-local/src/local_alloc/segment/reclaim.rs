@@ -29,6 +29,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 }
 
                 (*curr).owner = SegmentOwner::NONE;
+                (*curr).owner_allocator = core::ptr::null_mut();
                 (*curr).is_current = false;
                 (*curr).next_owned_segment = core::ptr::null_mut();
                 (*curr).prev_owned_segment = core::ptr::null_mut();
@@ -99,6 +100,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         unsafe {
             (*segment).owner = SegmentOwner::NONE;
+            (*segment).owner_allocator = core::ptr::null_mut();
             (*segment).next_owned_segment = core::ptr::null_mut();
             deallocate_segment::<B>(segment);
         }
@@ -162,6 +164,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     unlink_segment_pages(self, segment);
                     self.unlink_owned_segment(segment);
                     (*segment).owner = SegmentOwner::NONE;
+                    (*segment).owner_allocator = core::ptr::null_mut();
                     (*segment).next_owned_segment = core::ptr::null_mut();
                     deallocate_segment::<B>(segment);
                 }

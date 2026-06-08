@@ -1,4 +1,6 @@
 use serde_json::Value;
+use std::fmt;
+use std::fmt::Write as FmtWrite;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
@@ -144,7 +146,7 @@ fn missing_selected_benchmarks(rows: &[SummaryRow]) -> Vec<&'static str> {
 fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
     use std::collections::BTreeMap;
 
-    let mut table: BTreeMap<(String, String), AllocatorComparison> = BTreeMap::new();
+    let mut table: BTreeMap<(&str, &str), AllocatorComparison> = BTreeMap::new();
 
     for row in rows {
         let Some((group, allocator, sub_bench)) = split_allocator_benchmark(&row.benchmark) else {
@@ -155,9 +157,7 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
             continue;
         };
 
-        let entry = table
-            .entry((group.to_owned(), sub_bench.to_owned()))
-            .or_default();
+        let entry = table.entry((group, sub_bench)).or_default();
         match kind {
             AllocatorKind::Mnemosyne => entry.mnemosyne = Some(row.mean_ns),
             AllocatorKind::System => entry.system = Some(row.mean_ns),
@@ -194,71 +194,36 @@ fn print_and_save_allocator_comparison(rows: &[SummaryRow]) -> io::Result<()> {
     );
 
     for ((group, sub_bench), comparison) in &table {
-        let name = if sub_bench.is_empty() {
-            group.clone()
-        } else {
-            format!("{}/{}", group, sub_bench)
-        };
-
-        let mne_str = comparison
-            .mnemosyne
-            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
-        let sys_str = comparison
-            .system
-            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
-        let mi_str = comparison
-            .mimalloc
-            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
-        let rpm_str = comparison
-            .rpmalloc
-            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
-        let sn_str = comparison
-            .snmalloc
-            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
-        let je_str = comparison
-            .jemalloc
-            .map_or("N/A".to_string(), |v| format!("{:.3}", v));
+        let name = BenchmarkName { group, sub_bench };
+        let mnemosyne = NumericCell(comparison.mnemosyne);
+        let system = NumericCell(comparison.system);
+        let mimalloc = NumericCell(comparison.mimalloc);
+        let rpmalloc = NumericCell(comparison.rpmalloc);
+        let snmalloc = NumericCell(comparison.snmalloc);
+        let jemalloc = NumericCell(comparison.jemalloc);
 
         println!(
             "{:<45} {:<15} {:<15} {:<15} {:<15} {:<15} {:<15}",
-            name, mne_str, sys_str, mi_str, rpm_str, sn_str, je_str
+            name, mnemosyne, system, mimalloc, rpmalloc, snmalloc, jemalloc
         );
 
-        let vs_sys = match (comparison.mnemosyne, comparison.system) {
-            (Some(mn_v), Some(sys_v)) => format!("{:.2}x", mn_v / sys_v),
-            _ => "N/A".to_string(),
-        };
-        let vs_mi = match (comparison.mnemosyne, comparison.mimalloc) {
-            (Some(mn_v), Some(mi_v)) => format!("{:.2}x", mn_v / mi_v),
-            _ => "N/A".to_string(),
-        };
-        let vs_rpm = match (comparison.mnemosyne, comparison.rpmalloc) {
-            (Some(mn_v), Some(rpm_v)) => format!("{:.2}x", mn_v / rpm_v),
-            _ => "N/A".to_string(),
-        };
-        let vs_sn = match (comparison.mnemosyne, comparison.snmalloc) {
-            (Some(mn_v), Some(sn_v)) => format!("{:.2}x", mn_v / sn_v),
-            _ => "N/A".to_string(),
-        };
-        let vs_je = match (comparison.mnemosyne, comparison.jemalloc) {
-            (Some(mn_v), Some(je_v)) => format!("{:.2}x", mn_v / je_v),
-            _ => "N/A".to_string(),
-        };
-        markdown.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        writeln!(
+            markdown,
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             name,
-            mne_str,
-            sys_str,
-            mi_str,
-            rpm_str,
-            sn_str,
-            je_str,
-            vs_sys,
-            vs_mi,
-            vs_rpm,
-            vs_sn,
-            vs_je
-        ));
+            mnemosyne,
+            system,
+            mimalloc,
+            rpmalloc,
+            snmalloc,
+            jemalloc,
+            RatioCell(comparison.mnemosyne, comparison.system),
+            RatioCell(comparison.mnemosyne, comparison.mimalloc),
+            RatioCell(comparison.mnemosyne, comparison.rpmalloc),
+            RatioCell(comparison.mnemosyne, comparison.snmalloc),
+            RatioCell(comparison.mnemosyne, comparison.jemalloc)
+        )
+        .expect("writing allocator comparison markdown into String cannot fail");
     }
     println!(
         "============================================================================================================================================\n"
@@ -314,6 +279,46 @@ struct AllocatorComparison {
     rpmalloc: Option<f64>,
     snmalloc: Option<f64>,
     jemalloc: Option<f64>,
+}
+
+#[derive(Clone, Copy)]
+struct BenchmarkName<'a> {
+    group: &'a str,
+    sub_bench: &'a str,
+}
+
+impl fmt::Display for BenchmarkName<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.sub_bench.is_empty() {
+            f.write_str(self.group)
+        } else {
+            write!(f, "{}/{}", self.group, self.sub_bench)
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NumericCell(Option<f64>);
+
+impl fmt::Display for NumericCell {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(value) => write!(f, "{value:.3}"),
+            None => f.write_str("N/A"),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RatioCell(Option<f64>, Option<f64>);
+
+impl fmt::Display for RatioCell {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (self.0, self.1) {
+            (Some(mnemosyne), Some(other)) => write!(f, "{:.2}x", mnemosyne / other),
+            _ => f.write_str("N/A"),
+        }
+    }
 }
 
 fn write_metadata_json(path: &str) -> io::Result<()> {
@@ -638,10 +643,14 @@ fn benchmark_name(path: &Path) -> String {
 }
 
 fn normalize_path(path: &Path) -> String {
-    path.components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
+    let mut normalized = String::new();
+    for component in path.components() {
+        if !normalized.is_empty() {
+            normalized.push('/');
+        }
+        normalized.push_str(&component.as_os_str().to_string_lossy());
+    }
+    normalized
 }
 
 fn escape_csv(value: &str) -> String {
@@ -789,6 +798,18 @@ mod tests {
             Some(("segment cache eviction", "mnemosyne", ""))
         );
         assert_eq!(split_allocator_benchmark("malformed"), None);
+    }
+
+    #[test]
+    fn normalize_path_joins_components_without_intermediate_vec() {
+        let path = Path::new("allocator cycle latency")
+            .join("mnemosyne")
+            .join("large_8192");
+
+        assert_eq!(
+            normalize_path(&path),
+            "allocator cycle latency/mnemosyne/large_8192"
+        );
     }
 
     #[test]

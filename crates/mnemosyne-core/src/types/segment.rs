@@ -12,6 +12,8 @@ pub struct Segment {
     pub raw_alloc_ptr: *mut u8,
     /// Permission identity for the owner ThreadAllocator cache.
     pub owner: SegmentOwner,
+    /// Raw owner allocator cache pointer used after ownership has been proved.
+    pub owner_allocator: *mut core::ffi::c_void,
     /// True while this segment is the owner's active page-slicing segment.
     pub is_current: bool,
     /// Pointer to the next segment owned by the same ThreadAllocator.
@@ -60,6 +62,7 @@ impl Segment {
             let segment = &mut *aligned_ptr;
             segment.raw_alloc_ptr = raw_alloc_ptr;
             segment.owner = SegmentOwner::NONE;
+            segment.owner_allocator = core::ptr::null_mut();
             segment.is_current = false;
             segment.next_owned_segment = core::ptr::null_mut();
             segment.prev_owned_segment = core::ptr::null_mut();

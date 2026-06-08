@@ -24,7 +24,7 @@ mod validation;
 mod tests;
 
 pub use alloc::{thread_alloc, thread_alloc_layout};
-pub use free::thread_free;
+pub use free::{thread_free, thread_free_layout};
 pub use local_alloc::{SizeClassOccupancy, ThreadAllocator, ThreadAllocatorStats};
 pub use options::{
     ensure_options_initialized, mark_options_initialized, reset_options_for_testing,
@@ -49,7 +49,7 @@ pub mod internal {
     pub use crate::ThreadAllocator;
     pub use crate::{
         do_local_free_internal, initialize_allocated_bytes, poison_freed_bytes,
-        small_realloc_fits_existing_class,
+        small_realloc_fits_existing_class, thread_free_layout,
     };
     pub use core::alloc::Layout;
     pub use core::ptr::NonNull;
