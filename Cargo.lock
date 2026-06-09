@@ -757,8 +757,8 @@ dependencies = [
 
 [[package]]
 name = "themis"
-version = "0.4.0"
-source = "git+https://github.com/ryancinsight/themis#8993ff45f98c83088a79d4f337683c67425b312b"
+version = "0.5.0"
+source = "git+https://github.com/ryancinsight/themis#9a54a4ea681399ee5b84e1b54f24654ad69c68c9"
 dependencies = [
  "melinoe",
 ]

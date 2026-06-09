@@ -1,4 +1,15 @@
 use mnemosyne_core::types::Segment;
+use themis::NumaNodeId;
+
+const NUMA_BUCKETS: usize = 16;
+const HUGE_SIZE_BUCKETS: usize = 16;
+
+#[inline(always)]
+fn numa_bucket(node: usize) -> usize {
+    NumaNodeId::new(node as u32)
+        .bucket_index::<NUMA_BUCKETS>()
+        .index()
+}
 
 /// A single lock-free size-bucket for cached huge allocations.
 pub struct NodeHugeBucket {
@@ -23,9 +34,9 @@ impl NodeHugeBucket {
     }
 }
 
-/// A lock-free pool of cached huge allocations for a single NUMA node, divided into 16 size-buckets.
+/// A lock-free pool of cached huge allocations for a single NUMA node.
 pub struct NodeHugePool {
-    pub(crate) buckets: [NodeHugeBucket; 16],
+    pub(crate) buckets: [NodeHugeBucket; HUGE_SIZE_BUCKETS],
     pub(crate) total_count: core::sync::atomic::AtomicUsize,
 }
 
@@ -65,14 +76,14 @@ impl NodeHugePool {
 
 /// A NUMA-aware lock-free global pool of free huge allocations.
 pub struct GlobalHugePool {
-    nodes: [NodeHugePool; 16],
+    nodes: [NodeHugePool; NUMA_BUCKETS],
 }
 
 #[inline(always)]
 fn huge_bucket_index(size: usize) -> usize {
     let mb = size >> 20;
-    if mb >= 16 {
-        15
+    if mb >= HUGE_SIZE_BUCKETS {
+        HUGE_SIZE_BUCKETS - 1
     } else {
         mb
     }
@@ -128,7 +139,7 @@ impl GlobalHugePool {
             return false;
         }
 
-        let node = numa_node % 16;
+        let node = numa_bucket(numa_node);
         let bucket_idx = huge_bucket_index(size);
         let pool_node = &self.nodes[node];
         let bucket = &pool_node.buckets[bucket_idx];
@@ -176,7 +187,7 @@ impl GlobalHugePool {
         size: usize,
         numa_node: usize,
     ) -> Option<*mut Segment> {
-        let start_node = numa_node % 16;
+        let start_node = numa_bucket(numa_node);
         let bucket_idx = huge_bucket_index(size);
 
         // 1. Try local NUMA node first
@@ -191,8 +202,9 @@ impl GlobalHugePool {
         }
 
         // 2. Steal from other nodes
-        for i in 1..16 {
-            let other_node = (start_node + i) % 16;
+        let start = NumaNodeId::new(start_node as u32).bucket_index::<NUMA_BUCKETS>();
+        for i in 1..NUMA_BUCKETS {
+            let other_node = start.wrapping_add(i).index();
             if self.nodes[other_node]
                 .total_count
                 .load(core::sync::atomic::Ordering::Relaxed)
@@ -223,7 +235,7 @@ impl GlobalHugePool {
             return None;
         }
 
-        for bucket_idx in start_bucket..16 {
+        for bucket_idx in start_bucket..HUGE_SIZE_BUCKETS {
             let bucket = &pool_node.buckets[bucket_idx];
             let mut head = bucket.head.load(core::sync::atomic::Ordering::Acquire);
             loop {
@@ -286,12 +298,12 @@ impl GlobalHugePool {
     /// The caller must ensure that the backend `B` is valid and that no threads
     /// are concurrently accessing the purged memory or segment pointers.
     pub unsafe fn purge<B: mnemosyne_core::MemoryBackend>(&self) {
-        for node in 0..16 {
+        for node in 0..NUMA_BUCKETS {
             let pool_node = &self.nodes[node];
             pool_node
                 .total_count
                 .store(0, core::sync::atomic::Ordering::Relaxed);
-            for bucket_idx in 0..16 {
+            for bucket_idx in 0..HUGE_SIZE_BUCKETS {
                 let bucket = &pool_node.buckets[bucket_idx];
                 let mut head = bucket
                     .head
