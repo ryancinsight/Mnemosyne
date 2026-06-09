@@ -353,6 +353,13 @@ impl<T: ScratchElement> ScratchPool<T> {
     pub fn borrow_depth(&self) -> u8 {
         self.borrow_depth.get()
     }
+
+    /// Returns the capacity of the first slot (primary buffer).
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        // SAFETY: reading capacity is safe.
+        unsafe { (*self.slots[0].get()).capacity() }
+    }
 }
 
 /// Default alignment constant for external consumers.
