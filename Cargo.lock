@@ -758,7 +758,10 @@ dependencies = [
 [[package]]
 name = "themis"
 version = "0.1.0"
-source = "git+https://github.com/ryancinsight/themis#2b177959ffba43578b06c2cd8e49ebdfc040f60d"
+source = "git+https://github.com/ryancinsight/themis#0c6ae2f464f42c68984881e599c90353db27d7f5"
+dependencies = [
+ "melinoe",
+]
 
 [[package]]
 name = "tikv-jemalloc-sys"
