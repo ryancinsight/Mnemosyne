@@ -137,6 +137,48 @@ pub(crate) unsafe fn unlink_page_from_list<'id, B: HasSegmentPool>(
     page.list_state = 0;
 }
 
+/// Moves a page from full pages list to active pages list using a single-pass unlink and push.
+///
+/// # Safety
+///
+/// `page_ptr` must be branded and currently linked in the `full_head_slot` list.
+#[inline(always)]
+pub(crate) unsafe fn move_full_page_to_active_branded<'id, B: HasSegmentPool>(
+    token: &mut PageListToken<'id, B>,
+    full_head_slot: &mut Option<NonNull<Page>>,
+    active_head_slot: &mut Option<NonNull<Page>>,
+    page_ptr: BrandedPage<'id>,
+) {
+    let mut raw_page = page_ptr.ptr();
+    let page = unsafe { raw_page.as_mut() };
+    let next = page.next_page;
+    let prev = page.prev_page;
+
+    // Unlink page from full_pages list
+    if let Some(mut prev_ptr) = prev {
+        let _prev = unsafe { token.page(prev_ptr) };
+        prev_ptr.as_mut().next_page = next;
+    } else {
+        *full_head_slot = next;
+    }
+
+    if let Some(mut next_ptr) = next {
+        let _next = unsafe { token.page(next_ptr) };
+        next_ptr.as_mut().prev_page = prev;
+    }
+
+    // Push page to the front of active_pages list
+    let head = *active_head_slot;
+    page.next_page = head;
+    page.prev_page = None;
+    if let Some(mut head_ptr) = head {
+        let _head = unsafe { token.page(head_ptr) };
+        head_ptr.as_mut().prev_page = Some(raw_page);
+    }
+    *active_head_slot = Some(raw_page);
+    page.list_state = 1;
+}
+
 /// Reclaims any pending cross-thread frees on `page` and, if reclamation
 /// added blocks to the local free list, pops one block and increments the
 /// page's `alloc_count`.
@@ -262,35 +304,15 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             return false;
         }
         with_page_list_token::<B, _>(|mut token| {
-            let page = unsafe { &mut *page_ptr.as_ptr() };
-            let next = page.next_page;
-            let prev = page.prev_page;
-
-            // Unlink page from full_pages list
-            let full_head = unsafe { self.full_pages.get_unchecked_mut(class) };
-            if let Some(mut prev_ptr) = prev {
-                let _prev = unsafe { token.page(prev_ptr) };
-                unsafe { prev_ptr.as_mut().next_page = next };
-            } else {
-                *full_head = next;
+            let page = unsafe { token.page(page_ptr) };
+            unsafe {
+                move_full_page_to_active_branded(
+                    &mut token,
+                    self.full_pages.get_unchecked_mut(class),
+                    self.active_pages.get_unchecked_mut(class),
+                    page,
+                );
             }
-
-            if let Some(mut next_ptr) = next {
-                let _next = unsafe { token.page(next_ptr) };
-                unsafe { next_ptr.as_mut().prev_page = prev };
-            }
-
-            // Push page to the front of active_pages list
-            let active_head = unsafe { self.active_pages.get_unchecked_mut(class) };
-            let head = *active_head;
-            page.next_page = head;
-            page.prev_page = None;
-            if let Some(mut head_ptr) = head {
-                let _head = unsafe { token.page(head_ptr) };
-                unsafe { head_ptr.as_mut().prev_page = Some(page_ptr) };
-            }
-            *active_head = Some(page_ptr);
-            page.list_state = 1;
         });
         true
     }

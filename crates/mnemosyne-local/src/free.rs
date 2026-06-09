@@ -1,4 +1,6 @@
-use crate::local_alloc::page::{push_page_front, unlink_page_from_list, with_page_list_token};
+use crate::local_alloc::page::{
+    move_full_page_to_active_branded, push_page_front, unlink_page_from_list, with_page_list_token,
+};
 use crate::per_cpu;
 use crate::{poison_freed_bytes, LocalAllocatorSelector, ThreadAllocator};
 use core::ptr::NonNull;
@@ -239,8 +241,12 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
             } else {
                 // Case 2: Went from full to active
                 unsafe {
-                    unlink_page_from_list(&mut token, alloc.full_pages.get_unchecked_mut(class), branded_page);
-                    push_page_front(&mut token, alloc.active_pages.get_unchecked_mut(class), branded_page, 1);
+                    move_full_page_to_active_branded(
+                        &mut token,
+                        alloc.full_pages.get_unchecked_mut(class),
+                        alloc.active_pages.get_unchecked_mut(class),
+                        branded_page,
+                    );
                 }
             }
         } else if becomes_empty && !alloc.is_current_segment(segment) {
