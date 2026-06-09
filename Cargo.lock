@@ -385,6 +385,7 @@ dependencies = [
  "mnemosyne-backend",
  "mnemosyne-core",
  "num-complex",
+ "themis",
 ]
 
 [[package]]
@@ -753,6 +754,11 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
+
+[[package]]
+name = "themis"
+version = "0.1.0"
+source = "git+https://github.com/ryancinsight/themis#2b177959ffba43578b06c2cd8e49ebdfc040f60d"
 
 [[package]]
 name = "tikv-jemalloc-sys"
