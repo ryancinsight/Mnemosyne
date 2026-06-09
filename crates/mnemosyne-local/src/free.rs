@@ -1,3 +1,4 @@
+use crate::local_alloc::page::{push_page_front, unlink_page_from_list, with_page_list_token};
 use crate::per_cpu;
 use crate::{poison_freed_bytes, LocalAllocatorSelector, ThreadAllocator};
 use core::ptr::NonNull;
@@ -7,6 +8,7 @@ use mnemosyne_core::constants::{
 };
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::types::{Block, Page, Segment};
+
 
 /// Frees a memory block.
 ///
@@ -222,26 +224,40 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     unsafe { page.decrement_alloc_count_for_segment(segment, page_index) };
     let becomes_empty = page.alloc_count == 0;
 
-    if was_full {
-        let class = page.size_class as usize;
-        let page_ptr = unsafe { NonNull::new_unchecked(page as *mut Page) };
-        unsafe {
-            let _ = alloc.move_full_page_to_active(page_ptr, class);
-        }
-    }
-    if becomes_empty && !alloc.is_current_segment(segment) {
-        let class = page.size_class as usize;
-        let is_only_active = unsafe {
-            alloc.active_pages.get_unchecked(class).is_some_and(|head| {
-                core::ptr::eq(head.as_ptr(), page as *const Page) && page.next_page.is_none()
-            })
-        };
-        if !is_only_active {
-            alloc.unlink_page(page as *mut Page, class);
-            unsafe {
-                alloc.push_empty_page(NonNull::new_unchecked(page as *mut Page));
+    let class = page.size_class as usize;
+    let page_ptr = unsafe { NonNull::new_unchecked(page as *mut Page) };
+
+    with_page_list_token::<B, _>(|mut token| {
+        let branded_page = unsafe { token.page(page_ptr) };
+        if was_full {
+            if becomes_empty && !alloc.is_current_segment(segment) {
+                // Case 1: Went from full directly to empty
+                unsafe {
+                    unlink_page_from_list(&mut token, alloc.full_pages.get_unchecked_mut(class), branded_page);
+                    push_page_front(&mut token, &mut alloc.empty_pages, branded_page, 3);
+                }
+            } else {
+                // Case 2: Went from full to active
+                unsafe {
+                    unlink_page_from_list(&mut token, alloc.full_pages.get_unchecked_mut(class), branded_page);
+                    push_page_front(&mut token, alloc.active_pages.get_unchecked_mut(class), branded_page, 1);
+                }
+            }
+        } else if becomes_empty && !alloc.is_current_segment(segment) {
+            // Case 3: Went from active to empty (only if not the only active page)
+            let is_only_active = unsafe {
+                alloc.active_pages.get_unchecked(class).is_some_and(|head| {
+                    core::ptr::eq(head.as_ptr(), page as *const Page) && page.next_page.is_none()
+                })
+            };
+            if !is_only_active {
+                unsafe {
+                    unlink_page_from_list(&mut token, alloc.active_pages.get_unchecked_mut(class), branded_page);
+                    push_page_front(&mut token, &mut alloc.empty_pages, branded_page, 3);
+                }
             }
         }
-    }
+    });
+
     becomes_empty
 }

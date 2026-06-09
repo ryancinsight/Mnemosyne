@@ -76,7 +76,7 @@ pub(crate) fn with_page_list_token<B: HasSegmentPool, R>(
 /// `page_ptr` and every page currently linked from `head_slot` must belong to
 /// the allocator-list permission represented by `token`.
 #[inline(always)]
-unsafe fn push_page_front<'id, B: HasSegmentPool>(
+pub(crate) unsafe fn push_page_front<'id, B: HasSegmentPool>(
     token: &mut PageListToken<'id, B>,
     head_slot: &mut Option<NonNull<Page>>,
     page_ptr: BrandedPage<'id>,
