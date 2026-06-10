@@ -1,5 +1,16 @@
 # Backlog
 
+## Atlas in-house replacement roadmap — mnemosyne slice [arch]
+
+mnemosyne is the allocation SSOT. The GPU program (coeus/apollo using wgpu + cuda-oxide)
+needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBackend`:
+- [ ] [arch] Stage D1: device-memory strategy — device buffer pools, page-locked/pinned
+  host staging buffers, and an explicit unified-vs-discrete policy, exposed through the
+  `MemoryBackend` seam. Evaluate **cuda-oxide** allocation interop (vs the current
+  dlopen `cuMemAllocManaged` path) and wgpu buffer-pool hooks. ADR.
+- [ ] [minor] Stage D1: melinoe-branded device buffers so ownership transfer between
+  host/device/stream is a compile-time proof (pairs with coeus Stage D).
+
 ## Completed
 
 - [minor] Add `ScratchBank<T, const N>` as the provider-owned fixed scratch-role abstraction for Apollo transform workspaces, keeping role selection const-generic and avoiding repeated per-role `ScratchPool` statics in consumers.

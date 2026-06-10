@@ -11,6 +11,7 @@ use mnemosyne_arena::HasSegmentPool;
 #[repr(C)]
 pub struct LocalAllocatorSlot<B: HasSegmentPool> {
     allocator: core::cell::UnsafeCell<ThreadAllocator<B>>,
+    pub(crate) os_key: core::cell::Cell<u32>,
     /// One-shot flag recording whether this thread's exit-reclamation sentinel
     /// has been registered. Only the `#[thread_local]` fast path needs it: a
     /// `#[thread_local]` static is not dropped on thread teardown, so the first
@@ -31,6 +32,7 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
     pub const fn new() -> Self {
         Self {
             allocator: core::cell::UnsafeCell::new(ThreadAllocator::new()),
+            os_key: core::cell::Cell::new(u32::MAX),
             #[cfg(nightly_tls_active)]
             exit_armed: core::cell::Cell::new(false),
         }
