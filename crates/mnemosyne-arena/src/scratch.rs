@@ -197,8 +197,7 @@ impl<T: ScratchElement> AlignedVec<T> {
         } else {
             let old_layout = Self::layout_for(self.capacity);
             unsafe {
-                alloc::alloc::realloc(self.ptr as *mut u8, old_layout, new_layout.size())
-                    as *mut T
+                alloc::alloc::realloc(self.ptr as *mut u8, old_layout, new_layout.size()) as *mut T
             }
         };
         if new_ptr.is_null() {
@@ -213,8 +212,7 @@ impl<T: ScratchElement> AlignedVec<T> {
         let elem_size = core::mem::size_of::<T>();
         let size = capacity.saturating_mul(elem_size).max(1);
         let align = T::ALIGN_BYTES.max(elem_size);
-        core::alloc::Layout::from_size_align(size, align)
-            .expect("AlignedVec: invalid layout")
+        core::alloc::Layout::from_size_align(size, align).expect("AlignedVec: invalid layout")
     }
 }
 
@@ -362,6 +360,76 @@ impl<T: ScratchElement> ScratchPool<T> {
     }
 }
 
+/// A fixed set of same-typed scratch pools for domain-specific temporary roles.
+///
+/// Transform crates commonly need several independent thread-local scratch
+/// buffers for one element type: e.g. Stockham data, PFA data, Rader padding,
+/// and Bluestein chirps. `ScratchBank<T, N>` keeps those roles in one
+/// const-generic provider-owned container while preserving the same zero-copy
+/// [`ScratchPool::with_scratch`] access contract for each slot.
+pub struct ScratchBank<T: ScratchElement, const N: usize> {
+    pools: [ScratchPool<T>; N],
+}
+
+unsafe impl<T: ScratchElement, const N: usize> Send for ScratchBank<T, N> {}
+
+impl<T: ScratchElement, const N: usize> Default for ScratchBank<T, N> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: ScratchElement, const N: usize> ScratchBank<T, N> {
+    /// Creates a bank of empty scratch pools.
+    #[inline]
+    pub const fn new() -> Self {
+        Self {
+            pools: [const { ScratchPool::new() }; N],
+        }
+    }
+
+    /// Runs `f` with scratch from slot `INDEX`, sized to exactly `n` elements.
+    ///
+    /// `INDEX` is a const generic so role selection is resolved at compile
+    /// time at monomorphized call sites.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `INDEX >= N`.
+    #[inline]
+    pub fn with_scratch<const INDEX: usize, R>(
+        &self,
+        n: usize,
+        f: impl FnOnce(&mut [T]) -> R,
+    ) -> R {
+        assert!(INDEX < N, "ScratchBank slot index out of range");
+        self.pools[INDEX].with_scratch(n, f)
+    }
+
+    /// Returns the primary capacity for slot `INDEX`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `INDEX >= N`.
+    #[inline]
+    pub fn capacity<const INDEX: usize>(&self) -> usize {
+        assert!(INDEX < N, "ScratchBank slot index out of range");
+        self.pools[INDEX].capacity()
+    }
+
+    /// Returns the current borrow depth for slot `INDEX`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `INDEX >= N`.
+    #[inline]
+    pub fn borrow_depth<const INDEX: usize>(&self) -> u8 {
+        assert!(INDEX < N, "ScratchBank slot index out of range");
+        self.pools[INDEX].borrow_depth()
+    }
+}
+
 /// Default alignment constant for external consumers.
 #[inline]
 pub const fn default_align() -> usize {
@@ -442,8 +510,12 @@ mod tests {
     fn scratch_pool_overflow_to_owned() {
         let pool = ScratchPool::<f64>::new();
         fn nest(pool: &ScratchPool<f64>, depth: usize) {
-            if depth == 0 { return; }
-            pool.with_scratch(32, |_| { nest(pool, depth - 1); });
+            if depth == 0 {
+                return;
+            }
+            pool.with_scratch(32, |_| {
+                nest(pool, depth - 1);
+            });
         }
         nest(&pool, MAX_POOL_SLOTS + 1);
         assert_eq!(pool.borrow_depth(), 0);
@@ -465,7 +537,9 @@ mod tests {
         let pool = ScratchPool::<f64>::new();
         // Write data.
         pool.with_scratch(64, |s| {
-            for (i, v) in s.iter_mut().enumerate() { *v = i as f64; }
+            for (i, v) in s.iter_mut().enumerate() {
+                *v = i as f64;
+            }
         });
         // Reuse — data should still be present (not re-zeroed).
         pool.with_scratch(64, |s| {
@@ -478,7 +552,9 @@ mod tests {
     fn scratch_pool_returns_value() {
         let pool = ScratchPool::<f64>::new();
         let sum = pool.with_scratch(100, |scratch| {
-            for (i, v) in scratch.iter_mut().enumerate() { *v = i as f64; }
+            for (i, v) in scratch.iter_mut().enumerate() {
+                *v = i as f64;
+            }
             scratch.iter().sum::<f64>()
         });
         assert_eq!(sum, (0..100).map(|i| i as f64).sum::<f64>());
@@ -491,5 +567,25 @@ mod tests {
             assert_eq!(scratch.len(), 256);
             assert_eq!(scratch.as_ptr() as usize % DEFAULT_SCRATCH_ALIGN, 0);
         });
+    }
+
+    #[test]
+    fn scratch_bank_slots_are_independent() {
+        let bank = ScratchBank::<f64, 2>::new();
+        bank.with_scratch::<0, _>(128, |first| {
+            first[0] = 11.0;
+            bank.with_scratch::<1, _>(64, |second| {
+                second[0] = 29.0;
+                assert_eq!(first[0], 11.0);
+                assert_eq!(second[0], 29.0);
+                assert_eq!(second.len(), 64);
+            });
+            assert_eq!(first[0], 11.0);
+            assert_eq!(first.len(), 128);
+        });
+        assert!(bank.capacity::<0>() >= 128);
+        assert!(bank.capacity::<1>() >= 64);
+        assert_eq!(bank.borrow_depth::<0>(), 0);
+        assert_eq!(bank.borrow_depth::<1>(), 0);
     }
 }

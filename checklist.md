@@ -1,9 +1,10 @@
 # Checklist
 
-Target version: 0.1.0
+Target version: 0.2.0
 
 ## Verified
 
+- [x] [minor] Add provider-owned `ScratchBank<T, const N>` for fixed scratch-role banks, preserving zero-copy `ScratchPool` slot semantics while reducing Apollo-side repeated thread-local pool declarations. Verified by `scratch_bank_slots_are_independent`, full scratch unit subset, `cargo check -p mnemosyne-arena`, clippy, and docs.
 - [x] [patch] Prevent the combined usable-size benchmark from cross-optimizing allocation, query, and deallocation by passing the allocated pointer through `black_box` before the `usable_size` call and before `dealloc`; apply the same consumed `black_box` pattern to the allocator-cycle helper. Verified by focused Criterion: `usable size latency/Mnemosyne/small/32` `2.307 ns`, `medium/1024` `2.350 ns`, `large/8192` `5.196 ns`, and regenerated `allocator_comparison.md` reports small `2.297 ns`, medium `2.340 ns`, large `5.206 ns`.
 - [x] [patch] Route `GlobalAlloc::dealloc` through `thread_free_layout`, stamp owner allocator cache pointers, bypass the busy-bit write pair for first frees from full pages, move full pages back to active pages with one branded list token, and add active `rpmalloc::RpMalloc` benchmark coverage. Verified by local/global allocator tests and `benchmark_summary --features system-jemalloc -- --enforce-thresholds`; refreshed comparison reports `allocator deallocation latency/large_8192` Mnemosyne `40.909 ns` versus RpMalloc `6.871 ns` (`5.95x`) and `allocator cycle latency/large_8192` `2.136 ns`.
 - [x] [patch] Remove the remaining intermediate `Vec` allocation from `benchmark_summary` Criterion path normalization, allocator-comparison map keys, and markdown row formatting by using borrowed benchmark slices plus copy-sized `Display` adapters that stream into the existing output buffers. Verified by `normalize_path_joins_components_without_intermediate_vec` and the jemalloc-enabled benchmark summary gate.

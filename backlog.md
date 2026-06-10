@@ -2,6 +2,7 @@
 
 ## Completed
 
+- [minor] Add `ScratchBank<T, const N>` as the provider-owned fixed scratch-role abstraction for Apollo transform workspaces, keeping role selection const-generic and avoiding repeated per-role `ScratchPool` statics in consumers.
 - [patch] Prevent combined usable-size benchmark cross-optimization by consuming the allocated pointer through `black_box` before size query and deallocation, resolving the stale inverted small/medium/large ordering in `usable size latency`.
 - [patch] Add layout-proven `GlobalAlloc::dealloc` routing so Rust callers with the original `Layout` monomorphize out the large/huge free classifier for small allocations while preserving the pointer-only `thread_free` classifier for C-style and unknown-layout callers.
 - [patch] Outline active-profiler free-size accounting behind a cold helper so disabled profiling leaves the hot free path with only the existing activity guard.
