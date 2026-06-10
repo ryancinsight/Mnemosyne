@@ -39,6 +39,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
             S::get_slot_standard(|slot| {
                 let alloc_ptr = slot.allocator_ptr();
                 set_os_tls_value(key, alloc_ptr);
+                slot.os_key.set(key);
                 S::arm_thread_exit(slot);
                 slot.with_allocator(f)
             })
@@ -67,6 +68,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
             S::get_slot_standard(|slot| {
                 let alloc_ptr = slot.allocator_ptr();
                 set_os_tls_value(key, alloc_ptr);
+                slot.os_key.set(key);
                 S::arm_thread_exit(slot);
                 slot.with_allocator(f)
             })
@@ -94,6 +96,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
             S::get_slot_standard(|slot| {
                 let alloc_ptr = slot.allocator_ptr();
                 set_os_tls_value(key, alloc_ptr);
+                slot.os_key.set(key);
                 S::arm_thread_exit(slot);
                 unsafe { slot.with_allocator_unguarded(f) }
             })
@@ -112,6 +115,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
             S::get_slot_standard(|slot| {
                 let alloc_ptr = slot.allocator_ptr();
                 set_os_tls_value(key, alloc_ptr);
+                slot.os_key.set(key);
                 alloc_ptr
             })
         }
@@ -155,6 +159,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
                 S::get_slot_standard(|slot| {
                     let alloc_ptr = slot.allocator_ptr();
                     unsafe { set_teb_tls_slot(key, alloc_ptr) };
+                    slot.os_key.set(key);
                     S::arm_thread_exit(slot);
                     slot.with_allocator(f)
                 })
@@ -190,6 +195,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
                 S::get_slot_standard(|slot| {
                     let alloc_ptr = slot.allocator_ptr();
                     unsafe { set_teb_tls_slot(key, alloc_ptr) };
+                    slot.os_key.set(key);
                     S::arm_thread_exit(slot);
                     slot.with_allocator(f)
                 })
@@ -224,6 +230,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
                 S::get_slot_standard(|slot| {
                     let alloc_ptr = slot.allocator_ptr();
                     unsafe { set_teb_tls_slot(key, alloc_ptr) };
+                    slot.os_key.set(key);
                     S::arm_thread_exit(slot);
                     unsafe { slot.with_allocator_unguarded(f) }
                 })
@@ -249,6 +256,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
                 S::get_slot_standard(|slot| {
                     let alloc_ptr = slot.allocator_ptr();
                     unsafe { set_teb_tls_slot(key, alloc_ptr) };
+                    slot.os_key.set(key);
                     alloc_ptr
                 })
             }

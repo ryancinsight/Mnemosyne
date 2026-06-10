@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 ///
 /// Returns `None` only when OS TLS key allocation fails.
 #[inline(always)]
-pub(super) fn get_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
+pub(crate) fn get_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
     let mut key = atomic_key.load(Ordering::Relaxed);
     if key == u32::MAX {
         key = init_os_tls_key(atomic_key)?;
@@ -67,7 +67,7 @@ fn init_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
 
 /// Reads the value stored in the OS TLS slot identified by `key`.
 #[inline(always)]
-pub(super) fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
+pub(crate) fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
     unsafe {
         #[cfg(windows)]
         {
@@ -88,7 +88,7 @@ pub(super) fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
 
 /// Writes a value into the OS TLS slot identified by `key`.
 #[inline(always)]
-pub(super) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
+pub(crate) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
     unsafe {
         #[cfg(windows)]
         {
@@ -116,7 +116,7 @@ pub(super) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
 /// `index` must be a valid key returned by `TlsAlloc`.
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[inline(always)]
-pub(super) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
+pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
     if index < 64 {
         let val: *mut core::ffi::c_void;
         core::arch::asm!(
@@ -148,7 +148,7 @@ pub(super) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
 /// `index` must be a valid key returned by `TlsAlloc`.
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[inline(always)]
-pub(super) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
+pub(crate) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
     if index < 64 {
         core::arch::asm!(
             "mov gs:[0x1480 + {} * 8], {}",

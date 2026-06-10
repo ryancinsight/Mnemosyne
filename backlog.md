@@ -4,12 +4,13 @@
 
 mnemosyne is the allocation SSOT. The GPU program (coeus/apollo using wgpu + cuda-oxide)
 needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBackend`:
-- [ ] [arch] Stage D1: device-memory strategy — device buffer pools, page-locked/pinned
-  host staging buffers, and an explicit unified-vs-discrete policy, exposed through the
-  `MemoryBackend` seam. Evaluate **cuda-oxide** allocation interop (vs the current
-  dlopen `cuMemAllocManaged` path) and wgpu buffer-pool hooks. ADR.
+- [ ] [arch] Stage D1: device-memory strategy consumed by the `hephaestus` GPU substrate
+  (atlas ADR 0001) — device buffer pools, page-locked/pinned host staging, explicit
+  unified-vs-discrete policy through the `MemoryBackend` seam. Compose cuda-oxide
+  allocation interop with the existing dlopen `cuMemAllocManaged` path; add wgpu
+  buffer-pool hooks. ADR.
 - [ ] [minor] Stage D1: melinoe-branded device buffers so ownership transfer between
-  host/device/stream is a compile-time proof (pairs with coeus Stage D).
+  host/device/stream is a compile-time proof (pairs with hephaestus + coeus Stage D).
 
 ## Completed
 

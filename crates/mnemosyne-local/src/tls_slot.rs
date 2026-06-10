@@ -107,6 +107,21 @@ impl<B: HasSegmentPool> LocalAllocatorSlot<B> {
     }
 }
 
+impl<B: HasSegmentPool> Drop for LocalAllocatorSlot<B> {
+    #[inline]
+    fn drop(&mut self) {
+        let key = self.os_key.get();
+        if key != u32::MAX {
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            unsafe {
+                crate::tls::os_helpers::set_teb_tls_slot(key, core::ptr::null_mut());
+            }
+            crate::tls::os_helpers::set_os_tls_value(key, core::ptr::null_mut());
+        }
+    }
+}
+
+
 /// Thread-exit reclamation sentinel for the `#[thread_local]` fast cache.
 ///
 /// A `#[thread_local]` static does not run `Drop` when its owning thread exits,
