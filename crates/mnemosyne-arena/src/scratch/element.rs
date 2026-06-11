@@ -49,4 +49,3 @@ impl ScratchElement for num_complex::Complex64 {
 pub const fn default_align() -> usize {
     DEFAULT_SCRATCH_ALIGN
 }
-

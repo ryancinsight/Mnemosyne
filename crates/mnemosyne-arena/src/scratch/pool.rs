@@ -1,8 +1,8 @@
 //! Scratch buffer pool implementation for temporal allocations.
 
-use core::cell::{Cell, UnsafeCell};
 use super::aligned_vec::AlignedVec;
-use super::element::{ScratchElement, DEFAULT_SCRATCH_ALIGN};
+use super::element::ScratchElement;
+use core::cell::{Cell, UnsafeCell};
 
 /// Maximum concurrent borrows (recursive/nested calls) the pool supports.
 pub const MAX_POOL_SLOTS: usize = 4;

@@ -5,15 +5,15 @@
 //! Rader convolution. These buffers are typically allocated once, grown to the
 //! maximum needed size, and reused across many transform calls.
 
-pub mod element;
 pub mod aligned_vec;
-pub mod pool;
 pub mod bank;
+pub mod element;
+pub mod pool;
 
 #[cfg(test)]
 mod tests;
 
-pub use element::{ScratchElement, DEFAULT_SCRATCH_ALIGN, default_align};
 pub use aligned_vec::AlignedVec;
-pub use pool::{ScratchPool, MAX_POOL_SLOTS};
 pub use bank::ScratchBank;
+pub use element::{default_align, ScratchElement, DEFAULT_SCRATCH_ALIGN};
+pub use pool::{ScratchPool, MAX_POOL_SLOTS};
