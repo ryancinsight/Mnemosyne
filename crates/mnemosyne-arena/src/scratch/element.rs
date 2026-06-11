@@ -43,3 +43,10 @@ impl sealed::ScratchElementSealed for num_complex::Complex64 {}
 impl ScratchElement for num_complex::Complex64 {
     const ALIGN_BYTES: usize = DEFAULT_SCRATCH_ALIGN;
 }
+
+/// Default alignment constant for external consumers.
+#[inline]
+pub const fn default_align() -> usize {
+    DEFAULT_SCRATCH_ALIGN
+}
+
