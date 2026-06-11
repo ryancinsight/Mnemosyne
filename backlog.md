@@ -12,6 +12,17 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 - [ ] [minor] Stage D1: melinoe-branded device buffers so ownership transfer between
   host/device/stream is a compile-time proof (pairs with hephaestus + coeus Stage D).
 
+### Heterogeneous tiers + kernel resource budgets (atlas ADR 0002)
+- [ ] [minor] Tier-keyed device pools: allocation keyed by themis
+  `MemoryTier` (`Hbm` vs the new `Gddr`) + `PlacementHint`, with pinned-host
+  (`HostPinned`) staging pools, behind the existing `MemoryBackend` seam.
+- [ ] [minor] `KernelResourceBudget`: registers/thread and shared-memory/block
+  as themis-typed quantities with occupancy-relevant accounting. **Not**
+  register allocation — GPU compilers assign registers (ADR 0002 constraint
+  2); mnemosyne owns the budget vocabulary that moirai's occupancy planner
+  consumes and hephaestus passes to cutile kernel compilation. Shared-memory
+  arena budgeting is the literal-allocation part.
+
 ## Completed
 
 - [minor] Add `ScratchBank<T, const N>` as the provider-owned fixed scratch-role abstraction for Apollo transform workspaces, keeping role selection const-generic and avoiding repeated per-role `ScratchPool` statics in consumers.
