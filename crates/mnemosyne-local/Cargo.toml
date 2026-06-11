@@ -13,6 +13,8 @@ edition = "2021"
 # Thread-exit segment reclamation is preserved via a `Drop` sentinel because a
 # `#[thread_local]` static is not dropped automatically on thread teardown.
 nightly_tls = []
+std_tls = []
+
 
 [dependencies]
 mnemosyne-core = { path = "../mnemosyne-core" }

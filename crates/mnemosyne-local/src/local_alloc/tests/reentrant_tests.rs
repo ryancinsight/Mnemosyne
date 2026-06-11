@@ -1,5 +1,5 @@
-use super::fixtures::MockBackend;
 use super::super::*;
+use super::fixtures::MockBackend;
 use crate::LocalAllocatorSelector;
 
 /// Safety regression guard for the guard-free small-allocation fast path.

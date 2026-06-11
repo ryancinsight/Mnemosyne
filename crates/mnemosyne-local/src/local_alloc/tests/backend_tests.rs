@@ -1,5 +1,5 @@
-use super::fixtures::{ALLOC_COUNT, DEALLOC_COUNT, MOCK_ORPHAN_POOL, MockBackend};
 use super::super::*;
+use super::fixtures::{MockBackend, ALLOC_COUNT, DEALLOC_COUNT, MOCK_ORPHAN_POOL};
 use core::sync::atomic::Ordering;
 use mnemosyne_core::policy::StandardPolicy;
 

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::thread;
 
 use super::constants::{
-    CROSS_THREAD_ALLOCS, CROSS_THREAD_QUEUE_BOUND, THREAD_ALLOCS, THREADS, THREAD_WORK_QUEUE_BOUND,
+    CROSS_THREAD_ALLOCS, CROSS_THREAD_QUEUE_BOUND, THREADS, THREAD_ALLOCS, THREAD_WORK_QUEUE_BOUND,
 };
 use super::helpers::{alloc_dealloc, benchmark_failure, require_allocated};
 

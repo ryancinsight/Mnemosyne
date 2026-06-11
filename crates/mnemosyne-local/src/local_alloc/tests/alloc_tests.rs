@@ -1,5 +1,5 @@
-use super::fixtures::MockBackend;
 use super::super::*;
+use super::fixtures::MockBackend;
 use core::ptr::NonNull;
 use mnemosyne_arena::{allocate_segment, deallocate_segment};
 use mnemosyne_core::constants::{PAGES_PER_SEGMENT, PAGE_SHIFT};

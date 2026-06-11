@@ -8,7 +8,7 @@
 //! | [`stable`] | `StandardTls`, `CachedCellTls` (stable-channel `thread_local!`) |
 //! | [`native`] | `NativeOsTls` (`TlsGetValue`/`pthread_getspecific`), `AsmTls` (TEB inline ASM) |
 //! | [`nightly`] | `NightlyTls` (`#[thread_local]` nightly path) |
-//! | [`os_helpers`] | Platform-native TLS key init, get, set functions and TEB ASM helpers |
+//! | `os_helpers` | Private platform-native TLS key init, get, set functions and TEB ASM helpers |
 //!
 //! # Selection Strategy
 //!
@@ -19,13 +19,13 @@
 //! - POSIX, all: `CachedCellTls` or `NativeOsTls`
 //! - Generic fallback: `StandardTls`
 
-pub mod traits;
-pub mod stable;
 pub mod native;
 pub mod nightly;
 pub(crate) mod os_helpers;
+pub mod stable;
+pub mod traits;
 
-pub use traits::{TlsSlotAccess, TlsProvider};
-pub use stable::{StandardTls, CachedCellTls};
-pub use native::{NativeOsTls, AsmTls};
+pub use native::{AsmTls, NativeOsTls};
 pub use nightly::NightlyTls;
+pub use stable::{CachedCellTls, StandardTls};
+pub use traits::{TlsProvider, TlsSlotAccess};

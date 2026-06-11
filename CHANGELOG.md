@@ -25,6 +25,10 @@
 
 ### Changed
 
+- Added stable `std_tls` feature routing for allocator/profiler TLS selection
+  and re-exported `MemoryBackendWrapper`/`LocalAllocatorSelector` through the
+  top-level `mnemosyne` crate so consumers can name the monomorphized backend
+  selector surface directly.
 - Added `ScratchBank<T, const N>` to the scratch provider surface so transform crates can keep fixed role-specific scratch pools in one const-generic bank instead of duplicating per-role thread-local pool declarations. Verified by slot-independence scratch tests, `cargo check -p mnemosyne-arena`, clippy, and docs.
 - Routed Rust `GlobalAlloc::dealloc` through a layout-aware small-free entry point that removes the large/huge classifier branch when the original `Layout` proves a small allocation; pointer-only `thread_free` remains the classifier-backed API for unknown-layout callers.
 - Fixed the combined usable-size benchmark harness so the fresh allocation pointer is consumed through `black_box` before `usable_size` and before `dealloc`. The prior helper let LLVM cross-optimize the allocation/query/free sequence and produced an inverted Mnemosyne row (`large_8192` faster than small/medium). Focused Criterion now reports `small/32` and `medium/1024` near `2.3 ns`, with `large/8192` near `5.2 ns`.

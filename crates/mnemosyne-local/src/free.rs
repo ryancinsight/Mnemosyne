@@ -11,7 +11,6 @@ use mnemosyne_core::constants::{
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::types::{Block, Page, Segment};
 
-
 /// Frees a memory block.
 ///
 /// # Safety
@@ -235,7 +234,11 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
             if becomes_empty && !alloc.is_current_segment(segment) {
                 // Case 1: Went from full directly to empty
                 unsafe {
-                    unlink_page_from_list(&mut token, alloc.full_pages.get_unchecked_mut(class), branded_page);
+                    unlink_page_from_list(
+                        &mut token,
+                        alloc.full_pages.get_unchecked_mut(class),
+                        branded_page,
+                    );
                     push_page_front(&mut token, &mut alloc.empty_pages, branded_page, 3);
                 }
             } else {
@@ -258,7 +261,11 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
             };
             if !is_only_active {
                 unsafe {
-                    unlink_page_from_list(&mut token, alloc.active_pages.get_unchecked_mut(class), branded_page);
+                    unlink_page_from_list(
+                        &mut token,
+                        alloc.active_pages.get_unchecked_mut(class),
+                        branded_page,
+                    );
                     push_page_front(&mut token, &mut alloc.empty_pages, branded_page, 3);
                 }
             }

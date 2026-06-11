@@ -4,9 +4,9 @@
 //! `CachedCellTls` caches the raw allocator pointer in a `Cell<*mut c_void>` to
 //! bypass lazy-initialization overhead on hot paths.
 
+use super::traits::{TlsProvider, TlsSlotAccess};
 use crate::ThreadAllocator;
 use mnemosyne_arena::HasSegmentPool;
-use super::traits::{TlsProvider, TlsSlotAccess};
 
 /// Portable TLS provider using direct standard `std::thread_local!` lookups.
 pub struct StandardTls<B, S>(core::marker::PhantomData<(B, S)>);

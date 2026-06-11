@@ -4,12 +4,12 @@
 //! `AsmTls` uses direct TEB array indexing via inline ASM on Windows x86_64
 //! and falls back to `NativeOsTls` on other architectures.
 
-use crate::ThreadAllocator;
-use mnemosyne_arena::HasSegmentPool;
-use super::traits::{TlsProvider, TlsSlotAccess};
 use super::os_helpers::{get_os_tls_key, get_os_tls_value, set_os_tls_value};
 #[cfg(all(windows, target_arch = "x86_64"))]
 use super::os_helpers::{get_teb_tls_slot, set_teb_tls_slot};
+use super::traits::{TlsProvider, TlsSlotAccess};
+use crate::ThreadAllocator;
+use mnemosyne_arena::HasSegmentPool;
 
 /// Platform-native TLS provider using OS-level slots (`TlsGetValue` / `pthread_getspecific`).
 pub struct NativeOsTls<B, S>(core::marker::PhantomData<(B, S)>);

@@ -117,11 +117,11 @@ std::thread_local! {
     };
 }
 
-#[cfg(not(nightly_tls_active))]
+#[cfg(all(not(nightly_tls_active), not(feature = "std_tls")))]
 static PROFILER_TLS_KEY: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(u32::MAX);
 
-#[cfg(not(nightly_tls_active))]
+#[cfg(all(not(nightly_tls_active), not(feature = "std_tls")))]
 #[inline(always)]
 fn get_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
     // The atomic publishes an immutable OS TLS slot index only. It does not
@@ -133,7 +133,7 @@ fn get_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
     Some(key)
 }
 
-#[cfg(not(nightly_tls_active))]
+#[cfg(all(not(nightly_tls_active), not(feature = "std_tls")))]
 #[cold]
 #[inline(never)]
 fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
@@ -181,7 +181,7 @@ fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
     }
 }
 
-#[cfg(not(nightly_tls_active))]
+#[cfg(all(not(nightly_tls_active), not(feature = "std_tls")))]
 #[allow(dead_code)]
 #[inline(always)]
 fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
@@ -203,7 +203,7 @@ fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
     }
 }
 
-#[cfg(not(nightly_tls_active))]
+#[cfg(all(not(nightly_tls_active), not(feature = "std_tls")))]
 #[allow(dead_code)]
 #[inline(always)]
 fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
@@ -225,7 +225,11 @@ fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
     }
 }
 
-#[cfg(all(not(nightly_tls_active), all(windows, target_arch = "x86_64")))]
+#[cfg(all(
+    not(nightly_tls_active),
+    not(feature = "std_tls"),
+    all(windows, target_arch = "x86_64")
+))]
 #[inline(always)]
 unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
     if index < 64 {
@@ -253,7 +257,11 @@ unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
     }
 }
 
-#[cfg(all(not(nightly_tls_active), all(windows, target_arch = "x86_64")))]
+#[cfg(all(
+    not(nightly_tls_active),
+    not(feature = "std_tls"),
+    all(windows, target_arch = "x86_64")
+))]
 #[inline(always)]
 unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
     if index < 64 {
@@ -280,36 +288,43 @@ unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
 #[cfg(not(nightly_tls_active))]
 #[inline(always)]
 pub(crate) fn get_profiler_state() -> *mut ThreadState {
-    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[cfg(feature = "std_tls")]
     {
-        let Some(key) = get_os_tls_key(&PROFILER_TLS_KEY) else {
-            return THREAD_STATE.with(|cell| cell.get());
-        };
-        let ptr = unsafe { get_teb_tls_slot(key) } as *mut ThreadState;
-        if !ptr.is_null() {
-            ptr
-        } else {
-            THREAD_STATE.with(|cell| {
-                let p = cell.get();
-                unsafe { set_teb_tls_slot(key, p as *mut core::ffi::c_void) };
-                p
-            })
-        }
+        THREAD_STATE.with(|cell| cell.get())
     }
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    #[cfg(not(feature = "std_tls"))]
     {
-        let Some(key) = get_os_tls_key(&PROFILER_TLS_KEY) else {
-            return THREAD_STATE.with(|cell| cell.get());
-        };
-        let ptr = get_os_tls_value(key) as *mut ThreadState;
-        if !ptr.is_null() {
-            ptr
-        } else {
-            THREAD_STATE.with(|cell| {
-                let p = cell.get();
-                set_os_tls_value(key, p as *mut core::ffi::c_void);
-                p
-            })
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        {
+            let Some(key) = get_os_tls_key(&PROFILER_TLS_KEY) else {
+                return THREAD_STATE.with(|cell| cell.get());
+            };
+            let ptr = unsafe { get_teb_tls_slot(key) } as *mut ThreadState;
+            if !ptr.is_null() {
+                ptr
+            } else {
+                THREAD_STATE.with(|cell| {
+                    let p = cell.get();
+                    unsafe { set_teb_tls_slot(key, p as *mut core::ffi::c_void) };
+                    p
+                })
+            }
+        }
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        {
+            let Some(key) = get_os_tls_key(&PROFILER_TLS_KEY) else {
+                return THREAD_STATE.with(|cell| cell.get());
+            };
+            let ptr = get_os_tls_value(key) as *mut ThreadState;
+            if !ptr.is_null() {
+                ptr
+            } else {
+                THREAD_STATE.with(|cell| {
+                    let p = cell.get();
+                    set_os_tls_value(key, p as *mut core::ffi::c_void);
+                    p
+                })
+            }
         }
     }
 }

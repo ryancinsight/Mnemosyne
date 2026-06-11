@@ -4,11 +4,9 @@
 
 use core::alloc::{GlobalAlloc, Layout};
 use mnemosyne_core::NUM_SIZE_CLASSES;
-use mnemosyne_local::{
-    thread_alloc_layout, thread_free_layout, thread_realloc, LocalAllocatorSelector,
-};
+use mnemosyne_local::{thread_alloc_layout, thread_free_layout, thread_realloc};
 
-pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend};
+pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend, MemoryBackendWrapper};
 pub use mnemosyne_core::{options::MnemosyneOptions, AllocPolicy, StandardPolicy};
 pub use mnemosyne_hardened::{HardenedPolicy, SecurePolicy};
 #[cfg(feature = "branded")]
@@ -16,7 +14,7 @@ pub use mnemosyne_heap::{
     scope as branded_scope, BrandedBlock, BrandedBox, BrandedCell, BrandedVec, Heap,
     InvariantLifetime, ThreadLocalToken,
 };
-pub use mnemosyne_local::{usable_size, SizeClassOccupancy};
+pub use mnemosyne_local::{usable_size, LocalAllocatorSelector, SizeClassOccupancy};
 pub use mnemosyne_prof::{
     disable_leak_detector, disable_profiling, dump_leaks, dump_profile, enable_leak_detector,
     enable_profiling, is_leak_detector_enabled, is_profiling_enabled, register_alloc_hook,

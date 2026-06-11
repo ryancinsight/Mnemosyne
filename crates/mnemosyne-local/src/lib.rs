@@ -161,10 +161,13 @@ macro_rules! impl_local_allocator_selector {
             #[cfg(nightly_tls_active)]
             type SelectedTls = $crate::tls::NightlyTls<$backend, SlotAccess>;
 
-            #[cfg(all(not(nightly_tls_active), all(windows, target_arch = "x86_64")))]
+            #[cfg(all(not(nightly_tls_active), feature = "std_tls"))]
+            type SelectedTls = $crate::tls::CachedCellTls<$backend, SlotAccess>;
+
+            #[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), all(windows, target_arch = "x86_64")))]
             type SelectedTls = $crate::tls::AsmTls<$backend, SlotAccess>;
 
-            #[cfg(all(not(nightly_tls_active), not(all(windows, target_arch = "x86_64"))))]
+            #[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(all(windows, target_arch = "x86_64"))))]
             type SelectedTls = $crate::tls::NativeOsTls<$backend, SlotAccess>;
 
             impl $crate::LocalAllocatorSelector<$backend> for $backend {

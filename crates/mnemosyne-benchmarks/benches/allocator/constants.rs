@@ -6,10 +6,8 @@ pub const SMALL_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(32, 
 pub const SMALL_WITHIN_CLASS_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(24, 8) };
 pub const MEDIUM_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(1024, 8) };
 pub const LARGE_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(8192, 8) };
-pub const LARGE_WITHIN_CLASS_LAYOUT: Layout =
-    unsafe { Layout::from_size_align_unchecked(6144, 8) };
-pub const HUGE_LAYOUT: Layout =
-    unsafe { Layout::from_size_align_unchecked(2 * 1024 * 1024, 4096) };
+pub const LARGE_WITHIN_CLASS_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(6144, 8) };
+pub const HUGE_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(2 * 1024 * 1024, 4096) };
 pub const HUGE_REALLOC_SRC_LAYOUT: Layout =
     unsafe { Layout::from_size_align_unchecked(4 * 1024 * 1024, 4096) };
 pub const BATCH_ALLOCS: usize = 256;

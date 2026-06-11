@@ -4,9 +4,7 @@ use std::alloc::System;
 
 #[cfg(jemalloc_available)]
 use super::compat::bench_jemalloc;
-use super::constants::{
-    BATCH_ALLOCS, HUGE_LAYOUT, LARGE_LAYOUT, MEDIUM_LAYOUT, SMALL_LAYOUT,
-};
+use super::constants::{BATCH_ALLOCS, HUGE_LAYOUT, LARGE_LAYOUT, MEDIUM_LAYOUT, SMALL_LAYOUT};
 use super::helpers::{
     alloc_dealloc, burst_alloc_dealloc, dealloc_only, require_allocated, AllocatedBlock,
 };

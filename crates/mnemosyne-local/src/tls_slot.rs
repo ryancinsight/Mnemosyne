@@ -121,7 +121,6 @@ impl<B: HasSegmentPool> Drop for LocalAllocatorSlot<B> {
     }
 }
 
-
 /// Thread-exit reclamation sentinel for the `#[thread_local]` fast cache.
 ///
 /// A `#[thread_local]` static does not run `Drop` when its owning thread exits,

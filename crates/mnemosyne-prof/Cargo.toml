@@ -9,6 +9,8 @@ backtrace = "0.3"
 
 [features]
 nightly_tls = []
+std_tls = []
+
 
 [dev-dependencies]
 mnemosyne = { path = "../mnemosyne" }

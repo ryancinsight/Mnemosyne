@@ -1,6 +1,6 @@
-use super::fixtures::MockBackend;
-use super::super::*;
 use super::super::page::{unlink_page_from_list, with_page_list_token};
+use super::super::*;
+use super::fixtures::MockBackend;
 use core::ptr::NonNull;
 use mnemosyne_core::policy::StandardPolicy;
 use mnemosyne_core::types::Page;
@@ -193,7 +193,8 @@ fn unlink_full_page_reports_found_status_without_mutating_missing_page() {
         .lock()
         .expect("local allocator test lock was poisoned");
     let mut alloc = ThreadAllocator::<DefaultBackend>::new();
-    let class = mnemosyne_core::size_class::size_to_class(16).expect("16 bytes is a small allocation");
+    let class =
+        mnemosyne_core::size_class::size_to_class(16).expect("16 bytes is a small allocation");
     let mut listed = Page::new();
     let mut missing = Page::new();
     listed.list_state = 2; // Simulate being in full_pages

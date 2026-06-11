@@ -4,9 +4,9 @@
 //! `#[thread_local]` fast path that bypasses `LocalAllocatorSlot`
 //! lazy-initialization on hot allocation paths.
 
+use super::traits::{TlsProvider, TlsSlotAccess};
 use crate::ThreadAllocator;
 use mnemosyne_arena::HasSegmentPool;
-use super::traits::{TlsProvider, TlsSlotAccess};
 
 /// Unifies the nightly `#[thread_local]` compiler-backed TLS path.
 pub struct NightlyTls<B, S>(core::marker::PhantomData<(B, S)>);
