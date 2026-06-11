@@ -6,6 +6,7 @@
 extern crate std;
 
 pub mod constants;
+pub mod kernel_budget;
 pub mod options;
 pub mod policy;
 pub mod size_class;
@@ -14,6 +15,7 @@ pub mod types;
 pub mod validation;
 
 pub use constants::*;
+pub use kernel_budget::{KernelResourceBudget, OccupancyLimits};
 pub use policy::{AllocPolicy, StandardPolicy};
 pub use size_class::*;
 pub use sync::*;

@@ -16,12 +16,17 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 - [ ] [minor] Tier-keyed device pools: allocation keyed by themis
   `MemoryTier` (`Hbm` vs the new `Gddr`) + `PlacementHint`, with pinned-host
   (`HostPinned`) staging pools, behind the existing `MemoryBackend` seam.
-- [ ] [minor] `KernelResourceBudget`: registers/thread and shared-memory/block
-  as themis-typed quantities with occupancy-relevant accounting. **Not**
-  register allocation — GPU compilers assign registers (ADR 0002 constraint
-  2); mnemosyne owns the budget vocabulary that moirai's occupancy planner
-  consumes and hephaestus passes to cutile kernel compilation. Shared-memory
-  arena budgeting is the literal-allocation part.
+- [x] [minor] `KernelResourceBudget` (`mnemosyne-core::kernel_budget`):
+  registers/thread, shared-mem/block, threads/block with fully-`const`
+  occupancy limiters (`blocks_limited_by_{registers,shared_mem,threads}`,
+  `OccupancyLimits::blocks_per_unit` minimum). **Not** register allocation —
+  GPU compilers assign registers (ADR 0002 constraint 2). Capacities arrive
+  as plain quantities (themis `GpuTopology` accessor values) so
+  mnemosyne-core stays `no_std`/dependency-free; unreported capacities
+  surface as `u32::MAX` "no information", never a fabricated bound.
+  Verification: closed-form Ampere-class fixtures, zero-budget/zero-capacity
+  semantics, const-evaluability test. Remaining: shared-memory arena
+  budgeting (the literal-allocation part) pairs with Stage D1 device pools.
 
 ## Completed
 
