@@ -27,10 +27,31 @@ use std::io;
 use std::path::Path;
 use threshold::get_regression_threshold;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SummaryFlags {
+    refresh_baseline: bool,
+    enforce_thresholds: bool,
+}
+
+fn parse_flags(args: impl IntoIterator<Item = String>) -> SummaryFlags {
+    args.into_iter().fold(
+        SummaryFlags {
+            refresh_baseline: false,
+            enforce_thresholds: false,
+        },
+        |mut flags, arg| {
+            match arg.as_str() {
+                REFRESH_BASELINE_FLAG => flags.refresh_baseline = true,
+                ENFORCE_THRESHOLDS_FLAG => flags.enforce_thresholds = true,
+                _ => {}
+            }
+            flags
+        },
+    )
+}
+
 fn main() -> io::Result<()> {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let refresh_baseline = args.iter().any(|arg| arg == REFRESH_BASELINE_FLAG);
-    let enforce_thresholds = args.iter().any(|arg| arg == ENFORCE_THRESHOLDS_FLAG);
+    let flags = parse_flags(std::env::args().skip(1));
     let root = Path::new(CRITERION_ROOT);
     let baseline_content = if Path::new(BASELINE_PATH).exists() {
         fs::read_to_string(BASELINE_PATH)?
@@ -55,7 +76,7 @@ fn main() -> io::Result<()> {
         .collect::<Vec<_>>();
     let missing_baseline_rows = missing_selected_benchmarks(&rows);
     write_summary(CURRENT_EXCERPT_PATH, &current_excerpt_rows)?;
-    if refresh_baseline {
+    if flags.refresh_baseline {
         fs::create_dir_all("benchmarks")?;
         write_summary(BASELINE_PATH, &current_excerpt_rows)?;
     }
@@ -71,7 +92,7 @@ fn main() -> io::Result<()> {
         CURRENT_EXCERPT_PATH,
         current_excerpt_rows.len(),
         VARIANCE_PATH,
-        refresh_baseline
+        flags.refresh_baseline
     );
 
     allocator::print_and_save_allocator_comparison(&rows)?;
@@ -88,18 +109,53 @@ fn main() -> io::Result<()> {
         }
     }
 
-    if enforce_thresholds && !refresh_baseline && !missing_baseline_rows.is_empty() {
+    if flags.enforce_thresholds && !flags.refresh_baseline && !missing_baseline_rows.is_empty() {
         return Err(io::Error::other(format!(
             "Missing selected benchmark rows for threshold enforcement: {}",
             missing_baseline_rows.join(", ")
         )));
     }
 
-    if regression_detected && enforce_thresholds && !refresh_baseline {
+    if regression_detected && flags.enforce_thresholds && !flags.refresh_baseline {
         return Err(io::Error::other(
             "Performance regression detected. Gating threshold exceeded.",
         ));
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_summary_flags_without_order_dependency() {
+        let flags = parse_flags([
+            String::from("--ignored"),
+            String::from(ENFORCE_THRESHOLDS_FLAG),
+            String::from(REFRESH_BASELINE_FLAG),
+        ]);
+
+        assert_eq!(
+            flags,
+            SummaryFlags {
+                refresh_baseline: true,
+                enforce_thresholds: true,
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_summary_flags_are_ignored() {
+        let flags = parse_flags([String::from("--ignored")]);
+
+        assert_eq!(
+            flags,
+            SummaryFlags {
+                refresh_baseline: false,
+                enforce_thresholds: false,
+            }
+        );
+    }
 }

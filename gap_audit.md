@@ -2,6 +2,12 @@
 
 ## Closed
 
+- [patch] `benchmark_summary` still allocated a `Vec<String>` for command-line
+  arguments solely to test two flags. Replaced it with a single-pass
+  `SummaryFlags` fold over the argument iterator, preserving unknown-flag
+  tolerance and order independence without allocation. Evidence tier:
+  value-semantic parser tests plus full workspace gate and benchmark-summary
+  threshold execution.
 - [patch] Refreshed allocator comparison data under the `system-jemalloc`
   benchmark matrix. The first threshold pass flagged
   `segment cache eviction/mnemosyne` at `278577.994 ns` (`1.201x` baseline)

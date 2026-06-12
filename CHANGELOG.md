@@ -29,6 +29,8 @@
 
 ### Changed
 
+- Removed `benchmark_summary`'s command-argument `Vec` allocation; known flags
+  are parsed in one pass while preserving unknown-flag tolerance.
 - Refreshed `benchmarks/allocator_comparison.md` from the current
   `system-jemalloc` Criterion benchmark matrix. The selected-row threshold gate
   passes after a focused segment-cache eviction rerun stabilized the only

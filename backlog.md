@@ -30,6 +30,8 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Remove benchmark-summary CLI argument collection by parsing known
+  flags directly from the iterator with value-semantic parser coverage.
 - [patch] Refresh `benchmarks/allocator_comparison.md` with current
   `system-jemalloc` Criterion results and close the initial segment-cache
   eviction alert as measured variance after focused rerun plus threshold gate.

@@ -4,6 +4,16 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Remove the remaining command-argument `Vec` allocation from
+  `benchmark_summary` by parsing `--refresh-baseline` and
+  `--enforce-thresholds` in one pass over `std::env::args()`. Verification:
+  value-semantic flag parser tests; `cargo fmt --check`; focused
+  `benchmark_summary` tests; `cargo clippy --workspace --all-targets
+  --all-features -- -D warnings`; `cargo nextest run --workspace
+  --all-features`; `cargo test --doc --workspace --all-features`; `cargo doc
+  --workspace --all-features --no-deps`; `cargo run -p
+  mnemosyne-benchmarks --features system-jemalloc --bin benchmark_summary --
+  --enforce-thresholds`; `git diff --check`.
 - [x] [patch] Refresh `benchmarks/allocator_comparison.md` from a complete
   `system-jemalloc` allocator Criterion run and investigate the only initial
   gated regression. `segment cache eviction/mnemosyne` first reported
