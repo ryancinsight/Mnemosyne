@@ -18,6 +18,7 @@ pub static PER_CPU_CACHE_ENABLED: AtomicBool = AtomicBool::new(false);
 pub static PER_CPU_CACHE_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// A lock-free block cache slot for a single CPU, protected against ABA hazards.
+#[repr(align(64))]
 pub struct CpuCacheSlot {
     pub heads: [AtomicUsize; NUM_SIZE_CLASSES],
     pub counts: [AtomicU8; NUM_SIZE_CLASSES],
@@ -41,6 +42,7 @@ impl CpuCacheSlot {
 }
 
 /// Global per-CPU block cache array.
+#[repr(align(64))]
 pub struct PerCpuCache {
     pub slots: [CpuCacheSlot; MAX_CPUS],
 }
