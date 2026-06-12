@@ -117,6 +117,59 @@ pub fn current_cpu_id() -> usize {
     }
 }
 
+#[cfg(nightly_tls_active)]
+#[thread_local]
+static mut CACHED_CPU_ID: usize = usize::MAX;
+
+#[cfg(not(nightly_tls_active))]
+std::thread_local! {
+    static CACHED_CPU_ID: core::cell::Cell<usize> = const { core::cell::Cell::new(usize::MAX) };
+}
+
+/// Returns the cached CPU ID, or queries the OS and caches it if uninitialized.
+#[inline(always)]
+pub fn get_current_cpu_id() -> usize {
+    #[cfg(nightly_tls_active)]
+    unsafe {
+        let val = CACHED_CPU_ID;
+        if val != usize::MAX {
+            val
+        } else {
+            let actual = current_cpu_id();
+            CACHED_CPU_ID = actual;
+            actual
+        }
+    }
+    #[cfg(not(nightly_tls_active))]
+    {
+        CACHED_CPU_ID.with(|cell| {
+            let val = cell.get();
+            if val != usize::MAX {
+                val
+            } else {
+                let actual = current_cpu_id();
+                cell.set(actual);
+                actual
+            }
+        })
+    }
+}
+
+/// Force-refreshes the cached CPU ID from the OS.
+#[inline(always)]
+pub fn refresh_current_cpu_id() -> usize {
+    let actual = current_cpu_id();
+    #[cfg(nightly_tls_active)]
+    unsafe {
+        CACHED_CPU_ID = actual;
+    }
+    #[cfg(not(nightly_tls_active))]
+    {
+        CACHED_CPU_ID.with(|cell| cell.set(actual));
+    }
+    actual
+}
+
 #[inline]
 fn pack_ptr(ptr: *mut u8, count: usize) -> usize {
     let ptr_val = ptr as usize;
@@ -139,18 +192,37 @@ pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
         return core::ptr::null_mut();
     }
 
-    let cpu_id = current_cpu_id();
-    let slot = &PER_CPU_CACHE.slots[cpu_id];
+    let mut cpu_id = get_current_cpu_id();
+    let mut slot = &PER_CPU_CACHE.slots[cpu_id];
+    let mut refreshed = false;
 
     loop {
         let count = slot.counts[class].load(Ordering::Relaxed);
         if count == 0 {
+            if !refreshed {
+                let new_cpu_id = refresh_current_cpu_id();
+                if new_cpu_id != cpu_id {
+                    cpu_id = new_cpu_id;
+                    slot = &PER_CPU_CACHE.slots[cpu_id];
+                    refreshed = true;
+                    continue;
+                }
+            }
             return core::ptr::null_mut();
         }
 
         let packed_head = slot.heads[class].load(Ordering::Acquire);
         let (head_ptr, count_val) = unpack_ptr(packed_head);
         if head_ptr.is_null() {
+            if !refreshed {
+                let new_cpu_id = refresh_current_cpu_id();
+                if new_cpu_id != cpu_id {
+                    cpu_id = new_cpu_id;
+                    slot = &PER_CPU_CACHE.slots[cpu_id];
+                    refreshed = true;
+                    continue;
+                }
+            }
             return core::ptr::null_mut();
         }
 
@@ -158,17 +230,26 @@ pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
         let next_ptr = unsafe { *(head_ptr as *mut *mut u8) };
         let new_packed = pack_ptr(next_ptr, count_val + 1);
 
-        if slot.heads[class]
-            .compare_exchange_weak(
-                packed_head,
-                new_packed,
-                Ordering::Release,
-                Ordering::Acquire,
-            )
-            .is_ok()
-        {
-            slot.counts[class].fetch_sub(1, Ordering::Release);
-            return head_ptr;
+        match slot.heads[class].compare_exchange_weak(
+            packed_head,
+            new_packed,
+            Ordering::Release,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                slot.counts[class].fetch_sub(1, Ordering::Release);
+                return head_ptr;
+            }
+            Err(_) => {
+                if !refreshed {
+                    let new_cpu_id = refresh_current_cpu_id();
+                    if new_cpu_id != cpu_id {
+                        cpu_id = new_cpu_id;
+                        slot = &PER_CPU_CACHE.slots[cpu_id];
+                        refreshed = true;
+                    }
+                }
+            }
         }
     }
 }
@@ -184,12 +265,22 @@ pub fn try_free_cpu<P: AllocPolicy>(ptr: *mut u8, class: usize) -> bool {
         return false;
     }
 
-    let cpu_id = current_cpu_id();
-    let slot = &PER_CPU_CACHE.slots[cpu_id];
+    let mut cpu_id = get_current_cpu_id();
+    let mut slot = &PER_CPU_CACHE.slots[cpu_id];
+    let mut refreshed = false;
 
     loop {
         let count = slot.counts[class].load(Ordering::Relaxed);
         if count >= MAX_CACHED_BLOCKS {
+            if !refreshed {
+                let new_cpu_id = refresh_current_cpu_id();
+                if new_cpu_id != cpu_id {
+                    cpu_id = new_cpu_id;
+                    slot = &PER_CPU_CACHE.slots[cpu_id];
+                    refreshed = true;
+                    continue;
+                }
+            }
             return false;
         }
 
@@ -202,17 +293,26 @@ pub fn try_free_cpu<P: AllocPolicy>(ptr: *mut u8, class: usize) -> bool {
         }
         let new_packed = pack_ptr(ptr, count_val + 1);
 
-        if slot.heads[class]
-            .compare_exchange_weak(
-                packed_head,
-                new_packed,
-                Ordering::Release,
-                Ordering::Acquire,
-            )
-            .is_ok()
-        {
-            slot.counts[class].fetch_add(1, Ordering::Release);
-            return true;
+        match slot.heads[class].compare_exchange_weak(
+            packed_head,
+            new_packed,
+            Ordering::Release,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                slot.counts[class].fetch_add(1, Ordering::Release);
+                return true;
+            }
+            Err(_) => {
+                if !refreshed {
+                    let new_cpu_id = refresh_current_cpu_id();
+                    if new_cpu_id != cpu_id {
+                        cpu_id = new_cpu_id;
+                        slot = &PER_CPU_CACHE.slots[cpu_id];
+                        refreshed = true;
+                    }
+                }
+            }
         }
     }
 }
