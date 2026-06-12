@@ -3,6 +3,11 @@ name = "mnemosyne-heap"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["parallel", "mnemosyne-memory"]
+parallel = []
+mnemosyne-memory = []
+
 [dependencies]
 # Brand machinery (invariant-lifetime marker + thread-confined capability token)
 # is sourced from melinoe, the ecosystem's branding crate. Unpinned git dep:

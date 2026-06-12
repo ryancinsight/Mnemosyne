@@ -3,6 +3,11 @@ name = "mnemosyne-decay"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["parallel", "mnemosyne-memory"]
+parallel = []
+mnemosyne-memory = []
+
 [dependencies]
 mnemosyne-core = { path = "../mnemosyne-core" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }

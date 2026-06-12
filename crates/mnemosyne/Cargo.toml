@@ -15,7 +15,9 @@ mnemosyne-prof = { path = "../mnemosyne-prof" }
 num-complex = { version = "0.4", optional = true }
 
 [features]
-default = ["branded"]
+default = ["parallel", "mnemosyne-memory"]
+parallel = []
+mnemosyne-memory = ["branded"]
 branded = ["dep:mnemosyne-heap"]
 nightly_tls = ["mnemosyne-local/nightly_tls", "mnemosyne-prof/nightly_tls"]
 std_tls = ["mnemosyne-local/std_tls", "mnemosyne-prof/std_tls"]

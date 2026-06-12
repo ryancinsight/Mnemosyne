@@ -16,4 +16,7 @@ mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-prof = { path = "../mnemosyne-prof" }
 
 [features]
+default = ["parallel", "mnemosyne-memory"]
+parallel = []
+mnemosyne-memory = []
 nightly_tls = ["mnemosyne-prof/nightly_tls"]

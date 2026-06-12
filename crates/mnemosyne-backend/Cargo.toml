@@ -3,5 +3,10 @@ name = "mnemosyne-backend"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["parallel", "mnemosyne-memory"]
+parallel = []
+mnemosyne-memory = []
+
 [dependencies]
 mnemosyne-core = { path = "../mnemosyne-core" }

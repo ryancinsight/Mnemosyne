@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+default = ["parallel", "mnemosyne-memory"]
+parallel = []
+mnemosyne-memory = []
 # Replaces the portable `std::thread_local!` cache accessor with an ELF/PE
 # `#[thread_local]` static, which lowers to a single segment-register-relative
 # load (the mechanism mimalloc uses for `mi_heap_default`). This eliminates the

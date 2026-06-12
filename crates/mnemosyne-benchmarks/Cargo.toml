@@ -5,6 +5,9 @@ edition = "2021"
 build = "build.rs"
 
 [features]
+default = ["parallel", "mnemosyne-memory"]
+parallel = []
+mnemosyne-memory = ["mnemosyne/branded"]
 # Opt-in jemalloc comparator on Windows by linking a system-installed
 # `libjemalloc_s.a` (e.g. MSYS2 `mingw-w64-*-jemalloc`). `tikv-jemallocator`
 # builds jemalloc from source, which does not link on windows-gnu, so the

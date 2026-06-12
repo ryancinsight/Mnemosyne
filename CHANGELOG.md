@@ -4,6 +4,10 @@
 
 ### Added
 
+- Default `parallel` and `mnemosyne-memory` feature contracts across every
+  Mnemosyne package. Leaf crates expose zero-dependency marker features; the
+  top-level `mnemosyne/mnemosyne-memory` feature preserves the branded
+  heap-backed default memory surface.
 - `mnemosyne-core::kernel_budget` (atlas ADR 0002): `KernelResourceBudget`
   (registers/thread, shared-mem/block, threads/block; zero-thread launches
   rejected at construction) and `OccupancyLimits` with fully-`const`
