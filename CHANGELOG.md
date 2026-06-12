@@ -29,6 +29,10 @@
 
 ### Changed
 
+- Refreshed `benchmarks/allocator_comparison.md` from the current
+  `system-jemalloc` Criterion benchmark matrix. The selected-row threshold gate
+  passes after a focused segment-cache eviction rerun stabilized the only
+  initial alert.
 - Split the `benchmark_summary` binary into dedicated config, CSV, Criterion,
   report, allocator-rendering, metadata, and threshold modules. The entrypoint
   now only orchestrates the report pipeline, and the largest new leaf module is

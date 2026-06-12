@@ -2,6 +2,16 @@
 
 ## Closed
 
+- [patch] Refreshed allocator comparison data under the `system-jemalloc`
+  benchmark matrix. The first threshold pass flagged
+  `segment cache eviction/mnemosyne` at `278577.994 ns` (`1.201x` baseline)
+  with CI relative width `0.177`, above the variance stability bound. The row's
+  benchmark includes 8 backend segment releases per iteration after filling the
+  retained pool, so OS mapping-release variance is part of the measured
+  workload. Focused rerun stabilized the row at `249453.566 ns`, CI relative
+  width `0.048`, ratio `1.076x`; the selected-row threshold gate then passed.
+  Evidence tier: empirical Criterion validation; no allocator code change was
+  justified.
 - [patch] `mnemosyne-benchmarks/src/bin/benchmark_summary.rs` had grown into a
   mixed-concern 747-line binary containing command orchestration, CSV parsing,
   Criterion traversal, allocator markdown rendering, metadata generation, and

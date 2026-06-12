@@ -4,6 +4,15 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Refresh `benchmarks/allocator_comparison.md` from a complete
+  `system-jemalloc` allocator Criterion run and investigate the only initial
+  gated regression. `segment cache eviction/mnemosyne` first reported
+  `278577.994 ns` with unstable variance; focused rerun stabilized it at
+  `249453.566 ns`, ratio `1.076` against the selected baseline and below the
+  `1.15` gate. Verification: `cargo bench -p mnemosyne-benchmarks --features
+  system-jemalloc --bench allocator_bench`; focused `Segment cache eviction`
+  reruns; `cargo run -p mnemosyne-benchmarks --features system-jemalloc --bin
+  benchmark_summary -- --enforce-thresholds`; `git diff --check`.
 - [x] [patch] Split the `benchmark_summary` binary into leaf modules for
   allocator comparison rendering, active-group config, CSV parsing, Criterion
   extraction, metadata writing, report writing, and threshold policy; removed
