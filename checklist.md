@@ -4,6 +4,19 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Split the `benchmark_summary` binary into leaf modules for
+  allocator comparison rendering, active-group config, CSV parsing, Criterion
+  extraction, metadata writing, report writing, and threshold policy; removed
+  tracked unreferenced `scratch/test.*` artifacts; and made report/metadata
+  writers create missing parent directories. Evidence tier: value-semantic
+  writer test; `cargo fmt --check`; focused `benchmark_summary` tests;
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`;
+  `cargo nextest run --workspace --all-features`; `cargo test --doc
+  --workspace --all-features`; `cargo doc --workspace --all-features
+  --no-deps`. `benchmark_summary -- --enforce-thresholds` was also exercised:
+  it now reaches threshold validation and fails because this checkout has no
+  current Criterion rows under `target/criterion`, not because of a writer path
+  error.
 - [x] [patch] Add default `parallel` and `mnemosyne-memory` feature contracts
   to every Mnemosyne crate; facade `mnemosyne-memory` forwards to the existing
   branded heap-backed memory surface. Verification: `cargo metadata --no-deps

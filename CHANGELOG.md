@@ -29,6 +29,10 @@
 
 ### Changed
 
+- Split the `benchmark_summary` binary into dedicated config, CSV, Criterion,
+  report, allocator-rendering, metadata, and threshold modules. The entrypoint
+  now only orchestrates the report pipeline, and the largest new leaf module is
+  below the 500-line structural target.
 - Added stable `std_tls` feature routing for allocator/profiler TLS selection
   and re-exported `MemoryBackendWrapper`/`LocalAllocatorSelector` through the
   top-level `mnemosyne` crate so consumers can name the monomorphized backend
@@ -45,6 +49,18 @@
 - Replaced runtime size-class leading-zero arithmetic with a compile-time-generated `u8` lookup table for every small allocation size.
 - Removed per-row allocator-name `Vec`, owned comparison-key, formatted-cell, lowercase, and Criterion path-normalization allocations from `benchmark_summary` by using borrowed slices, copy-sized display adapters, and direct writes into existing output buffers.
 - Removed profiler dump snapshot clones and intermediate symbol vectors: `dump_profile` and `dump_leaks` now borrow active samples shard-by-shard, reuse exact retained stack slices, and stream report output directly.
+
+### Fixed
+
+- Made `benchmark_summary` report and metadata writers create missing parent
+  directories before opening output files, so a clean checkout without
+  `target/criterion` reports selected-row absence instead of failing at file
+  creation.
+
+### Removed
+
+- Removed tracked unreferenced scratch artifacts `scratch/test.cxx` and
+  `scratch/test.exe`.
 
 ## 0.1.0
 

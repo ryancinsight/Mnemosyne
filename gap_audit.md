@@ -2,6 +2,21 @@
 
 ## Closed
 
+- [patch] `mnemosyne-benchmarks/src/bin/benchmark_summary.rs` had grown into a
+  mixed-concern 747-line binary containing command orchestration, CSV parsing,
+  Criterion traversal, allocator markdown rendering, metadata generation, and
+  threshold policy. Split those concerns into a deep leaf-module hierarchy under
+  `src/bin/benchmark_summary/`, leaving the bin entrypoint as orchestration.
+  The largest new leaf is 195 lines. While exercising the command, an existing
+  path robustness defect surfaced: report writers created files under
+  `target/criterion` without creating the directory. The write boundary now
+  creates parent directories and is pinned by
+  `summary_writer_creates_missing_parent_directories`. Removed tracked,
+  unreferenced `scratch/test.cxx` and `scratch/test.exe`. Evidence tier:
+  value-semantic writer test plus full workspace clippy, nextest, doctest, and
+  rustdoc gates. Benchmark-summary threshold execution reaches selected-row
+  validation; it cannot pass in this checkout until Criterion rows exist under
+  `target/criterion`.
 - [patch] Default feature policy drift: Mnemosyne crates did not all expose the
   Atlas-wide `parallel` plus `mnemosyne-memory` default feature contract. Added
   zero-dependency markers to leaf crates and mapped the top-level

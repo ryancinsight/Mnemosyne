@@ -30,6 +30,10 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Split the benchmark-summary binary into dedicated config, CSV,
+  Criterion, report, allocator-rendering, metadata, and threshold leaf modules;
+  remove tracked scratch artifacts; and harden report writers so missing
+  `target/criterion` parents are created before output files are opened.
 - [minor] Add `ScratchBank<T, const N>` as the provider-owned fixed scratch-role abstraction for Apollo transform workspaces, keeping role selection const-generic and avoiding repeated per-role `ScratchPool` statics in consumers.
 - [patch] Prevent combined usable-size benchmark cross-optimization by consuming the allocated pointer through `black_box` before size query and deallocation, resolving the stale inverted small/medium/large ordering in `usable size latency`.
 - [patch] Add layout-proven `GlobalAlloc::dealloc` routing so Rust callers with the original `Layout` monomorphize out the large/huge free classifier for small allocations while preserving the pointer-only `thread_free` classifier for C-style and unknown-layout callers.
