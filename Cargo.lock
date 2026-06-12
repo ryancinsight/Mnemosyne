@@ -336,8 +336,8 @@ dependencies = [
 
 [[package]]
 name = "melinoe"
-version = "0.6.0"
-source = "git+https://github.com/ryancinsight/melinoe.git#8140882ce58c9e68f70e242f3509133cc53080d9"
+version = "0.7.0"
+source = "git+https://github.com/ryancinsight/melinoe.git#cee0b23fa22acbd3d8c5d602ab59b16b65c12f76"
 
 [[package]]
 name = "memchr"
@@ -463,6 +463,7 @@ dependencies = [
 name = "mnemosyne-local"
 version = "0.1.0"
 dependencies = [
+ "melinoe",
  "mnemosyne-arena",
  "mnemosyne-backend",
  "mnemosyne-core",
@@ -758,8 +759,8 @@ dependencies = [
 
 [[package]]
 name = "themis"
-version = "0.7.0"
-source = "git+https://github.com/ryancinsight/themis#65889060bb8a667ea5c46c737eb276cf51aeac46"
+version = "0.8.0"
+source = "git+https://github.com/ryancinsight/themis#7392d33723dc9467c6fae3f6ab8ff734f1f42dda"
 dependencies = [
  "melinoe",
 ]

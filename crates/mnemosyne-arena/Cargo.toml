@@ -14,4 +14,4 @@ num-complex = ["dep:num-complex"]
 mnemosyne-core = { path = "../mnemosyne-core" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 num-complex = { version = "0.4", optional = true }
-themis = { git = "https://github.com/ryancinsight/themis", version = "0.7.0", default-features = false, features = ["std"] }
+themis = { git = "https://github.com/ryancinsight/themis", version = "0.8.0", default-features = false, features = ["std"] }

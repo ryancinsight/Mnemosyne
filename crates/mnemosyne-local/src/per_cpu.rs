@@ -84,56 +84,24 @@ pub fn current_cpu_id() -> usize {
     themis::current_processor().map_or(0, |cpu| cpu as usize) % MAX_CPUS
 }
 
-#[cfg(nightly_tls_active)]
-#[thread_local]
-static mut CACHED_CPU_ID: usize = usize::MAX;
-
-#[cfg(not(nightly_tls_active))]
-std::thread_local! {
-    static CACHED_CPU_ID: core::cell::Cell<usize> = const { core::cell::Cell::new(usize::MAX) };
+melinoe::thread_cached! {
+    /// Per-thread cached CPU id (melinoe `thread_cached!` SSOT; replaces the
+    /// crate-local TLS pair and its `usize::MAX` sentinel — uninitialized is
+    /// now a real `Option` state).
+    mod cached_cpu_id: usize;
 }
 
 /// Returns the cached CPU ID, or queries the OS and caches it if uninitialized.
 #[inline(always)]
 pub fn get_current_cpu_id() -> usize {
-    #[cfg(nightly_tls_active)]
-    unsafe {
-        let val = CACHED_CPU_ID;
-        if val != usize::MAX {
-            val
-        } else {
-            let actual = current_cpu_id();
-            CACHED_CPU_ID = actual;
-            actual
-        }
-    }
-    #[cfg(not(nightly_tls_active))]
-    {
-        CACHED_CPU_ID.with(|cell| {
-            let val = cell.get();
-            if val != usize::MAX {
-                val
-            } else {
-                let actual = current_cpu_id();
-                cell.set(actual);
-                actual
-            }
-        })
-    }
+    cached_cpu_id::get_or_init(current_cpu_id)
 }
 
 /// Force-refreshes the cached CPU ID from the OS.
 #[inline(always)]
 pub fn refresh_current_cpu_id() -> usize {
     let actual = current_cpu_id();
-    #[cfg(nightly_tls_active)]
-    unsafe {
-        CACHED_CPU_ID = actual;
-    }
-    #[cfg(not(nightly_tls_active))]
-    {
-        CACHED_CPU_ID.with(|cell| cell.set(actual));
-    }
+    cached_cpu_id::set(actual);
     actual
 }
 
