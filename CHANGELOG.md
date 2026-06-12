@@ -29,6 +29,12 @@
 
 ### Changed
 
+- `mnemosyne-local` now uses `melinoe::thread_cached!` for the allocator TLS
+  seed cache, preserving the nonzero randomized seed contract while removing
+  duplicate local stable/nightly cache branches.
+- Split `mnemosyne-heap` unit tests into heap, boxed, cell, vector, and trait
+  leaf modules. Runtime behavior is unchanged; the root test module now owns
+  only shared fixtures and module wiring.
 - Removed `benchmark_summary`'s command-argument `Vec` allocation; known flags
   are parsed in one pass while preserving unknown-flag tolerance.
 - Refreshed `benchmarks/allocator_comparison.md` from the current

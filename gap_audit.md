@@ -2,6 +2,17 @@
 
 ## Closed
 
+- [patch] `mnemosyne-local::get_tls_seed` duplicated one-shot thread-local
+  initialization logic with separate nightly/stable branches. Replaced the
+  local cache with `melinoe::thread_cached!`, retaining the same randomized
+  nonzero seed computation while removing allocator-owned TLS cache machinery.
+  Evidence tier: workspace compile/test/doc gates plus benchmark-summary
+  threshold execution; no speedup claim is made without a dedicated profile.
+- [patch] `mnemosyne-heap/src/tests.rs` had grown to 911 lines and mixed heap,
+  boxed, cell, vector, and trait-operation test concerns. Split it into
+  bounded-context leaf modules under `src/tests/`, leaving shared fixtures in a
+  40-line root module. The largest leaf is 255 lines. Evidence tier:
+  value-semantic heap unit tests plus full workspace gate.
 - [patch] `benchmark_summary` still allocated a `Vec<String>` for command-line
   arguments solely to test two flags. Replaced it with a single-pass
   `SummaryFlags` fold over the argument iterator, preserving unknown-flag

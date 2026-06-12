@@ -30,6 +30,10 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Replace duplicate local allocator TLS seed cache branches with the
+  Melinoe thread-cached initialization primitive.
+- [patch] Split `mnemosyne-heap` unit tests into bounded-context leaf modules
+  under `src/tests/`, keeping the root module as shared fixtures only.
 - [patch] Remove benchmark-summary CLI argument collection by parsing known
   flags directly from the iterator with value-semantic parser coverage.
 - [patch] Refresh `benchmarks/allocator_comparison.md` with current

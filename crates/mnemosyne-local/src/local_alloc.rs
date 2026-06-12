@@ -11,55 +11,23 @@ use mnemosyne_core::types::{Page, Segment};
 
 pub use stats::{SizeClassOccupancy, ThreadAllocatorStats};
 
-#[cfg(nightly_tls_active)]
-#[thread_local]
-static mut TLS_SEED_NIGHTLY: usize = 0;
-
-#[cfg(not(nightly_tls_active))]
-std::thread_local! {
-    static TLS_SEED: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+melinoe::thread_cached! {
+    mod tls_seed: usize;
 }
 
 #[inline(always)]
 pub(crate) fn get_tls_seed() -> usize {
-    #[cfg(nightly_tls_active)]
-    unsafe {
-        let val = TLS_SEED_NIGHTLY;
-        if val == 0 {
-            use std::hash::{BuildHasher, Hasher};
-            let state = std::collections::hash_map::RandomState::new();
-            let mut hasher = state.build_hasher();
-            hasher.write_usize(0);
-            let mut seed = hasher.finish() as usize;
-            if seed == 0 {
-                seed = 0xdeadbeeffacefeed;
-            }
-            TLS_SEED_NIGHTLY = seed;
-            seed
-        } else {
-            val
+    tls_seed::get_or_init(|| {
+        use std::hash::{BuildHasher, Hasher};
+        let state = std::collections::hash_map::RandomState::new();
+        let mut hasher = state.build_hasher();
+        hasher.write_usize(0);
+        let mut seed = hasher.finish() as usize;
+        if seed == 0 {
+            seed = 0xdeadbeeffacefeed;
         }
-    }
-    #[cfg(not(nightly_tls_active))]
-    {
-        TLS_SEED.with(|cell| {
-            let val = cell.get();
-            if val == 0 {
-                use std::hash::{BuildHasher, Hasher};
-                let state = std::collections::hash_map::RandomState::new();
-                let mut hasher = state.build_hasher();
-                hasher.write_usize(0);
-                let mut seed = hasher.finish() as usize;
-                if seed == 0 {
-                    seed = 0xdeadbeeffacefeed;
-                }
-                cell.set(seed);
-                seed
-            } else {
-                val
-            }
-        })
-    }
+        seed
+    })
 }
 
 static CROSS_THREAD_RECLAIMED_BLOCKS: AtomicUsize = AtomicUsize::new(0);

@@ -4,6 +4,20 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Replace the ad hoc local allocator TLS seed cache with
+  `melinoe::thread_cached!`, making Melinoe the SSOT for thread-cached
+  initialization while preserving the nonzero randomized seed contract.
+  Verification: `cargo fmt --check`; focused `mnemosyne-heap` unit tests;
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`;
+  `cargo nextest run --workspace --all-features`; `cargo test --doc
+  --workspace --all-features`; `cargo doc --workspace --all-features
+  --no-deps`; `cargo run -p mnemosyne-benchmarks --features
+  system-jemalloc --bin benchmark_summary -- --enforce-thresholds`; `git diff
+  --check`.
+- [x] [patch] Split `mnemosyne-heap` unit tests into `heap`, `boxed`, `cell`,
+  `vec`, and `traits` leaf modules. The root test module is now 40 lines and
+  the largest leaf is 255 lines, preserving the same value-semantic coverage
+  under the deep vertical hierarchy target. Verification: same gate as above.
 - [x] [patch] Remove the remaining command-argument `Vec` allocation from
   `benchmark_summary` by parsing `--refresh-baseline` and
   `--enforce-thresholds` in one pass over `std::env::args()`. Verification:
