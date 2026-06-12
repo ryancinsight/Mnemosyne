@@ -7,8 +7,13 @@
   zero-dependency markers to leaf crates and mapped the top-level
   `mnemosyne-memory` feature to the existing branded memory surface. Evidence
   tier: Cargo metadata audit across Apollo, Leto, Hermes, Mnemosyne, Moirai,
-  Melinoe, Themis, and Hephaestus; formatting and diff checks. Compile/test
-  residual: target lockfile access denied before rustc.
+  Melinoe, Themis, and Hephaestus; full Mnemosyne workspace gate under
+  Ninja/Clang on windows-gnu.
+- [patch] Per-CPU allocator cache routing duplicated platform CPU-probe code in
+  `mnemosyne-local`. Replaced it with `themis::current_processor()`, keeping
+  Themis as the SSOT for topology identity while preserving the `MAX_CPUS`
+  modulo bound at the allocator boundary. Evidence tier: provider integration
+  plus full workspace gate.
 - [minor] Apollo FFT scratch allocation needed several independent role-specific pools per complex element type, forcing consumer-owned repeated thread-local `ScratchPool` declarations. Added provider-owned `ScratchBank<T, const N>` with const-generic slot selection and independent per-slot capacity/borrow depth. Evidence tier: type-level const slot selection plus value-semantic slot-independence tests, focused scratch tests, clippy, and rustdoc.
 - [patch] `allocator deallocation latency/mnemosyne/large_8192` regressed against RpMalloc on a row that is still served by the maximum small size class, not by the large/huge mapping path. Added active `rpmalloc::RpMalloc` benchmark coverage, routed Rust `GlobalAlloc::dealloc` through `thread_free_layout` so a valid `Layout` eliminates the `page.block_size == 0` classifier branch for small layouts, cold-outlined active-profiler size accounting, stamped a proved-owner allocator cache pointer into each owned segment, bypassed the busy-bit write pair for first frees from full pages, and moved full pages back to active pages with one branded list token. Evidence tier: empirical Criterion plus allocator value-semantic tests. Current comparison reports Mnemosyne `40.909 ns` versus RpMalloc `6.871 ns` (`5.95x`), improving the reported `45.121 ns` while leaving residual full/active transition cost and row variance as the next gap.
 - [patch] Public `thread_alloc_cold` charged periodic defragmentation after `ThreadAllocator::alloc_cold` had already charged the same cold refill. Removed the duplicate outer charge and added value-semantic coverage that one page refill advances `defrag_counter` by exactly one. Evidence tier: unit assertion plus Criterion threshold gate. Current retained rows report `allocator allocation latency/large_8192` at Mnemosyne `42.252 ns` versus RpMalloc `19.026 ns` and `allocator deallocation latency/large_8192` at Mnemosyne `36.985 ns` versus RpMalloc `6.638 ns`.

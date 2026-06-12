@@ -8,8 +8,15 @@ Target version: 0.2.0
   to every Mnemosyne crate; facade `mnemosyne-memory` forwards to the existing
   branded heap-backed memory surface. Verification: `cargo metadata --no-deps
   --locked --format-version 1`; full Atlas feature-policy metadata audit;
-  `cargo fmt --check`; `git diff --check`. Residual: compile/test gates were
-  blocked before rustc by denied access to `target/debug/.cargo-lock`.
+  `cargo fmt --check`; `cargo check --workspace --locked`; `cargo test
+  --workspace --locked`; `cargo clippy --workspace --all-targets --locked
+  -- -D warnings`; `cargo doc --workspace --no-deps --locked`; `git diff
+  --check`. Native allocator benchmark dependencies require Ninja/Clang on
+  this windows-gnu host because the MSYS GCC frontend rejects the target flags.
+- [x] [patch] Route `mnemosyne-local::current_cpu_id` through
+  `themis::current_processor()` so Themis owns processor identity and
+  Mnemosyne consumes the topology provider instead of duplicating Linux/Windows
+  probes. Evidence tier: provider integration through full workspace gate.
 - [x] [patch] Add stable `std_tls` feature routing for the local allocator and profiler TLS selectors, re-export `MemoryBackendWrapper`/`LocalAllocatorSelector` through `mnemosyne`, and remove the duplicate top-level import/header that made Apollo clippy fail through the local Mnemosyne patch. Verification: `cargo fmt --check`; `cargo check --workspace --all-features`; `cargo clippy --workspace --all-targets --all-features -- -D warnings`; `cargo test --workspace --all-features`; `cargo doc --workspace --all-features --no-deps`; `git diff --check`.
 - [x] [minor] Add provider-owned `ScratchBank<T, const N>` for fixed scratch-role banks, preserving zero-copy `ScratchPool` slot semantics while reducing Apollo-side repeated thread-local pool declarations. Verified by `scratch_bank_slots_are_independent`, full scratch unit subset, `cargo check -p mnemosyne-arena`, clippy, and docs.
 - [x] [patch] Prevent the combined usable-size benchmark from cross-optimizing allocation, query, and deallocation by passing the allocated pointer through `black_box` before the `usable_size` call and before `dealloc`; apply the same consumed `black_box` pattern to the allocator-cycle helper. Verified by focused Criterion: `usable size latency/Mnemosyne/small/32` `2.307 ns`, `medium/1024` `2.350 ns`, `large/8192` `5.196 ns`, and regenerated `allocator_comparison.md` reports small `2.297 ns`, medium `2.340 ns`, large `5.206 ns`.

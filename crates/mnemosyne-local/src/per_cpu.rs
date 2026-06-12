@@ -81,42 +81,7 @@ pub fn enable_cpu_cache() {
 /// Returns the current CPU ID.
 #[inline]
 pub fn current_cpu_id() -> usize {
-    #[cfg(target_os = "linux")]
-    {
-        unsafe {
-            let mut cpu_val = 0u32;
-            let mut ret: isize;
-            core::arch::asm!(
-                "syscall",
-                in("rax") 309isize, // __NR_getcpu
-                in("rdi") &mut cpu_val as *mut u32,
-                in("rsi") core::ptr::null_mut::<u32>(),
-                in("rdx") core::ptr::null_mut::<u8>(),
-                lateout("rax") ret,
-                lateout("rcx") _,
-                lateout("r11") _,
-                options(nostack, preserves_flags)
-            );
-            if ret == 0 {
-                cpu_val as usize % MAX_CPUS
-            } else {
-                0
-            }
-        }
-    }
-    #[cfg(windows)]
-    {
-        unsafe {
-            extern "system" {
-                fn GetCurrentProcessorNumber() -> u32;
-            }
-            GetCurrentProcessorNumber() as usize % MAX_CPUS
-        }
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    {
-        0
-    }
+    themis::current_processor().map_or(0, |cpu| cpu as usize) % MAX_CPUS
 }
 
 #[cfg(nightly_tls_active)]
