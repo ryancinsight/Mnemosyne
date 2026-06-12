@@ -29,6 +29,10 @@
 
 ### Changed
 
+- Split the `mnemosyne` global allocator integration tests into basic
+  allocation, stats/cache, realloc, policy/backend, and leak-detector leaf
+  modules. Runtime behavior is unchanged; the integration root now owns only
+  the global allocator declaration and shared imports.
 - `mnemosyne-local` now uses `melinoe::thread_cached!` for the allocator TLS
   seed cache, preserving the nonzero randomized seed contract while removing
   duplicate local stable/nightly cache branches.

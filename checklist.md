@@ -4,6 +4,17 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Split `mnemosyne` global allocator integration coverage into
+  `basic`, `stats`, `realloc`, `policy`, and `leak` leaf modules. The
+  integration-test root now owns only the global allocator, shared imports, and
+  module wiring; largest leaf is 312 lines. Verification: focused
+  `cargo test -p mnemosyne --test global_alloc_tests -- --test-threads=1`;
+  `cargo fmt --check`; `cargo clippy --workspace --all-targets
+  --all-features -- -D warnings`; `cargo nextest run --workspace
+  --all-features`; `cargo test --doc --workspace --all-features`; `cargo doc
+  --workspace --all-features --no-deps`; `cargo run -p
+  mnemosyne-benchmarks --features system-jemalloc --bin benchmark_summary --
+  --enforce-thresholds`; `git diff --check`.
 - [x] [patch] Replace the ad hoc local allocator TLS seed cache with
   `melinoe::thread_cached!`, making Melinoe the SSOT for thread-cached
   initialization while preserving the nonzero randomized seed contract.

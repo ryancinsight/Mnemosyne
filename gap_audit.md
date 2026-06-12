@@ -2,6 +2,12 @@
 
 ## Closed
 
+- [patch] `crates/mnemosyne/tests/global_alloc_tests.rs` remained a 794-line
+  integration-test crate mixing basic allocation, telemetry/cache, realloc,
+  policy/backend, and leak-detector coverage. Split those bounded contexts into
+  leaf modules under `tests/global_alloc_tests/`, leaving a 24-line root for
+  global allocator ownership and shared imports. Largest leaf is 312 lines.
+  Evidence tier: value-semantic integration tests plus full workspace gate.
 - [patch] `mnemosyne-local::get_tls_seed` duplicated one-shot thread-local
   initialization logic with separate nightly/stable branches. Replaced the
   local cache with `melinoe::thread_cached!`, retaining the same randomized

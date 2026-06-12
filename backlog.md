@@ -30,6 +30,9 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Split `mnemosyne` global allocator integration tests into
+  bounded-context leaf modules while keeping the root as global allocator and
+  shared fixture ownership only.
 - [patch] Replace duplicate local allocator TLS seed cache branches with the
   Melinoe thread-cached initialization primitive.
 - [patch] Split `mnemosyne-heap` unit tests into bounded-context leaf modules
