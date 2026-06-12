@@ -30,6 +30,9 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Split `mnemosyne-prof` TLS provider and per-thread hook state into a
+  dedicated leaf module, leaving public controls and hook entry points in the
+  crate root.
 - [patch] Split `mnemosyne` global allocator integration tests into
   bounded-context leaf modules while keeping the root as global allocator and
   shared fixture ownership only.

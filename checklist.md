@@ -4,6 +4,17 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Split `mnemosyne-prof` TLS provider and per-thread hook state
+  machinery into `src/tls.rs`, leaving `src/lib.rs` focused on public control
+  APIs and allocation/free hook entry points. No Rust file remains over 500
+  lines; `lib.rs` is 231 lines and `tls.rs` is 285. Verification:
+  `cargo test -p mnemosyne-prof -- --test-threads=1`; `cargo fmt --check`;
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`;
+  `cargo nextest run --workspace --all-features`; `cargo test --doc
+  --workspace --all-features`; `cargo doc --workspace --all-features
+  --no-deps`; `cargo run -p mnemosyne-benchmarks --features
+  system-jemalloc --bin benchmark_summary -- --enforce-thresholds`; `git diff
+  --check`.
 - [x] [patch] Split `mnemosyne` global allocator integration coverage into
   `basic`, `stats`, `realloc`, `policy`, and `leak` leaf modules. The
   integration-test root now owns only the global allocator, shared imports, and

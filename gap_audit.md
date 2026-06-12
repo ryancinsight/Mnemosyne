@@ -2,6 +2,12 @@
 
 ## Closed
 
+- [patch] `mnemosyne-prof/src/lib.rs` still mixed public profiler controls,
+  hook hot paths, and platform TLS provider selection in one 511-line module.
+  Moved TLS state, native OS TLS key handling, TEB slot accessors, and hook
+  reentrancy helpers into `src/tls.rs`, with cfg-gated exports for
+  nightly-only sample counters. Evidence tier: profiler-focused tests plus full
+  workspace clippy, nextest, doctest, rustdoc, and benchmark-summary gates.
 - [patch] `crates/mnemosyne/tests/global_alloc_tests.rs` remained a 794-line
   integration-test crate mixing basic allocation, telemetry/cache, realloc,
   policy/backend, and leak-detector coverage. Split those bounded contexts into

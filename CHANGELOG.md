@@ -29,6 +29,9 @@
 
 ### Changed
 
+- Split `mnemosyne-prof` TLS provider selection and per-thread hook state into
+  `src/tls.rs`. Public profiler controls and allocation/free hook entry points
+  remain in `src/lib.rs`; behavior and exported API are unchanged.
 - Split the `mnemosyne` global allocator integration tests into basic
   allocation, stats/cache, realloc, policy/backend, and leak-detector leaf
   modules. Runtime behavior is unchanged; the integration root now owns only
