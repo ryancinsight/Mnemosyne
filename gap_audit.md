@@ -2,6 +2,13 @@
 
 ## Closed
 
+- [patch] `benchmark_summary` still materialized baseline comparison rows into
+  a `Vec<ComparisonRow>` and cloned each benchmark `Cow` before writing the CSV
+  and checking thresholds. Replaced it with a lending `comparison_rows`
+  iterator over baseline/current slices; `write_comparison` streams rows and
+  returns the count used in status output. Evidence tier: value-semantic
+  comparison iterator test plus full workspace gate and benchmark-summary
+  threshold execution.
 - [patch] `benchmark_summary` still collected the selected baseline excerpt
   rows into a `Vec` solely to write `allocator_current_excerpt.csv`, refresh
   the baseline, and print a count. Added `write_summary_iter` so selected rows

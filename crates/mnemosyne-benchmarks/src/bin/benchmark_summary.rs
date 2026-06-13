@@ -19,8 +19,8 @@ use config::{
 };
 use criterion::collect_estimates;
 use report::{
-    compare_to_baseline, missing_selected_benchmarks, read_summary, write_comparison,
-    write_summary, write_summary_iter, write_variance_report,
+    comparison_rows, missing_selected_benchmarks, read_summary, write_comparison, write_summary,
+    write_summary_iter, write_variance_report,
 };
 use std::fs;
 use std::io;
@@ -66,8 +66,8 @@ fn main() -> io::Result<()> {
 
     write_summary(SUMMARY_PATH, &rows)?;
     write_variance_report(VARIANCE_PATH, &rows)?;
-    let comparisons = compare_to_baseline(&previous_baseline, &rows);
-    write_comparison(COMPARISON_PATH, &comparisons)?;
+    let comparison_count =
+        write_comparison(COMPARISON_PATH, comparison_rows(&previous_baseline, &rows))?;
 
     let missing_baseline_rows = missing_selected_benchmarks(&rows);
     let current_excerpt_count = write_summary_iter(
@@ -93,7 +93,7 @@ fn main() -> io::Result<()> {
         SUMMARY_PATH,
         rows.len(),
         COMPARISON_PATH,
-        comparisons.len(),
+        comparison_count,
         CURRENT_EXCERPT_PATH,
         current_excerpt_count,
         VARIANCE_PATH,
@@ -103,8 +103,8 @@ fn main() -> io::Result<()> {
     allocator::print_and_save_allocator_comparison(&rows)?;
 
     let mut regression_detected = false;
-    for comp in &comparisons {
-        let threshold = get_regression_threshold(&comp.benchmark);
+    for comp in comparison_rows(&previous_baseline, &rows) {
+        let threshold = get_regression_threshold(comp.benchmark);
         if comp.mean_ratio > threshold {
             eprintln!(
                 "REGRESSION DETECTED: Benchmark '{}' mean ratio is {:.3} (exceeded threshold of {:.2})",

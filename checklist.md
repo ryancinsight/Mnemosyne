@@ -4,6 +4,17 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Remove the benchmark-baseline comparison `Vec` allocation from
+  `benchmark_summary` by replacing `compare_to_baseline` with a lending
+  `comparison_rows` iterator and making `write_comparison` return its written
+  row count. Threshold checks now iterate borrowed comparison rows directly and
+  benchmark names are not cloned. Verification: focused `benchmark_summary`
+  tests; `cargo fmt --check`; `cargo clippy --workspace --all-targets
+  --all-features -- -D warnings`; `cargo nextest run --workspace
+  --all-features`; `cargo test --doc --workspace --all-features`; `cargo doc
+  --workspace --all-features --no-deps`; `cargo run -p
+  mnemosyne-benchmarks --features system-jemalloc --bin benchmark_summary --
+  --enforce-thresholds`; `git diff --check`.
 - [x] [patch] Remove the selected-baseline excerpt `Vec` allocation from
   `benchmark_summary` by streaming selected rows through `write_summary_iter`,
   returning the written row count for reporting. Verification:

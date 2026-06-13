@@ -29,6 +29,9 @@
 
 ### Changed
 
+- `benchmark_summary` now streams baseline comparison rows through a lending
+  iterator instead of collecting `ComparisonRow` values and cloning benchmark
+  names before CSV output and threshold checks.
 - `benchmark_summary` now streams selected baseline excerpt rows directly to
   CSV writers instead of collecting them into an intermediate `Vec`.
 - Split `mnemosyne-prof` TLS provider selection and per-thread hook state into

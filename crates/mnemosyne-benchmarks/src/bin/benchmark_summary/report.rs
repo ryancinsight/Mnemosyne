@@ -16,7 +16,7 @@ pub struct SummaryRow<'a> {
 }
 
 pub struct ComparisonRow<'a> {
-    pub benchmark: Cow<'a, str>,
+    pub benchmark: &'a str,
     pub current_mean_ns: f64,
     pub baseline_mean_ns: f64,
     pub mean_ratio: f64,
@@ -127,41 +127,42 @@ pub fn write_variance_report(path: &str, rows: &[SummaryRow]) -> io::Result<()> 
     Ok(())
 }
 
-pub fn compare_to_baseline<'a, 'b>(
-    baseline: &[SummaryRow<'a>],
-    current: &[SummaryRow<'b>],
-) -> Vec<ComparisonRow<'a>> {
-    baseline
-        .iter()
-        .filter_map(|baseline_row| {
-            let current_row = current
-                .iter()
-                .find(|row| row.benchmark == baseline_row.benchmark)?;
-            Some(ComparisonRow {
-                benchmark: baseline_row.benchmark.clone(),
-                current_mean_ns: current_row.mean_ns,
-                baseline_mean_ns: baseline_row.mean_ns,
-                mean_ratio: current_row.mean_ns / baseline_row.mean_ns,
-                current_median_ns: current_row.median_ns,
-                baseline_median_ns: baseline_row.median_ns,
-                median_ratio: current_row.median_ns / baseline_row.median_ns,
-            })
+pub fn comparison_rows<'row>(
+    baseline: &'row [SummaryRow<'_>],
+    current: &'row [SummaryRow<'_>],
+) -> impl Iterator<Item = ComparisonRow<'row>> + 'row {
+    baseline.iter().filter_map(|baseline_row| {
+        let current_row = current
+            .iter()
+            .find(|row| row.benchmark == baseline_row.benchmark)?;
+        Some(ComparisonRow {
+            benchmark: baseline_row.benchmark.as_ref(),
+            current_mean_ns: current_row.mean_ns,
+            baseline_mean_ns: baseline_row.mean_ns,
+            mean_ratio: current_row.mean_ns / baseline_row.mean_ns,
+            current_median_ns: current_row.median_ns,
+            baseline_median_ns: baseline_row.median_ns,
+            median_ratio: current_row.median_ns / baseline_row.median_ns,
         })
-        .collect()
+    })
 }
 
-pub fn write_comparison(path: &str, rows: &[ComparisonRow]) -> io::Result<()> {
+pub fn write_comparison<'row, I>(path: &str, rows: I) -> io::Result<usize>
+where
+    I: IntoIterator<Item = ComparisonRow<'row>>,
+{
     ensure_parent_dir(path)?;
     let mut output = File::create(path)?;
     writeln!(
         output,
         "benchmark,current_mean_ns,baseline_mean_ns,mean_ratio,current_median_ns,baseline_median_ns,median_ratio"
     )?;
+    let mut count = 0;
     for row in rows {
         writeln!(
             output,
             "{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
-            escape_csv(&row.benchmark),
+            escape_csv(row.benchmark),
             row.current_mean_ns,
             row.baseline_mean_ns,
             row.mean_ratio,
@@ -169,8 +170,9 @@ pub fn write_comparison(path: &str, rows: &[ComparisonRow]) -> io::Result<()> {
             row.baseline_median_ns,
             row.median_ratio
         )?;
+        count += 1;
     }
-    Ok(())
+    Ok(count)
 }
 
 fn ensure_parent_dir(path: &str) -> io::Result<()> {
@@ -201,11 +203,17 @@ mod tests {
             mean_ci_upper_ns: None,
         }];
 
-        let comparison = compare_to_baseline(&baseline, &current);
+        let mut comparison = comparison_rows(&baseline, &current);
+        let first = comparison
+            .next()
+            .expect("matching current row must produce one comparison");
 
-        assert_eq!(comparison.len(), 1);
-        assert_eq!(comparison[0].mean_ratio, 1.5);
-        assert_eq!(comparison[0].median_ratio, 0.5);
+        assert_eq!(first.mean_ratio, 1.5);
+        assert_eq!(first.median_ratio, 0.5);
+        assert!(
+            comparison.next().is_none(),
+            "one baseline row must produce only one comparison"
+        );
     }
 
     #[test]
