@@ -50,12 +50,18 @@ pub fn read_summary(contents: &str) -> io::Result<Vec<SummaryRow<'_>>> {
     Ok(rows)
 }
 
-pub fn missing_selected_benchmarks(rows: &[SummaryRow]) -> Vec<&'static str> {
-    BASELINE_BENCHMARKS
+pub fn missing_selected_benchmarks_message(rows: &[SummaryRow]) -> Option<String> {
+    let mut missing = BASELINE_BENCHMARKS
         .iter()
         .copied()
-        .filter(|benchmark| !rows.iter().any(|row| row.benchmark == *benchmark))
-        .collect()
+        .filter(|benchmark| !rows.iter().any(|row| row.benchmark == *benchmark));
+    let first = missing.next()?;
+    let mut message = String::from(first);
+    for benchmark in missing {
+        message.push_str(", ");
+        message.push_str(benchmark);
+    }
+    Some(message)
 }
 
 pub fn write_summary(path: &str, rows: &[SummaryRow]) -> io::Result<()> {
@@ -226,14 +232,15 @@ mod tests {
             mean_ci_upper_ns: None,
         }];
 
-        let missing = missing_selected_benchmarks(&current);
+        let missing = missing_selected_benchmarks_message(&current)
+            .expect("incomplete current rows must report missing selected benchmarks");
 
         assert!(
-            missing.contains(&"threaded saturated small allocation cycles/mnemosyne"),
+            missing.contains("threaded saturated small allocation cycles/mnemosyne"),
             "missing selected rows must include absent threshold-gated threaded benchmark"
         );
         assert!(
-            !missing.contains(&"allocator cycle latency/mnemosyne/small_32"),
+            !missing.contains("allocator cycle latency/mnemosyne/small_32"),
             "present selected rows must not be reported missing"
         );
     }

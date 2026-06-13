@@ -29,6 +29,9 @@
 
 ### Changed
 
+- `benchmark_summary` now builds missing selected-row diagnostics directly
+  from the baseline iterator instead of collecting missing benchmark names into
+  a `Vec`.
 - `benchmark_summary` now streams baseline comparison rows through a lending
   iterator instead of collecting `ComparisonRow` values and cloning benchmark
   names before CSV output and threshold checks.

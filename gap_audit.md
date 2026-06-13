@@ -2,6 +2,12 @@
 
 ## Closed
 
+- [patch] `benchmark_summary` still collected missing selected baseline names
+  into a `Vec<&'static str>` solely to join them for the threshold-enforcement
+  error. Replaced that with direct iterator-to-message construction, so the
+  common complete-data path returns `None` without allocating. Evidence tier:
+  value-semantic missing-row diagnostic test plus full workspace gate and
+  benchmark-summary threshold execution.
 - [patch] `benchmark_summary` still materialized baseline comparison rows into
   a `Vec<ComparisonRow>` and cloned each benchmark `Cow` before writing the CSV
   and checking thresholds. Replaced it with a lending `comparison_rows`

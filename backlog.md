@@ -30,6 +30,8 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Remove the missing-selected-benchmark `Vec` allocation from
+  `benchmark_summary` threshold enforcement.
 - [patch] Remove the benchmark-baseline comparison `Vec` allocation and
   benchmark-name clone from `benchmark_summary` by streaming borrowed
   comparison rows.

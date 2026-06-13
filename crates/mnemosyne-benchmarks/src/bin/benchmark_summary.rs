@@ -19,8 +19,8 @@ use config::{
 };
 use criterion::collect_estimates;
 use report::{
-    comparison_rows, missing_selected_benchmarks, read_summary, write_comparison, write_summary,
-    write_summary_iter, write_variance_report,
+    comparison_rows, missing_selected_benchmarks_message, read_summary, write_comparison,
+    write_summary, write_summary_iter, write_variance_report,
 };
 use std::fs;
 use std::io;
@@ -69,7 +69,7 @@ fn main() -> io::Result<()> {
     let comparison_count =
         write_comparison(COMPARISON_PATH, comparison_rows(&previous_baseline, &rows))?;
 
-    let missing_baseline_rows = missing_selected_benchmarks(&rows);
+    let missing_baseline_rows = missing_selected_benchmarks_message(&rows);
     let current_excerpt_count = write_summary_iter(
         CURRENT_EXCERPT_PATH,
         BASELINE_BENCHMARKS
@@ -114,11 +114,13 @@ fn main() -> io::Result<()> {
         }
     }
 
-    if flags.enforce_thresholds && !flags.refresh_baseline && !missing_baseline_rows.is_empty() {
-        return Err(io::Error::other(format!(
-            "Missing selected benchmark rows for threshold enforcement: {}",
-            missing_baseline_rows.join(", ")
-        )));
+    if flags.enforce_thresholds && !flags.refresh_baseline {
+        if let Some(missing_baseline_rows) = missing_baseline_rows {
+            return Err(io::Error::other(format!(
+                "Missing selected benchmark rows for threshold enforcement: {}",
+                missing_baseline_rows
+            )));
+        }
     }
 
     if regression_detected && flags.enforce_thresholds && !flags.refresh_baseline {
