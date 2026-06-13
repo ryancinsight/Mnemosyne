@@ -1,42 +1,60 @@
 use std::borrow::Cow;
 
 pub fn parse_summary_line(line: &str) -> Option<(Cow<'_, str>, f64, f64)> {
-    let fields = parse_csv_line_cow(line);
-    if fields.len() != 3 {
+    let mut fields = CsvFields::new(line);
+    let benchmark = fields.next()?;
+    let mean_ns = fields.next()?.parse().ok()?;
+    let median_ns = fields.next()?.parse().ok()?;
+    if fields.next().is_some() {
         return None;
     }
 
-    let mean_ns = fields[1].parse().ok()?;
-    let median_ns = fields[2].parse().ok()?;
-    Some((fields[0].clone(), mean_ns, median_ns))
+    Some((benchmark, mean_ns, median_ns))
 }
 
-pub fn parse_csv_line_cow(line: &str) -> Vec<Cow<'_, str>> {
-    let mut fields = Vec::new();
-    let mut chars = line.char_indices().peekable();
-    let mut in_quotes = false;
-    let mut start = 0;
-    let mut has_escapes = false;
+struct CsvFields<'a> {
+    line: &'a str,
+    start: usize,
+}
 
-    while let Some((idx, ch)) = chars.next() {
-        match ch {
-            '"' if in_quotes && chars.peek().map(|&(_, c)| c) == Some('"') => {
-                has_escapes = true;
-                chars.next();
-            }
-            '"' => in_quotes = !in_quotes,
-            ',' if !in_quotes => {
-                let segment = &line[start..idx];
-                fields.push(process_segment(segment, has_escapes));
-                start = idx + 1;
-                has_escapes = false;
-            }
-            _ => {}
-        }
+impl<'a> CsvFields<'a> {
+    fn new(line: &'a str) -> Self {
+        Self { line, start: 0 }
     }
-    let segment = &line[start..];
-    fields.push(process_segment(segment, has_escapes));
-    fields
+}
+
+impl<'a> Iterator for CsvFields<'a> {
+    type Item = Cow<'a, str>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.start > self.line.len() {
+            return None;
+        }
+
+        let start = self.start;
+        let mut chars = self.line[start..].char_indices().peekable();
+        let mut in_quotes = false;
+        let mut has_escapes = false;
+
+        while let Some((relative_idx, ch)) = chars.next() {
+            match ch {
+                '"' if in_quotes && chars.peek().map(|&(_, c)| c) == Some('"') => {
+                    has_escapes = true;
+                    chars.next();
+                }
+                '"' => in_quotes = !in_quotes,
+                ',' if !in_quotes => {
+                    let end = start + relative_idx;
+                    self.start = end + 1;
+                    return Some(process_segment(&self.line[start..end], has_escapes));
+                }
+                _ => {}
+            }
+        }
+
+        self.start = self.line.len() + 1;
+        Some(process_segment(&self.line[start..], has_escapes))
+    }
 }
 
 pub fn escape_csv(value: &str) -> String {
@@ -74,5 +92,18 @@ mod tests {
         assert_eq!(row.0, "allocator, \"quoted\"");
         assert_eq!(row.1, 1.25);
         assert_eq!(row.2, 2.5);
+    }
+
+    #[test]
+    fn rejects_rows_with_missing_summary_fields() {
+        assert_eq!(parse_summary_line("allocator,1.250000"), None);
+    }
+
+    #[test]
+    fn rejects_rows_with_extra_summary_fields() {
+        assert_eq!(
+            parse_summary_line("allocator,1.250000,2.500000,extra"),
+            None
+        );
     }
 }

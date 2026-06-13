@@ -29,6 +29,9 @@
 
 ### Changed
 
+- `benchmark_summary` now parses summary CSV rows through a lending `Cow`
+  iterator instead of collecting fields into a `Vec` and cloning the benchmark
+  name.
 - `benchmark_summary` now builds missing selected-row diagnostics directly
   from the baseline iterator instead of collecting missing benchmark names into
   a `Vec`.

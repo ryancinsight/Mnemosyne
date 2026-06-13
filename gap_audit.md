@@ -2,6 +2,12 @@
 
 ## Closed
 
+- [patch] `benchmark_summary` still parsed each summary CSV line by collecting
+  every field into a `Vec<Cow<_>>` and cloning the benchmark field before
+  parsing numeric columns. Replaced that with a lending `CsvFields` iterator
+  consumed directly by `parse_summary_line`; unescaped fields remain borrowed
+  and escaped quoted fields allocate only for unescaping. Evidence tier:
+  value-semantic parser tests plus workspace gate.
 - [patch] `benchmark_summary` still collected missing selected baseline names
   into a `Vec<&'static str>` solely to join them for the threshold-enforcement
   error. Replaced that with direct iterator-to-message construction, so the

@@ -4,6 +4,16 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Remove the benchmark-summary CSV parser's per-row `Vec<Cow<_>>`
+  allocation and benchmark-name clone. `parse_summary_line` now consumes a
+  lending `CsvFields` iterator, borrows unescaped fields, allocates only for
+  escaped quoted fields, and preserves the exact-three-field summary-row
+  contract. Verification: focused `benchmark_summary` tests; `cargo fmt
+  --check`; `cargo clippy --workspace --all-targets --all-features -- -D
+  warnings`; `cargo nextest run --workspace --all-features`; `cargo test
+  --doc --workspace --all-features`; `cargo doc --workspace --all-features
+  --no-deps`; `cargo run -p mnemosyne-benchmarks --features system-jemalloc
+  --bin benchmark_summary -- --enforce-thresholds`; `git diff --check`.
 - [x] [patch] Remove the missing-selected-benchmark `Vec` allocation from
   `benchmark_summary` threshold enforcement. `missing_selected_benchmarks`
   now builds the comma-separated diagnostic directly from the iterator and

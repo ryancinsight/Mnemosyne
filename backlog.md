@@ -30,6 +30,9 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Remove benchmark-summary CSV row `Vec<Cow<_>>` collection and
+  benchmark-name clone by parsing required summary fields through a lending
+  `Cow` iterator.
 - [patch] Remove the missing-selected-benchmark `Vec` allocation from
   `benchmark_summary` threshold enforcement.
 - [patch] Remove the benchmark-baseline comparison `Vec` allocation and
