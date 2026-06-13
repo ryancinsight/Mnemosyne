@@ -21,7 +21,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 let mut total_allocations = 0;
                 for i in 1..PAGES_PER_SEGMENT {
                     let page = &mut (*curr).pages[i];
-                    let reclaimed = page.reclaim_thread_free_dynamic(dynamic_encrypted);
+                    let reclaimed =
+                        page.reclaim_thread_free_dynamic_for_segment(dynamic_encrypted, curr, i);
                     if reclaimed > 0 {
                         crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
                     }
@@ -78,7 +79,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 if pg.thread_free.is_empty() {
                     return false;
                 }
-                let reclaimed = pg.reclaim_thread_free_dynamic(dynamic_encrypted);
+                let reclaimed =
+                    pg.reclaim_thread_free_dynamic_for_segment(dynamic_encrypted, segment, i);
                 if reclaimed > 0 {
                     crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
                 }
@@ -135,7 +137,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         continue;
                     }
                     let pg = unsafe { &mut (*segment).pages[i] };
-                    let reclaimed = pg.reclaim_thread_free_dynamic(dynamic_encrypted);
+                    let reclaimed = unsafe {
+                        pg.reclaim_thread_free_dynamic_for_segment(dynamic_encrypted, segment, i)
+                    };
                     if reclaimed > 0 {
                         crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
                     }

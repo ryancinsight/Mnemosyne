@@ -30,6 +30,9 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Route allocator segment reclamation sweeps through a segment-aware
+  page cross-thread-free reclaim helper, avoiding repeated parent segment and
+  page-index derivation where the caller already owns that metadata.
 - [patch] Remove benchmark-summary CSV row `Vec<Cow<_>>` collection and
   benchmark-name clone by parsing required summary fields through a lending
   `Cow` iterator.

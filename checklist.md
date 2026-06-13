@@ -4,6 +4,18 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Route segment-owned cross-thread free reclamation through a
+  segment-aware `Page::reclaim_thread_free_dynamic_for_segment` helper. Owned
+  segment teardown, targeted segment reclaim, and periodic defragmentation
+  sweeps now reuse their known `Segment` pointer and page index instead of
+  re-deriving them from the `Page` address. Verification: focused core page
+  reclaim tests; focused local allocator cross-thread reclaim/defrag tests;
+  focused local allocator allocation/recycling tests; `cargo fmt --check`;
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`;
+  `cargo nextest run --workspace --all-features`; `cargo test --doc
+  --workspace --all-features`; `cargo doc --workspace --all-features
+  --no-deps`; `cargo run -p mnemosyne-benchmarks --features system-jemalloc
+  --bin benchmark_summary -- --enforce-thresholds`; `git diff --check`.
 - [x] [patch] Remove the benchmark-summary CSV parser's per-row `Vec<Cow<_>>`
   allocation and benchmark-name clone. `parse_summary_line` now consumes a
   lending `CsvFields` iterator, borrows unescaped fields, allocates only for

@@ -2,6 +2,13 @@
 
 ## Closed
 
+- [patch] Segment-owned allocator reclaim paths (`reclaim_owned_segments`,
+  `try_reclaim_segment`, and `periodic_defragmentation_sweep`) knew the parent
+  `Segment` pointer and page index but still called `Page` reclamation through
+  an address-derived wrapper. Added
+  `Page::reclaim_thread_free_dynamic_for_segment` so those sweeps reuse known
+  metadata and update occupancy via the segment-aware counter path. Evidence
+  tier: value-semantic core/local allocator reclaim tests plus workspace gate.
 - [patch] `benchmark_summary` still parsed each summary CSV line by collecting
   every field into a `Vec<Cow<_>>` and cloning the benchmark field before
   parsing numeric columns. Replaced that with a lending `CsvFields` iterator

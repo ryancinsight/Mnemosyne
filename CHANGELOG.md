@@ -29,6 +29,10 @@
 
 ### Changed
 
+- Allocator segment reclaim and defragmentation sweeps now call a
+  segment-aware page cross-thread-free reclaim helper, reusing the known
+  `Segment` pointer and page index instead of re-deriving them from the page
+  address.
 - `benchmark_summary` now parses summary CSV rows through a lending `Cow`
   iterator instead of collecting fields into a `Vec` and cloning the benchmark
   name.

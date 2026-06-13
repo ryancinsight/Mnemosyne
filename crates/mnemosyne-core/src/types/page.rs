@@ -279,11 +279,32 @@ impl Page {
     /// metadata.
     #[inline]
     pub unsafe fn reclaim_thread_free_dynamic(&mut self, encrypted: bool) -> usize {
+        let self_addr = self as *const Page as usize;
+        let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
+        let segment = segment_addr as *mut Segment;
+        let page_index = self.index_in_segment();
+        unsafe { self.reclaim_thread_free_dynamic_for_segment(encrypted, segment, page_index) }
+    }
+
+    /// Atomically drains cross-thread frees when the caller already knows the
+    /// parent segment and page index.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must be this page's parent segment, and `page_index` must be
+    /// this page's index in `segment.pages`.
+    #[inline]
+    pub unsafe fn reclaim_thread_free_dynamic_for_segment(
+        &mut self,
+        encrypted: bool,
+        segment: *mut Segment,
+        page_index: usize,
+    ) -> usize {
+        debug_assert_eq!(
+            self.page_index as usize, page_index,
+            "segment-aware reclaim called with the wrong page index"
+        );
         let cookie = if encrypted {
-            let self_addr = self as *const Page as usize;
-            let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
-            let segment = segment_addr as *mut Segment;
-            let page_index = self.index_in_segment();
             unsafe { (*segment).keys[page_index] }
         } else {
             0
@@ -299,7 +320,7 @@ impl Page {
             count,
             self.alloc_count
         );
-        unsafe { self.set_alloc_count(self.alloc_count - count) };
+        unsafe { self.set_alloc_count_for_segment(segment, page_index, self.alloc_count - count) };
 
         if self.free.is_none() {
             self.free = Some(block);
