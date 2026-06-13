@@ -30,6 +30,8 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Remove the selected-baseline excerpt `Vec` allocation from
+  `benchmark_summary` by streaming selected rows through an iterator writer.
 - [patch] Split `mnemosyne-prof` TLS provider and per-thread hook state into a
   dedicated leaf module, leaving public controls and hook entry points in the
   crate root.

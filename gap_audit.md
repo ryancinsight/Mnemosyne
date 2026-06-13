@@ -2,6 +2,13 @@
 
 ## Closed
 
+- [patch] `benchmark_summary` still collected the selected baseline excerpt
+  rows into a `Vec` solely to write `allocator_current_excerpt.csv`, refresh
+  the baseline, and print a count. Added `write_summary_iter` so selected rows
+  stream directly from the sorted summary rows to the writer; the function
+  returns the count for status output. Evidence tier: value-semantic iterator
+  writer test plus full workspace gate and benchmark-summary threshold
+  execution.
 - [patch] `mnemosyne-prof/src/lib.rs` still mixed public profiler controls,
   hook hot paths, and platform TLS provider selection in one 511-line module.
   Moved TLS state, native OS TLS key handling, TEB slot accessors, and hook

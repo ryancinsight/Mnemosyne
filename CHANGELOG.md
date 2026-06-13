@@ -29,6 +29,8 @@
 
 ### Changed
 
+- `benchmark_summary` now streams selected baseline excerpt rows directly to
+  CSV writers instead of collecting them into an intermediate `Vec`.
 - Split `mnemosyne-prof` TLS provider selection and per-thread hook state into
   `src/tls.rs`. Public profiler controls and allocation/free hook entry points
   remain in `src/lib.rs`; behavior and exported API are unchanged.

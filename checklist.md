@@ -4,6 +4,16 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Remove the selected-baseline excerpt `Vec` allocation from
+  `benchmark_summary` by streaming selected rows through `write_summary_iter`,
+  returning the written row count for reporting. Verification:
+  `summary_iter_writer_reports_written_row_count`; focused
+  `cargo test -p mnemosyne-benchmarks --bin benchmark_summary`; `cargo fmt
+  --check`; `cargo clippy --workspace --all-targets --all-features -- -D
+  warnings`; `cargo nextest run --workspace --all-features`; `cargo test
+  --doc --workspace --all-features`; `cargo doc --workspace --all-features
+  --no-deps`; `cargo run -p mnemosyne-benchmarks --features system-jemalloc
+  --bin benchmark_summary -- --enforce-thresholds`; `git diff --check`.
 - [x] [patch] Split `mnemosyne-prof` TLS provider and per-thread hook state
   machinery into `src/tls.rs`, leaving `src/lib.rs` focused on public control
   APIs and allocation/free hook entry points. No Rust file remains over 500

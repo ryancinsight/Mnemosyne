@@ -59,12 +59,21 @@ pub fn missing_selected_benchmarks(rows: &[SummaryRow]) -> Vec<&'static str> {
 }
 
 pub fn write_summary(path: &str, rows: &[SummaryRow]) -> io::Result<()> {
+    write_summary_iter(path, rows.iter()).map(|_| ())
+}
+
+pub fn write_summary_iter<'row, 'benchmark, I>(path: &str, rows: I) -> io::Result<usize>
+where
+    'benchmark: 'row,
+    I: IntoIterator<Item = &'row SummaryRow<'benchmark>>,
+{
     ensure_parent_dir(path)?;
     let mut output = File::create(path)?;
     writeln!(
         output,
         "benchmark,mean_point_estimate_ns,median_point_estimate_ns"
     )?;
+    let mut count = 0;
     for row in rows {
         writeln!(
             output,
@@ -73,8 +82,9 @@ pub fn write_summary(path: &str, rows: &[SummaryRow]) -> io::Result<()> {
             row.mean_ns,
             row.median_ns
         )?;
+        count += 1;
     }
-    Ok(())
+    Ok(count)
 }
 
 pub fn write_variance_report(path: &str, rows: &[SummaryRow]) -> io::Result<()> {
@@ -251,6 +261,53 @@ mod tests {
         assert!(
             contents.contains("allocator cycle latency/mnemosyne/small_32,1.250000,1.000000"),
             "summary output must contain the written benchmark row, got {contents:?}"
+        );
+
+        std::fs::remove_dir_all(&root)
+            .expect("temporary benchmark-summary directory cleanup failed");
+    }
+
+    #[test]
+    fn summary_iter_writer_reports_written_row_count() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock must be after Unix epoch for temp path generation")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "mnemosyne-benchmark-summary-iter-{}-{nonce}",
+            std::process::id(),
+        ));
+        let output = root.join("summary.csv");
+        let rows = [
+            SummaryRow {
+                benchmark: Cow::Borrowed("allocator cycle latency/mnemosyne/small_32"),
+                mean_ns: 1.25,
+                median_ns: 1.0,
+                mean_ci_lower_ns: None,
+                mean_ci_upper_ns: None,
+            },
+            SummaryRow {
+                benchmark: Cow::Borrowed("allocator cycle latency/mnemosyne/medium_1024"),
+                mean_ns: 2.5,
+                median_ns: 2.0,
+                mean_ci_lower_ns: None,
+                mean_ci_upper_ns: None,
+            },
+        ];
+
+        let count = write_summary_iter(
+            output
+                .to_str()
+                .expect("temporary benchmark-summary path must be valid UTF-8"),
+            rows.iter(),
+        )
+        .expect("summary iterator writer must create output");
+
+        assert_eq!(count, 2);
+        let contents = std::fs::read_to_string(&output).expect("summary output must be readable");
+        assert!(
+            contents.contains("allocator cycle latency/mnemosyne/medium_1024,2.500000,2.000000"),
+            "summary output must contain the second streamed row, got {contents:?}"
         );
 
         std::fs::remove_dir_all(&root)

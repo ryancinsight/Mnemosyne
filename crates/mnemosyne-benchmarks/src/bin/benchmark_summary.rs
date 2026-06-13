@@ -20,7 +20,7 @@ use config::{
 use criterion::collect_estimates;
 use report::{
     compare_to_baseline, missing_selected_benchmarks, read_summary, write_comparison,
-    write_summary, write_variance_report,
+    write_summary, write_summary_iter, write_variance_report,
 };
 use std::fs;
 use std::io;
@@ -69,16 +69,21 @@ fn main() -> io::Result<()> {
     let comparisons = compare_to_baseline(&previous_baseline, &rows);
     write_comparison(COMPARISON_PATH, &comparisons)?;
 
-    let current_excerpt_rows = BASELINE_BENCHMARKS
-        .iter()
-        .filter_map(|benchmark| rows.iter().find(|row| row.benchmark == *benchmark))
-        .cloned()
-        .collect::<Vec<_>>();
     let missing_baseline_rows = missing_selected_benchmarks(&rows);
-    write_summary(CURRENT_EXCERPT_PATH, &current_excerpt_rows)?;
+    let current_excerpt_count = write_summary_iter(
+        CURRENT_EXCERPT_PATH,
+        BASELINE_BENCHMARKS
+            .iter()
+            .filter_map(|benchmark| rows.iter().find(|row| row.benchmark == *benchmark)),
+    )?;
     if flags.refresh_baseline {
         fs::create_dir_all("benchmarks")?;
-        write_summary(BASELINE_PATH, &current_excerpt_rows)?;
+        write_summary_iter(
+            BASELINE_PATH,
+            BASELINE_BENCHMARKS
+                .iter()
+                .filter_map(|benchmark| rows.iter().find(|row| row.benchmark == *benchmark)),
+        )?;
     }
 
     metadata::write_metadata_json(METADATA_PATH)?;
@@ -90,7 +95,7 @@ fn main() -> io::Result<()> {
         COMPARISON_PATH,
         comparisons.len(),
         CURRENT_EXCERPT_PATH,
-        current_excerpt_rows.len(),
+        current_excerpt_count,
         VARIANCE_PATH,
         flags.refresh_baseline
     );
