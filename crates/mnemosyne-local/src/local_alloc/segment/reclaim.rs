@@ -21,10 +21,15 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 let mut total_allocations = 0;
                 for i in 1..PAGES_PER_SEGMENT {
                     let page = &mut (*curr).pages[i];
-                    let reclaimed =
-                        page.reclaim_thread_free_dynamic_for_segment(dynamic_encrypted, curr, i);
-                    if reclaimed > 0 {
-                        crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
+                    if !page.thread_free.is_empty() {
+                        let reclaimed = page.reclaim_thread_free_dynamic_for_segment(
+                            dynamic_encrypted,
+                            curr,
+                            i,
+                        );
+                        if reclaimed > 0 {
+                            crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
+                        }
                     }
                     total_allocations += page.alloc_count;
                 }

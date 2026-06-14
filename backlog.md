@@ -30,6 +30,9 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Skip empty page-local remote-free queues during thread-exit
+  owned-segment reclamation, avoiding unnecessary atomic drains while
+  preserving live-segment orphaning semantics.
 - [patch] Skip empty page-local remote-free queues during periodic allocator
   defragmentation sweeps, avoiding unnecessary atomic drains while preserving
   live-allocation accounting.

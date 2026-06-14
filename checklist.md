@@ -4,6 +4,18 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Skip empty remote-free queues during thread-exit owned-segment
+  reclamation. `reclaim_owned_segments` now checks `Page::thread_free.is_empty()`
+  before issuing an atomic drain for each page, while still scanning every page
+  for `alloc_count` so live segments are orphaned and empty segments are
+  released correctly. Verification: focused selected-TLS thread-exit reclaim
+  test; focused local allocator backend tests; focused local allocator
+  cross-thread reclaim/defrag tests; `cargo fmt --check`; `cargo clippy
+  --workspace --all-targets --all-features -- -D warnings`; `cargo nextest
+  run --workspace --all-features`; `cargo test --doc --workspace
+  --all-features`; `cargo doc --workspace --all-features --no-deps`; `cargo
+  run -p mnemosyne-benchmarks --features system-jemalloc --bin
+  benchmark_summary -- --enforce-thresholds`; `git diff --check`.
 - [x] [patch] Skip empty remote-free queues during periodic allocator
   defragmentation sweeps. `periodic_defragmentation_sweep` now matches
   targeted segment reclaim by checking `Page::thread_free.is_empty()` before

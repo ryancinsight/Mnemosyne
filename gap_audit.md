@@ -2,6 +2,13 @@
 
 ## Closed
 
+- [patch] `ThreadAllocator::reclaim_owned_segments` scanned every page during
+  thread-exit reclamation and atomically drained each page even when the
+  `thread_free` queue was empty. Added the same empty-queue guard used by
+  periodic and targeted reclaim paths while preserving the full `alloc_count`
+  scan that decides whether a segment is released or orphaned. Evidence tier:
+  value-semantic local allocator thread-exit and cross-thread tests plus
+  workspace gate.
 - [patch] `ThreadAllocator::periodic_defragmentation_sweep` atomically drained
   every occupied page even when `thread_free` was empty. Targeted segment
   reclaim already used the cheaper `is_empty` guard. Added the same guard to

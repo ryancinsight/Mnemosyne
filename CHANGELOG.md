@@ -29,6 +29,9 @@
 
 ### Changed
 
+- Thread-exit owned-segment reclamation now checks page-local remote-free
+  queues before attempting an atomic drain while still scanning every page's
+  live allocation count.
 - Periodic allocator defragmentation now checks page-local remote-free queues
   before attempting an atomic drain, matching targeted segment reclaim behavior
   while preserving occupied-page accounting.
