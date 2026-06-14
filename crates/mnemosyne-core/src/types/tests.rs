@@ -56,7 +56,7 @@ fn test_page_reclaim_thread_free() {
         .push::<crate::policy::StandardPolicy>(first);
 
     let reclaimed = unsafe {
-        page.reclaim_thread_free_dynamic_for_segment(false, segment_ptr, page.index_in_segment())
+        page.reclaim_thread_free_if_present_for_segment(false, segment_ptr, page.index_in_segment())
     };
 
     assert_eq!(reclaimed, 1);

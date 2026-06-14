@@ -2,6 +2,13 @@
 
 ## Closed
 
+- [patch] Empty-queue guarded remote-free reclamation was duplicated in
+  thread-exit and periodic allocator sweeps, while targeted segment reclaim
+  used a separate branch shape. Added
+  `Page::reclaim_thread_free_if_present_for_segment` as the SSOT for the
+  guarded, segment-aware drain path and routed all segment reclaim sweeps
+  through it. Evidence tier: value-semantic core/local allocator reclaim tests
+  plus workspace gate.
 - [patch] `ThreadAllocator::reclaim_owned_segments` scanned every page during
   thread-exit reclamation and atomically drained each page even when the
   `thread_free` queue was empty. Added the same empty-queue guard used by

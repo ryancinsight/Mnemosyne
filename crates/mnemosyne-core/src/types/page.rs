@@ -337,6 +337,30 @@ impl Page {
         count
     }
 
+    /// Drains cross-thread frees only when the page-local queue is currently
+    /// non-empty.
+    ///
+    /// This keeps sweep-style callers from issuing an atomic `pop_all` for
+    /// pages that have no remote frees while preserving the same reclamation
+    /// logic when the queue is populated.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must be this page's parent segment, and `page_index` must be
+    /// this page's index in `segment.pages`.
+    #[inline]
+    pub unsafe fn reclaim_thread_free_if_present_for_segment(
+        &mut self,
+        encrypted: bool,
+        segment: *mut Segment,
+        page_index: usize,
+    ) -> usize {
+        if self.thread_free.is_empty() {
+            return 0;
+        }
+        unsafe { self.reclaim_thread_free_dynamic_for_segment(encrypted, segment, page_index) }
+    }
+
     /// Atomically drains cross-thread frees into the page-local free list.
     ///
     /// # Safety

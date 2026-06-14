@@ -30,6 +30,8 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Centralize allocator sweep remote-free reclamation through a
+  segment-aware `Page` helper that skips empty queues before atomic drains.
 - [patch] Skip empty page-local remote-free queues during thread-exit
   owned-segment reclamation, avoiding unnecessary atomic drains while
   preserving live-segment orphaning semantics.

@@ -4,6 +4,18 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Centralize guarded page-local remote-free reclamation behind
+  `Page::reclaim_thread_free_if_present_for_segment`. Thread-exit reclaim,
+  targeted segment reclaim, and periodic defragmentation now share the same
+  empty-queue guard and segment-aware drain path instead of open-coding the
+  branch in each allocator sweep. Verification: focused core page reclaim
+  tests; focused local allocator backend/thread-exit tests; focused local
+  allocator cross-thread reclaim/defrag tests; `cargo fmt --check`; `cargo
+  clippy --workspace --all-targets --all-features -- -D warnings`; `cargo
+  nextest run --workspace --all-features`; `cargo test --doc --workspace
+  --all-features`; `cargo doc --workspace --all-features --no-deps`; `cargo
+  run -p mnemosyne-benchmarks --features system-jemalloc --bin
+  benchmark_summary -- --enforce-thresholds`; `git diff --check`.
 - [x] [patch] Skip empty remote-free queues during thread-exit owned-segment
   reclamation. `reclaim_owned_segments` now checks `Page::thread_free.is_empty()`
   before issuing an atomic drain for each page, while still scanning every page

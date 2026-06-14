@@ -29,6 +29,9 @@
 
 ### Changed
 
+- Allocator segment sweeps now share
+  `Page::reclaim_thread_free_if_present_for_segment` for guarded remote-free
+  reclamation, keeping the empty-queue fast path in one page-level API.
 - Thread-exit owned-segment reclamation now checks page-local remote-free
   queues before attempting an atomic drain while still scanning every page's
   live allocation count.
