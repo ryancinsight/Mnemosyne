@@ -4,6 +4,18 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Skip empty remote-free queues during periodic allocator
+  defragmentation sweeps. `periodic_defragmentation_sweep` now matches
+  targeted segment reclaim by checking `Page::thread_free.is_empty()` before
+  issuing an atomic `pop_all`, while preserving `alloc_count` accounting for
+  every occupied page. Verification: focused periodic-defrag test; focused
+  local allocator cross-thread reclaim/defrag tests; focused local allocator
+  allocation/recycling tests; `cargo fmt --check`; `cargo clippy --workspace
+  --all-targets --all-features -- -D warnings`; `cargo nextest run
+  --workspace --all-features`; `cargo test --doc --workspace --all-features`;
+  `cargo doc --workspace --all-features --no-deps`; `cargo run -p
+  mnemosyne-benchmarks --features system-jemalloc --bin benchmark_summary --
+  --enforce-thresholds`; `git diff --check`.
 - [x] [patch] Route segment-owned cross-thread free reclamation through a
   segment-aware `Page::reclaim_thread_free_dynamic_for_segment` helper. Owned
   segment teardown, targeted segment reclaim, and periodic defragmentation

@@ -30,6 +30,9 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Skip empty page-local remote-free queues during periodic allocator
+  defragmentation sweeps, avoiding unnecessary atomic drains while preserving
+  live-allocation accounting.
 - [patch] Route allocator segment reclamation sweeps through a segment-aware
   page cross-thread-free reclaim helper, avoiding repeated parent segment and
   page-index derivation where the caller already owns that metadata.

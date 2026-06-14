@@ -2,6 +2,12 @@
 
 ## Closed
 
+- [patch] `ThreadAllocator::periodic_defragmentation_sweep` atomically drained
+  every occupied page even when `thread_free` was empty. Targeted segment
+  reclaim already used the cheaper `is_empty` guard. Added the same guard to
+  periodic sweeps so pages with no remote frees retain only the `alloc_count`
+  accounting read. Evidence tier: value-semantic local allocator reclaim and
+  defragmentation tests plus workspace gate.
 - [patch] Segment-owned allocator reclaim paths (`reclaim_owned_segments`,
   `try_reclaim_segment`, and `periodic_defragmentation_sweep`) knew the parent
   `Segment` pointer and page index but still called `Page` reclamation through

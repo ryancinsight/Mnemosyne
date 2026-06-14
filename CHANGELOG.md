@@ -29,6 +29,9 @@
 
 ### Changed
 
+- Periodic allocator defragmentation now checks page-local remote-free queues
+  before attempting an atomic drain, matching targeted segment reclaim behavior
+  while preserving occupied-page accounting.
 - Allocator segment reclaim and defragmentation sweeps now call a
   segment-aware page cross-thread-free reclaim helper, reusing the known
   `Segment` pointer and page index instead of re-deriving them from the page
