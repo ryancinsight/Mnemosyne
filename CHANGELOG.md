@@ -29,6 +29,9 @@
 
 ### Changed
 
+- Orphan segment adoption now uses the guarded segment-aware page remote-free
+  reclaim helper, avoiding atomic drains on empty page-local remote-free queues
+  during adopted-segment scans.
 - Allocation-side remote-free recovery now checks for an empty page-local
   queue inside `try_reclaim_and_allocate`, so active and full page recovery
   paths share one guarded drain helper.

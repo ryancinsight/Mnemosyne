@@ -241,7 +241,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                             if page.block_size > 0 {
                                 // Reclaim cross-thread frees to get accurate count.
-                                let reclaimed = page.reclaim_thread_free::<P>();
+                                let reclaimed = page.reclaim_thread_free_if_present_for_segment(
+                                    P::ENABLE_FREE_LIST_ENCRYPTION,
+                                    seg_ptr,
+                                    i,
+                                );
                                 if reclaimed > 0 {
                                     super::record_cross_thread_reclaimed(reclaimed);
                                 }

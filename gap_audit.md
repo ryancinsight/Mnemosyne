@@ -2,6 +2,13 @@
 
 ## Closed
 
+- [patch] Orphan-segment adoption still called `Page::reclaim_thread_free`
+  directly for every occupied page while scanning the adopted segment, even
+  though it already knew the parent `Segment` pointer and page index. Routed
+  adoption through `Page::reclaim_thread_free_if_present_for_segment` so empty
+  page-local remote-free queues avoid an atomic drain and all segment-owned
+  reclaim paths share the guarded helper. Evidence tier: value-semantic orphan
+  reuse and cross-thread allocator tests plus workspace gate.
 - [patch] `try_reclaim_and_allocate` was the shared allocation-side remote-free
   recovery helper, but the full-page scan still owned its own
   `thread_free.is_empty()` branch while active-page callers paid the helper's
