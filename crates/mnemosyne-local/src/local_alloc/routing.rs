@@ -146,21 +146,16 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
             checked += 1;
             let page = page_ptr.as_mut();
-            // Skip pages whose remote-free queue is empty without touching
-            // metadata; saves an atomic swap on every iteration that has no
-            // pending remote frees.
-            if !page.thread_free.is_empty() {
-                // Safety: `page` is owned by this allocator.
-                if let Some(block) = try_reclaim_and_allocate::<P>(page) {
-                    if page.alloc_count < page.max_blocks() {
-                        // Page is no longer full! Move it back to active list.
-                        // Safety: page_ptr and class are valid.
-                        unsafe {
-                            let _ = self.move_full_page_to_active(page_ptr, class);
-                        }
+            // Safety: `page` is owned by this allocator.
+            if let Some(block) = try_reclaim_and_allocate::<P>(page) {
+                if page.alloc_count < page.max_blocks() {
+                    // Page is no longer full! Move it back to active list.
+                    // Safety: page_ptr and class are valid.
+                    unsafe {
+                        let _ = self.move_full_page_to_active(page_ptr, class);
                     }
-                    return block.as_ptr() as *mut u8;
                 }
+                return block.as_ptr() as *mut u8;
             }
             curr_opt = page.next_page;
         }

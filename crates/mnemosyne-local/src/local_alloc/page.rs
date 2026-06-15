@@ -195,6 +195,9 @@ pub(crate) unsafe fn move_full_page_to_active_branded<'id, B: HasSegmentPool>(
 pub(crate) unsafe fn try_reclaim_and_allocate<P: AllocPolicy>(
     page: &mut Page,
 ) -> Option<NonNull<Block>> {
+    if page.thread_free.is_empty() {
+        return None;
+    }
     let reclaimed = unsafe { page.reclaim_thread_free::<P>() };
     if reclaimed == 0 {
         return None;

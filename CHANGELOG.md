@@ -29,6 +29,9 @@
 
 ### Changed
 
+- Allocation-side remote-free recovery now checks for an empty page-local
+  queue inside `try_reclaim_and_allocate`, so active and full page recovery
+  paths share one guarded drain helper.
 - Allocator segment sweeps now share
   `Page::reclaim_thread_free_if_present_for_segment` for guarded remote-free
   reclamation, keeping the empty-queue fast path in one page-level API.

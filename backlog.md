@@ -30,6 +30,9 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Move allocation-side remote-free empty-queue guarding into
+  `try_reclaim_and_allocate` so active and full page recovery share one
+  helper-owned drain path.
 - [patch] Centralize allocator sweep remote-free reclamation through a
   segment-aware `Page` helper that skips empty queues before atomic drains.
 - [patch] Skip empty page-local remote-free queues during thread-exit

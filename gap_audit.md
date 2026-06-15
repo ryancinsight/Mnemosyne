@@ -2,6 +2,13 @@
 
 ## Closed
 
+- [patch] `try_reclaim_and_allocate` was the shared allocation-side remote-free
+  recovery helper, but the full-page scan still owned its own
+  `thread_free.is_empty()` branch while active-page callers paid the helper's
+  atomic drain on empty queues. Moved the empty-queue guard into the helper so
+  all allocation recovery paths share one fast path and one remote-free drain
+  contract. Evidence tier: value-semantic local allocator cross-thread,
+  allocation/recycling, and cold-refill tests plus workspace gate.
 - [patch] Empty-queue guarded remote-free reclamation was duplicated in
   thread-exit and periodic allocator sweeps, while targeted segment reclaim
   used a separate branch shape. Added

@@ -4,6 +4,18 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Centralize allocation-side remote-free empty-queue guarding in
+  `try_reclaim_and_allocate`. Active-page, cold active-page, and full-page
+  allocation recovery now share the same helper-owned `thread_free.is_empty()`
+  check before any atomic drain, removing the duplicated full-list branch while
+  preserving page reactivation semantics. Verification: focused local allocator
+  cross-thread reclaim/defrag tests; focused local allocator allocation and
+  recycling tests; focused cold-refill defrag-accounting test; `cargo fmt
+  --check`; `cargo clippy --workspace --all-targets --all-features -- -D
+  warnings`; `cargo nextest run --workspace --all-features`; `cargo test
+  --doc --workspace --all-features`; `cargo doc --workspace --all-features
+  --no-deps`; `cargo run -p mnemosyne-benchmarks --features system-jemalloc
+  --bin benchmark_summary -- --enforce-thresholds`; `git diff --check`.
 - [x] [patch] Centralize guarded page-local remote-free reclamation behind
   `Page::reclaim_thread_free_if_present_for_segment`. Thread-exit reclaim,
   targeted segment reclaim, and periodic defragmentation now share the same
