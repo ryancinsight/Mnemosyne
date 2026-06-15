@@ -20,6 +20,28 @@ pub(crate) unsafe fn pop_page_free_block<P: AllocPolicy>(page: &mut Page) -> Non
     unsafe { page.pop_block::<P>() }
 }
 
+/// Allocates one block from a page-local free list or from that page's lazy
+/// bump range.
+///
+/// Returns `None` when the page has no local free block and no uninitialized
+/// block remaining.
+///
+/// # Safety
+///
+/// The caller must own `page` through the current thread allocator and must
+/// ensure that any decoded free-list links use policy `P`.
+#[inline(always)]
+pub(crate) unsafe fn try_allocate_page_local<P: AllocPolicy>(
+    page: &mut Page,
+) -> Option<NonNull<Block>> {
+    if page.free.is_none() && page.initialized_blocks >= page.max_blocks() {
+        return None;
+    }
+    let block = unsafe { page.pop_block::<P>() };
+    unsafe { page.increment_alloc_count() };
+    Some(block)
+}
+
 /// Zero-sized permission proving exclusive allocator authority over page-list
 /// metadata for one mutation step.
 pub(crate) struct PageListToken<'id, B: HasSegmentPool> {
@@ -205,8 +227,8 @@ pub(crate) unsafe fn try_reclaim_and_allocate<P: AllocPolicy>(
     super::record_cross_thread_reclaimed(reclaimed);
     // Safety: `reclaim_thread_free` returning a nonzero count guarantees
     // that the drained chain is now linked onto `page.free`.
-    let block = unsafe { pop_page_free_block::<P>(page) };
-    unsafe { page.increment_alloc_count() };
+    let block = unsafe { try_allocate_page_local::<P>(page) }
+        .expect("invariant: reclaimed remote frees populate the page-local free list");
     Some(block)
 }
 

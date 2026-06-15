@@ -2,6 +2,13 @@
 
 ## Closed
 
+- [patch] Page-local small-allocation logic was open-coded in both the public
+  `thread_alloc` active-page path and `ThreadAllocator::alloc_class`/cold
+  active-page recovery: pop the page free list, or lazily bump the page, then
+  increment `alloc_count`. Added `try_allocate_page_local` as the SSOT for that
+  page operation while leaving poisoning/profiling and cold routing in their
+  existing callers. Evidence tier: value-semantic local allocation tests plus
+  workspace gate.
 - [patch] Orphan-segment adoption still called `Page::reclaim_thread_free`
   directly for every occupied page while scanning the adopted segment, even
   though it already knew the parent `Segment` pointer and page index. Routed

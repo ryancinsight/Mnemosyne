@@ -30,6 +30,9 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Consolidate page-local free-list pop and lazy bump allocation into a
+  single allocator helper used by `thread_alloc` and `ThreadAllocator`
+  allocation paths.
 - [patch] Route orphan-segment adoption through the guarded segment-aware
   page remote-free reclaim helper, avoiding empty-queue atomic drains while
   preserving adoption ownership and encryption semantics.

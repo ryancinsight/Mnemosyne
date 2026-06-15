@@ -29,6 +29,8 @@
 
 ### Changed
 
+- Page-local small-allocation paths now share one helper for local free-list
+  pop or lazy bump allocation plus allocation-count accounting.
 - Orphan segment adoption now uses the guarded segment-aware page remote-free
   reclaim helper, avoiding atomic drains on empty page-local remote-free queues
   during adopted-segment scans.

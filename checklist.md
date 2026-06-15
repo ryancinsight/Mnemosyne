@@ -4,6 +4,18 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Consolidate page-local small-allocation pop/bump logic in
+  `try_allocate_page_local`. The public `thread_alloc` fast path and
+  `ThreadAllocator::alloc_class`/cold active-page recovery now share one
+  helper for local free-list pop or lazy bump allocation plus `alloc_count`
+  increment, while caller-specific poisoning, profiling, and cold routing stay
+  outside the helper. Verification: focused local allocator allocation tests;
+  focused layout-validated allocation entry test; `cargo fmt --check`; `cargo
+  clippy --workspace --all-targets --all-features -- -D warnings`; `cargo
+  nextest run --workspace --all-features`; `cargo test --doc --workspace
+  --all-features`; `cargo doc --workspace --all-features --no-deps`; `cargo
+  run -p mnemosyne-benchmarks --features system-jemalloc --bin
+  benchmark_summary -- --enforce-thresholds`; `git diff --check`.
 - [x] [patch] Route orphan-segment adoption through the guarded
   segment-aware remote-free reclaim helper. Adoption already owns the
   `Segment` pointer and page index for each scanned page, so it now skips empty

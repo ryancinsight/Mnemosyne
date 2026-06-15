@@ -1,11 +1,11 @@
-use super::page::{pop_page_free_block, try_reclaim_and_allocate};
+use super::page::{pop_page_free_block, try_allocate_page_local, try_reclaim_and_allocate};
 use crate::local_alloc::ThreadAllocator;
 use core::ptr::NonNull;
 use mnemosyne_arena::{allocate_segment, HasSegmentPool};
-use mnemosyne_core::constants::{PAGES_PER_SEGMENT, SEGMENT_SIZE};
+use mnemosyne_core::constants::PAGES_PER_SEGMENT;
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::{class_to_size, size_to_class};
-use mnemosyne_core::types::{Page, Segment};
+use mnemosyne_core::types::Page;
 
 impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// Allocates a small memory block of the specified size class.
@@ -19,34 +19,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // Safety: page_ptr points to a valid Page structure inside an active segment owned by us.
             let page = unsafe { page_ptr.as_mut() };
 
-            // 1. Check thread-local free list (hot fast path)
-            if let Some(block) = page.free {
-                // Safety: block points to a valid free Block inside the page.
-                // We update page.free to the next block in the linked list.
-                let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-                    let self_addr = page as *const Page as usize;
-                    let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
-                    let segment = segment_addr as *mut Segment;
-                    let page_index = page.index_in_segment();
-                    unsafe { (*segment).keys[page_index] }
-                } else {
-                    0
-                };
-                unsafe {
-                    page.free = (*block.as_ptr()).get_next::<P>(cookie);
-                    page.increment_alloc_count();
-                }
+            // 1. Check thread-local free list or lazy bump allocation.
+            if let Some(block) = unsafe { try_allocate_page_local::<P>(page) } {
                 return block.as_ptr() as *mut u8;
-            }
-
-            // Check lazy bump allocation
-            if page.initialized_blocks < page.max_blocks() {
-                let idx = page.initialized_blocks;
-                page.initialized_blocks += 1;
-                page.increment_alloc_count();
-                let page_start = page.page_start();
-                let block_ptr = unsafe { page_start.add(idx * page.block_size) };
-                return block_ptr;
             }
 
             // 2. Reclaim batched cross-thread frees only after the local list is empty.
@@ -106,29 +81,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // 1b. Check if the new head of active_pages can satisfy the allocation.
         if let Some(mut active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
             let active_page = active_ptr.as_mut();
-            if let Some(block) = active_page.free {
-                let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-                    let self_addr = active_page as *const Page as usize;
-                    let segment_addr = self_addr & !(SEGMENT_SIZE - 1);
-                    let segment = segment_addr as *mut Segment;
-                    let page_index = active_page.index_in_segment();
-                    unsafe { (*segment).keys[page_index] }
-                } else {
-                    0
-                };
-                unsafe {
-                    active_page.free = (*block.as_ptr()).get_next::<P>(cookie);
-                    active_page.increment_alloc_count();
-                }
+            if let Some(block) = unsafe { try_allocate_page_local::<P>(active_page) } {
                 return block.as_ptr() as *mut u8;
-            }
-            if active_page.initialized_blocks < active_page.max_blocks() {
-                let idx = active_page.initialized_blocks;
-                active_page.initialized_blocks += 1;
-                active_page.increment_alloc_count();
-                let page_start = active_page.page_start();
-                let block_ptr = unsafe { page_start.add(idx * active_page.block_size) };
-                return block_ptr;
             }
             if let Some(block) = unsafe { try_reclaim_and_allocate::<P>(active_page) } {
                 return block.as_ptr() as *mut u8;
