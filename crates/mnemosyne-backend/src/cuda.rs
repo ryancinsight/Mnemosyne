@@ -5,9 +5,270 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 use mnemosyne_core::MemoryBackend;
 
 #[cfg(target_family = "windows")]
+#[repr(C)]
+struct EXCEPTION_RECORD {
+    exception_code: u32,
+    exception_flags: u32,
+    exception_record: *mut EXCEPTION_RECORD,
+    exception_address: *mut c_void,
+    number_parameters: u32,
+    exception_information: [usize; 15],
+}
+
+#[cfg(target_family = "windows")]
+#[repr(C)]
+struct EXCEPTION_POINTERS {
+    exception_record: *mut EXCEPTION_RECORD,
+    context_record: *mut c_void,
+}
+
+#[cfg(target_family = "windows")]
 extern "system" {
     fn LoadLibraryA(lpLibFileName: *const u8) -> *mut c_void;
     fn GetProcAddress(hModule: *mut c_void, lpProcName: *const u8) -> *mut c_void;
+    fn GetCurrentProcessId() -> u32;
+    fn ProcessIdToSessionId(dwProcessId: u32, pSessionId: *mut u32) -> i32;
+    fn CreateThread(
+        lpThreadAttributes: *mut c_void,
+        dwStackSize: usize,
+        lpStartAddress: unsafe extern "system" fn(*mut c_void) -> u32,
+        lpParameter: *mut c_void,
+        dwCreationFlags: u32,
+        lpThreadId: *mut u32,
+    ) -> *mut c_void;
+    fn WaitForSingleObject(hHandle: *mut c_void, dwMilliseconds: u32) -> u32;
+    fn GetExitCodeThread(hThread: *mut c_void, lpExitCode: *mut u32) -> i32;
+    fn ExitThread(dwExitCode: u32);
+    fn GetCurrentThreadId() -> u32;
+    fn CloseHandle(hObject: *mut c_void) -> i32;
+    fn AddVectoredExceptionHandler(
+        FirstHandler: u32,
+        VectoredHandler: unsafe extern "system" fn(*mut EXCEPTION_POINTERS) -> i32,
+    ) -> *mut c_void;
+    fn RemoveVectoredExceptionHandler(Handler: *mut c_void) -> u32;
+}
+
+#[cfg(target_family = "windows")]
+fn is_session_zero() -> bool {
+    let mut session_id = 0;
+    // Safety: Calls standard Win32 APIs exported by kernel32.dll.
+    unsafe {
+        let pid = GetCurrentProcessId();
+        if ProcessIdToSessionId(pid, &mut session_id) != 0 {
+            session_id == 0
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(not(target_family = "windows"))]
+fn is_session_zero() -> bool {
+    false
+}
+
+#[cfg(target_family = "windows")]
+static mut WORKER_THREAD_ID: u32 = 0;
+#[cfg(target_family = "windows")]
+static mut CU_INIT_PTR: *mut c_void = core::ptr::null_mut();
+#[cfg(target_family = "windows")]
+static mut CU_INIT_RESULT: i32 = -1;
+
+#[cfg(target_family = "windows")]
+unsafe fn run_cu_init_isolated(init_sym: *mut c_void) -> i32 {
+    unsafe extern "system" fn worker_thread_fn(_param: *mut c_void) -> u32 {
+        type CuInitFn = unsafe extern "system" fn(u32) -> i32;
+        let cu_init: CuInitFn = core::mem::transmute(CU_INIT_PTR);
+        let res = cu_init(0);
+        CU_INIT_RESULT = res;
+        0
+    }
+
+    unsafe extern "system" fn veh_handler(exception_info: *mut EXCEPTION_POINTERS) -> i32 {
+        let exception_record = (*exception_info).exception_record;
+        let code = (*exception_record).exception_code;
+        let current_thread_id = GetCurrentThreadId();
+
+        if code == 0xC0000005 && WORKER_THREAD_ID != 0 && current_thread_id == WORKER_THREAD_ID {
+            WORKER_THREAD_ID = 0;
+            ExitThread(0xC0000005);
+        }
+        0
+    }
+
+    CU_INIT_PTR = init_sym;
+    CU_INIT_RESULT = -1;
+    WORKER_THREAD_ID = 0;
+
+    let handler = AddVectoredExceptionHandler(1, veh_handler);
+    if handler.is_null() {
+        return -1;
+    }
+
+    let mut thread_id = 0;
+    let thread_handle = CreateThread(
+        core::ptr::null_mut(),
+        0,
+        worker_thread_fn,
+        core::ptr::null_mut(),
+        0,
+        &mut thread_id,
+    );
+
+    if thread_handle.is_null() {
+        RemoveVectoredExceptionHandler(handler);
+        return -1;
+    }
+    WORKER_THREAD_ID = thread_id;
+
+    WaitForSingleObject(thread_handle, 5000);
+
+    let mut exit_code = 0;
+    GetExitCodeThread(thread_handle, &mut exit_code);
+    CloseHandle(thread_handle);
+    RemoveVectoredExceptionHandler(handler);
+
+    if exit_code == 0 {
+        CU_INIT_RESULT
+    } else {
+        -1
+    }
+}
+
+#[cfg(not(target_family = "windows"))]
+unsafe fn run_cu_init_isolated(init_sym: *mut c_void) -> i32 {
+    type CuInitFn = unsafe extern "system" fn(u32) -> core::ffi::c_int;
+    let cu_init: CuInitFn = core::mem::transmute(init_sym);
+    cu_init(0)
+}
+
+/// Creates a temporary CUDA context on device 0 for testing purposes.
+///
+/// Returns the context pointer, or null on failure.
+///
+/// # Safety
+///
+/// The caller must destroy a non-null returned context exactly once with
+/// [`destroy_temp_context`] on a thread where the CUDA driver API can accept
+/// context destruction. The returned pointer must not be used after destruction
+/// and must not be passed to non-CUDA deallocation APIs.
+pub unsafe fn create_temp_context() -> *mut c_void {
+    let lib = {
+        #[cfg(target_family = "windows")]
+        {
+            LoadLibraryA(c"nvcuda.dll".as_ptr() as *const u8)
+        }
+        #[cfg(target_family = "unix")]
+        {
+            let p = dlopen(c"libcuda.so".as_ptr() as *const u8, RTLD_LAZY);
+            if p.is_null() {
+                dlopen(c"libcuda.so.1".as_ptr() as *const u8, RTLD_LAZY)
+            } else {
+                p
+            }
+        }
+        #[cfg(not(any(target_family = "windows", target_family = "unix")))]
+        {
+            core::ptr::null_mut()
+        }
+    };
+    if lib.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    let device_get = {
+        #[cfg(target_family = "windows")]
+        {
+            GetProcAddress(lib, c"cuDeviceGet".as_ptr() as *const u8)
+        }
+        #[cfg(target_family = "unix")]
+        {
+            dlsym(lib, c"cuDeviceGet".as_ptr() as *const u8)
+        }
+    };
+
+    let ctx_create = {
+        #[cfg(target_family = "windows")]
+        {
+            GetProcAddress(lib, c"cuCtxCreate_v2".as_ptr() as *const u8)
+        }
+        #[cfg(target_family = "unix")]
+        {
+            dlsym(lib, c"cuCtxCreate_v2".as_ptr() as *const u8)
+        }
+    };
+
+    if device_get.is_null() || ctx_create.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    type CuDeviceGetFn = unsafe extern "system" fn(*mut i32, i32) -> i32;
+    type CuCtxCreateFn = unsafe extern "system" fn(*mut *mut c_void, u32, i32) -> i32;
+
+    let cu_device_get: CuDeviceGetFn = core::mem::transmute(device_get);
+    let cu_ctx_create: CuCtxCreateFn = core::mem::transmute(ctx_create);
+
+    let mut dev: i32 = 0;
+    if cu_device_get(&mut dev, 0) == 0 {
+        let mut ctx: *mut c_void = core::ptr::null_mut();
+        if cu_ctx_create(&mut ctx, 0, dev) == 0 {
+            return ctx;
+        }
+    }
+
+    core::ptr::null_mut()
+}
+
+/// Destroys a temporary CUDA context.
+///
+/// # Safety
+///
+/// `ctx` must be either null or a live context returned by
+/// [`create_temp_context`] that has not already been destroyed. After this call,
+/// the pointer is invalid and must not be reused.
+pub unsafe fn destroy_temp_context(ctx: *mut c_void) {
+    if ctx.is_null() {
+        return;
+    }
+    let lib = {
+        #[cfg(target_family = "windows")]
+        {
+            LoadLibraryA(c"nvcuda.dll".as_ptr() as *const u8)
+        }
+        #[cfg(target_family = "unix")]
+        {
+            let p = dlopen(c"libcuda.so".as_ptr() as *const u8, RTLD_LAZY);
+            if p.is_null() {
+                dlopen(c"libcuda.so.1".as_ptr() as *const u8, RTLD_LAZY)
+            } else {
+                p
+            }
+        }
+        #[cfg(not(any(target_family = "windows", target_family = "unix")))]
+        {
+            core::ptr::null_mut()
+        }
+    };
+    if lib.is_null() {
+        return;
+    }
+
+    let ctx_destroy = {
+        #[cfg(target_family = "windows")]
+        {
+            GetProcAddress(lib, c"cuCtxDestroy_v2".as_ptr() as *const u8)
+        }
+        #[cfg(target_family = "unix")]
+        {
+            dlsym(lib, c"cuCtxDestroy_v2".as_ptr() as *const u8)
+        }
+    };
+
+    if !ctx_destroy.is_null() {
+        type CuCtxDestroyFn = unsafe extern "system" fn(*mut c_void) -> i32;
+        let cu_ctx_destroy: CuCtxDestroyFn = core::mem::transmute(ctx_destroy);
+        let _ = cu_ctx_destroy(ctx);
+    }
 }
 
 #[cfg(target_family = "unix")]
@@ -100,34 +361,6 @@ fn unregister_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bo
     false
 }
 
-fn is_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool {
-    let active_count = CUDA_ALLOCATION_COUNT.load(Ordering::Acquire);
-    if active_count == 0 {
-        return false;
-    }
-
-    let mut seen_non_null = 0;
-    let start_idx = (ptr as usize >> 12) % MAX_TRACKED_CUDA_ALLOCATIONS;
-    for i in 0..MAX_TRACKED_CUDA_ALLOCATIONS {
-        let idx = (start_idx + i) % MAX_TRACKED_CUDA_ALLOCATIONS;
-        let val = registry[idx].load(Ordering::Relaxed);
-        if !val.is_null() {
-            seen_non_null += 1;
-            if val == ptr {
-                return true;
-            }
-            if seen_non_null >= active_count {
-                break;
-            }
-        }
-    }
-    false
-}
-
-fn is_cuda_ptr(ptr: *mut u8) -> bool {
-    is_cuda_ptr_in(&CUDA_ALLOCATIONS, ptr)
-}
-
 /// Initializes the CUDA Unified Memory driver by dynamically resolving driver symbols.
 ///
 /// This function is safe to call concurrently from multiple threads because it uses
@@ -180,6 +413,10 @@ fn unregister_cuda_ptr(ptr: *mut u8) -> bool {
 /// - Exclusive access during symbol loading (enforced by the parent `init_cuda` caller).
 /// - The resolved symbols must be valid function pointers and must not be mutated.
 unsafe fn init_cuda_once() {
+    if is_session_zero() {
+        return;
+    }
+
     let lib = {
         #[cfg(target_family = "windows")]
         {
@@ -238,16 +475,12 @@ unsafe fn init_cuda_once() {
     };
 
     if !init_sym.is_null() && !alloc_sym.is_null() && !free_sym.is_null() {
-        CU_INIT.store(init_sym, Ordering::Release);
-        CU_MEM_ALLOC_MANAGED.store(alloc_sym, Ordering::Release);
-        CU_MEM_FREE.store(free_sym, Ordering::Release);
-
-        // Safety: transmute maps the verified dynamic library symbol address
-        // to a function pointer with system calling convention.
-        type CuInitFn = unsafe extern "system" fn(u32) -> core::ffi::c_int;
-        let cu_init: CuInitFn = unsafe { core::mem::transmute::<*mut c_void, CuInitFn>(init_sym) };
-        // Safety: cuInit is initialized with flags = 0 as specified by NVIDIA CUDA Driver API.
-        let _ = unsafe { cu_init(0) };
+        let res = run_cu_init_isolated(init_sym);
+        if res == 0 {
+            CU_INIT.store(init_sym, Ordering::Release);
+            CU_MEM_ALLOC_MANAGED.store(alloc_sym, Ordering::Release);
+            CU_MEM_FREE.store(free_sym, Ordering::Release);
+        }
     }
 }
 
@@ -258,11 +491,11 @@ unsafe fn init_cuda_once() {
 pub struct CudaUnifiedBackend;
 
 impl MemoryBackend for CudaUnifiedBackend {
-    const SUPPORTS_PAGE_RESET: bool = <crate::DefaultBackend as MemoryBackend>::SUPPORTS_PAGE_RESET;
-    const SUPPORTS_MAKE_GUARD: bool = <crate::DefaultBackend as MemoryBackend>::SUPPORTS_MAKE_GUARD;
-    const SUPPORTS_DECOMMIT: bool = <crate::DefaultBackend as MemoryBackend>::SUPPORTS_DECOMMIT;
+    const SUPPORTS_PAGE_RESET: bool = false;
+    const SUPPORTS_MAKE_GUARD: bool = false;
+    const SUPPORTS_DECOMMIT: bool = false;
 
-    /// Allocates CUDA unified managed memory, falling back to default host virtual memory on failure.
+    /// Allocates CUDA unified managed memory. Returns null on failure.
     ///
     /// # Safety
     ///
@@ -290,7 +523,7 @@ impl MemoryBackend for CudaUnifiedBackend {
                 if register_cuda_ptr(ptr) {
                     return ptr;
                 }
-                // If registry is full, deallocate and fallback.
+                // If registry is full, deallocate and return null.
                 // Safety: transmute maps the verified dynamic library symbol address
                 // to a function pointer with system calling convention.
                 type CuMemFreeFn = unsafe extern "system" fn(u64) -> core::ffi::c_int;
@@ -301,8 +534,7 @@ impl MemoryBackend for CudaUnifiedBackend {
             }
         }
 
-        // Safety: Fallback to default CPU OS virtual allocator.
-        unsafe { <crate::DefaultBackend as MemoryBackend>::allocate(size) }
+        core::ptr::null_mut()
     }
 
     /// Deallocates memory allocated by this backend.
@@ -311,7 +543,7 @@ impl MemoryBackend for CudaUnifiedBackend {
     ///
     /// The ptr must be valid and size must match the allocated size.
     #[inline]
-    unsafe fn deallocate(ptr: *mut u8, size: usize) -> bool {
+    unsafe fn deallocate(ptr: *mut u8, _size: usize) -> bool {
         if unregister_cuda_ptr(ptr) {
             let free_ptr = CU_MEM_FREE.load(Ordering::Acquire);
             if !free_ptr.is_null() {
@@ -326,57 +558,40 @@ impl MemoryBackend for CudaUnifiedBackend {
             }
         }
 
-        // Safety: Fallback to default CPU OS virtual deallocator.
-        unsafe { <crate::DefaultBackend as MemoryBackend>::deallocate(ptr, size) }
+        false
     }
 
-    /// Drops the physical backing of an idle page range while keeping the
-    /// virtual mapping committed. For fallback host allocations, it forwards the
-    /// reset call to `DefaultBackend`. For active CUDA managed memory, it returns `false`.
+    /// Drops the physical backing of an idle page range. Since CUDA unified memory
+    /// does not support OS page resets via this interface, returns false.
     ///
     /// # Safety
     ///
     /// Same contract as the wrapped `MemoryBackend::page_reset`.
     #[inline]
-    unsafe fn page_reset(ptr: *mut u8, size: usize) -> bool {
-        if !is_cuda_ptr(ptr) {
-            // Safety: Forward to host OS allocator for host fallback mappings.
-            unsafe { <crate::DefaultBackend as MemoryBackend>::page_reset(ptr, size) }
-        } else {
-            false
-        }
+    unsafe fn page_reset(_ptr: *mut u8, _size: usize) -> bool {
+        false
     }
 
-    /// Installs a guard region. For fallback host allocations, it forwards the
-    /// guard install to `DefaultBackend`. For active CUDA managed memory, it returns `false`.
+    /// Installs a guard region. Since CUDA unified memory does not support OS guards,
+    /// returns false.
     ///
     /// # Safety
     ///
     /// Same contract as the wrapped `MemoryBackend::make_guard`.
     #[inline]
-    unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
-        if !is_cuda_ptr(ptr) {
-            // Safety: Forward to host OS allocator for host fallback mappings.
-            unsafe { <crate::DefaultBackend as MemoryBackend>::make_guard(ptr, size) }
-        } else {
-            false
-        }
+    unsafe fn make_guard(_ptr: *mut u8, _size: usize) -> bool {
+        false
     }
 
-    /// Releases the commit charge of a page range. For fallback host allocations, it
-    /// forwards the decommit to `DefaultBackend`. For active CUDA managed memory, it returns `false`.
+    /// Releases the commit charge of a page range. Since CUDA unified memory does not
+    /// support OS decommit, returns false.
     ///
     /// # Safety
     ///
     /// Same contract as the wrapped `MemoryBackend::decommit`.
     #[inline]
-    unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
-        if !is_cuda_ptr(ptr) {
-            // Safety: Forward to host OS allocator for host fallback mappings.
-            unsafe { <crate::DefaultBackend as MemoryBackend>::decommit(ptr, size) }
-        } else {
-            false
-        }
+    unsafe fn decommit(_ptr: *mut u8, _size: usize) -> bool {
+        false
     }
 }
 
@@ -393,6 +608,30 @@ mod tests {
 
     fn test_registry() -> CudaAllocationRegistry {
         [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_TRACKED_CUDA_ALLOCATIONS]
+    }
+
+    fn is_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool {
+        let active_count = CUDA_ALLOCATION_COUNT.load(Ordering::Acquire);
+        if active_count == 0 {
+            return false;
+        }
+
+        let mut seen_non_null = 0;
+        let start_idx = (ptr as usize >> 12) % MAX_TRACKED_CUDA_ALLOCATIONS;
+        for i in 0..MAX_TRACKED_CUDA_ALLOCATIONS {
+            let idx = (start_idx + i) % MAX_TRACKED_CUDA_ALLOCATIONS;
+            let val = registry[idx].load(Ordering::Relaxed);
+            if !val.is_null() {
+                seen_non_null += 1;
+                if val == ptr {
+                    return true;
+                }
+                if seen_non_null >= active_count {
+                    break;
+                }
+            }
+        }
+        false
     }
 
     #[test]

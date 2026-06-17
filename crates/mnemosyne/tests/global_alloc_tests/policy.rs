@@ -76,6 +76,13 @@ fn test_cuda_unified_backend() {
     let _guard = TEST_LOCK
         .lock()
         .expect("global allocator test lock was poisoned");
+    if !is_cuda_available() {
+        return;
+    }
+    let ctx = unsafe { mnemosyne_backend::cuda::create_temp_context() };
+    if ctx.is_null() {
+        return;
+    }
     let allocator = MnemosyneAllocator::<StandardPolicy, CudaUnifiedBackend>::new();
     let layout = Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
     let ptr = unsafe { allocator.alloc(layout) };
@@ -93,4 +100,6 @@ fn test_cuda_unified_backend() {
 
     // Verify is_cuda_available is callable
     let _ = is_cuda_available();
+
+    unsafe { mnemosyne_backend::cuda::destroy_temp_context(ctx) };
 }
