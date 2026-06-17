@@ -181,8 +181,8 @@ pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
                     if new_cpu_id != cpu_id {
                         cpu_id = new_cpu_id;
                         slot = &PER_CPU_CACHE.slots[cpu_id];
-                        refreshed = true;
                     }
+                    refreshed = true;
                 }
             }
         }
@@ -244,8 +244,8 @@ pub fn try_free_cpu<P: AllocPolicy>(ptr: *mut u8, class: usize) -> bool {
                     if new_cpu_id != cpu_id {
                         cpu_id = new_cpu_id;
                         slot = &PER_CPU_CACHE.slots[cpu_id];
-                        refreshed = true;
                     }
+                    refreshed = true;
                 }
             }
         }
