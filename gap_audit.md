@@ -2,6 +2,17 @@
 
 ## Closed
 
+- [patch] Large/huge fallback allocation in `thread_alloc_checked` and
+  `thread_alloc_cold` repeated the same real allocation plus policy-selected
+  byte initialization in multiple branches. Added
+  `allocate_large_or_huge_initialized` so every large/huge fallback keeps one
+  initialization contract and one raw allocator call site in `alloc.rs`.
+  Evidence tier: value-semantic local allocation tests plus workspace gate.
+- [patch] Per-CPU cache allocation/free retry loops refreshed the cached CPU id
+  after failed CAS attempts but only marked the refresh as consumed when the CPU
+  id changed. Local commit `64df5fa` marks the refresh as consumed after the
+  OS probe itself, bounding refresh cost under contention. Evidence tier:
+  workspace gate.
 - [patch] Page-local small-allocation logic was open-coded in both the public
   `thread_alloc` active-page path and `ThreadAllocator::alloc_class`/cold
   active-page recovery: pop the page free list, or lazily bump the page, then

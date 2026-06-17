@@ -62,11 +62,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     align: usize,
 ) -> *mut u8 {
     if align > MIN_BLOCK_SIZE {
-        let ptr = unsafe { allocate_large_or_huge::<B>(size, align, P::ENABLE_POISONING) };
-        if !ptr.is_null() {
-            unsafe { initialize_allocated_bytes::<P>(ptr, size) };
-        }
-        return ptr;
+        return unsafe { allocate_large_or_huge_initialized::<P, B>(size, align) };
     }
 
     let adjusted_size = core::cmp::max(size, align);
@@ -74,12 +70,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     let class = match size_to_class_nonzero(adjusted_size) {
         Some(c) => c,
         None => {
-            let ptr =
-                unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
-            if !ptr.is_null() {
-                unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-            }
-            return ptr;
+            return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
         }
     };
 
@@ -118,33 +109,33 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
 
     let slot_ptr = B::get_allocator_ptr();
     if slot_ptr.is_null() {
-        let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
-        if !ptr.is_null() {
-            unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-        }
-        return ptr;
+        return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
     }
 
     let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
     if alloc.is_allocating {
-        let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) };
-        if !ptr.is_null() {
-            unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-        }
-        return ptr;
+        return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
     }
 
     alloc.is_allocating = true;
     let ptr = unsafe { alloc.alloc_cold::<P>(class) };
     alloc.is_allocating = false;
 
-    let final_ptr = if ptr.is_null() {
-        unsafe { allocate_large_or_huge::<B>(adjusted_size, align, P::ENABLE_POISONING) }
-    } else {
-        ptr
-    };
-    if !final_ptr.is_null() {
-        unsafe { initialize_allocated_bytes::<P>(final_ptr, adjusted_size) };
+    if ptr.is_null() {
+        return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
     }
-    final_ptr
+    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+    ptr
+}
+
+#[inline(always)]
+unsafe fn allocate_large_or_huge_initialized<P: AllocPolicy, B: HasSegmentPool>(
+    size: usize,
+    align: usize,
+) -> *mut u8 {
+    let ptr = unsafe { allocate_large_or_huge::<B>(size, align, P::ENABLE_POISONING) };
+    if !ptr.is_null() {
+        unsafe { initialize_allocated_bytes::<P>(ptr, size) };
+    }
+    ptr
 }

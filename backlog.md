@@ -30,6 +30,10 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Consolidate initialized large/huge allocation fallback branches into
+  one allocator helper in `mnemosyne-local::alloc`.
+- [patch] Bound per-CPU cache CPU-id refresh retries after failed CAS attempts
+  so each allocation/free attempt performs at most one refresh probe.
 - [patch] Consolidate page-local free-list pop and lazy bump allocation into a
   single allocator helper used by `thread_alloc` and `ThreadAllocator`
   allocation paths.

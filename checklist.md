@@ -4,6 +4,23 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Consolidate initialized large/huge allocation fallbacks in
+  `allocate_large_or_huge_initialized`. Alignment overflow, adjusted-size
+  fallback, missing allocator-slot fallback, reentrant allocator fallback, and
+  cold-refill failure now route through one helper that performs the real
+  large/huge allocation and policy-selected byte initialization. Verification:
+  focused local allocator layout-bound, layout-validated fast-entry, and huge
+  usable-size tests; `cargo fmt --check`; `cargo clippy --workspace
+  --all-targets --all-features -- -D warnings`; `cargo nextest run
+  --workspace --all-features`; `cargo test --doc --workspace --all-features`;
+  `cargo doc --workspace --all-features --no-deps`; `cargo run -p
+  mnemosyne-benchmarks --features system-jemalloc --bin benchmark_summary --
+  --enforce-thresholds`; `git diff --check`.
+- [x] [patch] Bound per-CPU cache refresh retries after failed lock-free CAS
+  attempts. The local commit `64df5fa` refreshes the cached CPU id at most once
+  per allocation/free attempt even when the refreshed id is unchanged, avoiding
+  repeated OS CPU-id probes under contention. Verification covered by the full
+  workspace gate in this sprint.
 - [x] [patch] Consolidate page-local small-allocation pop/bump logic in
   `try_allocate_page_local`. The public `thread_alloc` fast path and
   `ThreadAllocator::alloc_class`/cold active-page recovery now share one

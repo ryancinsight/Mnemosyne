@@ -29,6 +29,11 @@
 
 ### Changed
 
+- Large/huge allocation fallback paths in `mnemosyne-local` now share one
+  helper that performs the real allocation and policy-selected byte
+  initialization.
+- Per-CPU cache allocation/free retries now perform at most one CPU-id refresh
+  probe per attempt after CAS contention.
 - Page-local small-allocation paths now share one helper for local free-list
   pop or lazy bump allocation plus allocation-count accounting.
 - Orphan segment adoption now uses the guarded segment-aware page remote-free
