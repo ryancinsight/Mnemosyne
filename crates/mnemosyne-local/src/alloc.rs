@@ -77,14 +77,16 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     let slot_ptr = B::get_allocator_ptr_raw();
     if !slot_ptr.is_null() {
         let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
-        if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
-            let page = unsafe { page_ptr.as_mut() };
-            if let Some(block) =
-                unsafe { crate::local_alloc::page::try_allocate_page_local::<P>(page) }
-            {
-                let ptr = block.as_ptr() as *mut u8;
-                unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-                return ptr;
+        if !alloc.is_allocating {
+            if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
+                let page = unsafe { page_ptr.as_mut() };
+                if let Some(block) =
+                    unsafe { crate::local_alloc::page::try_allocate_page_local::<P>(page) }
+                {
+                    let ptr = block.as_ptr() as *mut u8;
+                    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+                    return ptr;
+                }
             }
         }
     }

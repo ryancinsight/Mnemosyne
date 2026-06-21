@@ -11,10 +11,32 @@ fn numa_bucket(node: usize) -> usize {
         .index()
 }
 
-/// A single lock-free size-bucket for cached huge allocations.
+struct NodeHugeBucketState {
+    head: *mut Segment,
+}
+
+/// A size-bucket for cached huge allocations.
+#[repr(align(64))]
 pub struct NodeHugeBucket {
-    head: core::sync::atomic::AtomicPtr<Segment>,
+    lock: mnemosyne_core::sync::SpinLock,
+    state: core::cell::UnsafeCell<NodeHugeBucketState>,
     count: core::sync::atomic::AtomicUsize,
+}
+
+unsafe impl Send for NodeHugeBucket {}
+unsafe impl Sync for NodeHugeBucket {}
+
+impl NodeHugeBucket {
+    /// Creates a new empty `NodeHugeBucket`.
+    pub const fn new() -> Self {
+        Self {
+            lock: mnemosyne_core::sync::SpinLock::new(),
+            state: core::cell::UnsafeCell::new(NodeHugeBucketState {
+                head: core::ptr::null_mut(),
+            }),
+            count: core::sync::atomic::AtomicUsize::new(0),
+        }
+    }
 }
 
 impl Default for NodeHugeBucket {
@@ -24,15 +46,6 @@ impl Default for NodeHugeBucket {
     }
 }
 
-impl NodeHugeBucket {
-    /// Creates a new empty `NodeHugeBucket`.
-    pub const fn new() -> Self {
-        Self {
-            head: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
-            count: core::sync::atomic::AtomicUsize::new(0),
-        }
-    }
-}
 
 /// A lock-free pool of cached huge allocations for a single NUMA node.
 pub struct NodeHugePool {
@@ -80,12 +93,17 @@ pub struct GlobalHugePool {
 }
 
 #[inline(always)]
-fn huge_bucket_index(size: usize) -> usize {
-    let mb = size >> 20;
-    if mb >= HUGE_SIZE_BUCKETS {
-        HUGE_SIZE_BUCKETS - 1
+pub(crate) fn huge_bucket_index(size: usize) -> usize {
+    if size <= 16384 {
+        0
     } else {
-        mb
+        let bits = usize::BITS - (size - 1).leading_zeros();
+        let idx = (bits as usize).saturating_sub(14);
+        if idx >= HUGE_SIZE_BUCKETS {
+            HUGE_SIZE_BUCKETS - 1
+        } else {
+            idx
+        }
     }
 }
 
@@ -144,36 +162,26 @@ impl GlobalHugePool {
         let pool_node = &self.nodes[node];
         let bucket = &pool_node.buckets[bucket_idx];
 
+        bucket.lock.lock();
         let count = bucket.count.load(core::sync::atomic::Ordering::Relaxed);
         if count >= Self::MAX_CACHED_HUGE_BLOCKS {
+            bucket.lock.unlock();
             return false;
         }
 
-        let mut head = bucket.head.load(core::sync::atomic::Ordering::Relaxed);
-        loop {
-            // Write next pointer into the segment header
-            unsafe {
-                (*segment).next_free_segment = head;
-            }
-
-            match bucket.head.compare_exchange_weak(
-                head,
-                segment,
-                core::sync::atomic::Ordering::Release,
-                core::sync::atomic::Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    bucket
-                        .count
-                        .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                    pool_node
-                        .total_count
-                        .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                    return true;
-                }
-                Err(actual) => head = actual,
-            }
+        // Safety: We hold the spinlock, so we have exclusive access to the state.
+        unsafe {
+            let state = &mut *bucket.state.get();
+            (*segment).next_free_segment = state.head;
+            state.head = segment;
         }
+
+        bucket.count.store(count + 1, core::sync::atomic::Ordering::Relaxed);
+        pool_node
+            .total_count
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        bucket.lock.unlock();
+        true
     }
 
     /// Pops a huge block segment from the pool that is at least `size` bytes, stealing if needed.
@@ -182,7 +190,7 @@ impl GlobalHugePool {
     ///
     /// The returned segment is exclusively owned by the caller.
     #[inline]
-    pub unsafe fn pop<B: mnemosyne_core::MemoryBackend>(
+    pub unsafe fn pop(
         &self,
         size: usize,
         numa_node: usize,
@@ -196,7 +204,7 @@ impl GlobalHugePool {
             .load(core::sync::atomic::Ordering::Relaxed)
             > 0
         {
-            if let Some(res) = self.pop_from_node::<B>(size, start_node, bucket_idx) {
+            if let Some(res) = self.pop_from_node(size, start_node, bucket_idx) {
                 return Some(res);
             }
         }
@@ -210,7 +218,7 @@ impl GlobalHugePool {
                 .load(core::sync::atomic::Ordering::Relaxed)
                 > 0
             {
-                if let Some(res) = self.pop_from_node::<B>(size, other_node, bucket_idx) {
+                if let Some(res) = self.pop_from_node(size, other_node, bucket_idx) {
                     return Some(res);
                 }
             }
@@ -220,7 +228,7 @@ impl GlobalHugePool {
     }
 
     #[inline]
-    unsafe fn pop_from_node<B: mnemosyne_core::MemoryBackend>(
+    unsafe fn pop_from_node(
         &self,
         size: usize,
         node: usize,
@@ -237,56 +245,49 @@ impl GlobalHugePool {
 
         for bucket_idx in start_bucket..HUGE_SIZE_BUCKETS {
             let bucket = &pool_node.buckets[bucket_idx];
-            let mut head = bucket.head.load(core::sync::atomic::Ordering::Acquire);
-            loop {
-                if head.is_null() {
-                    break;
-                }
-
-                let next = unsafe { (*head).next_free_segment };
-                let block_size = unsafe { (*head).pages[0].block_size };
-
-                if block_size >= size {
-                    match bucket.head.compare_exchange_weak(
-                        head,
-                        next,
-                        core::sync::atomic::Ordering::AcqRel,
-                        core::sync::atomic::Ordering::Acquire,
-                    ) {
-                        Ok(_) => {
-                            bucket
-                                .count
-                                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+            bucket.lock.lock();
+            unsafe {
+                let state = &mut *bucket.state.get();
+                if bucket_idx == start_bucket {
+                    // Search for the first block that fits.
+                    let mut prev: *mut Segment = core::ptr::null_mut();
+                    let mut curr = state.head;
+                    while !curr.is_null() {
+                        let block_size = (*curr).pages[0].block_size;
+                        if block_size >= size {
+                            // Unlink curr
+                            if prev.is_null() {
+                                state.head = (*curr).next_free_segment;
+                            } else {
+                                (*prev).next_free_segment = (*curr).next_free_segment;
+                            }
+                            (*curr).next_free_segment = core::ptr::null_mut();
+                            bucket.count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
                             pool_node
                                 .total_count
                                 .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-                            return Some(head);
+                            bucket.lock.unlock();
+                            return Some(curr);
                         }
-                        Err(actual) => head = actual,
+                        prev = curr;
+                        curr = (*curr).next_free_segment;
                     }
                 } else {
-                    // If it is too small, pop it anyway, deallocate it to OS, and continue.
-                    match bucket.head.compare_exchange_weak(
-                        head,
-                        next,
-                        core::sync::atomic::Ordering::AcqRel,
-                        core::sync::atomic::Ordering::Acquire,
-                    ) {
-                        Ok(_) => {
-                            bucket
-                                .count
-                                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-                            pool_node
-                                .total_count
-                                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-                            let raw_ptr = unsafe { (*head).raw_alloc_ptr };
-                            let _ = unsafe { B::deallocate(raw_ptr, block_size) };
-                            head = bucket.head.load(core::sync::atomic::Ordering::Acquire);
-                        }
-                        Err(actual) => head = actual,
+                    // Higher bucket: first block is guaranteed to fit.
+                    let h = state.head;
+                    if !h.is_null() {
+                        state.head = (*h).next_free_segment;
+                        (*h).next_free_segment = core::ptr::null_mut();
+                        bucket.count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+                        pool_node
+                            .total_count
+                            .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+                        bucket.lock.unlock();
+                        return Some(h);
                     }
                 }
             }
+            bucket.lock.unlock();
         }
         None
     }
@@ -300,15 +301,23 @@ impl GlobalHugePool {
     pub unsafe fn purge<B: mnemosyne_core::MemoryBackend>(&self) {
         for node in 0..NUMA_BUCKETS {
             let pool_node = &self.nodes[node];
-            pool_node
-                .total_count
-                .store(0, core::sync::atomic::Ordering::Relaxed);
             for bucket_idx in 0..HUGE_SIZE_BUCKETS {
                 let bucket = &pool_node.buckets[bucket_idx];
-                let mut head = bucket
-                    .head
-                    .swap(core::ptr::null_mut(), core::sync::atomic::Ordering::Acquire);
+                bucket.lock.lock();
+                let count = bucket.count.load(core::sync::atomic::Ordering::Relaxed);
+                if count == 0 {
+                    bucket.lock.unlock();
+                    continue;
+                }
+                let mut head = unsafe {
+                    let state = &mut *bucket.state.get();
+                    let h = state.head;
+                    state.head = core::ptr::null_mut();
+                    h
+                };
                 bucket.count.store(0, core::sync::atomic::Ordering::Relaxed);
+                pool_node.total_count.fetch_sub(count, core::sync::atomic::Ordering::Relaxed);
+                bucket.lock.unlock();
 
                 while !head.is_null() {
                     let next = unsafe { (*head).next_free_segment };

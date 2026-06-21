@@ -8,6 +8,7 @@ default = ["parallel", "mnemosyne-memory"]
 parallel = []
 mnemosyne-memory = []
 segment-tail-guards = []
+segment-header-guards = []
 num-complex = ["dep:num-complex"]
 
 [dependencies]

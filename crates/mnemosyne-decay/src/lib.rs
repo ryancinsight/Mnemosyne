@@ -1,6 +1,5 @@
 use core::sync::atomic::Ordering;
 use mnemosyne_arena::HasSegmentPool;
-use mnemosyne_core::constants::PAGES_PER_SEGMENT;
 use mnemosyne_core::options::PURGE_CADENCE_MS;
 use mnemosyne_core::types::SegmentOwner;
 use std::thread;
@@ -68,15 +67,19 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
         let dynamic_encrypted = unsafe { (*segment).free_list_encrypted };
         let mut total_allocations = 0;
 
-        for i in 1..PAGES_PER_SEGMENT {
-            let page = unsafe { &mut (*segment).pages[i] };
-            if page.block_size > 0 {
-                // Reclaim any cross-thread frees to update the alloc_count
-                unsafe {
-                    page.reclaim_thread_free_dynamic(dynamic_encrypted);
-                }
-                total_allocations += page.alloc_count;
+        let mut mask = unsafe { (*segment).page_occupied_mask };
+        while mask != 0 {
+            let i = mask.trailing_zeros() as usize;
+            mask &= mask - 1;
+            if i == 0 {
+                continue;
             }
+            let page = unsafe { &mut (*segment).pages[i] };
+            // Reclaim any cross-thread frees to update the alloc_count
+            unsafe {
+                page.reclaim_thread_free_dynamic(dynamic_encrypted);
+            }
+            total_allocations += page.alloc_count;
         }
 
         if total_allocations == 0 {

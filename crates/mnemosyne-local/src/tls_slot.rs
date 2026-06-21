@@ -112,7 +112,7 @@ impl<B: HasSegmentPool> Drop for LocalAllocatorSlot<B> {
     fn drop(&mut self) {
         let key = self.os_key.get();
         if key != u32::MAX {
-            #[cfg(all(windows, target_arch = "x86_64"))]
+            #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
             unsafe {
                 crate::tls::os_helpers::set_teb_tls_slot(key, core::ptr::null_mut());
             }

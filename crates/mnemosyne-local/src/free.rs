@@ -1,5 +1,6 @@
 use crate::local_alloc::page::{
-    move_full_page_to_active_branded, push_page_front, unlink_page_from_list, with_page_list_token,
+    move_active_page_to_empty_branded, move_full_page_to_active_branded, push_page_front,
+    unlink_page_from_list, with_page_list_token,
 };
 use crate::per_cpu;
 use crate::{poison_freed_bytes, LocalAllocatorSelector, ThreadAllocator};
@@ -70,8 +71,8 @@ unsafe fn thread_free_classified<
     }
 
     if !LAYOUT_PROVES_SMALL && page.block_size == 0 {
+        let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
         if P::ENABLE_POISONING {
-            let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
             let size = unsafe { (*segment).pages[0].alloc_count };
             let size = if size > 0 {
                 size
@@ -80,7 +81,6 @@ unsafe fn thread_free_classified<
             };
             unsafe { poison_freed_bytes::<P>(ptr, size) };
         }
-        let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
         let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
         return;
     }
@@ -98,8 +98,8 @@ unsafe fn thread_free_classified<
     let block = ptr as *mut Block;
     let owner = unsafe { (*segment).owner };
 
-    #[cfg(all(windows, target_arch = "x86_64"))]
-    let is_owner = {
+    #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
+    let (is_owner, owner_allocator) = {
         let tid = unsafe {
             let val: u32;
             core::arch::asm!(
@@ -109,15 +109,19 @@ unsafe fn thread_free_classified<
             );
             val
         };
-        owner.matches_thread_id(tid)
+        if owner.matches_thread_id(tid) {
+            (true, unsafe { (*segment).owner_allocator })
+        } else {
+            (false, core::ptr::null_mut())
+        }
     };
-    #[cfg(not(all(windows, target_arch = "x86_64")))]
-    let is_owner = {
+    #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
+    let (is_owner, owner_allocator) = {
         let current_allocator = B::get_allocator_ptr_raw();
-        owner.matches(current_allocator)
+        (owner.matches(current_allocator), current_allocator)
     };
 
-    if is_owner {
+    if is_owner && !owner_allocator.is_null() {
         debug_assert!(page.alloc_count > 0, "local free observed zero alloc_count");
         let page_free = page.free;
         let page_alloc_count = page.alloc_count;
@@ -140,25 +144,69 @@ unsafe fn thread_free_classified<
             return;
         }
 
-        let owner_allocator = unsafe { (*segment).owner_allocator };
-        if !owner_allocator.is_null() {
-            let alloc = unsafe { &mut *(owner_allocator as *mut ThreadAllocator<B>) };
-            if page.list_state == 2 && page_alloc_count != 1 && !alloc.is_allocating {
-                do_local_free_internal::<P, B>(alloc, block, page, segment, page_index);
-                return;
-            }
-            if !alloc.is_allocating {
-                alloc.is_allocating = true;
-                let became_empty =
-                    do_local_free_internal::<P, B>(alloc, block, page, segment, page_index);
+        let alloc = unsafe { &mut *(owner_allocator as *mut ThreadAllocator<B>) };
+        if page.list_state == 2 && page_alloc_count != 1 && !alloc.is_allocating {
+            unsafe {
+                (*block).set_next::<P>(page_free, cookie);
+                page.free = Some(NonNull::new_unchecked(block));
+                page.alloc_count = page_alloc_count - 1;
 
-                if became_empty {
-                    unsafe { alloc.record_defrag_operation::<P>() };
+                let class = page.size_class as usize;
+                let page_ptr = NonNull::new_unchecked(page as *mut Page);
+                with_page_list_token::<B, _>(|mut token| {
+                    let branded_page = token.page(page_ptr);
+                    move_full_page_to_active_branded(
+                        &mut token,
+                        alloc.full_pages.get_unchecked_mut(class),
+                        alloc.active_pages.get_unchecked_mut(class),
+                        branded_page,
+                    );
+                });
+            }
+            return;
+        }
+        if page.list_state != 2 && page_alloc_count == 1 && !alloc.is_allocating {
+            alloc.is_allocating = true;
+            unsafe {
+                (*block).set_next::<P>(page_free, cookie);
+                page.free = Some(NonNull::new_unchecked(block));
+                page.decrement_alloc_count_for_segment(segment, page_index);
+
+                if !alloc.is_current_segment(segment) {
+                    let class = page.size_class as usize;
+                    let page_ptr = NonNull::new_unchecked(page as *mut Page);
+                    with_page_list_token::<B, _>(|mut token| {
+                        let branded_page = token.page(page_ptr);
+                        let is_only_active = alloc.active_pages.get_unchecked(class).is_some_and(|head| {
+                            core::ptr::eq(head.as_ptr(), page as *const Page) && page.next_page.is_none()
+                        });
+                        if !is_only_active {
+                            move_active_page_to_empty_branded(
+                                &mut token,
+                                alloc.active_pages.get_unchecked_mut(class),
+                                &mut alloc.empty_pages,
+                                branded_page,
+                            );
+                        }
+                    });
                 }
 
-                alloc.is_allocating = false;
-                return;
+                alloc.record_defrag_operation::<P>();
             }
+            alloc.is_allocating = false;
+            return;
+        }
+        if !alloc.is_allocating {
+            alloc.is_allocating = true;
+            let became_empty =
+                do_local_free_internal::<P, B>(alloc, block, page, segment, page_index);
+
+            if became_empty {
+                unsafe { alloc.record_defrag_operation::<P>() };
+            }
+
+            alloc.is_allocating = false;
+            return;
         }
     }
 

@@ -1,6 +1,8 @@
 use crate::local_alloc::ThreadAllocator;
+use crate::local_alloc::page::{push_page_front, unlink_page_from_list, with_page_list_token};
+use core::ptr::NonNull;
 use mnemosyne_arena::{deallocate_segment, HasSegmentPool};
-use mnemosyne_core::constants::PAGES_PER_SEGMENT;
+use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::types::{Page, Segment, SegmentOwner};
 
@@ -12,6 +14,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// pools, then clears the owned-segment chain so the operation is
     /// idempotent.
     pub fn reclaim_owned_segments(&mut self) {
+        // We must clear the current segment first before deallocating any segments,
+        // to avoid a use-after-free if the current segment gets deallocated.
+        unsafe { self.set_current_segment(None) };
+
         let mut curr = self.owned_segments_head;
         while !curr.is_null() {
             unsafe {
@@ -19,7 +25,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                 let dynamic_encrypted = (*curr).free_list_encrypted;
                 let mut total_allocations = 0;
-                for i in 1..PAGES_PER_SEGMENT {
+                let mut mask = (*curr).page_occupied_mask;
+                while mask != 0 {
+                    let i = mask.trailing_zeros() as usize;
+                    mask &= mask - 1;
+                    if i == 0 {
+                        continue;
+                    }
                     let page = &mut (*curr).pages[i];
                     let reclaimed =
                         page.reclaim_thread_free_if_present_for_segment(dynamic_encrypted, curr, i);
@@ -44,8 +56,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 curr = next;
             }
         }
+        self.next_page_index = 0;
         self.owned_segments_head = core::ptr::null_mut();
         self.owned_segment_count = 0;
+        self.active_pages = [None; NUM_SIZE_CLASSES];
+        self.full_pages = [None; NUM_SIZE_CLASSES];
         self.empty_pages = None;
     }
 
@@ -76,14 +91,15 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     continue;
                 }
                 let pg = &mut (*segment).pages[i];
-                let reclaimed =
-                    pg.reclaim_thread_free_if_present_for_segment(dynamic_encrypted, segment, i);
-                if reclaimed == 0 {
-                    return false;
-                }
-                crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
                 if pg.alloc_count > 0 {
-                    return false;
+                    let reclaimed =
+                        pg.reclaim_thread_free_if_present_for_segment(dynamic_encrypted, segment, i);
+                    if reclaimed > 0 {
+                        crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
+                    }
+                    if pg.alloc_count > 0 {
+                        return false;
+                    }
                 }
             }
         }
@@ -127,37 +143,49 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             let mut total_allocations = 0;
 
             if unsafe { (*segment).page_occupied_mask != 0 } {
-                let mut mask = unsafe { (*segment).page_occupied_mask };
-                while mask != 0 {
-                    let i = mask.trailing_zeros() as usize;
-                    mask &= mask - 1;
-                    if i == 0 {
-                        continue;
-                    }
-                    let pg = unsafe { &mut (*segment).pages[i] };
-                    let reclaimed = unsafe {
-                        pg.reclaim_thread_free_if_present_for_segment(dynamic_encrypted, segment, i)
-                    };
-                    if reclaimed > 0 {
-                        crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
-                    }
-                    total_allocations += pg.alloc_count;
+                unsafe {
+                    with_page_list_token::<B, _>(|mut token| {
+                        let mut mask = (*segment).page_occupied_mask;
+                        while mask != 0 {
+                            let i = mask.trailing_zeros() as usize;
+                            mask &= mask - 1;
+                            if i == 0 {
+                                continue;
+                            }
+                            let pg = &mut (*segment).pages[i];
+                            let reclaimed = pg.reclaim_thread_free_if_present_for_segment(dynamic_encrypted, segment, i);
+                            if reclaimed > 0 {
+                                crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
+                            }
+                            total_allocations += pg.alloc_count;
 
-                    if pg.alloc_count == 0 && (pg.list_state == 1 || pg.list_state == 2) {
-                        let class = pg.size_class as usize;
-                        let is_only_active = self.active_pages[class].is_some_and(|head| {
-                            core::ptr::eq(head.as_ptr(), pg)
-                                && unsafe { (*head.as_ptr()).next_page.is_none() }
-                        });
-                        if !is_only_active {
-                            unsafe {
-                                self.unlink_page(pg as *mut Page, class);
-                                self.push_empty_page(core::ptr::NonNull::new_unchecked(
-                                    pg as *mut Page,
-                                ));
+                            if pg.alloc_count == 0 && (pg.list_state == 1 || pg.list_state == 2) {
+                                let class = pg.size_class as usize;
+                                let is_only_active = self.active_pages[class].is_some_and(|head| {
+                                    core::ptr::eq(head.as_ptr(), pg)
+                                        && (*head.as_ptr()).next_page.is_none()
+                                });
+                                if !is_only_active {
+                                    let pg_ptr = NonNull::new_unchecked(pg as *mut Page);
+                                    let branded_page = token.page(pg_ptr);
+                                    if pg.list_state == 1 {
+                                        unlink_page_from_list(
+                                            &mut token,
+                                            self.active_pages.get_unchecked_mut(class),
+                                            branded_page,
+                                        );
+                                    } else {
+                                        unlink_page_from_list(
+                                            &mut token,
+                                            self.full_pages.get_unchecked_mut(class),
+                                            branded_page,
+                                        );
+                                    }
+                                    push_page_front(&mut token, &mut self.empty_pages, branded_page, 3);
+                                }
                             }
                         }
-                    }
+                    });
                 }
             }
 
@@ -179,12 +207,17 @@ unsafe fn unlink_segment_pages<B: HasSegmentPool>(
     alloc: &mut ThreadAllocator<B>,
     segment: *mut Segment,
 ) {
-    for i in 1..PAGES_PER_SEGMENT {
+    let mut mask = unsafe { (*segment).page_linked_mask };
+    while mask != 0 {
+        let i = mask.trailing_zeros() as usize;
+        mask &= mask - 1;
         let pg = unsafe { &mut (*segment).pages[i] };
-        if pg.block_size > 0 {
+        let state = pg.list_state;
+        if state == 1 || state == 2 {
             let class = pg.size_class as usize;
             unsafe { alloc.unlink_page(pg as *mut Page, class) };
+        } else if state == 3 {
+            unsafe { alloc.unlink_empty_page(pg as *mut Page) };
         }
-        unsafe { alloc.unlink_empty_page(pg as *mut Page) };
     }
 }

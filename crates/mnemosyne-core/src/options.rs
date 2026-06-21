@@ -6,7 +6,8 @@
 use core::sync::atomic::{AtomicBool, AtomicUsize};
 
 /// The maximum number of segments retained in the global segment pool.
-pub static MAX_RETAINED_SEGMENTS: AtomicUsize = AtomicUsize::new(1024);
+pub static MAX_RETAINED_SEGMENTS: AtomicUsize = AtomicUsize::new(crate::constants::MAX_RETAINED_SEGMENTS_LIMIT);
+
 
 /// Whether the advisory huge page hint (`MADV_HUGEPAGE`) is enabled on Linux.
 pub static ENABLE_HUGEPAGE_HINT: AtomicBool = AtomicBool::new(true);
@@ -26,7 +27,7 @@ impl Default for MnemosyneOptions {
     #[inline]
     fn default() -> Self {
         Self {
-            max_retained_segments: 1024,
+            max_retained_segments: crate::constants::MAX_RETAINED_SEGMENTS_LIMIT,
             purge_cadence_ms: 0,
             enable_hugepage_hint: true,
         }
@@ -48,7 +49,11 @@ pub fn get_options() -> MnemosyneOptions {
 #[inline]
 pub fn set_options(options: MnemosyneOptions) {
     use core::sync::atomic::Ordering;
-    MAX_RETAINED_SEGMENTS.store(options.max_retained_segments, Ordering::Release);
+    let clamped_retained = core::cmp::min(
+        options.max_retained_segments,
+        crate::constants::MAX_RETAINED_SEGMENTS_LIMIT,
+    );
+    MAX_RETAINED_SEGMENTS.store(clamped_retained, Ordering::Release);
     PURGE_CADENCE_MS.store(options.purge_cadence_ms, Ordering::Release);
     ENABLE_HUGEPAGE_HINT.store(options.enable_hugepage_hint, Ordering::Release);
 }

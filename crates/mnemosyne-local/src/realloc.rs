@@ -47,10 +47,13 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     new_size: usize,
 ) -> *mut u8 {
     if !ptr.is_null() && new_size != 0 {
-        if !P::ZERO_INITIALIZE && !P::ENABLE_POISONING {
+        let is_grow = new_size > layout.size();
+        let policy_allows_in_place = true;
+
+        let mut can_reuse = false;
+        if policy_allows_in_place {
             let is_small =
                 layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE;
-            let mut can_reuse = false;
 
             if new_size <= layout.size() {
                 if is_small {
@@ -87,10 +90,28 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                     }
                 }
             }
+        }
 
-            if can_reuse {
-                return ptr;
+        if can_reuse {
+            if P::ZERO_INITIALIZE && is_grow {
+                unsafe {
+                    core::ptr::write_bytes(ptr.add(layout.size()), 0, new_size - layout.size());
+                }
+            } else if P::ENABLE_POISONING && is_grow {
+                unsafe {
+                    core::ptr::write_bytes(
+                        ptr.add(layout.size()),
+                        P::POISON_ALLOC_BYTE,
+                        new_size - layout.size(),
+                    );
+                }
             }
+            if P::ENABLE_POISONING && new_size < layout.size() {
+                unsafe {
+                    poison_freed_bytes::<P>(ptr.add(new_size), layout.size() - new_size);
+                }
+            }
+            return ptr;
         }
     } else {
         if ptr.is_null() {
@@ -124,21 +145,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
             if !slot_ptr.is_null() {
                 let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
                 if !alloc.is_allocating {
-                    #[cfg(all(windows, target_arch = "x86_64"))]
-                    let is_owner = {
-                        let tid = unsafe {
-                            let val: u32;
-                            core::arch::asm!(
-                                "mov {0:e}, gs:[0x48]",
-                                out(reg) val,
-                                options(nostack, preserves_flags, readonly)
-                            );
-                            val
-                        };
-                        unsafe { (*segment).owner.matches_thread_id(tid) }
-                    };
-                    #[cfg(not(all(windows, target_arch = "x86_64")))]
-                    let is_owner = unsafe { (*segment).owner.matches(slot_ptr) };
+                    let is_owner = unsafe { (*segment).is_owned_by(|| slot_ptr) };
 
                     if is_owner {
                         alloc.is_allocating = true;

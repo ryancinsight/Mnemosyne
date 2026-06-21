@@ -1,15 +1,15 @@
-//! Lock-free per-CPU L1 block caching with ABA protection.
+//! Lock-free per-CPU L1 block caching.
+//!
+//! Stores block pointers in a flat atomic array inside static global memory
+//! (`PER_CPU_CACHE`), making it 100% memory-safe and UAF-free without dereferencing
+//! block payload memory.
 
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::policy::AllocPolicy;
 
-const MAX_CACHED_BLOCKS: u8 = 8;
+const MAX_CACHED_BLOCKS: usize = 8;
 const MAX_CPUS: usize = 256;
-
-const PACKED_PTR_BITS: u32 = 48;
-const PTR_MASK: usize = (1usize << PACKED_PTR_BITS) - 1;
-const COUNT_WRAP_MASK: usize = (1usize << (usize::BITS - PACKED_PTR_BITS)) - 1;
 
 #[cfg(test)]
 pub static PER_CPU_CACHE_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -17,11 +17,10 @@ pub static PER_CPU_CACHE_ENABLED: AtomicBool = AtomicBool::new(false);
 #[cfg(not(test))]
 pub static PER_CPU_CACHE_ENABLED: AtomicBool = AtomicBool::new(true);
 
-/// A lock-free block cache slot for a single CPU, protected against ABA hazards.
+/// A lock-free block cache slot for a single CPU, protected against UAF and ABA hazards.
 #[repr(align(64))]
 pub struct CpuCacheSlot {
-    pub heads: [AtomicUsize; NUM_SIZE_CLASSES],
-    pub counts: [AtomicU8; NUM_SIZE_CLASSES],
+    pub blocks: [[AtomicUsize; MAX_CACHED_BLOCKS]; NUM_SIZE_CLASSES],
 }
 
 impl Default for CpuCacheSlot {
@@ -35,8 +34,7 @@ impl CpuCacheSlot {
     /// Creates a new empty `CpuCacheSlot`.
     pub const fn new() -> Self {
         Self {
-            heads: [const { AtomicUsize::new(0) }; NUM_SIZE_CLASSES],
-            counts: [const { AtomicU8::new(0) }; NUM_SIZE_CLASSES],
+            blocks: [const { [const { AtomicUsize::new(0) }; MAX_CACHED_BLOCKS] }; NUM_SIZE_CLASSES],
         }
     }
 }
@@ -105,24 +103,13 @@ pub fn refresh_current_cpu_id() -> usize {
     actual
 }
 
-#[inline]
-fn pack_ptr(ptr: *mut u8, count: usize) -> usize {
-    let ptr_val = ptr as usize;
-    debug_assert_eq!(ptr_val & !PTR_MASK, 0);
-    let count_val = count & COUNT_WRAP_MASK;
-    ptr_val | (count_val << PACKED_PTR_BITS)
-}
-
-#[inline]
-fn unpack_ptr(packed: usize) -> (*mut u8, usize) {
-    let ptr_val = packed & PTR_MASK;
-    let count_val = packed >> PACKED_PTR_BITS;
-    (ptr_val as *mut u8, count_val)
-}
-
 /// Tries to allocate a block from the per-CPU cache.
 #[inline(always)]
 pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
+    if P::ENABLE_FREE_LIST_ENCRYPTION {
+        return core::ptr::null_mut();
+    }
+
     if DISABLE_CPU_CACHE.load(Ordering::Relaxed) || !PER_CPU_CACHE_ENABLED.load(Ordering::Relaxed) {
         return core::ptr::null_mut();
     }
@@ -131,9 +118,20 @@ pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
     let mut slot = &PER_CPU_CACHE.slots[cpu_id];
     let mut refreshed = false;
 
-    loop {
-        let count = slot.counts[class].load(Ordering::Relaxed);
-        if count == 0 {
+    for _ in 0..2 {
+        let mut found_idx = None;
+        let mut block_ptr_val = 0;
+
+        for i in 0..MAX_CACHED_BLOCKS {
+            let val = slot.blocks[class][i].load(Ordering::Acquire);
+            if val != 0 {
+                found_idx = Some(i);
+                block_ptr_val = val;
+                break;
+            }
+        }
+
+        let Some(idx) = found_idx else {
             if !refreshed {
                 let new_cpu_id = refresh_current_cpu_id();
                 if new_cpu_id != cpu_id {
@@ -144,36 +142,16 @@ pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
                 }
             }
             return core::ptr::null_mut();
-        }
+        };
 
-        let packed_head = slot.heads[class].load(Ordering::Acquire);
-        let (head_ptr, count_val) = unpack_ptr(packed_head);
-        if head_ptr.is_null() {
-            if !refreshed {
-                let new_cpu_id = refresh_current_cpu_id();
-                if new_cpu_id != cpu_id {
-                    cpu_id = new_cpu_id;
-                    slot = &PER_CPU_CACHE.slots[cpu_id];
-                    refreshed = true;
-                    continue;
-                }
-            }
-            return core::ptr::null_mut();
-        }
-
-        // Safety: head_ptr points to a valid cached block.
-        let next_ptr = unsafe { *(head_ptr as *mut *mut u8) };
-        let new_packed = pack_ptr(next_ptr, count_val + 1);
-
-        match slot.heads[class].compare_exchange_weak(
-            packed_head,
-            new_packed,
-            Ordering::Release,
+        match slot.blocks[class][idx].compare_exchange_weak(
+            block_ptr_val,
+            0,
             Ordering::Acquire,
+            Ordering::Relaxed,
         ) {
             Ok(_) => {
-                slot.counts[class].fetch_sub(1, Ordering::Release);
-                return head_ptr;
+                return block_ptr_val as *mut u8;
             }
             Err(_) => {
                 if !refreshed {
@@ -183,16 +161,23 @@ pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
                         slot = &PER_CPU_CACHE.slots[cpu_id];
                     }
                     refreshed = true;
+                } else {
+                    break;
                 }
             }
         }
     }
+    core::ptr::null_mut()
 }
 
 /// Tries to free a block back to the per-CPU cache.
 #[inline(always)]
 pub fn try_free_cpu<P: AllocPolicy>(ptr: *mut u8, class: usize) -> bool {
     if ptr.is_null() {
+        return false;
+    }
+
+    if P::ENABLE_FREE_LIST_ENCRYPTION {
         return false;
     }
 
@@ -204,9 +189,17 @@ pub fn try_free_cpu<P: AllocPolicy>(ptr: *mut u8, class: usize) -> bool {
     let mut slot = &PER_CPU_CACHE.slots[cpu_id];
     let mut refreshed = false;
 
-    loop {
-        let count = slot.counts[class].load(Ordering::Relaxed);
-        if count >= MAX_CACHED_BLOCKS {
+    for _ in 0..2 {
+        let mut found_idx = None;
+        for i in 0..MAX_CACHED_BLOCKS {
+            let val = slot.blocks[class][i].load(Ordering::Relaxed);
+            if val == 0 {
+                found_idx = Some(i);
+                break;
+            }
+        }
+
+        let Some(idx) = found_idx else {
             if !refreshed {
                 let new_cpu_id = refresh_current_cpu_id();
                 if new_cpu_id != cpu_id {
@@ -217,25 +210,15 @@ pub fn try_free_cpu<P: AllocPolicy>(ptr: *mut u8, class: usize) -> bool {
                 }
             }
             return false;
-        }
+        };
 
-        let packed_head = slot.heads[class].load(Ordering::Acquire);
-        let (head_ptr, count_val) = unpack_ptr(packed_head);
-
-        // Safety: ptr is a valid free block.
-        unsafe {
-            *(ptr as *mut *mut u8) = head_ptr;
-        }
-        let new_packed = pack_ptr(ptr, count_val + 1);
-
-        match slot.heads[class].compare_exchange_weak(
-            packed_head,
-            new_packed,
+        match slot.blocks[class][idx].compare_exchange_weak(
+            0,
+            ptr as usize,
             Ordering::Release,
-            Ordering::Acquire,
+            Ordering::Relaxed,
         ) {
             Ok(_) => {
-                slot.counts[class].fetch_add(1, Ordering::Release);
                 return true;
             }
             Err(_) => {
@@ -246,8 +229,11 @@ pub fn try_free_cpu<P: AllocPolicy>(ptr: *mut u8, class: usize) -> bool {
                         slot = &PER_CPU_CACHE.slots[cpu_id];
                     }
                     refreshed = true;
+                } else {
+                    break;
                 }
             }
         }
     }
+    false
 }

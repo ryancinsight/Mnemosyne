@@ -10,12 +10,12 @@ use super::alloc::{
 use super::pool::{GlobalHugePool, GlobalSegmentPool, HasSegmentPool};
 use super::stats::{arena_memory_stats, SegmentRelease};
 use core::sync::atomic::{AtomicUsize, Ordering};
-use mnemosyne_core::constants::{SEGMENT_ALIGN, SEGMENT_SIZE};
+use mnemosyne_core::constants::{PAGE_SIZE, SEGMENT_ALIGN, SEGMENT_SIZE};
 use mnemosyne_core::types::Segment;
 use mnemosyne_core::MemoryBackend;
 use std::boxed::Box;
 
-#[cfg(feature = "segment-tail-guards")]
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 use std::alloc::{alloc, dealloc, Layout};
 
 struct FailingReleaseBackend;
@@ -52,23 +52,28 @@ impl HasSegmentPool for FailingReleaseBackend {
     }
 }
 
-#[cfg(feature = "segment-tail-guards")]
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 struct GuardRecordingBackend;
 
-#[cfg(feature = "segment-tail-guards")]
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 static GUARD_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-#[cfg(feature = "segment-tail-guards")]
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 static GUARD_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-#[cfg(feature = "segment-tail-guards")]
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 static GUARD_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
-#[cfg(feature = "segment-tail-guards")]
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 static GUARD_CALLS: AtomicUsize = AtomicUsize::new(0);
-#[cfg(feature = "segment-tail-guards")]
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 static LAST_GUARD_PTR: AtomicUsize = AtomicUsize::new(0);
-#[cfg(feature = "segment-tail-guards")]
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 static LAST_GUARD_SIZE: AtomicUsize = AtomicUsize::new(0);
 
-#[cfg(feature = "segment-tail-guards")]
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
+static GUARD_PTRS: [AtomicUsize; 2] = [AtomicUsize::new(0), AtomicUsize::new(0)];
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
+static GUARD_SIZES: [AtomicUsize; 2] = [AtomicUsize::new(0), AtomicUsize::new(0)];
+
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 impl MemoryBackend for GuardRecordingBackend {
     const SUPPORTS_MAKE_GUARD: bool = true;
 
@@ -88,17 +93,21 @@ impl MemoryBackend for GuardRecordingBackend {
     }
 
     unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
-        GUARD_CALLS.fetch_add(1, Ordering::Relaxed);
+        let idx = GUARD_CALLS.fetch_add(1, Ordering::Relaxed);
+        if idx < 2 {
+            GUARD_PTRS[idx].store(ptr as usize, Ordering::Relaxed);
+            GUARD_SIZES[idx].store(size, Ordering::Relaxed);
+        }
         LAST_GUARD_PTR.store(ptr as usize, Ordering::Relaxed);
         LAST_GUARD_SIZE.store(size, Ordering::Relaxed);
         true
     }
 }
 
-#[cfg(feature = "segment-tail-guards")]
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 impl super::pool::private::Sealed for GuardRecordingBackend {}
 
-#[cfg(feature = "segment-tail-guards")]
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 impl HasSegmentPool for GuardRecordingBackend {
     fn global_segment_pool() -> &'static GlobalSegmentPool {
         &GUARD_POOL
@@ -141,7 +150,7 @@ fn purge_retains_segment_when_backend_release_fails() {
     );
 }
 
-#[cfg(feature = "segment-tail-guards")]
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 #[test]
 fn fresh_segment_install_increments_guard_telemetry_and_round_trips() {
     use mnemosyne_backend::{backend_memory_stats, MemoryBackendWrapper};
@@ -157,10 +166,20 @@ fn fresh_segment_install_increments_guard_telemetry_and_round_trips() {
         .expect("OS-backed segment allocation must succeed");
     let after_alloc = backend_memory_stats();
 
+    let mut expected_guards_size = 0;
+    #[cfg(feature = "segment-tail-guards")]
+    {
+        expected_guards_size += SEGMENT_TAIL_GUARD_SIZE;
+    }
+    #[cfg(feature = "segment-header-guards")]
+    {
+        expected_guards_size += super::alloc::SEGMENT_HEADER_GUARD_SIZE;
+    }
+
     if after_alloc.guard_install_calls > before.guard_install_calls {
         assert!(
-            after_alloc.guard_install_bytes >= before.guard_install_bytes + SEGMENT_TAIL_GUARD_SIZE,
-            "guard_install_bytes advanced by less than SEGMENT_TAIL_GUARD_SIZE"
+            after_alloc.guard_install_bytes >= before.guard_install_bytes + expected_guards_size,
+            "guard_install_bytes advanced by less than expected_guards_size"
         );
     }
     assert!(
@@ -185,28 +204,61 @@ fn fresh_segment_installs_tail_guard_in_alignment_slack() {
     while GuardRecordingBackend::global_segment_pool().pop().is_some() {}
     while GuardRecordingBackend::global_orphan_pool().pop().is_some() {}
     GUARD_CALLS.store(0, Ordering::Relaxed);
-    LAST_GUARD_PTR.store(0, Ordering::Relaxed);
-    LAST_GUARD_SIZE.store(0, Ordering::Relaxed);
+    for i in 0..2 {
+        GUARD_PTRS[i].store(0, Ordering::Relaxed);
+        GUARD_SIZES[i].store(0, Ordering::Relaxed);
+    }
 
     let segment =
         unsafe { allocate_segment::<GuardRecordingBackend>() }.expect("segment allocation");
     let expected_guard = segment as usize + SEGMENT_SIZE;
 
-    assert_eq!(
-        GUARD_CALLS.load(Ordering::Relaxed),
-        1,
-        "fresh segment allocation did not request exactly one guard install"
-    );
-    assert_eq!(
-        LAST_GUARD_PTR.load(Ordering::Relaxed),
-        expected_guard,
-        "tail guard was not placed immediately after the segment"
-    );
-    assert_eq!(
-        LAST_GUARD_SIZE.load(Ordering::Relaxed),
-        SEGMENT_TAIL_GUARD_SIZE,
-        "tail guard size drifted from the documented constant"
-    );
+    // Find the tail guard in the recorded guard calls.
+    let mut found = false;
+    let limit = core::cmp::min(GUARD_CALLS.load(Ordering::Relaxed), 2);
+    for idx in 0..limit {
+        let ptr = GUARD_PTRS[idx].load(Ordering::Relaxed);
+        let size = GUARD_SIZES[idx].load(Ordering::Relaxed);
+        if ptr == expected_guard && size == SEGMENT_TAIL_GUARD_SIZE {
+            found = true;
+            break;
+        }
+    }
+
+    assert!(found, "tail guard was not placed immediately after the segment");
+
+    let released = unsafe { release_segment_mapping::<GuardRecordingBackend>(segment) };
+    assert_eq!(released, SegmentRelease::Released);
+}
+
+#[cfg(feature = "segment-header-guards")]
+#[test]
+fn fresh_segment_installs_header_guard_in_page_0() {
+    while GuardRecordingBackend::global_segment_pool().pop().is_some() {}
+    while GuardRecordingBackend::global_orphan_pool().pop().is_some() {}
+    GUARD_CALLS.store(0, Ordering::Relaxed);
+    for i in 0..2 {
+        GUARD_PTRS[i].store(0, Ordering::Relaxed);
+        GUARD_SIZES[i].store(0, Ordering::Relaxed);
+    }
+
+    let segment =
+        unsafe { allocate_segment::<GuardRecordingBackend>() }.expect("segment allocation");
+    let expected_guard = segment as usize + PAGE_SIZE - super::alloc::SEGMENT_HEADER_GUARD_SIZE;
+
+    // Find the header guard in the recorded guard calls.
+    let mut found = false;
+    let limit = core::cmp::min(GUARD_CALLS.load(Ordering::Relaxed), 2);
+    for idx in 0..limit {
+        let ptr = GUARD_PTRS[idx].load(Ordering::Relaxed);
+        let size = GUARD_SIZES[idx].load(Ordering::Relaxed);
+        if ptr == expected_guard && size == super::alloc::SEGMENT_HEADER_GUARD_SIZE {
+            found = true;
+            break;
+        }
+    }
+
+    assert!(found, "header guard was not placed at the end of Page 0");
 
     let released = unsafe { release_segment_mapping::<GuardRecordingBackend>(segment) };
     assert_eq!(released, SegmentRelease::Released);
@@ -417,16 +469,37 @@ fn test_reset_segment_pool_propagates_correct_bounds() {
 
     assert_eq!(calls, 1, "expected exactly 1 page_reset call");
     assert_eq!(
-        last_ptr, segment as usize,
-        "expected page_reset pointer to match segment pointer"
+        last_ptr, segment as usize + PAGE_SIZE,
+        "expected page_reset pointer to match segment pointer plus PAGE_SIZE"
     );
     assert_eq!(
-        last_size, SEGMENT_SIZE,
-        "expected page_reset size to match SEGMENT_SIZE"
+        last_size, SEGMENT_SIZE - PAGE_SIZE,
+        "expected page_reset size to match SEGMENT_SIZE minus PAGE_SIZE"
     );
 
     // Clean up
     let popped = RESET_POOL.pop().expect("segment must be in the pool");
     let released = unsafe { release_segment_mapping::<ResetRecordingBackend>(popped) };
     assert_eq!(released, SegmentRelease::Released);
+}
+
+#[test]
+fn test_huge_pool_log2_bucketing() {
+    use super::pool::huge_pool::huge_bucket_index;
+
+    // Boundary at 16 KiB
+    assert_eq!(huge_bucket_index(0), 0);
+    assert_eq!(huge_bucket_index(16384), 0);
+    assert_eq!(huge_bucket_index(16385), 1);
+
+    // Power of two transitions
+    assert_eq!(huge_bucket_index(32768), 1); // 32 KiB
+    assert_eq!(huge_bucket_index(32769), 2);
+    assert_eq!(huge_bucket_index(65536), 2); // 64 KiB
+    assert_eq!(huge_bucket_index(65537), 3);
+    assert_eq!(huge_bucket_index(1048576), 6); // 1 MiB
+    assert_eq!(huge_bucket_index(1048577), 7);
+    assert_eq!(huge_bucket_index(16 * 1024 * 1024), 10); // 16 MiB
+    assert_eq!(huge_bucket_index(16 * 1024 * 1024 + 1), 11);
+    assert_eq!(huge_bucket_index(512 * 1024 * 1024), 15); // Large sizes saturate to max bucket
 }

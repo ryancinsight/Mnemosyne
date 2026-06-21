@@ -89,8 +89,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
         }
 
-        // 2. Check if any page in full_pages has reclaimed cross-thread frees!
-        // We only check pages that actually have pending cross-thread frees.
+        // 2. Check if any page in full_pages has local free blocks or reclaimed cross-thread frees!
         // Also limit loop to 128 pages to bound search latency under threaded saturation.
         let mut curr_opt = unsafe { *self.full_pages.get_unchecked(class) };
         let mut checked = 0;
@@ -101,7 +100,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             checked += 1;
             let page = page_ptr.as_mut();
             // Safety: `page` is owned by this allocator.
-            if let Some(block) = try_reclaim_and_allocate::<P>(page) {
+            let mut block_opt = unsafe { try_allocate_page_local::<P>(page) };
+            if block_opt.is_none() {
+                block_opt = unsafe { try_reclaim_and_allocate::<P>(page) };
+            }
+            if let Some(block) = block_opt {
                 if page.alloc_count < page.max_blocks() {
                     // Page is no longer full! Move it back to active list.
                     // Safety: page_ptr and class are valid.
@@ -188,6 +191,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                         self.set_current_segment(Some(NonNull::new_unchecked(seg_ptr)));
                         self.next_page_index = PAGES_PER_SEGMENT;
+
+                        (*seg_ptr).page_linked_mask = 0;
 
                         for i in 1..PAGES_PER_SEGMENT {
                             let page_ptr = &mut (*seg_ptr).pages[i] as *mut Page;

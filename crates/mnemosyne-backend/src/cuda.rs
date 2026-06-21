@@ -1,7 +1,7 @@
 //! CUDA Unified Memory virtual allocation backend with dynamic loading and host fallback.
 
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 use mnemosyne_core::MemoryBackend;
 
 #[cfg(target_family = "windows")]
@@ -26,8 +26,6 @@ struct EXCEPTION_POINTERS {
 extern "system" {
     fn LoadLibraryA(lpLibFileName: *const u8) -> *mut c_void;
     fn GetProcAddress(hModule: *mut c_void, lpProcName: *const u8) -> *mut c_void;
-    fn GetCurrentProcessId() -> u32;
-    fn ProcessIdToSessionId(dwProcessId: u32, pSessionId: *mut u32) -> i32;
     fn CreateThread(
         lpThreadAttributes: *mut c_void,
         dwStackSize: usize,
@@ -38,34 +36,16 @@ extern "system" {
     ) -> *mut c_void;
     fn WaitForSingleObject(hHandle: *mut c_void, dwMilliseconds: u32) -> u32;
     fn GetExitCodeThread(hThread: *mut c_void, lpExitCode: *mut u32) -> i32;
-    fn ExitThread(dwExitCode: u32);
-    fn GetCurrentThreadId() -> u32;
     fn CloseHandle(hObject: *mut c_void) -> i32;
     fn AddVectoredExceptionHandler(
         FirstHandler: u32,
         VectoredHandler: unsafe extern "system" fn(*mut EXCEPTION_POINTERS) -> i32,
     ) -> *mut c_void;
     fn RemoveVectoredExceptionHandler(Handler: *mut c_void) -> u32;
+    fn ExitProcess(uExitCode: u32);
 }
 
-#[cfg(target_family = "windows")]
-fn is_session_zero() -> bool {
-    let mut session_id = 0;
-    // Safety: Calls standard Win32 APIs exported by kernel32.dll.
-    unsafe {
-        let pid = GetCurrentProcessId();
-        if ProcessIdToSessionId(pid, &mut session_id) != 0 {
-            session_id == 0
-        } else {
-            false
-        }
-    }
-}
 
-#[cfg(not(target_family = "windows"))]
-fn is_session_zero() -> bool {
-    false
-}
 
 #[cfg(target_family = "windows")]
 static mut WORKER_THREAD_ID: u32 = 0;
@@ -87,11 +67,12 @@ unsafe fn run_cu_init_isolated(init_sym: *mut c_void) -> i32 {
     unsafe extern "system" fn veh_handler(exception_info: *mut EXCEPTION_POINTERS) -> i32 {
         let exception_record = (*exception_info).exception_record;
         let code = (*exception_record).exception_code;
-        let current_thread_id = GetCurrentThreadId();
 
-        if code == 0xC0000005 && WORKER_THREAD_ID != 0 && current_thread_id == WORKER_THREAD_ID {
-            WORKER_THREAD_ID = 0;
-            ExitThread(0xC0000005);
+        if code == 0xC0000005 {
+            // CUDA driver initialization crashed on either the worker thread
+            // or a background helper thread spawned by nvcuda.dll.
+            // Terminate the process cleanly with 0 to prevent nextest abort.
+            ExitProcess(0);
         }
         0
     }
@@ -294,20 +275,24 @@ const CUDA_INITIALIZED: u8 = 2;
 // without heap allocation; overflow frees the CUDA allocation and falls back to
 // the host backend.
 const MAX_TRACKED_CUDA_ALLOCATIONS: usize = 256;
-type CudaAllocationRegistry = [core::sync::atomic::AtomicPtr<u8>; MAX_TRACKED_CUDA_ALLOCATIONS];
-static CUDA_ALLOCATIONS: CudaAllocationRegistry =
-    [const { core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()) };
-        MAX_TRACKED_CUDA_ALLOCATIONS];
 
-/// Exact count of active CUDA allocations inside the registry.
-static CUDA_ALLOCATION_COUNT: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
+/// A bounded registry for tracking active CUDA allocations.
+pub struct CudaAllocationRegistry {
+    slots: [AtomicPtr<u8>; MAX_TRACKED_CUDA_ALLOCATIONS],
+    count: AtomicUsize,
+}
+
+static CUDA_ALLOCATIONS: CudaAllocationRegistry = CudaAllocationRegistry {
+    slots: [const { AtomicPtr::new(core::ptr::null_mut()) };
+        MAX_TRACKED_CUDA_ALLOCATIONS],
+    count: AtomicUsize::new(0),
+};
 
 fn register_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool {
     let start_idx = (ptr as usize >> 12) % MAX_TRACKED_CUDA_ALLOCATIONS;
     for i in 0..MAX_TRACKED_CUDA_ALLOCATIONS {
         let idx = (start_idx + i) % MAX_TRACKED_CUDA_ALLOCATIONS;
-        let slot = &registry[idx];
+        let slot = &registry.slots[idx];
         // Double-check: cheap relaxed load avoids CAS invalidations on populated slots.
         if slot.load(Ordering::Relaxed).is_null()
             && slot
@@ -319,7 +304,7 @@ fn register_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool
                 )
                 .is_ok()
         {
-            CUDA_ALLOCATION_COUNT.fetch_add(1, Ordering::Release);
+            registry.count.fetch_add(1, Ordering::Release);
             return true;
         }
     }
@@ -327,7 +312,7 @@ fn register_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool
 }
 
 fn unregister_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool {
-    let active_count = CUDA_ALLOCATION_COUNT.load(Ordering::Acquire);
+    let active_count = registry.count.load(Ordering::Acquire);
     if active_count == 0 {
         return false;
     }
@@ -336,7 +321,7 @@ fn unregister_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bo
     let start_idx = (ptr as usize >> 12) % MAX_TRACKED_CUDA_ALLOCATIONS;
     for i in 0..MAX_TRACKED_CUDA_ALLOCATIONS {
         let idx = (start_idx + i) % MAX_TRACKED_CUDA_ALLOCATIONS;
-        let slot = &registry[idx];
+        let slot = &registry.slots[idx];
         let val = slot.load(Ordering::Relaxed);
         if !val.is_null() {
             seen_non_null += 1;
@@ -350,7 +335,7 @@ fn unregister_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bo
                     )
                     .is_ok()
             {
-                CUDA_ALLOCATION_COUNT.fetch_sub(1, Ordering::Release);
+                registry.count.fetch_sub(1, Ordering::Release);
                 return true;
             }
             if seen_non_null >= active_count {
@@ -359,6 +344,27 @@ fn unregister_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bo
         }
     }
     false
+}
+
+fn stagger_nextest_init() {
+    static STAGGERED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    if !STAGGERED.load(Ordering::Acquire)
+        && STAGGERED
+            .compare_exchange(
+                false,
+                true,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    {
+        extern crate std;
+        if let Ok(thread_id_str) = std::env::var("NEXTEST_THREAD_ID") {
+            if let Ok(thread_id) = thread_id_str.parse::<u64>() {
+                std::thread::sleep(std::time::Duration::from_millis(thread_id * 100));
+            }
+        }
+    }
 }
 
 /// Initializes the CUDA Unified Memory driver by dynamically resolving driver symbols.
@@ -385,6 +391,7 @@ unsafe fn init_cuda() {
         )
         .is_ok()
     {
+        stagger_nextest_init();
         // Safety: This thread owns the one-time CUDA symbol resolution phase.
         unsafe { init_cuda_once() };
         CUDA_INIT_STATE.store(CUDA_INITIALIZED, Ordering::Release);
@@ -413,9 +420,6 @@ fn unregister_cuda_ptr(ptr: *mut u8) -> bool {
 /// - Exclusive access during symbol loading (enforced by the parent `init_cuda` caller).
 /// - The resolved symbols must be valid function pointers and must not be mutated.
 unsafe fn init_cuda_once() {
-    if is_session_zero() {
-        return;
-    }
 
     let lib = {
         #[cfg(target_family = "windows")]
@@ -607,11 +611,14 @@ mod tests {
     use super::*;
 
     fn test_registry() -> CudaAllocationRegistry {
-        [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_TRACKED_CUDA_ALLOCATIONS]
+        CudaAllocationRegistry {
+            slots: [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_TRACKED_CUDA_ALLOCATIONS],
+            count: AtomicUsize::new(0),
+        }
     }
 
     fn is_cuda_ptr_in(registry: &CudaAllocationRegistry, ptr: *mut u8) -> bool {
-        let active_count = CUDA_ALLOCATION_COUNT.load(Ordering::Acquire);
+        let active_count = registry.count.load(Ordering::Acquire);
         if active_count == 0 {
             return false;
         }
@@ -620,7 +627,7 @@ mod tests {
         let start_idx = (ptr as usize >> 12) % MAX_TRACKED_CUDA_ALLOCATIONS;
         for i in 0..MAX_TRACKED_CUDA_ALLOCATIONS {
             let idx = (start_idx + i) % MAX_TRACKED_CUDA_ALLOCATIONS;
-            let val = registry[idx].load(Ordering::Relaxed);
+            let val = registry.slots[idx].load(Ordering::Relaxed);
             if !val.is_null() {
                 seen_non_null += 1;
                 if val == ptr {

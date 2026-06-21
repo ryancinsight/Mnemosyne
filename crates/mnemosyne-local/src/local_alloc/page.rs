@@ -116,6 +116,13 @@ pub(crate) unsafe fn push_page_front<'id, B: HasSegmentPool>(
     }
     *head_slot = Some(raw_page);
     page.list_state = list_state;
+    if page.page_index > 0 {
+        let segment_addr = (raw_page.as_ptr() as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+        let segment = segment_addr as *mut mnemosyne_core::types::Segment;
+        unsafe {
+            (*segment).page_linked_mask |= 1 << page.page_index;
+        }
+    }
 }
 
 /// Unlinks the page identified by `page_ptr` from the doubly-linked list
@@ -157,6 +164,13 @@ pub(crate) unsafe fn unlink_page_from_list<'id, B: HasSegmentPool>(
     page.next_page = None;
     page.prev_page = None;
     page.list_state = 0;
+    if page.page_index > 0 {
+        let segment_addr = (raw_page.as_ptr() as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+        let segment = segment_addr as *mut mnemosyne_core::types::Segment;
+        unsafe {
+            (*segment).page_linked_mask &= !(1 << page.page_index);
+        }
+    }
 }
 
 /// Moves a page from full pages list to active pages list using a single-pass unlink and push.
@@ -200,6 +214,49 @@ pub(crate) unsafe fn move_full_page_to_active_branded<'id, B: HasSegmentPool>(
     *active_head_slot = Some(raw_page);
     page.list_state = 1;
 }
+
+/// Moves a page from active pages list to empty pages list using a single-pass unlink and push.
+///
+/// # Safety
+///
+/// `page_ptr` must be branded and currently linked in the `active_head_slot` list.
+#[inline(always)]
+pub(crate) unsafe fn move_active_page_to_empty_branded<'id, B: HasSegmentPool>(
+    token: &mut PageListToken<'id, B>,
+    active_head_slot: &mut Option<NonNull<Page>>,
+    empty_head_slot: &mut Option<NonNull<Page>>,
+    page_ptr: BrandedPage<'id>,
+) {
+    let mut raw_page = page_ptr.ptr();
+    let page = unsafe { raw_page.as_mut() };
+    let next = page.next_page;
+    let prev = page.prev_page;
+
+    // Unlink page from active_pages list
+    if let Some(mut prev_ptr) = prev {
+        let _prev = unsafe { token.page(prev_ptr) };
+        prev_ptr.as_mut().next_page = next;
+    } else {
+        *active_head_slot = next;
+    }
+
+    if let Some(mut next_ptr) = next {
+        let _next = unsafe { token.page(next_ptr) };
+        next_ptr.as_mut().prev_page = prev;
+    }
+
+    // Push page to the front of empty_pages list
+    let head = *empty_head_slot;
+    page.next_page = head;
+    page.prev_page = None;
+    if let Some(mut head_ptr) = head {
+        let _head = unsafe { token.page(head_ptr) };
+        head_ptr.as_mut().prev_page = Some(raw_page);
+    }
+    *empty_head_slot = Some(raw_page);
+    page.list_state = 3;
+}
+
 
 /// Reclaims any pending cross-thread frees on `page` and, if reclamation
 /// added blocks to the local free list, pops one block and increments the
@@ -399,7 +456,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         with_page_list_token::<B, _>(|mut token| {
             let mut curr = self.empty_pages;
+            let mut checked = 0;
             while let Some(page_ptr) = curr {
+                if checked >= 16 {
+                    break;
+                }
+                checked += 1;
                 let page_addr = page_ptr.as_ptr() as usize;
                 let segment_addr = page_addr & !(SEGMENT_SIZE - 1);
                 let segment = segment_addr as *mut Segment;

@@ -4,14 +4,14 @@ use super::pool::HasSegmentPool;
 use super::stats::SegmentRelease;
 use super::utils::checked_align_up;
 use crate::numa::current_numa_node;
-use mnemosyne_core::constants::{SEGMENT_ALIGN, SEGMENT_SIZE};
+use mnemosyne_core::constants::{MAX_RETAINED_SEGMENTS_LIMIT, PAGE_SIZE, SEGMENT_ALIGN, SEGMENT_SIZE};
 use mnemosyne_core::types::Segment;
 
 /// Bytes requested from the OS for each standard segment mapping.
 pub const SEGMENT_MAPPING_SIZE: usize = SEGMENT_SIZE * 2;
 
 /// Free segment mappings retained for reuse.
-pub const MAX_RETAINED_SEGMENTS: usize = 1024;
+pub const MAX_RETAINED_SEGMENTS: usize = MAX_RETAINED_SEGMENTS_LIMIT;
 
 /// Size of the guard region installed in the slack after every segment.
 ///
@@ -31,6 +31,12 @@ pub const SEGMENT_TAIL_GUARD_SIZE: usize = 4096;
 
 const _: () = assert!(SEGMENT_TAIL_GUARD_SIZE.is_power_of_two());
 const _: () = assert!(SEGMENT_TAIL_GUARD_SIZE <= SEGMENT_ALIGN);
+
+/// Size of the guard region installed at the end of Page 0.
+pub const SEGMENT_HEADER_GUARD_SIZE: usize = 4096;
+
+const _: () = assert!(SEGMENT_HEADER_GUARD_SIZE.is_power_of_two());
+const _: () = assert!(SEGMENT_HEADER_GUARD_SIZE <= PAGE_SIZE);
 
 /// Non-generic helper to pop a segment from the global segment pool or orphan pool.
 ///
@@ -168,6 +174,21 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
             // live reservation holding no allocator data (it precedes the header)
             // and remains covered by the base release.
             let _ = unsafe { B::decommit(raw_ptr, head_slack) };
+        }
+    }
+
+    #[cfg(feature = "segment-header-guards")]
+    {
+        if B::SUPPORTS_MAKE_GUARD {
+            // Install a header guard at the end of Page 0.
+            // Underflows (backward OOB writes) from Page 1 land in this guard region
+            // instead of overwriting the segment metadata at the start of Page 0.
+            //
+            // Safety: aligned_addr + PAGE_SIZE - SEGMENT_HEADER_GUARD_SIZE is inside the mapping
+            // and Page 0 is reserved strictly for Segment metadata (ending far before the guard).
+            let header_guard_addr = aligned_addr + PAGE_SIZE - SEGMENT_HEADER_GUARD_SIZE;
+            let _guarded =
+                unsafe { B::make_guard(header_guard_addr as *mut u8, SEGMENT_HEADER_GUARD_SIZE) };
         }
     }
 
@@ -324,18 +345,11 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
     }
 
     let pool = B::global_segment_pool();
-    // Drain into a fixed-size stack buffer (the pool is bounded to
-    // MAX_RETAINED_SEGMENTS, so this never overflows).
-    let mut buffer: [*mut Segment; MAX_RETAINED_SEGMENTS] =
-        [core::ptr::null_mut(); MAX_RETAINED_SEGMENTS];
-    let mut drained = 0usize;
-    while drained < MAX_RETAINED_SEGMENTS {
-        match pool.pop() {
-            Some(segment) => {
-                buffer[drained] = segment;
-                drained += 1;
-            }
-            None => break,
+    let mut list_head: *mut Segment = core::ptr::null_mut();
+    while let Some(segment) = pool.pop() {
+        unsafe {
+            (*segment).next_free_segment = list_head;
+            list_head = segment;
         }
     }
 
@@ -344,19 +358,19 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
     // declines the advice) returns false, in which case we leave the
     // mapping untouched and simply re-cache the segment.
     let mut reset_count = 0usize;
-    for slot in buffer.iter().take(drained) {
-        let segment = *slot;
-        // Safety: segment was popped from the retained pool above and is
-        // an initialized mapping owned by this allocator until we push it
-        // back below. We reset only the active committed segment range [segment, segment + SEGMENT_SIZE)
-        // to avoid calling page_reset on the decommitted head/tail slack pages,
-        // which would cause the system call to fail on Windows. The segment pointer
-        // is page-aligned and SEGMENT_SIZE is a multiple of the system page size,
-        // which matches the page_reset alignment invariants.
-        if unsafe { B::page_reset(segment as *mut u8, SEGMENT_SIZE) } {
-            reset_count += 1;
+    let mut curr = list_head;
+    while !curr.is_null() {
+        let segment = curr;
+        unsafe {
+            curr = (*segment).next_free_segment;
+            (*segment).next_free_segment = core::ptr::null_mut();
+            let reset_ptr = (segment as usize + PAGE_SIZE) as *mut u8;
+            let reset_size = SEGMENT_SIZE - PAGE_SIZE;
+            if B::page_reset(reset_ptr, reset_size) {
+                reset_count += 1;
+            }
+            pool.push_unbounded(segment);
         }
-        unsafe { pool.push_unbounded(segment) };
     }
 
     pool.record_reset(reset_count);

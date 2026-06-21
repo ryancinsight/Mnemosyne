@@ -114,7 +114,7 @@ pub(crate) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
 ///
 /// # Safety
 /// `index` must be a valid key returned by `TlsAlloc`.
-#[cfg(all(windows, target_arch = "x86_64"))]
+#[cfg(all(windows, target_arch = "x86_64", not(miri)))]
 #[inline(always)]
 pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
     if index < 64 {
@@ -146,7 +146,7 @@ pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
 ///
 /// # Safety
 /// `index` must be a valid key returned by `TlsAlloc`.
-#[cfg(all(windows, target_arch = "x86_64"))]
+#[cfg(all(windows, target_arch = "x86_64", not(miri)))]
 #[inline(always)]
 pub(crate) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
     if index < 64 {

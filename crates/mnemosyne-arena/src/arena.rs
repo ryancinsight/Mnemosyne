@@ -115,7 +115,7 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(
     };
 
     let numa_node = crate::numa::current_numa_node() as usize;
-    let cached = unsafe { B::global_huge_pool().pop::<B>(total_alloc_size, numa_node) };
+    let cached = unsafe { B::global_huge_pool().pop(total_alloc_size, numa_node) };
     let is_cache_hit = cached.is_some();
 
     let (raw_ptr, block_size) = match cached {
@@ -198,10 +198,9 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
         segment_ptr
     };
 
-    debug_assert!(
-        !resolved_segment_ptr.is_null(),
-        "resolved_segment_ptr must not be null"
-    );
+    if resolved_segment_ptr.is_null() {
+        return false;
+    }
 
     let segment = unsafe { &mut *resolved_segment_ptr };
     let huge_size = segment.pages[0].block_size;

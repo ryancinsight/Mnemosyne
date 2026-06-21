@@ -90,7 +90,10 @@ fn init_options_from_env() {
     }
 
     if let Some(parsed) = parse_env_usize("MNEMOSYNE_MAX_RETAINED_SEGMENTS") {
-        let clamped = core::cmp::min(parsed, 1024);
+        let clamped = core::cmp::min(
+            parsed,
+            mnemosyne_core::constants::MAX_RETAINED_SEGMENTS_LIMIT,
+        );
         mnemosyne_core::options::MAX_RETAINED_SEGMENTS
             .store(clamped, core::sync::atomic::Ordering::Release);
     }
@@ -127,7 +130,10 @@ fn init_options_from_env() {
 pub fn reset_options_for_testing() {
     OPTIONS_INIT.store(false, core::sync::atomic::Ordering::Release);
     mnemosyne_core::options::MAX_RETAINED_SEGMENTS
-        .store(1024, core::sync::atomic::Ordering::Release);
+        .store(
+            mnemosyne_core::constants::MAX_RETAINED_SEGMENTS_LIMIT,
+            core::sync::atomic::Ordering::Release,
+        );
     mnemosyne_core::options::ENABLE_HUGEPAGE_HINT
         .store(true, core::sync::atomic::Ordering::Release);
     mnemosyne_core::options::PURGE_CADENCE_MS.store(0, core::sync::atomic::Ordering::Release);

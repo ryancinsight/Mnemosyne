@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["parallel", "mnemosyne-memory"]
+default = ["parallel", "mnemosyne-memory", "std_tls"]
 parallel = []
 mnemosyne-memory = []
 # Replaces the portable `std::thread_local!` cache accessor with an ELF/PE

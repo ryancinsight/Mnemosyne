@@ -21,8 +21,13 @@ impl Hasher for FastHasher {
     #[inline(always)]
     fn write(&mut self, bytes: &[u8]) {
         for &byte in bytes {
-            self.write_u8(byte);
+            self.0 = self.0.wrapping_mul(109) ^ (byte as u64);
         }
+    }
+
+    #[inline(always)]
+    fn write_u8(&mut self, i: u8) {
+        self.0 = self.0.wrapping_mul(109) ^ (i as u64);
     }
 
     #[inline(always)]
@@ -59,13 +64,20 @@ pub struct Sample {
 }
 
 const SHARDS: usize = 64;
-static ACTIVE_SAMPLES: [Mutex<Option<HashMap<usize, Sample, FastBuildHasher>>>; SHARDS] =
-    [const { Mutex::new(None) }; SHARDS];
+
+#[repr(align(64))]
+struct Shard {
+    mutex: Mutex<Option<HashMap<usize, Sample, FastBuildHasher>>>,
+}
+
+static ACTIVE_SAMPLES: [Shard; SHARDS] =
+    [const { Shard { mutex: Mutex::new(None) } }; SHARDS];
 
 fn get_map(
     shard: usize,
 ) -> std::sync::MutexGuard<'static, Option<HashMap<usize, Sample, FastBuildHasher>>> {
     let mut lock = ACTIVE_SAMPLES[shard]
+        .mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if lock.is_none() {
@@ -78,6 +90,7 @@ fn get_map(
 pub(crate) fn reset_sampler_state() {
     for shard in &ACTIVE_SAMPLES {
         let mut lock = shard
+            .mutex
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *lock = None;
@@ -209,6 +222,7 @@ fn dump_profile_inner(path: &str) -> std::io::Result<()> {
     let mut folded: HashMap<String, usize> = HashMap::new();
     for shard in &ACTIVE_SAMPLES {
         let lock = shard
+            .mutex
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(ref map) = *lock {
@@ -282,6 +296,7 @@ fn dump_leaks_inner(path: &str) -> std::io::Result<usize> {
     let mut total_leaks = 0usize;
     for shard in &ACTIVE_SAMPLES {
         let lock = shard
+            .mutex
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(ref map) = *lock {

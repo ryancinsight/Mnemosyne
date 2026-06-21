@@ -40,6 +40,8 @@ pub struct Segment {
     /// segment, and later sweeps validate `alloc_count`, so the mask remains a
     /// conservative reclaim accelerator rather than an ownership authority.
     pub page_occupied_mask: u32,
+    /// Mask tracking pages currently linked in the allocator's lists (active, full, empty).
+    pub page_linked_mask: u32,
     /// Per-page keys for free-list pointer encryption.
     pub keys: [usize; PAGES_PER_SEGMENT],
     /// The pages metadata array. Page 0 is reserved for segment metadata.
@@ -70,6 +72,7 @@ impl Segment {
             segment.free_list_encrypted = false;
             segment.numa_node = numa_node;
             segment.page_occupied_mask = 0;
+            segment.page_linked_mask = 0;
             // Page 0 holds segment metadata and is never allocated from;
             // only pages 1..PAGES_PER_SEGMENT need explicit free-list state.
             // We still initialize page 0 with `Page::new()` so debugging and
@@ -128,5 +131,36 @@ impl Segment {
             huge_size
         );
         (raw_ptr_addr + huge_size) - user_ptr as usize
+    }
+
+    /// Returns true if this segment is owned by the allocator represented by the given raw slot pointer.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `self` is a valid reference to a `Segment`.
+    #[inline(always)]
+    pub unsafe fn is_owned_by(&self, get_slot_ptr: impl FnOnce() -> *mut core::ffi::c_void) -> bool {
+        let owner = self.owner;
+        #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
+        {
+            let _ = get_slot_ptr;
+            let tid = {
+                let val: u32;
+                // Safety: Inline assembly reading GS register is safe under Windows x86_64.
+                unsafe {
+                    core::arch::asm!(
+                        "mov {0:e}, gs:[0x48]",
+                        out(reg) val,
+                        options(nostack, preserves_flags, readonly)
+                    );
+                }
+                val
+            };
+            owner.matches_thread_id(tid)
+        }
+        #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
+        {
+            owner.matches(get_slot_ptr())
+        }
     }
 }

@@ -52,9 +52,9 @@ fn secure_realloc_within_usable_size_uses_replacement_allocation() {
         !new_ptr.is_null(),
         "secure realloc returned null for in-class growth"
     );
-    assert_ne!(
+    assert_eq!(
         new_ptr, ptr,
-        "secure realloc must not grow in place without initializing new bytes"
+        "secure realloc must grow in place within the same size class block"
     );
     for offset in 0..old_layout.size() {
         let byte = unsafe { *new_ptr.add(offset) };

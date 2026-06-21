@@ -67,3 +67,46 @@ fn test_numa_node_segment_retention() {
         mnemosyne_arena::deallocate_segment::<mnemosyne_backend::MemoryBackendWrapper>(segment);
     }
 }
+
+#[test]
+fn test_per_cpu_cache_contention_bounds() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("local topology test lock was poisoned");
+    use mnemosyne_local::per_cpu;
+    use core::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
+
+    let _per_cpu_guard = PerCpuCacheGuard::enable();
+    let cpu_id = per_cpu::get_current_cpu_id();
+    let class = 0;
+    
+    // Set up a block in the per-CPU cache slot
+    let dummy_block = 0x12345678usize;
+    per_cpu::PER_CPU_CACHE.slots[cpu_id].blocks[class][0]
+        .store(dummy_block, Ordering::Relaxed);
+
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let stop_clone = stop.clone();
+    
+    // Spawn a thread to constantly change the slot value to cause CAS failures
+    let handle = thread::spawn(move || {
+        let mut val = dummy_block;
+        while !stop_clone.load(Ordering::Relaxed) {
+            val = if val == dummy_block { 0x87654321usize } else { dummy_block };
+            per_cpu::PER_CPU_CACHE.slots[cpu_id].blocks[class][0].store(val, Ordering::Relaxed);
+        }
+    });
+
+    // Run try_alloc_cpu many times under severe contention.
+    // It must return quickly (either returning a block or null) and NEVER hang/live-lock.
+    for _ in 0..1000 {
+        let _res = per_cpu::try_alloc_cpu::<StandardPolicy>(class);
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    let _ = handle.join();
+
+    // Clean up slot
+    per_cpu::PER_CPU_CACHE.slots[cpu_id].blocks[class][0].store(0, Ordering::Relaxed);
+}

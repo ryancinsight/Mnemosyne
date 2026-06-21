@@ -1,4 +1,4 @@
-#[cfg(all(not(nightly_tls_active), not(feature = "std_tls")))]
+#[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(miri)))]
 use core::sync::atomic::Ordering;
 
 #[derive(Clone, Copy)]
@@ -24,11 +24,11 @@ std::thread_local! {
     };
 }
 
-#[cfg(all(not(nightly_tls_active), not(feature = "std_tls")))]
+#[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(miri)))]
 static PROFILER_TLS_KEY: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(u32::MAX);
 
-#[cfg(all(not(nightly_tls_active), not(feature = "std_tls")))]
+#[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(miri)))]
 #[inline(always)]
 fn get_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
     // The atomic publishes an immutable OS TLS slot index only. It does not
@@ -40,7 +40,7 @@ fn get_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
     Some(key)
 }
 
-#[cfg(all(not(nightly_tls_active), not(feature = "std_tls")))]
+#[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(miri)))]
 #[cold]
 #[inline(never)]
 fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
@@ -88,7 +88,7 @@ fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
     }
 }
 
-#[cfg(all(not(nightly_tls_active), not(feature = "std_tls")))]
+#[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(miri)))]
 #[allow(dead_code)]
 #[inline(always)]
 fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
@@ -110,7 +110,7 @@ fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
     }
 }
 
-#[cfg(all(not(nightly_tls_active), not(feature = "std_tls")))]
+#[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(miri)))]
 #[allow(dead_code)]
 #[inline(always)]
 fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
@@ -135,7 +135,8 @@ fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
 #[cfg(all(
     not(nightly_tls_active),
     not(feature = "std_tls"),
-    all(windows, target_arch = "x86_64")
+    all(windows, target_arch = "x86_64"),
+    not(miri)
 ))]
 #[inline(always)]
 unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
@@ -167,7 +168,8 @@ unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
 #[cfg(all(
     not(nightly_tls_active),
     not(feature = "std_tls"),
-    all(windows, target_arch = "x86_64")
+    all(windows, target_arch = "x86_64"),
+    not(miri)
 ))]
 #[inline(always)]
 unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
@@ -195,11 +197,11 @@ unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
 #[cfg(not(nightly_tls_active))]
 #[inline(always)]
 pub(crate) fn get_profiler_state() -> *mut ThreadState {
-    #[cfg(feature = "std_tls")]
+    #[cfg(any(feature = "std_tls", miri))]
     {
         THREAD_STATE.with(|cell| cell.get())
     }
-    #[cfg(not(feature = "std_tls"))]
+    #[cfg(all(not(feature = "std_tls"), not(miri)))]
     {
         #[cfg(all(windows, target_arch = "x86_64"))]
         {

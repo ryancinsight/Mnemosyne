@@ -36,6 +36,9 @@ pub const MAX_ALLOC_SIZE: usize = isize::MAX as usize;
 /// The total number of small size classes.
 pub const NUM_SIZE_CLASSES: usize = 44;
 
+/// The maximum number of segments retained in the global pool (compile-time limit).
+pub const MAX_RETAINED_SEGMENTS_LIMIT: usize = 1024;
+
 // Compile-time structural invariant checks.
 //
 // These `const _: () = assert!(...)` items are evaluated by the compiler
