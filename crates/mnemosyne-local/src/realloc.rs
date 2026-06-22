@@ -48,10 +48,9 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
 ) -> *mut u8 {
     if !ptr.is_null() && new_size != 0 {
         let is_grow = new_size > layout.size();
-        let policy_allows_in_place = true;
 
         let mut can_reuse = false;
-        if policy_allows_in_place {
+        {
             let is_small =
                 layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE;
 

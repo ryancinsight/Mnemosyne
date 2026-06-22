@@ -109,11 +109,6 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             self.unlink_owned_segment(segment);
         }
 
-        if self.current_segment.is_some_and(|p| p.as_ptr() == segment) {
-            unsafe { self.set_current_segment(None) };
-            self.next_page_index = 0;
-        }
-
         unsafe {
             (*segment).owner = SegmentOwner::NONE;
             (*segment).owner_allocator = core::ptr::null_mut();

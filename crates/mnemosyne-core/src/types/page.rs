@@ -36,8 +36,8 @@ pub struct Page {
 unsafe impl Send for Page {}
 unsafe impl Sync for Page {}
 
-#[inline]
-fn gcd(mut a: usize, mut b: usize) -> usize {
+#[inline(always)]
+const fn gcd(mut a: usize, mut b: usize) -> usize {
     while b != 0 {
         let t = b;
         b = a % b;

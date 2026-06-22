@@ -68,16 +68,23 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         };
 
         for class in 0..NUM_SIZE_CLASSES {
-            unsafe { accumulate_list(&mut snapshot, self.active_pages[class]) };
-            unsafe { accumulate_list(&mut snapshot, self.full_pages[class]) };
+            unsafe { accumulate_active_list(&mut snapshot, self.active_pages[class]) };
+            unsafe { accumulate_active_list(&mut snapshot, self.full_pages[class]) };
         }
-        unsafe { accumulate_list(&mut snapshot, self.empty_pages) };
+        // Empty pages are tracked separately: they retain stale size_class/block_size
+        // from their last use, so they must not be counted as live active pages.
+        unsafe { accumulate_empty_list(&mut snapshot, self.empty_pages) };
 
         snapshot
     }
 }
 
-unsafe fn accumulate_list(snapshot: &mut ThreadAllocatorStats, mut current: Option<NonNull<Page>>) {
+/// Accumulates stats for pages in an active or full list.
+/// Empty pages must not pass through this function — use `accumulate_empty_list`.
+unsafe fn accumulate_active_list(
+    snapshot: &mut ThreadAllocatorStats,
+    mut current: Option<NonNull<Page>>,
+) {
     while let Some(page_ptr) = current {
         let page = unsafe { page_ptr.as_ref() };
         if page.block_size > 0 {
@@ -91,6 +98,25 @@ unsafe fn accumulate_list(snapshot: &mut ThreadAllocatorStats, mut current: Opti
             occupancy.live_allocations += page.alloc_count;
             occupancy.total_slots += page.max_blocks();
             snapshot.current_thread_live_allocations += page.alloc_count;
+        }
+        current = page.next_page;
+    }
+}
+
+/// Accumulates stats for pages in the empty recycle list.
+///
+/// Empty pages retain stale `size_class`/`block_size` from their last active
+/// use, so they must not be counted as live active pages or add to total_slots.
+unsafe fn accumulate_empty_list(
+    snapshot: &mut ThreadAllocatorStats,
+    mut current: Option<NonNull<Page>>,
+) {
+    while let Some(page_ptr) = current {
+        let page = unsafe { page_ptr.as_ref() };
+        if page.block_size > 0 {
+            let class = page.size_class as usize;
+            debug_assert!(class < NUM_SIZE_CLASSES);
+            snapshot.size_class_occupancy[class].empty_pages += 1;
         }
         current = page.next_page;
     }

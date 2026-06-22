@@ -123,7 +123,7 @@ pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
         let mut block_ptr_val = 0;
 
         for i in 0..MAX_CACHED_BLOCKS {
-            let val = slot.blocks[class][i].load(Ordering::Acquire);
+            let val = slot.blocks[class][i].load(Ordering::Relaxed);
             if val != 0 {
                 found_idx = Some(i);
                 block_ptr_val = val;

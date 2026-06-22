@@ -86,13 +86,14 @@ fn stats_snapshot_counts_active_and_empty_page_lists() {
     let empty_stats = alloc.stats();
     assert_eq!(empty_stats.current_thread_live_allocations, 0);
     assert_eq!(empty_stats.current_thread_owned_segments, 1);
-    assert_eq!(empty_stats.size_class_occupancy[class].active_pages, 1);
+    // The page moved to the empty recycle list: it is no longer an active page,
+    // so active_pages must be zero and total_slots must not include its capacity.
+    // The empty_pages counter tracks pages in the recycle pool, not active pages
+    // that happen to have zero allocations.
+    assert_eq!(empty_stats.size_class_occupancy[class].active_pages, 0);
     assert_eq!(empty_stats.size_class_occupancy[class].empty_pages, 1);
     assert_eq!(empty_stats.size_class_occupancy[class].live_allocations, 0);
-    assert_eq!(
-        empty_stats.size_class_occupancy[class].total_slots,
-        live_stats.size_class_occupancy[class].total_slots
-    );
+    assert_eq!(empty_stats.size_class_occupancy[class].total_slots, 0);
 }
 
 #[test]

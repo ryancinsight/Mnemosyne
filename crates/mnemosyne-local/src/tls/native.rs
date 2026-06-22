@@ -48,31 +48,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
 
     #[inline(always)]
     fn with_allocator_guard<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
-        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
-            return S::get_slot_standard(|slot| {
-                S::arm_thread_exit(slot);
-                slot.with_allocator(f)
-            });
-        };
-        let ptr = get_os_tls_value(key);
-        if !ptr.is_null() {
-            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
-            if alloc.is_allocating {
-                return None;
-            }
-            alloc.is_allocating = true;
-            let result = f(alloc);
-            alloc.is_allocating = false;
-            Some(result)
-        } else {
-            S::get_slot_standard(|slot| {
-                let alloc_ptr = slot.allocator_ptr();
-                set_os_tls_value(key, alloc_ptr);
-                slot.os_key.set(key);
-                S::arm_thread_exit(slot);
-                slot.with_allocator(f)
-            })
-        }
+        <NativeOsTls<B, S> as TlsProvider<B>>::with_allocator(f)
     }
 
     #[inline(always)]
@@ -167,31 +143,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
 
     #[inline(always)]
     fn with_allocator_guard<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
-        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
-            return S::get_slot_standard(|slot| {
-                S::arm_thread_exit(slot);
-                slot.with_allocator(f)
-            });
-        };
-        let ptr = unsafe { get_teb_tls_slot(key) };
-        if !ptr.is_null() {
-            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
-            if alloc.is_allocating {
-                return None;
-            }
-            alloc.is_allocating = true;
-            let result = f(alloc);
-            alloc.is_allocating = false;
-            Some(result)
-        } else {
-            S::get_slot_standard(|slot| {
-                let alloc_ptr = slot.allocator_ptr();
-                unsafe { set_teb_tls_slot(key, alloc_ptr) };
-                slot.os_key.set(key);
-                S::arm_thread_exit(slot);
-                slot.with_allocator(f)
-            })
-        }
+        <AsmTls<B, S> as TlsProvider<B>>::with_allocator(f)
     }
 
     #[inline(always)]

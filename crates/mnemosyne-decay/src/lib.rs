@@ -75,9 +75,10 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
                 continue;
             }
             let page = unsafe { &mut (*segment).pages[i] };
-            // Reclaim any cross-thread frees to update the alloc_count
+            // Reclaim any cross-thread frees to update the alloc_count, using
+            // the segment-aware variant to avoid redundant segment-address masking.
             unsafe {
-                page.reclaim_thread_free_dynamic(dynamic_encrypted);
+                page.reclaim_thread_free_if_present_for_segment(dynamic_encrypted, segment, i);
             }
             total_allocations += page.alloc_count;
         }
