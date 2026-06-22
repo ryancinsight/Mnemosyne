@@ -80,7 +80,6 @@ fn test_cuda_unified_backend() {
     {
         // Skip on Windows: the WDDM driver does not support concurrent CPU access
         // to managed memory from parallel test processes executed by nextest.
-        return;
     }
     #[cfg(not(windows))]
     {

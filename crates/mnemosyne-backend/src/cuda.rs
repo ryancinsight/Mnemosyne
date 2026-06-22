@@ -45,8 +45,6 @@ extern "system" {
     fn ExitProcess(uExitCode: u32);
 }
 
-
-
 #[cfg(target_family = "windows")]
 static mut WORKER_THREAD_ID: u32 = 0;
 #[cfg(target_family = "windows")]
@@ -283,8 +281,7 @@ pub struct CudaAllocationRegistry {
 }
 
 static CUDA_ALLOCATIONS: CudaAllocationRegistry = CudaAllocationRegistry {
-    slots: [const { AtomicPtr::new(core::ptr::null_mut()) };
-        MAX_TRACKED_CUDA_ALLOCATIONS],
+    slots: [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_TRACKED_CUDA_ALLOCATIONS],
     count: AtomicUsize::new(0),
 };
 
@@ -350,12 +347,7 @@ fn stagger_nextest_init() {
     static STAGGERED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
     if !STAGGERED.load(Ordering::Acquire)
         && STAGGERED
-            .compare_exchange(
-                false,
-                true,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
     {
         extern crate std;
@@ -420,7 +412,6 @@ fn unregister_cuda_ptr(ptr: *mut u8) -> bool {
 /// - Exclusive access during symbol loading (enforced by the parent `init_cuda` caller).
 /// - The resolved symbols must be valid function pointers and must not be mutated.
 unsafe fn init_cuda_once() {
-
     let lib = {
         #[cfg(target_family = "windows")]
         {

@@ -225,7 +225,10 @@ fn fresh_segment_installs_tail_guard_in_alignment_slack() {
         }
     }
 
-    assert!(found, "tail guard was not placed immediately after the segment");
+    assert!(
+        found,
+        "tail guard was not placed immediately after the segment"
+    );
 
     let released = unsafe { release_segment_mapping::<GuardRecordingBackend>(segment) };
     assert_eq!(released, SegmentRelease::Released);
@@ -469,11 +472,13 @@ fn test_reset_segment_pool_propagates_correct_bounds() {
 
     assert_eq!(calls, 1, "expected exactly 1 page_reset call");
     assert_eq!(
-        last_ptr, segment as usize + PAGE_SIZE,
+        last_ptr,
+        segment as usize + PAGE_SIZE,
         "expected page_reset pointer to match segment pointer plus PAGE_SIZE"
     );
     assert_eq!(
-        last_size, SEGMENT_SIZE - PAGE_SIZE,
+        last_size,
+        SEGMENT_SIZE - PAGE_SIZE,
         "expected page_reset size to match SEGMENT_SIZE minus PAGE_SIZE"
     );
 

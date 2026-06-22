@@ -117,7 +117,8 @@ pub(crate) unsafe fn push_page_front<'id, B: HasSegmentPool>(
     *head_slot = Some(raw_page);
     page.list_state = list_state;
     if page.page_index > 0 {
-        let segment_addr = (raw_page.as_ptr() as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+        let segment_addr =
+            (raw_page.as_ptr() as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
         let segment = segment_addr as *mut mnemosyne_core::types::Segment;
         unsafe {
             (*segment).page_linked_mask |= 1 << page.page_index;
@@ -165,7 +166,8 @@ pub(crate) unsafe fn unlink_page_from_list<'id, B: HasSegmentPool>(
     page.prev_page = None;
     page.list_state = 0;
     if page.page_index > 0 {
-        let segment_addr = (raw_page.as_ptr() as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+        let segment_addr =
+            (raw_page.as_ptr() as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
         let segment = segment_addr as *mut mnemosyne_core::types::Segment;
         unsafe {
             (*segment).page_linked_mask &= !(1 << page.page_index);
@@ -256,7 +258,6 @@ pub(crate) unsafe fn move_active_page_to_empty_branded<'id, B: HasSegmentPool>(
     *empty_head_slot = Some(raw_page);
     page.list_state = 3;
 }
-
 
 /// Reclaims any pending cross-thread frees on `page` and, if reclamation
 /// added blocks to the local free list, pops one block and increments the

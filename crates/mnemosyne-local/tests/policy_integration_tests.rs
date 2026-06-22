@@ -195,7 +195,7 @@ fn test_randomized_allocation_policy() {
 #[test]
 fn test_in_place_realloc_growth_under_policies() {
     use core::alloc::Layout;
-    use mnemosyne_core::policy::{AllocPolicy, private::Sealed};
+    use mnemosyne_core::policy::{private::Sealed, AllocPolicy};
 
     const ALIGN: usize = 8;
     // 20 bytes rounded to size class 1 (32 bytes).
@@ -220,7 +220,10 @@ fn test_in_place_realloc_growth_under_policies() {
 
         let ptr1_re = thread_realloc::<ZeroInitOnlyPolicy, Backend>(ptr1, old_layout, new_size);
         assert!(!ptr1_re.is_null());
-        assert_eq!(ptr1_re, ptr1, "ZeroInitOnlyPolicy reallocation must be in-place");
+        assert_eq!(
+            ptr1_re, ptr1,
+            "ZeroInitOnlyPolicy reallocation must be in-place"
+        );
 
         // Check content preservation
         for i in 0..20 {
@@ -247,7 +250,10 @@ fn test_in_place_realloc_growth_under_policies() {
 
         let ptr2_re = thread_realloc::<PoisonOnlyPolicy, Backend>(ptr2, old_layout, new_size);
         assert!(!ptr2_re.is_null());
-        assert_eq!(ptr2_re, ptr2, "PoisonOnlyPolicy reallocation must be in-place");
+        assert_eq!(
+            ptr2_re, ptr2,
+            "PoisonOnlyPolicy reallocation must be in-place"
+        );
 
         // Check content preservation
         for i in 0..20 {
@@ -285,7 +291,10 @@ fn test_in_place_realloc_growth_under_policies() {
 
         let ptr4_re = thread_realloc::<HardenedPolicy, Backend>(ptr4, old_layout, new_size);
         assert!(!ptr4_re.is_null());
-        assert_eq!(ptr4_re, ptr4, "HardenedPolicy reallocation must be in-place");
+        assert_eq!(
+            ptr4_re, ptr4,
+            "HardenedPolicy reallocation must be in-place"
+        );
 
         // Check content preservation
         for i in 0..20 {
@@ -298,4 +307,3 @@ fn test_in_place_realloc_growth_under_policies() {
         thread_free::<HardenedPolicy, Backend>(ptr4_re);
     }
 }
-

@@ -87,11 +87,26 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
                     return ptr;
                 }
+                if let Some(block) =
+                    unsafe { crate::local_alloc::page::try_reclaim_and_allocate::<P>(page) }
+                {
+                    let ptr = block.as_ptr() as *mut u8;
+                    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+                    return ptr;
+                }
             }
         }
+        unsafe {
+            thread_alloc_cold::<P, B>(
+                class,
+                adjusted_size,
+                align,
+                Some(core::ptr::NonNull::new_unchecked(alloc as *mut _)),
+            )
+        }
+    } else {
+        unsafe { thread_alloc_cold::<P, B>(class, adjusted_size, align, None) }
     }
-
-    unsafe { thread_alloc_cold::<P, B>(class, adjusted_size, align) }
 }
 
 #[cold]
@@ -100,6 +115,7 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
     class: usize,
     adjusted_size: usize,
     align: usize,
+    alloc_opt: Option<core::ptr::NonNull<ThreadAllocator<B>>>,
 ) -> *mut u8 {
     if B::ENABLE_CPU_CACHE {
         let cpu_ptr = per_cpu::try_alloc_cpu::<P>(class);
@@ -109,12 +125,16 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
         }
     }
 
-    let slot_ptr = B::get_allocator_ptr();
-    if slot_ptr.is_null() {
-        return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
-    }
+    let alloc = if let Some(alloc_ptr) = alloc_opt {
+        unsafe { &mut *alloc_ptr.as_ptr() }
+    } else {
+        let slot_ptr = B::get_allocator_ptr();
+        if slot_ptr.is_null() {
+            return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
+        }
+        unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) }
+    };
 
-    let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
     if alloc.is_allocating {
         return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
     }

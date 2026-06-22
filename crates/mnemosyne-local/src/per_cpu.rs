@@ -34,7 +34,8 @@ impl CpuCacheSlot {
     /// Creates a new empty `CpuCacheSlot`.
     pub const fn new() -> Self {
         Self {
-            blocks: [const { [const { AtomicUsize::new(0) }; MAX_CACHED_BLOCKS] }; NUM_SIZE_CLASSES],
+            blocks: [const { [const { AtomicUsize::new(0) }; MAX_CACHED_BLOCKS] };
+                NUM_SIZE_CLASSES],
         }
     }
 }

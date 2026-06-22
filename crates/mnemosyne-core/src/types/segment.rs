@@ -139,7 +139,10 @@ impl Segment {
     ///
     /// The caller must ensure that `self` is a valid reference to a `Segment`.
     #[inline(always)]
-    pub unsafe fn is_owned_by(&self, get_slot_ptr: impl FnOnce() -> *mut core::ffi::c_void) -> bool {
+    pub unsafe fn is_owned_by(
+        &self,
+        get_slot_ptr: impl FnOnce() -> *mut core::ffi::c_void,
+    ) -> bool {
         let owner = self.owner;
         #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
         {

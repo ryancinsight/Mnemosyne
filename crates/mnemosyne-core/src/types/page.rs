@@ -178,7 +178,9 @@ impl Page {
     /// The caller must guarantee that the parent segment is a valid Segment mapping.
     #[inline(always)]
     pub unsafe fn decrement_alloc_count(&mut self) {
-        debug_assert!(self.alloc_count > 0);
+        if self.alloc_count == 0 {
+            panic!("decrement_alloc_count: page alloc_count is already 0");
+        }
         let count = self.alloc_count - 1;
         self.alloc_count = count;
         if count == 0 {
@@ -206,7 +208,9 @@ impl Page {
         page_index: usize,
     ) {
         debug_assert!(page_index < crate::constants::PAGES_PER_SEGMENT);
-        debug_assert!(self.alloc_count > 0);
+        if self.alloc_count == 0 {
+            panic!("decrement_alloc_count_for_segment: page alloc_count is already 0");
+        }
         let count = self.alloc_count - 1;
         self.alloc_count = count;
         if count == 0 && unsafe { !(*segment).is_current } {
@@ -314,12 +318,12 @@ impl Page {
             return 0;
         };
 
-        debug_assert!(
-            self.alloc_count >= count,
-            "reclaim count {} exceeds page allocation count {}",
-            count,
-            self.alloc_count
-        );
+        if count > self.alloc_count {
+            panic!(
+                "reclaim count {} exceeds page allocation count {}",
+                count, self.alloc_count
+            );
+        }
         unsafe { self.set_alloc_count_for_segment(segment, page_index, self.alloc_count - count) };
 
         if self.free.is_none() {

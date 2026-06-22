@@ -70,8 +70,11 @@ struct Shard {
     mutex: Mutex<Option<HashMap<usize, Sample, FastBuildHasher>>>,
 }
 
-static ACTIVE_SAMPLES: [Shard; SHARDS] =
-    [const { Shard { mutex: Mutex::new(None) } }; SHARDS];
+static ACTIVE_SAMPLES: [Shard; SHARDS] = [const {
+    Shard {
+        mutex: Mutex::new(None),
+    }
+}; SHARDS];
 
 fn get_map(
     shard: usize,

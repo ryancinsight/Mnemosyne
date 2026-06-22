@@ -227,12 +227,16 @@ impl SpinLock {
     /// Acquires the lock, spinning if necessary.
     #[inline(always)]
     pub fn lock(&self) {
-        while self.locked.compare_exchange_weak(
-            false,
-            true,
-            core::sync::atomic::Ordering::Acquire,
-            core::sync::atomic::Ordering::Relaxed,
-        ).is_err() {
+        while self
+            .locked
+            .compare_exchange_weak(
+                false,
+                true,
+                core::sync::atomic::Ordering::Acquire,
+                core::sync::atomic::Ordering::Relaxed,
+            )
+            .is_err()
+        {
             while self.locked.load(core::sync::atomic::Ordering::Relaxed) {
                 core::hint::spin_loop();
             }
@@ -242,7 +246,7 @@ impl SpinLock {
     /// Releases the lock.
     #[inline(always)]
     pub fn unlock(&self) {
-        self.locked.store(false, core::sync::atomic::Ordering::Release);
+        self.locked
+            .store(false, core::sync::atomic::Ordering::Release);
     }
 }
-

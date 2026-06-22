@@ -270,13 +270,20 @@ fn test_segment_occupancy_mask_cleanup_on_replacement() {
     let ptr = unsafe { alloc.alloc::<StandardPolicy>(16) };
     assert!(!ptr.is_null());
 
-    let current_seg_ptr = alloc.current_segment.expect("expected current segment").as_ptr();
+    let current_seg_ptr = alloc
+        .current_segment
+        .expect("expected current segment")
+        .as_ptr();
     let ptr_val = ptr as usize;
     let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
 
     // Assert that the page's occupancy bit is set
     let mask_before = unsafe { (*current_seg_ptr).page_occupied_mask };
-    assert_ne!(mask_before & (1 << page_index), 0, "occupancy bit must be set");
+    assert_ne!(
+        mask_before & (1 << page_index),
+        0,
+        "occupancy bit must be set"
+    );
 
     // 2. Free the block locally. Since the segment is current, the occupancy mask bit is NOT cleared.
     unsafe {

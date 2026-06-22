@@ -46,7 +46,6 @@ impl Default for NodeHugeBucket {
     }
 }
 
-
 /// A lock-free pool of cached huge allocations for a single NUMA node.
 pub struct NodeHugePool {
     pub(crate) buckets: [NodeHugeBucket; HUGE_SIZE_BUCKETS],
@@ -176,7 +175,9 @@ impl GlobalHugePool {
             state.head = segment;
         }
 
-        bucket.count.store(count + 1, core::sync::atomic::Ordering::Relaxed);
+        bucket
+            .count
+            .store(count + 1, core::sync::atomic::Ordering::Relaxed);
         pool_node
             .total_count
             .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -190,11 +191,7 @@ impl GlobalHugePool {
     ///
     /// The returned segment is exclusively owned by the caller.
     #[inline]
-    pub unsafe fn pop(
-        &self,
-        size: usize,
-        numa_node: usize,
-    ) -> Option<*mut Segment> {
+    pub unsafe fn pop(&self, size: usize, numa_node: usize) -> Option<*mut Segment> {
         let start_node = numa_bucket(numa_node);
         let bucket_idx = huge_bucket_index(size);
 
@@ -262,7 +259,9 @@ impl GlobalHugePool {
                                 (*prev).next_free_segment = (*curr).next_free_segment;
                             }
                             (*curr).next_free_segment = core::ptr::null_mut();
-                            bucket.count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+                            bucket
+                                .count
+                                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
                             pool_node
                                 .total_count
                                 .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
@@ -278,7 +277,9 @@ impl GlobalHugePool {
                     if !h.is_null() {
                         state.head = (*h).next_free_segment;
                         (*h).next_free_segment = core::ptr::null_mut();
-                        bucket.count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+                        bucket
+                            .count
+                            .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
                         pool_node
                             .total_count
                             .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
@@ -316,7 +317,9 @@ impl GlobalHugePool {
                     h
                 };
                 bucket.count.store(0, core::sync::atomic::Ordering::Relaxed);
-                pool_node.total_count.fetch_sub(count, core::sync::atomic::Ordering::Relaxed);
+                pool_node
+                    .total_count
+                    .fetch_sub(count, core::sync::atomic::Ordering::Relaxed);
                 bucket.lock.unlock();
 
                 while !head.is_null() {

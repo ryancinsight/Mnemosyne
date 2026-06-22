@@ -455,3 +455,89 @@ fn test_dealloc_path() {
     assert!(!ptr.is_null());
     unsafe { thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr) };
 }
+
+#[test]
+fn test_double_free_aborts_process() {
+    use std::env;
+    use std::process::Command;
+    use std::string::String;
+
+    if env::var("RUN_DOUBLE_FREE_ABORT_TEST").is_ok() {
+        unsafe {
+            let ptr = thread_alloc::<StandardPolicy, MemoryBackendWrapper>(16, 8);
+            thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr);
+            thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr);
+        }
+        return;
+    }
+
+    let current_exe = env::current_exe().unwrap();
+    let output = Command::new(current_exe)
+        .arg("tests::test_double_free_aborts_process")
+        .arg("--exact")
+        .env("RUN_DOUBLE_FREE_ABORT_TEST", "1")
+        .output()
+        .unwrap();
+
+    if output.status.success() {
+        std::println!(
+            "Subprocess stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        std::println!(
+            "Subprocess stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        panic!("Subprocess succeeded but was expected to abort!");
+    }
+}
+
+#[test]
+fn test_reclaim_overflow_aborts_process() {
+    use std::env;
+    use std::process::Command;
+    use std::string::String;
+
+    if env::var("RUN_RECLAIM_OVERFLOW_ABORT_TEST").is_ok() {
+        unsafe {
+            let ptr = thread_alloc::<StandardPolicy, MemoryBackendWrapper>(16, 8);
+            let ptr_val = ptr as usize;
+            let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
+            let segment = segment_addr as *mut Segment;
+            let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+            let page = &mut (*segment).pages[page_index];
+
+            // Manually reduce alloc_count to 0 so count (1) > alloc_count (0) during reclaim.
+            page.set_alloc_count_for_segment(segment, page_index, 0);
+
+            // Push the block directly to the thread_free queue.
+            let block = ptr as *mut Block;
+            page.thread_free
+                .push::<StandardPolicy>(NonNull::new_unchecked(block));
+
+            // Run reclaim, which should detect count (1) > alloc_count (0) and abort.
+            page.reclaim_thread_free::<StandardPolicy>();
+        }
+        return;
+    }
+
+    let current_exe = env::current_exe().unwrap();
+    let output = Command::new(current_exe)
+        .arg("tests::test_reclaim_overflow_aborts_process")
+        .arg("--exact")
+        .env("RUN_RECLAIM_OVERFLOW_ABORT_TEST", "1")
+        .output()
+        .unwrap();
+
+    if output.status.success() {
+        std::println!(
+            "Subprocess stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        std::println!(
+            "Subprocess stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        panic!("Subprocess succeeded but was expected to abort!");
+    }
+}

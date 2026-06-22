@@ -164,4 +164,3 @@ impl NodeSegmentPool {
         self.reset_segments.fetch_add(count, Ordering::Relaxed);
     }
 }
-

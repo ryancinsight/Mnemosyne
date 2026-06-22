@@ -1,5 +1,5 @@
-use crate::local_alloc::ThreadAllocator;
 use crate::local_alloc::page::{push_page_front, unlink_page_from_list, with_page_list_token};
+use crate::local_alloc::ThreadAllocator;
 use core::ptr::NonNull;
 use mnemosyne_arena::{deallocate_segment, HasSegmentPool};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
@@ -92,8 +92,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 }
                 let pg = &mut (*segment).pages[i];
                 if pg.alloc_count > 0 {
-                    let reclaimed =
-                        pg.reclaim_thread_free_if_present_for_segment(dynamic_encrypted, segment, i);
+                    let reclaimed = pg.reclaim_thread_free_if_present_for_segment(
+                        dynamic_encrypted,
+                        segment,
+                        i,
+                    );
                     if reclaimed > 0 {
                         crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
                     }
@@ -148,7 +151,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                 continue;
                             }
                             let pg = &mut (*segment).pages[i];
-                            let reclaimed = pg.reclaim_thread_free_if_present_for_segment(dynamic_encrypted, segment, i);
+                            let reclaimed = pg.reclaim_thread_free_if_present_for_segment(
+                                dynamic_encrypted,
+                                segment,
+                                i,
+                            );
                             if reclaimed > 0 {
                                 crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
                             }
@@ -176,7 +183,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                             branded_page,
                                         );
                                     }
-                                    push_page_front(&mut token, &mut self.empty_pages, branded_page, 3);
+                                    push_page_front(
+                                        &mut token,
+                                        &mut self.empty_pages,
+                                        branded_page,
+                                        3,
+                                    );
                                 }
                             }
                         }

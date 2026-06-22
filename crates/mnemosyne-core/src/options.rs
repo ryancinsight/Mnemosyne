@@ -6,8 +6,8 @@
 use core::sync::atomic::{AtomicBool, AtomicUsize};
 
 /// The maximum number of segments retained in the global segment pool.
-pub static MAX_RETAINED_SEGMENTS: AtomicUsize = AtomicUsize::new(crate::constants::MAX_RETAINED_SEGMENTS_LIMIT);
-
+pub static MAX_RETAINED_SEGMENTS: AtomicUsize =
+    AtomicUsize::new(crate::constants::MAX_RETAINED_SEGMENTS_LIMIT);
 
 /// Whether the advisory huge page hint (`MADV_HUGEPAGE`) is enabled on Linux.
 pub static ENABLE_HUGEPAGE_HINT: AtomicBool = AtomicBool::new(true);

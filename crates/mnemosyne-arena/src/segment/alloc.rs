@@ -4,7 +4,9 @@ use super::pool::HasSegmentPool;
 use super::stats::SegmentRelease;
 use super::utils::checked_align_up;
 use crate::numa::current_numa_node;
-use mnemosyne_core::constants::{MAX_RETAINED_SEGMENTS_LIMIT, PAGE_SIZE, SEGMENT_ALIGN, SEGMENT_SIZE};
+use mnemosyne_core::constants::{
+    MAX_RETAINED_SEGMENTS_LIMIT, PAGE_SIZE, SEGMENT_ALIGN, SEGMENT_SIZE,
+};
 use mnemosyne_core::types::Segment;
 
 /// Bytes requested from the OS for each standard segment mapping.

@@ -122,7 +122,9 @@ unsafe fn thread_free_classified<
     };
 
     if is_owner && !owner_allocator.is_null() {
-        debug_assert!(page.alloc_count > 0, "local free observed zero alloc_count");
+        if page.alloc_count == 0 {
+            std::process::abort();
+        }
         let page_free = page.free;
         let page_alloc_count = page.alloc_count;
         let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
@@ -177,9 +179,11 @@ unsafe fn thread_free_classified<
                     let page_ptr = NonNull::new_unchecked(page as *mut Page);
                     with_page_list_token::<B, _>(|mut token| {
                         let branded_page = token.page(page_ptr);
-                        let is_only_active = alloc.active_pages.get_unchecked(class).is_some_and(|head| {
-                            core::ptr::eq(head.as_ptr(), page as *const Page) && page.next_page.is_none()
-                        });
+                        let is_only_active =
+                            alloc.active_pages.get_unchecked(class).is_some_and(|head| {
+                                core::ptr::eq(head.as_ptr(), page as *const Page)
+                                    && page.next_page.is_none()
+                            });
                         if !is_only_active {
                             move_active_page_to_empty_branded(
                                 &mut token,

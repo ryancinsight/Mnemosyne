@@ -2,10 +2,13 @@ use core::alloc::{GlobalAlloc, Layout};
 use std::thread;
 
 use mnemosyne::{
-    disable_leak_detector, dump_leaks, enable_leak_detector, is_cuda_available,
-    is_leak_detector_enabled, memory_stats, memory_stats_generic, purge, reset, usable_size,
-    CudaUnifiedBackend, Mnemosyne, MnemosyneAllocator, SecurePolicy, StandardPolicy,
+    disable_leak_detector, dump_leaks, enable_leak_detector, is_leak_detector_enabled,
+    memory_stats, purge, reset, usable_size, Mnemosyne, MnemosyneAllocator, SecurePolicy,
+    StandardPolicy,
 };
+
+#[cfg(not(windows))]
+use mnemosyne::{is_cuda_available, memory_stats_generic, CudaUnifiedBackend};
 
 #[global_allocator]
 static ALLOCATOR: Mnemosyne = Mnemosyne;
