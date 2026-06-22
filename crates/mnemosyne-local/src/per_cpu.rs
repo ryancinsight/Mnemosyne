@@ -192,12 +192,20 @@ pub fn try_free_cpu<P: AllocPolicy>(ptr: *mut u8, class: usize) -> bool {
 
     for _ in 0..2 {
         let mut found_idx = None;
+        let mut is_double_free = false;
         for i in 0..MAX_CACHED_BLOCKS {
             let val = slot.blocks[class][i].load(Ordering::Relaxed);
-            if val == 0 {
-                found_idx = Some(i);
+            if val == ptr as usize {
+                is_double_free = true;
                 break;
             }
+            if val == 0 && found_idx.is_none() {
+                found_idx = Some(i);
+            }
+        }
+
+        if is_double_free {
+            std::process::abort();
         }
 
         let Some(idx) = found_idx else {

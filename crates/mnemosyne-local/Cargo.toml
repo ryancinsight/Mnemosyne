@@ -17,6 +17,8 @@ mnemosyne-memory = []
 # `#[thread_local]` static is not dropped automatically on thread teardown.
 nightly_tls = []
 std_tls = []
+segment-tail-guards = ["mnemosyne-arena/segment-tail-guards"]
+segment-header-guards = ["mnemosyne-arena/segment-header-guards"]
 
 
 [dependencies]

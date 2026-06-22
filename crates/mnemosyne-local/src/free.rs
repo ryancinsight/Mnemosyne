@@ -125,6 +125,9 @@ unsafe fn thread_free_classified<
         if page.alloc_count == 0 {
             std::process::abort();
         }
+        if Some(NonNull::new_unchecked(block)) == page.free {
+            std::process::abort();
+        }
         let page_free = page.free;
         let page_alloc_count = page.alloc_count;
         let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
