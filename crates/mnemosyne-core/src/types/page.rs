@@ -179,7 +179,7 @@ impl Page {
     #[inline(always)]
     pub unsafe fn decrement_alloc_count(&mut self) {
         if self.alloc_count == 0 {
-            panic!("decrement_alloc_count: page alloc_count is already 0");
+            abort_on_corruption();
         }
         let count = self.alloc_count - 1;
         self.alloc_count = count;
@@ -209,7 +209,7 @@ impl Page {
     ) {
         debug_assert!(page_index < crate::constants::PAGES_PER_SEGMENT);
         if self.alloc_count == 0 {
-            panic!("decrement_alloc_count_for_segment: page alloc_count is already 0");
+            abort_on_corruption();
         }
         let count = self.alloc_count - 1;
         self.alloc_count = count;
@@ -319,10 +319,7 @@ impl Page {
         };
 
         if count > self.alloc_count {
-            panic!(
-                "reclaim count {} exceeds page allocation count {}",
-                count, self.alloc_count
-            );
+            abort_on_corruption();
         }
         unsafe { self.set_alloc_count_for_segment(segment, page_index, self.alloc_count - count) };
 
@@ -447,5 +444,17 @@ impl Page {
             self.initialized_blocks = 0;
             self.free = None;
         }
+    }
+}
+
+#[inline(always)]
+fn abort_on_corruption() -> ! {
+    #[cfg(any(feature = "std", test))]
+    {
+        std::process::abort();
+    }
+    #[cfg(not(any(feature = "std", test)))]
+    {
+        panic!("Mnemosyne allocator corruption detected");
     }
 }

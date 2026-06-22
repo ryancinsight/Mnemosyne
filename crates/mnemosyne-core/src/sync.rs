@@ -87,6 +87,16 @@ impl AtomicFreeList {
         let mut current = self.head.load(Ordering::Relaxed);
         loop {
             let current_addr = current & Self::PTR_MASK;
+            if block_addr == current_addr {
+                #[cfg(any(feature = "std", test))]
+                {
+                    std::process::abort();
+                }
+                #[cfg(not(any(feature = "std", test)))]
+                {
+                    panic!("Double free detected in AtomicFreeList");
+                }
+            }
             let current_ptr = core::ptr::with_exposed_provenance_mut::<Block>(current_addr);
             let next_count = ((current >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
 
@@ -156,6 +166,16 @@ impl AtomicFreeList {
 
         let mut current = self.head.load(Ordering::Relaxed);
         loop {
+            if block_ptr == current {
+                #[cfg(any(feature = "std", test))]
+                {
+                    std::process::abort();
+                }
+                #[cfg(not(any(feature = "std", test)))]
+                {
+                    panic!("Double free detected in AtomicFreeList");
+                }
+            }
             // Safety: block_ptr is guaranteed to be valid, writeable, aligned memory,
             // exclusive to the thread calling push.
             unsafe {

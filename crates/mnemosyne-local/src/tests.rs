@@ -541,3 +541,42 @@ fn test_reclaim_overflow_aborts_process() {
         panic!("Subprocess succeeded but was expected to abort!");
     }
 }
+
+#[test]
+fn test_cross_thread_double_free_aborts_process() {
+    use std::env;
+    use std::process::Command;
+    use std::string::String;
+
+    if env::var("RUN_CROSS_THREAD_DOUBLE_FREE_ABORT_TEST").is_ok() {
+        let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(16, 8) };
+        let ptr_val = ptr as usize;
+        let handle = std::thread::spawn(move || unsafe {
+            let ptr = ptr_val as *mut u8;
+            thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr);
+            thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr);
+        });
+        let _ = handle.join();
+        return;
+    }
+
+    let current_exe = env::current_exe().unwrap();
+    let output = Command::new(current_exe)
+        .arg("tests::test_cross_thread_double_free_aborts_process")
+        .arg("--exact")
+        .env("RUN_CROSS_THREAD_DOUBLE_FREE_ABORT_TEST", "1")
+        .output()
+        .unwrap();
+
+    if output.status.success() {
+        std::println!(
+            "Subprocess stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        std::println!(
+            "Subprocess stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        panic!("Subprocess succeeded but was expected to abort!");
+    }
+}
