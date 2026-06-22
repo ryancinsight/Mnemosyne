@@ -180,7 +180,16 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         }
         if let Some(current) = self.current_segment {
             unsafe {
-                (*current.as_ptr()).is_current = false;
+                let seg_ptr = current.as_ptr();
+                (*seg_ptr).is_current = false;
+                let mut mask = (*seg_ptr).page_occupied_mask;
+                while mask != 0 {
+                    let i = mask.trailing_zeros() as usize;
+                    mask &= mask - 1;
+                    if i > 0 && (*seg_ptr).pages[i].alloc_count == 0 {
+                        (*seg_ptr).page_occupied_mask &= !(1 << i);
+                    }
+                }
             }
         }
         if let Some(next) = segment {

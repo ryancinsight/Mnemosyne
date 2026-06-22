@@ -258,3 +258,53 @@ fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
         "post-saturation allocation reused the full page"
     );
 }
+
+#[test]
+fn test_segment_occupancy_mask_cleanup_on_replacement() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("local allocator test lock was poisoned");
+    let mut alloc = ThreadAllocator::<DefaultBackend>::new();
+
+    // 1. Allocate a small block to initialize current_segment and pages
+    let ptr = unsafe { alloc.alloc::<StandardPolicy>(16) };
+    assert!(!ptr.is_null());
+
+    let current_seg_ptr = alloc.current_segment.expect("expected current segment").as_ptr();
+    let ptr_val = ptr as usize;
+    let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+
+    // Assert that the page's occupancy bit is set
+    let mask_before = unsafe { (*current_seg_ptr).page_occupied_mask };
+    assert_ne!(mask_before & (1 << page_index), 0, "occupancy bit must be set");
+
+    // 2. Free the block locally. Since the segment is current, the occupancy mask bit is NOT cleared.
+    unsafe {
+        let block = ptr as *mut Block;
+        let page = &mut (*current_seg_ptr).pages[page_index];
+        (*block).set_next::<StandardPolicy>(page.free, 0);
+        page.free = Some(NonNull::new_unchecked(block));
+        page.decrement_alloc_count_for_segment(current_seg_ptr, page_index);
+    }
+
+    // Assert that the occupancy mask is STILL set because it's the current segment
+    let mask_after_free = unsafe { (*current_seg_ptr).page_occupied_mask };
+    assert_ne!(
+        mask_after_free & (1 << page_index),
+        0,
+        "occupancy bit must still be set after free when segment is current"
+    );
+
+    // 3. Force current segment to change (set to None, simulating replacement)
+    unsafe {
+        alloc.set_current_segment(None);
+    }
+
+    // Assert that the occupancy mask bit is now CLEARED!
+    let mask_after_replacement = unsafe { (*current_seg_ptr).page_occupied_mask };
+    assert_eq!(
+        mask_after_replacement & (1 << page_index),
+        0,
+        "occupancy bit must be cleared after segment replacement"
+    );
+}
