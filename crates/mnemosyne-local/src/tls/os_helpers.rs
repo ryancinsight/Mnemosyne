@@ -166,6 +166,8 @@ pub(crate) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void)
         let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
         if !expansion_slots.is_null() {
             *expansion_slots.add(index as usize - 64) = value;
+        } else {
+            set_os_tls_value(index, value);
         }
     }
 }
