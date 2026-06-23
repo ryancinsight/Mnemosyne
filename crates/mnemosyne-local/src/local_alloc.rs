@@ -112,8 +112,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline]
     pub fn next_random(&mut self) -> u64 {
         if self.rng_state == 0x123456789abcdefu64 {
+            let seed = get_tls_seed() as u64;
             let addr = self as *const Self as usize as u64;
-            self.rng_state ^= addr;
+            self.rng_state = seed ^ addr;
             if self.rng_state == 0 {
                 self.rng_state = 0x123456789abcdefu64;
             }

@@ -99,11 +99,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
             checked += 1;
             let page = page_ptr.as_mut();
-            // Safety: `page` is owned by this allocator.
-            let mut block_opt = unsafe { try_allocate_page_local::<P>(page) };
-            if block_opt.is_none() {
-                block_opt = unsafe { try_reclaim_and_allocate::<P>(page) };
-            }
+            // Safety: `page` is owned by this allocator. Since it is in full_pages,
+            // we know it has no local free blocks. We only need to check for cross-thread frees to reclaim.
+            let block_opt = unsafe { try_reclaim_and_allocate::<P>(page) };
             if let Some(block) = block_opt {
                 if page.alloc_count < page.max_blocks() {
                     // Page is no longer full! Move it back to active list.
