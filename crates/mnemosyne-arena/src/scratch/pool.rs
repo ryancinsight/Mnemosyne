@@ -124,9 +124,7 @@ impl<T: ScratchElement> ScratchPool<T> {
         } else {
             // All slots exhausted; allocate owned fallback.
             let mut owned = AlignedVec::with_capacity(n);
-            // SAFETY: we just allocated `n` capacity, and will write all
-            // elements through the closure before reading.
-            unsafe { owned.set_len(n) };
+            owned.ensure_len(n);
             f(owned.as_mut_slice())
         }
     }

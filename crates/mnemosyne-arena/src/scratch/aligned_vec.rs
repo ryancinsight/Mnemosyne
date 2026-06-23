@@ -88,19 +88,6 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.len = min_len;
     }
 
-    /// Sets the logical length without zeroing. Caller must ensure elements
-    /// in `[old_len, new_len)` are written before reading.
-    ///
-    /// # Safety
-    ///
-    /// `new_len` must be <= `self.capacity`. Elements in `[old_len, new_len)`
-    /// are uninitialized and must be written before read.
-    #[inline]
-    pub unsafe fn set_len(&mut self, new_len: usize) {
-        debug_assert!(new_len <= self.capacity);
-        self.len = new_len;
-    }
-
     #[inline]
     pub fn as_mut_ptr(&mut self) -> *mut T {
         self.ptr

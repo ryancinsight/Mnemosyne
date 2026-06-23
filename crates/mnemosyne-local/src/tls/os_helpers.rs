@@ -95,14 +95,18 @@ pub(crate) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
             extern "system" {
                 fn TlsSetValue(dwTlsIndex: u32, lpTlsValue: *mut core::ffi::c_void) -> i32;
             }
-            TlsSetValue(key, value);
+            if TlsSetValue(key, value) == 0 {
+                std::process::abort();
+            }
         }
         #[cfg(not(windows))]
         {
             extern "C" {
                 fn pthread_setspecific(key: u32, value: *const core::ffi::c_void) -> i32;
             }
-            pthread_setspecific(key, value);
+            if pthread_setspecific(key, value) != 0 {
+                std::process::abort();
+            }
         }
     }
 }

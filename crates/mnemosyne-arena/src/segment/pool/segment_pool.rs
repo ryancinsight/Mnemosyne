@@ -72,8 +72,37 @@ impl GlobalSegmentPool {
         if let Some(segment) = self.nodes[node].pop() {
             return Some(segment);
         }
-        // Local node cache miss: refresh our TLS cached NUMA node ID in case we migrated.
+        // Local node cache miss: refresh our TLS cached NUMA node ID in case we migrated,
+        // but rate-limit the OS query to avoid system call overhead under high contention/miss rates.
+        #[cfg(feature = "std")]
+        let mut refreshed = false;
+        #[cfg(feature = "std")]
+        std::thread_local! {
+            static MISS_COUNT: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+        }
+        #[cfg(feature = "std")]
+        let new_node = MISS_COUNT.with(|c| {
+            let count = c.get();
+            if count >= 31 {
+                c.set(0);
+                refreshed = true;
+                numa_bucket(crate::numa::refresh_numa_node())
+            } else {
+                c.set(count + 1);
+                node
+            }
+        });
+        #[cfg(not(feature = "std"))]
         let new_node = numa_bucket(crate::numa::refresh_numa_node());
+
+        #[cfg(feature = "std")]
+        if refreshed && new_node != node {
+            node = new_node;
+            if let Some(segment) = self.nodes[node].pop() {
+                return Some(segment);
+            }
+        }
+        #[cfg(not(feature = "std"))]
         if new_node != node {
             node = new_node;
             if let Some(segment) = self.nodes[node].pop() {
