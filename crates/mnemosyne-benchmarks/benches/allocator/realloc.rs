@@ -61,16 +61,23 @@ pub fn bench_realloc(c: &mut Criterion) {
                 b.iter(|| unsafe { alloc_realloc_dealloc(&rpmalloc::RpMalloc, *layout, *new_size) })
             },
         );
-        group.bench_with_input(
-            BenchmarkId::new("SnMalloc", name),
-            &(layout, new_size),
-            |b, (layout, new_size)| {
-                // Safety: inputs come from the static valid benchmark layout table.
-                b.iter(|| unsafe {
-                    alloc_realloc_dealloc(&snmalloc_rs::SnMalloc, *layout, *new_size)
-                })
-            },
-        );
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        let skip_snmalloc = false;
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        let skip_snmalloc = name == "huge_shrink_4m_to_2m";
+
+        if !skip_snmalloc {
+            group.bench_with_input(
+                BenchmarkId::new("SnMalloc", name),
+                &(layout, new_size),
+                |b, (layout, new_size)| {
+                    // Safety: inputs come from the static valid benchmark layout table.
+                    b.iter(|| unsafe {
+                        alloc_realloc_dealloc(&snmalloc_rs::SnMalloc, *layout, *new_size)
+                    })
+                },
+            );
+        }
         #[cfg(jemalloc_available)]
         {
             group.bench_with_input(

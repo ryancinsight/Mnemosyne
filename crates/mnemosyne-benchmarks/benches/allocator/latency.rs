@@ -34,10 +34,17 @@ pub fn bench_allocator_cycles(c: &mut Criterion) {
             // Safety: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe { alloc_dealloc(&rpmalloc::RpMalloc, *layout) })
         });
-        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
-            b.iter(|| unsafe { alloc_dealloc(&snmalloc_rs::SnMalloc, *layout) })
-        });
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        let skip_snmalloc = false;
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        let skip_snmalloc = name == "huge/2m";
+
+        if !skip_snmalloc {
+            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+                // Safety: `layout` comes from the static valid benchmark layout table.
+                b.iter(|| unsafe { alloc_dealloc(&snmalloc_rs::SnMalloc, *layout) })
+            });
+        }
         #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
@@ -86,13 +93,22 @@ pub fn bench_allocator_alloc(c: &mut Criterion) {
                 BatchSize::SmallInput,
             )
         });
-        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-            b.iter_batched(
-                || (),
-                |_| unsafe { AllocatedBlock::new(&snmalloc_rs::SnMalloc, *layout, "alloc_only") },
-                BatchSize::SmallInput,
-            )
-        });
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        let skip_snmalloc = false;
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        let skip_snmalloc = name == "huge/2m";
+
+        if !skip_snmalloc {
+            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+                b.iter_batched(
+                    || (),
+                    |_| unsafe {
+                        AllocatedBlock::new(&snmalloc_rs::SnMalloc, *layout, "alloc_only")
+                    },
+                    BatchSize::SmallInput,
+                )
+            });
+        }
         #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
@@ -148,15 +164,22 @@ pub fn bench_allocator_dealloc(c: &mut Criterion) {
                 BatchSize::SmallInput,
             )
         });
-        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-            b.iter_batched(
-                || unsafe {
-                    require_allocated(snmalloc_rs::SnMalloc.alloc(*layout), "dealloc_only")
-                },
-                |ptr| unsafe { dealloc_only(&snmalloc_rs::SnMalloc, ptr, *layout) },
-                BatchSize::SmallInput,
-            )
-        });
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        let skip_snmalloc = false;
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        let skip_snmalloc = name == "huge/2m";
+
+        if !skip_snmalloc {
+            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+                b.iter_batched(
+                    || unsafe {
+                        require_allocated(snmalloc_rs::SnMalloc.alloc(*layout), "dealloc_only")
+                    },
+                    |ptr| unsafe { dealloc_only(&snmalloc_rs::SnMalloc, ptr, *layout) },
+                    BatchSize::SmallInput,
+                )
+            });
+        }
         #[cfg(jemalloc_available)]
         {
             group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {

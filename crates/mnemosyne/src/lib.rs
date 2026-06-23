@@ -6,7 +6,10 @@ use core::alloc::{GlobalAlloc, Layout};
 use mnemosyne_core::NUM_SIZE_CLASSES;
 use mnemosyne_local::{thread_alloc_layout, thread_free_layout, thread_realloc};
 
-pub use mnemosyne_backend::{is_cuda_available, CudaUnifiedBackend, MemoryBackendWrapper};
+pub use mnemosyne_backend::{
+    is_cuda_available, CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend,
+    MemoryBackendWrapper, WgpuStagingBackend,
+};
 pub use mnemosyne_core::{options::MnemosyneOptions, AllocPolicy, StandardPolicy};
 pub use mnemosyne_hardened::{HardenedPolicy, SecurePolicy};
 #[cfg(feature = "branded")]

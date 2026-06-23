@@ -48,6 +48,9 @@ pub fn decay_step() {
     decay_step_for_backend::<mnemosyne_backend::DefaultBackend>();
     decay_step_for_backend::<mnemosyne_backend::MemoryBackendWrapper>();
     decay_step_for_backend::<mnemosyne_backend::CudaUnifiedBackend>();
+    decay_step_for_backend::<mnemosyne_backend::CudaDeviceBackend>();
+    decay_step_for_backend::<mnemosyne_backend::CudaHostPinnedBackend>();
+    decay_step_for_backend::<mnemosyne_backend::WgpuStagingBackend>();
 }
 
 fn decay_step_for_backend<B: HasSegmentPool>() {

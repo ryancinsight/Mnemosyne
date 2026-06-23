@@ -92,3 +92,72 @@ impl HasSegmentPool for mnemosyne_backend::CudaUnifiedBackend {
         &CUDA_BACKEND_HUGE_POOL
     }
 }
+
+static CUDA_DEVICE_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static CUDA_DEVICE_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static CUDA_DEVICE_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+
+impl private::Sealed for mnemosyne_backend::CudaDeviceBackend {}
+
+impl HasSegmentPool for mnemosyne_backend::CudaDeviceBackend {
+    #[inline(always)]
+    fn global_segment_pool() -> &'static GlobalSegmentPool {
+        &CUDA_DEVICE_SEGMENT_POOL
+    }
+
+    #[inline(always)]
+    fn global_orphan_pool() -> &'static GlobalSegmentPool {
+        &CUDA_DEVICE_ORPHAN_POOL
+    }
+
+    #[inline(always)]
+    fn global_huge_pool() -> &'static GlobalHugePool {
+        &CUDA_DEVICE_HUGE_POOL
+    }
+}
+
+static CUDA_HOST_PINNED_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static CUDA_HOST_PINNED_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static CUDA_HOST_PINNED_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+
+impl private::Sealed for mnemosyne_backend::CudaHostPinnedBackend {}
+
+impl HasSegmentPool for mnemosyne_backend::CudaHostPinnedBackend {
+    #[inline(always)]
+    fn global_segment_pool() -> &'static GlobalSegmentPool {
+        &CUDA_HOST_PINNED_SEGMENT_POOL
+    }
+
+    #[inline(always)]
+    fn global_orphan_pool() -> &'static GlobalSegmentPool {
+        &CUDA_HOST_PINNED_ORPHAN_POOL
+    }
+
+    #[inline(always)]
+    fn global_huge_pool() -> &'static GlobalHugePool {
+        &CUDA_HOST_PINNED_HUGE_POOL
+    }
+}
+
+static WGPU_STAGING_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static WGPU_STAGING_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
+static WGPU_STAGING_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+
+impl private::Sealed for mnemosyne_backend::WgpuStagingBackend {}
+
+impl HasSegmentPool for mnemosyne_backend::WgpuStagingBackend {
+    #[inline(always)]
+    fn global_segment_pool() -> &'static GlobalSegmentPool {
+        &WGPU_STAGING_SEGMENT_POOL
+    }
+
+    #[inline(always)]
+    fn global_orphan_pool() -> &'static GlobalSegmentPool {
+        &WGPU_STAGING_ORPHAN_POOL
+    }
+
+    #[inline(always)]
+    fn global_huge_pool() -> &'static GlobalHugePool {
+        &WGPU_STAGING_HUGE_POOL
+    }
+}

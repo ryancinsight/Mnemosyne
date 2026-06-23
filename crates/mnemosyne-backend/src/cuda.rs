@@ -262,6 +262,10 @@ const RTLD_LAZY: core::ffi::c_int = 1;
 static CU_INIT: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 static CU_MEM_ALLOC_MANAGED: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 static CU_MEM_FREE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+static CU_MEM_ALLOC: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+static CU_MEM_HOST_ALLOC: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+static CU_MEM_FREE_HOST: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+static CU_MEM_ADVISE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 static CUDA_INIT_STATE: AtomicU8 = AtomicU8::new(CUDA_UNINITIALIZED);
 
 const CUDA_UNINITIALIZED: u8 = 0;
@@ -281,6 +285,16 @@ pub struct CudaAllocationRegistry {
 }
 
 static CUDA_ALLOCATIONS: CudaAllocationRegistry = CudaAllocationRegistry {
+    slots: [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_TRACKED_CUDA_ALLOCATIONS],
+    count: AtomicUsize::new(0),
+};
+
+static CUDA_DEVICE_ALLOCATIONS: CudaAllocationRegistry = CudaAllocationRegistry {
+    slots: [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_TRACKED_CUDA_ALLOCATIONS],
+    count: AtomicUsize::new(0),
+};
+
+static CUDA_HOST_PINNED_ALLOCATIONS: CudaAllocationRegistry = CudaAllocationRegistry {
     slots: [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_TRACKED_CUDA_ALLOCATIONS],
     count: AtomicUsize::new(0),
 };
@@ -469,12 +483,68 @@ unsafe fn init_cuda_once() {
         }
     };
 
+    let alloc_v2_sym = {
+        #[cfg(target_family = "windows")]
+        {
+            GetProcAddress(lib, c"cuMemAlloc_v2".as_ptr() as *const u8)
+        }
+        #[cfg(target_family = "unix")]
+        {
+            dlsym(lib, c"cuMemAlloc_v2".as_ptr() as *const u8)
+        }
+    };
+
+    let host_alloc_sym = {
+        #[cfg(target_family = "windows")]
+        {
+            GetProcAddress(lib, c"cuMemHostAlloc".as_ptr() as *const u8)
+        }
+        #[cfg(target_family = "unix")]
+        {
+            dlsym(lib, c"cuMemHostAlloc".as_ptr() as *const u8)
+        }
+    };
+
+    let free_host_sym = {
+        #[cfg(target_family = "windows")]
+        {
+            GetProcAddress(lib, c"cuMemFreeHost".as_ptr() as *const u8)
+        }
+        #[cfg(target_family = "unix")]
+        {
+            dlsym(lib, c"cuMemFreeHost".as_ptr() as *const u8)
+        }
+    };
+
+    let advise_sym = {
+        #[cfg(target_family = "windows")]
+        {
+            GetProcAddress(lib, c"cuMemAdvise".as_ptr() as *const u8)
+        }
+        #[cfg(target_family = "unix")]
+        {
+            dlsym(lib, c"cuMemAdvise".as_ptr() as *const u8)
+        }
+    };
+
     if !init_sym.is_null() && !alloc_sym.is_null() && !free_sym.is_null() {
         let res = run_cu_init_isolated(init_sym);
         if res == 0 {
             CU_INIT.store(init_sym, Ordering::Release);
             CU_MEM_ALLOC_MANAGED.store(alloc_sym, Ordering::Release);
             CU_MEM_FREE.store(free_sym, Ordering::Release);
+            if !alloc_v2_sym.is_null() {
+                CU_MEM_ALLOC.store(alloc_v2_sym, Ordering::Release);
+            }
+            if !host_alloc_sym.is_null() {
+                CU_MEM_HOST_ALLOC.store(host_alloc_sym, Ordering::Release);
+            }
+            if !free_host_sym.is_null() {
+                CU_MEM_FREE_HOST.store(free_host_sym, Ordering::Release);
+            }
+            if !advise_sym.is_null() {
+                CU_MEM_ADVISE.store(advise_sym, Ordering::Release);
+            }
         }
     }
 }
@@ -586,6 +656,141 @@ impl MemoryBackend for CudaUnifiedBackend {
     /// Same contract as the wrapped `MemoryBackend::decommit`.
     #[inline]
     unsafe fn decommit(_ptr: *mut u8, _size: usize) -> bool {
+        false
+    }
+}
+
+fn register_device_ptr(ptr: *mut u8) -> bool {
+    register_cuda_ptr_in(&CUDA_DEVICE_ALLOCATIONS, ptr)
+}
+
+fn unregister_device_ptr(ptr: *mut u8) -> bool {
+    unregister_cuda_ptr_in(&CUDA_DEVICE_ALLOCATIONS, ptr)
+}
+
+fn register_host_pinned_ptr(ptr: *mut u8) -> bool {
+    register_cuda_ptr_in(&CUDA_HOST_PINNED_ALLOCATIONS, ptr)
+}
+
+fn unregister_host_pinned_ptr(ptr: *mut u8) -> bool {
+    unregister_cuda_ptr_in(&CUDA_HOST_PINNED_ALLOCATIONS, ptr)
+}
+
+/// A memory backend allocating CUDA device memory.
+///
+/// Under the hood, this uses CUDA unified memory (`cuMemAllocManaged`) and advises the driver
+/// to prefer device placement (`cuMemAdvise` with `CU_MEM_ADVISE_SET_PREFERRED_LOCATION`). This
+/// allows the host CPU to write allocator metadata in-band without segfaulting, while keeping
+/// the allocation device-preferred for optimal kernel performance.
+pub struct CudaDeviceBackend;
+
+impl MemoryBackend for CudaDeviceBackend {
+    const SUPPORTS_PAGE_RESET: bool = false;
+    const SUPPORTS_MAKE_GUARD: bool = false;
+    const SUPPORTS_DECOMMIT: bool = false;
+
+    #[inline]
+    unsafe fn allocate(size: usize) -> *mut u8 {
+        unsafe { init_cuda() };
+        let alloc_ptr = CU_MEM_ALLOC_MANAGED.load(Ordering::Acquire);
+        let free_ptr = CU_MEM_FREE.load(Ordering::Acquire);
+        let advise_ptr = CU_MEM_ADVISE.load(Ordering::Acquire);
+        if !alloc_ptr.is_null() && !free_ptr.is_null() {
+            type CuMemAllocManagedFn =
+                unsafe extern "system" fn(*mut u64, usize, u32) -> core::ffi::c_int;
+            let cu_mem_alloc_managed: CuMemAllocManagedFn =
+                unsafe { core::mem::transmute::<*mut c_void, CuMemAllocManagedFn>(alloc_ptr) };
+
+            let mut dptr: u64 = 0;
+            // CU_MEM_ATTACH_GLOBAL = 0x01
+            let res = unsafe { cu_mem_alloc_managed(&mut dptr, size, 0x01) };
+            if res == 0 && dptr != 0 {
+                let ptr = dptr as *mut u8;
+                if register_device_ptr(ptr) {
+                    if !advise_ptr.is_null() {
+                        type CuMemAdviseFn =
+                            unsafe extern "system" fn(u64, usize, u32, i32) -> core::ffi::c_int;
+                        let cu_mem_advise: CuMemAdviseFn = unsafe {
+                            core::mem::transmute::<*mut c_void, CuMemAdviseFn>(advise_ptr)
+                        };
+                        // CU_MEM_ADVISE_SET_PREFERRED_LOCATION = 3
+                        let _ = unsafe { cu_mem_advise(dptr, size, 3, 0) };
+                    }
+                    return ptr;
+                }
+                type CuMemFreeFn = unsafe extern "system" fn(u64) -> core::ffi::c_int;
+                let cu_mem_free: CuMemFreeFn =
+                    unsafe { core::mem::transmute::<*mut c_void, CuMemFreeFn>(free_ptr) };
+                let _ = unsafe { cu_mem_free(dptr) };
+            }
+        }
+        core::ptr::null_mut()
+    }
+
+    #[inline]
+    unsafe fn deallocate(ptr: *mut u8, _size: usize) -> bool {
+        if unregister_device_ptr(ptr) {
+            let free_ptr = CU_MEM_FREE.load(Ordering::Acquire);
+            if !free_ptr.is_null() {
+                type CuMemFreeFn = unsafe extern "system" fn(u64) -> core::ffi::c_int;
+                let cu_mem_free: CuMemFreeFn =
+                    unsafe { core::mem::transmute::<*mut c_void, CuMemFreeFn>(free_ptr) };
+                let status = unsafe { cu_mem_free(ptr as u64) };
+                return status == 0;
+            }
+        }
+        false
+    }
+}
+
+/// A memory backend allocating CUDA page-locked (pinned) host memory.
+pub struct CudaHostPinnedBackend;
+
+impl MemoryBackend for CudaHostPinnedBackend {
+    const SUPPORTS_PAGE_RESET: bool = false;
+    const SUPPORTS_MAKE_GUARD: bool = false;
+    const SUPPORTS_DECOMMIT: bool = false;
+
+    #[inline]
+    unsafe fn allocate(size: usize) -> *mut u8 {
+        unsafe { init_cuda() };
+        let host_alloc_ptr = CU_MEM_HOST_ALLOC.load(Ordering::Acquire);
+        let free_host_ptr = CU_MEM_FREE_HOST.load(Ordering::Acquire);
+        if !host_alloc_ptr.is_null() && !free_host_ptr.is_null() {
+            type CuMemHostAllocFn =
+                unsafe extern "system" fn(*mut *mut c_void, usize, u32) -> core::ffi::c_int;
+            let cu_mem_host_alloc: CuMemHostAllocFn =
+                unsafe { core::mem::transmute::<*mut c_void, CuMemHostAllocFn>(host_alloc_ptr) };
+
+            let mut host_ptr: *mut c_void = core::ptr::null_mut();
+            // CU_MEMHOSTALLOC_DEVICEMAP = 0x02
+            let res = unsafe { cu_mem_host_alloc(core::ptr::addr_of_mut!(host_ptr), size, 0x02) };
+            if res == 0 && !host_ptr.is_null() {
+                let ptr = host_ptr as *mut u8;
+                if register_host_pinned_ptr(ptr) {
+                    return ptr;
+                }
+                type CuMemFreeHostFn = unsafe extern "system" fn(*mut c_void) -> core::ffi::c_int;
+                let cu_mem_free_host: CuMemFreeHostFn =
+                    unsafe { core::mem::transmute::<*mut c_void, CuMemFreeHostFn>(free_host_ptr) };
+                let _ = unsafe { cu_mem_free_host(host_ptr) };
+            }
+        }
+        core::ptr::null_mut()
+    }
+
+    #[inline]
+    unsafe fn deallocate(ptr: *mut u8, _size: usize) -> bool {
+        if unregister_host_pinned_ptr(ptr) {
+            let free_host_ptr = CU_MEM_FREE_HOST.load(Ordering::Acquire);
+            if !free_host_ptr.is_null() {
+                type CuMemFreeHostFn = unsafe extern "system" fn(*mut c_void) -> core::ffi::c_int;
+                let cu_mem_free_host: CuMemFreeHostFn =
+                    unsafe { core::mem::transmute::<*mut c_void, CuMemFreeHostFn>(free_host_ptr) };
+                let status = unsafe { cu_mem_free_host(ptr as *mut c_void) };
+                return status == 0;
+            }
+        }
         false
     }
 }

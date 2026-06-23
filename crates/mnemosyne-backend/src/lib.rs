@@ -13,10 +13,51 @@ mod unix;
 pub use unix::UnixBackend as DefaultBackend;
 
 pub mod cuda;
-pub use cuda::{is_cuda_available, CudaUnifiedBackend};
+pub use cuda::{is_cuda_available, CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend};
 
 pub mod telemetry;
 pub use telemetry::{backend_memory_stats, BackendMemoryStats};
+
+use core::ffi::c_void;
+use core::sync::atomic::{AtomicPtr, Ordering};
+
+/// Global static callbacks for hooking a third-party allocator (like wgpu) into Mnemosyne.
+pub static WGPU_ALLOCATE_CALLBACK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+pub static WGPU_DEALLOCATE_CALLBACK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+
+/// A memory backend that delegates allocation/deallocation to registered callbacks.
+/// Used to hook wgpu buffer staging/allocation into Mnemosyne.
+pub struct WgpuStagingBackend;
+
+impl mnemosyne_core::MemoryBackend for WgpuStagingBackend {
+    const SUPPORTS_PAGE_RESET: bool = false;
+    const SUPPORTS_MAKE_GUARD: bool = false;
+    const SUPPORTS_DECOMMIT: bool = false;
+
+    #[inline]
+    unsafe fn allocate(size: usize) -> *mut u8 {
+        let callback = WGPU_ALLOCATE_CALLBACK.load(Ordering::Acquire);
+        if !callback.is_null() {
+            type AllocFn = unsafe extern "C" fn(usize) -> *mut u8;
+            let alloc_fn: AllocFn = unsafe { core::mem::transmute(callback) };
+            unsafe { alloc_fn(size) }
+        } else {
+            core::ptr::null_mut()
+        }
+    }
+
+    #[inline]
+    unsafe fn deallocate(ptr: *mut u8, size: usize) -> bool {
+        let callback = WGPU_DEALLOCATE_CALLBACK.load(Ordering::Acquire);
+        if !callback.is_null() {
+            type DeallocFn = unsafe extern "C" fn(*mut u8, usize) -> bool;
+            let dealloc_fn: DeallocFn = unsafe { core::mem::transmute(callback) };
+            unsafe { dealloc_fn(ptr, size) }
+        } else {
+            false
+        }
+    }
+}
 
 /// High-level OS page mapping backend helper.
 pub struct MemoryBackendWrapper;

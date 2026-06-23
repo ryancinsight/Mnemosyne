@@ -81,6 +81,39 @@ fn test_cuda_unified_backend() {
         // Skip on Windows: the WDDM driver does not support concurrent CPU access
         // to managed memory from parallel test processes executed by nextest.
     }
+    // Test WgpuStagingBackend
+    {
+        use core::ffi::c_void;
+        use core::sync::atomic::Ordering;
+        use mnemosyne_backend::{WGPU_ALLOCATE_CALLBACK, WGPU_DEALLOCATE_CALLBACK};
+
+        unsafe extern "C" fn mock_alloc(size: usize) -> *mut u8 {
+            std::alloc::alloc(Layout::from_size_align_unchecked(size, 8))
+        }
+
+        unsafe extern "C" fn mock_dealloc(ptr: *mut u8, size: usize) -> bool {
+            std::alloc::dealloc(ptr, Layout::from_size_align_unchecked(size, 8));
+            true
+        }
+
+        WGPU_ALLOCATE_CALLBACK.store(mock_alloc as *mut c_void, Ordering::Release);
+        WGPU_DEALLOCATE_CALLBACK.store(mock_dealloc as *mut c_void, Ordering::Release);
+
+        let allocator = MnemosyneAllocator::<StandardPolicy, WgpuStagingBackend>::new();
+        let layout = Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
+        let ptr = unsafe { allocator.alloc(layout) };
+        assert!(!ptr.is_null(), "Wgpu staging backend allocation failed");
+
+        unsafe {
+            ptr.write(99);
+            assert_eq!(ptr.read(), 99);
+            allocator.dealloc(ptr, layout);
+        }
+
+        WGPU_ALLOCATE_CALLBACK.store(core::ptr::null_mut(), Ordering::Release);
+        WGPU_DEALLOCATE_CALLBACK.store(core::ptr::null_mut(), Ordering::Release);
+    }
+
     #[cfg(not(windows))]
     {
         if !is_cuda_available() {
@@ -90,20 +123,60 @@ fn test_cuda_unified_backend() {
         if ctx.is_null() {
             return;
         }
-        let allocator = MnemosyneAllocator::<StandardPolicy, CudaUnifiedBackend>::new();
-        let layout = Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
-        let ptr = unsafe { allocator.alloc(layout) };
-        assert!(!ptr.is_null(), "CUDA unified backend allocation failed");
 
-        unsafe {
-            ptr.write(42);
-            assert_eq!(ptr.read(), 42);
-            allocator.dealloc(ptr, layout);
+        // Test CudaUnifiedBackend
+        {
+            let allocator = MnemosyneAllocator::<StandardPolicy, CudaUnifiedBackend>::new();
+            let layout =
+                Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
+            let ptr = unsafe { allocator.alloc(layout) };
+            assert!(!ptr.is_null(), "CUDA unified backend allocation failed");
+
+            unsafe {
+                ptr.write(42);
+                assert_eq!(ptr.read(), 42);
+                allocator.dealloc(ptr, layout);
+            }
+
+            let stats = memory_stats_generic::<CudaUnifiedBackend>();
+            assert_eq!(stats.current_thread_live_allocations, 0);
         }
 
-        // Verify statistics generic query works for CUDA backend
-        let stats = memory_stats_generic::<CudaUnifiedBackend>();
-        assert_eq!(stats.current_thread_live_allocations, 0);
+        // Test CudaDeviceBackend
+        {
+            let allocator = MnemosyneAllocator::<StandardPolicy, CudaDeviceBackend>::new();
+            let layout =
+                Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
+            let ptr = unsafe { allocator.alloc(layout) };
+            assert!(!ptr.is_null(), "CUDA device backend allocation failed");
+
+            unsafe {
+                ptr.write(43);
+                assert_eq!(ptr.read(), 43);
+                allocator.dealloc(ptr, layout);
+            }
+
+            let stats = memory_stats_generic::<CudaDeviceBackend>();
+            assert_eq!(stats.current_thread_live_allocations, 0);
+        }
+
+        // Test CudaHostPinnedBackend
+        {
+            let allocator = MnemosyneAllocator::<StandardPolicy, CudaHostPinnedBackend>::new();
+            let layout =
+                Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
+            let ptr = unsafe { allocator.alloc(layout) };
+            assert!(!ptr.is_null(), "CUDA host pinned backend allocation failed");
+
+            unsafe {
+                ptr.write(44);
+                assert_eq!(ptr.read(), 44);
+                allocator.dealloc(ptr, layout);
+            }
+
+            let stats = memory_stats_generic::<CudaHostPinnedBackend>();
+            assert_eq!(stats.current_thread_live_allocations, 0);
+        }
 
         // Verify is_cuda_available is callable
         let _ = is_cuda_available();

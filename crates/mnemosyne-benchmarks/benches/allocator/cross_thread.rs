@@ -56,11 +56,18 @@ pub fn bench_cross_thread_free(c: &mut Criterion) {
         });
         drop(rpmalloc_worker);
 
-        let snmalloc_worker = HandoffWorker::new(&SNMALLOC);
-        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-            b.iter(|| snmalloc_worker.alloc_then_handoff(*layout, count))
-        });
-        drop(snmalloc_worker);
+        #[cfg(not(all(windows, target_arch = "x86_64")))]
+        let skip_snmalloc = false;
+        #[cfg(all(windows, target_arch = "x86_64"))]
+        let skip_snmalloc = name == "huge/2m";
+
+        if !skip_snmalloc {
+            let snmalloc_worker = HandoffWorker::new(&SNMALLOC);
+            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+                b.iter(|| snmalloc_worker.alloc_then_handoff(*layout, count))
+            });
+            drop(snmalloc_worker);
+        }
 
         #[cfg(jemalloc_available)]
         {
