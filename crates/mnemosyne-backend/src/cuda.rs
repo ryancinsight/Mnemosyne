@@ -66,7 +66,7 @@ unsafe fn run_cu_init_isolated(init_sym: *mut c_void) -> i32 {
         let exception_record = (*exception_info).exception_record;
         let code = (*exception_record).exception_code;
 
-        if code == 0xC0000005 {
+        if code == 0xC0000005 || code == 0xC0000006 {
             // CUDA driver initialization crashed on either the worker thread
             // or a background helper thread spawned by nvcuda.dll.
             // Terminate the process cleanly with 0 to prevent nextest abort.
