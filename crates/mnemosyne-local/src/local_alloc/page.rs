@@ -278,7 +278,18 @@ pub(crate) unsafe fn try_reclaim_and_allocate<P: AllocPolicy>(
     if page.thread_free.is_empty() {
         return None;
     }
-    let reclaimed = unsafe { page.reclaim_thread_free::<P>() };
+    let self_addr = page as *mut Page as usize;
+    let segment_addr = self_addr & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+    let segment = segment_addr as *mut mnemosyne_core::types::Segment;
+    let page_index = page.index_in_segment();
+
+    let reclaimed = unsafe {
+        page.reclaim_thread_free_dynamic_for_segment(
+            P::ENABLE_FREE_LIST_ENCRYPTION,
+            segment,
+            page_index,
+        )
+    };
     if reclaimed == 0 {
         return None;
     }

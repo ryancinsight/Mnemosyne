@@ -331,7 +331,7 @@ impl Page {
         }
         unsafe { self.set_alloc_count_for_segment(segment, page_index, self.alloc_count - count) };
 
-        let page_start = self.page_start() as usize;
+        let page_start = (segment as usize) + (page_index << crate::constants::PAGE_SHIFT);
         let page_end = page_start + crate::constants::PAGE_SIZE;
 
         let mut last = block;
