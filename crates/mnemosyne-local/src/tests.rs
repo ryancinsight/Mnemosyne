@@ -807,3 +807,62 @@ fn test_free_list_corruption_out_of_bounds_aborts_process() {
         panic!("Subprocess succeeded but was expected to abort!");
     }
 }
+
+#[test]
+fn test_thread_free_cycle_aborts_process() {
+    use mnemosyne_core::policy::AllocPolicy;
+    use std::env;
+    use std::process::Command;
+    use std::string::String;
+
+    if env::var("RUN_THREAD_FREE_CYCLE_ABORT_TEST").is_ok() {
+        unsafe {
+            let ptr1 = thread_alloc::<StandardPolicy, MemoryBackendWrapper>(16, 8);
+            let ptr2 = thread_alloc::<StandardPolicy, MemoryBackendWrapper>(16, 8);
+            let ptr1_val = ptr1 as usize;
+            let segment_addr = ptr1_val & !(SEGMENT_SIZE - 1);
+            let segment = segment_addr as *mut Segment;
+            let page_index = (ptr1_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+            let page = &mut (*segment).pages[page_index];
+
+            let block1 = ptr1 as *mut Block;
+            let block2 = ptr2 as *mut Block;
+            let cookie = if StandardPolicy::ENABLE_FREE_LIST_ENCRYPTION {
+                (*segment).keys[page_index]
+            } else {
+                0
+            };
+
+            // Push block2 then block1 to build list block1 -> block2 -> None
+            page.thread_free.push::<StandardPolicy>(NonNull::new_unchecked(block2));
+            page.thread_free.push::<StandardPolicy>(NonNull::new_unchecked(block1));
+
+            // Manually link block2 to block1 to form cycle block1 -> block2 -> block1
+            (*block2).set_next::<StandardPolicy>(NonNull::new(block1), cookie);
+
+            // Run reclaim, which should walk the cycle, detect visited (3) > count (2), and abort.
+            page.reclaim_thread_free::<StandardPolicy>();
+        }
+        return;
+    }
+
+    let current_exe = env::current_exe().unwrap();
+    let output = Command::new(current_exe)
+        .arg("tests::test_thread_free_cycle_aborts_process")
+        .arg("--exact")
+        .env("RUN_THREAD_FREE_CYCLE_ABORT_TEST", "1")
+        .output()
+        .unwrap();
+
+    if output.status.success() {
+        std::println!(
+            "Subprocess stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        std::println!(
+            "Subprocess stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        panic!("Subprocess succeeded but was expected to abort!");
+    }
+}

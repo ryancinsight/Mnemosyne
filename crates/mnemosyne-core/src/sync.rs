@@ -66,14 +66,16 @@ impl AtomicFreeList {
         // that intent precisely and keeps the round-trip well-defined under the
         // exposed-provenance model.
         let block_addr = block_ptr.expose_provenance();
-        debug_assert_eq!(
-            block_addr & !Self::PTR_MASK,
-            0,
-            "block address {:p} does not fit in {} bits; the packed deallocation \
-             queue requires canonical low-half userspace addresses",
-            block_ptr,
-            Self::PACKED_PTR_BITS
-        );
+        if (block_addr & !Self::PTR_MASK) != 0 {
+            #[cfg(any(feature = "std", test))]
+            {
+                std::process::abort();
+            }
+            #[cfg(not(any(feature = "std", test)))]
+            {
+                panic!("Block address does not fit in 48 bits");
+            }
+        }
 
         let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
             let segment_addr = block_addr & !(crate::constants::SEGMENT_SIZE - 1);
@@ -204,6 +206,16 @@ impl AtomicFreeList {
             let mut current = Some(head);
             while let Some(node) = current {
                 count += 1;
+                if count > crate::constants::PAGE_SIZE {
+                    #[cfg(any(feature = "std", test))]
+                    {
+                        std::process::abort();
+                    }
+                    #[cfg(not(any(feature = "std", test)))]
+                    {
+                        panic!("Cycle detected in AtomicFreeList");
+                    }
+                }
                 current = unsafe { (*node.as_ptr()).get_next_dynamic(encrypted, cookie) };
             }
             (head, count)

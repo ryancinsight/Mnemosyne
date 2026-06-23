@@ -343,7 +343,12 @@ impl Page {
             abort_on_corruption();
         }
 
+        let mut visited = 1;
         while let Some(node) = unsafe { (*last.as_ptr()).get_next_dynamic(encrypted, cookie) } {
+            visited += 1;
+            if visited > count {
+                abort_on_corruption();
+            }
             let node_addr = node.as_ptr() as usize;
             if node_addr < page_start
                 || node_addr + self.block_size > page_end
@@ -352,6 +357,9 @@ impl Page {
                 abort_on_corruption();
             }
             last = node;
+        }
+        if visited != count {
+            abort_on_corruption();
         }
 
         if self.free.is_none() {
