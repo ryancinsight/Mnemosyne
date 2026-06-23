@@ -266,6 +266,12 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     segment: *mut Segment,
     page_index: usize,
 ) -> bool {
+    if page.alloc_count == 0 {
+        std::process::abort();
+    }
+    if Some(NonNull::new_unchecked(block)) == page.free {
+        std::process::abort();
+    }
     let was_full = page.list_state == 2;
     let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
         unsafe { (*segment).keys[page_index] }

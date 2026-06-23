@@ -209,7 +209,7 @@ fn huge_deallocation_returns_backend_release_status() {
     let segment_ptr = segment.as_mut_ptr();
 
     unsafe {
-        Segment::initialize(segment_ptr, 0x1000 as *mut u8, 0);
+        Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0);
         (*segment_ptr).pages[0].block_size = SEGMENT_SIZE * 10;
     }
 

@@ -187,13 +187,22 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
     ptr: *mut u8,
     segment_ptr: *mut Segment,
 ) -> bool {
-    // Safety: ptr is a valid large/huge allocation, so we can retrieve the segment pointer
-    // from the metadata slot immediately preceding it if segment_ptr is null.
     let resolved_segment_ptr = if segment_ptr.is_null() {
         if ptr.is_null() {
             return false;
         }
-        unsafe { *((ptr as *mut *mut Segment).sub(1)) }
+        let s = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+        if s.is_null() || (s as usize) & (SEGMENT_ALIGN - 1) != 0 {
+            #[cfg(any(feature = "std", test))]
+            {
+                std::process::abort();
+            }
+            #[cfg(not(any(feature = "std", test)))]
+            {
+                panic!("Corrupt segment pointer detected in metadata slot");
+            }
+        }
+        s
     } else {
         segment_ptr
     };
@@ -203,6 +212,23 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
     }
 
     let segment = unsafe { &mut *resolved_segment_ptr };
+    let raw_ptr = segment.raw_alloc_ptr;
+    let aligned_addr = resolved_segment_ptr as usize;
+
+    if raw_ptr.is_null()
+        || aligned_addr < raw_ptr as usize
+        || aligned_addr - (raw_ptr as usize) >= SEGMENT_ALIGN
+    {
+        #[cfg(any(feature = "std", test))]
+        {
+            std::process::abort();
+        }
+        #[cfg(not(any(feature = "std", test)))]
+        {
+            panic!("Corrupt segment header invariants detected");
+        }
+    }
+
     let huge_size = segment.pages[0].block_size;
 
     if huge_size > 0 {

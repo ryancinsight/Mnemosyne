@@ -1,6 +1,9 @@
 //! Shared arena and segment management logic for Mnemosyne.
 
-#![no_std]
+#![cfg_attr(not(any(feature = "std", test)), no_std)]
+
+#[cfg(any(feature = "std", test))]
+extern crate std;
 
 extern crate alloc;
 

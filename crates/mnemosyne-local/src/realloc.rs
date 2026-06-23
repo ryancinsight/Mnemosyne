@@ -170,6 +170,12 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                                 } else {
                                     0
                                 };
+                                if page_ref.alloc_count == 0 {
+                                    std::process::abort();
+                                }
+                                if Some(NonNull::new_unchecked(block)) == page_free {
+                                    std::process::abort();
+                                }
                                 if page_free.is_some()
                                     && (page_alloc_count != 1 || (*segment).is_current)
                                 {

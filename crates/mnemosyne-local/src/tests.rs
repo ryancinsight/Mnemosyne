@@ -661,3 +661,149 @@ fn test_cpu_cache_double_free_aborts_process() {
         panic!("Subprocess succeeded but was expected to abort!");
     }
 }
+
+#[test]
+fn test_large_alloc_metadata_corruption_aborts_process() {
+    use std::env;
+    use std::process::Command;
+    use std::string::String;
+
+    if env::var("RUN_LARGE_ALLOC_METADATA_CORRUPTION_ABORT_TEST").is_ok() {
+        unsafe {
+            let ptr = thread_alloc::<StandardPolicy, MemoryBackendWrapper>(65536, 8);
+            assert!(!ptr.is_null());
+
+            // Corrupt the metadata slot immediately preceding the payload.
+            let metadata_slot = (ptr as *mut usize).sub(1);
+            metadata_slot.write(0x1337); // Invalid segment pointer alignment.
+
+            thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr);
+        }
+        return;
+    }
+
+    let current_exe = env::current_exe().unwrap();
+    let output = Command::new(current_exe)
+        .arg("tests::test_large_alloc_metadata_corruption_aborts_process")
+        .arg("--exact")
+        .env("RUN_LARGE_ALLOC_METADATA_CORRUPTION_ABORT_TEST", "1")
+        .output()
+        .unwrap();
+
+    if output.status.success() {
+        std::println!(
+            "Subprocess stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        std::println!(
+            "Subprocess stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        panic!("Subprocess succeeded but was expected to abort!");
+    }
+}
+
+#[test]
+fn test_large_alloc_segment_invariant_corruption_aborts_process() {
+    use std::env;
+    use std::process::Command;
+    use std::string::String;
+
+    if env::var("RUN_LARGE_ALLOC_SEGMENT_INVARIANT_CORRUPTION_ABORT_TEST").is_ok() {
+        unsafe {
+            let ptr = thread_alloc::<StandardPolicy, MemoryBackendWrapper>(65536, 8);
+            assert!(!ptr.is_null());
+
+            // Retrieve the valid segment pointer from the metadata slot.
+            let segment_ptr = *((ptr as *mut *mut Segment).sub(1));
+
+            // Corrupt the segment header's raw_alloc_ptr to violate the alignment offset invariant.
+            (*segment_ptr).raw_alloc_ptr = core::ptr::null_mut();
+
+            thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr);
+        }
+        return;
+    }
+
+    let current_exe = env::current_exe().unwrap();
+    let output = Command::new(current_exe)
+        .arg("tests::test_large_alloc_segment_invariant_corruption_aborts_process")
+        .arg("--exact")
+        .env(
+            "RUN_LARGE_ALLOC_SEGMENT_INVARIANT_CORRUPTION_ABORT_TEST",
+            "1",
+        )
+        .output()
+        .unwrap();
+
+    if output.status.success() {
+        std::println!(
+            "Subprocess stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        std::println!(
+            "Subprocess stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        panic!("Subprocess succeeded but was expected to abort!");
+    }
+}
+
+#[test]
+fn test_free_list_corruption_out_of_bounds_aborts_process() {
+    use std::env;
+    use std::process::Command;
+    use std::string::String;
+
+    if env::var("RUN_FREE_LIST_CORRUPTION_OUT_OF_BOUNDS_ABORT_TEST").is_ok() {
+        unsafe {
+            // Allocate a small block
+            let ptr = thread_alloc::<StandardPolicy, MemoryBackendWrapper>(16, 8);
+            assert!(!ptr.is_null());
+
+            // Get containing segment and page
+            let ptr_val = ptr as usize;
+            let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
+            let segment = segment_addr as *mut Segment;
+            let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+
+            // Free the block to put it on the free list
+            thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr);
+
+            // Corrupt the next pointer inside the block.
+            // Since it's on page.free, we can decrypt/encrypt the next pointer.
+            // Let's write an out-of-bounds address (e.g., 0x12345678) as the next pointer.
+            let cookie = (*segment).keys[page_index];
+            let corrupt_block = ptr as *mut Block;
+            // Write corrupted next pointer
+            let bad_ptr = 0x12345678 as *mut Block;
+            (*corrupt_block).set_next::<StandardPolicy>(NonNull::new(bad_ptr), cookie);
+
+            // Allocate again. This should pop the corrupted next pointer, but
+            // when pop_block retrieves it from page.free, it will validate it and abort!
+            let _ptr_new = thread_alloc::<StandardPolicy, MemoryBackendWrapper>(16, 8);
+            let _ptr_another = thread_alloc::<StandardPolicy, MemoryBackendWrapper>(16, 8);
+        }
+        return;
+    }
+
+    let current_exe = env::current_exe().unwrap();
+    let output = Command::new(current_exe)
+        .arg("tests::test_free_list_corruption_out_of_bounds_aborts_process")
+        .arg("--exact")
+        .env("RUN_FREE_LIST_CORRUPTION_OUT_OF_BOUNDS_ABORT_TEST", "1")
+        .output()
+        .unwrap();
+
+    if output.status.success() {
+        std::println!(
+            "Subprocess stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        std::println!(
+            "Subprocess stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        panic!("Subprocess succeeded but was expected to abort!");
+    }
+}

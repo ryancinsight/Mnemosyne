@@ -253,6 +253,14 @@ impl Page {
     #[inline(always)]
     pub unsafe fn pop_block<P: crate::policy::AllocPolicy>(&mut self) -> NonNull<Block> {
         if let Some(block) = self.free {
+            let block_addr = block.as_ptr() as usize;
+            let page_start = self.page_start() as usize;
+            if block_addr < page_start
+                || block_addr + self.block_size > page_start + crate::constants::PAGE_SIZE
+                || (block_addr & (crate::constants::MIN_BLOCK_SIZE - 1)) != 0
+            {
+                abort_on_corruption();
+            }
             let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
                 let self_addr = self as *const Page as usize;
                 let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
@@ -323,13 +331,32 @@ impl Page {
         }
         unsafe { self.set_alloc_count_for_segment(segment, page_index, self.alloc_count - count) };
 
+        let page_start = self.page_start() as usize;
+        let page_end = page_start + crate::constants::PAGE_SIZE;
+
+        let mut last = block;
+        let first_addr = last.as_ptr() as usize;
+        if first_addr < page_start
+            || first_addr + self.block_size > page_end
+            || (first_addr & (crate::constants::MIN_BLOCK_SIZE - 1)) != 0
+        {
+            abort_on_corruption();
+        }
+
+        while let Some(node) = unsafe { (*last.as_ptr()).get_next_dynamic(encrypted, cookie) } {
+            let node_addr = node.as_ptr() as usize;
+            if node_addr < page_start
+                || node_addr + self.block_size > page_end
+                || (node_addr & (crate::constants::MIN_BLOCK_SIZE - 1)) != 0
+            {
+                abort_on_corruption();
+            }
+            last = node;
+        }
+
         if self.free.is_none() {
             self.free = Some(block);
         } else {
-            let mut last = block;
-            while let Some(node) = unsafe { (*last.as_ptr()).get_next_dynamic(encrypted, cookie) } {
-                last = node;
-            }
             unsafe {
                 (*last.as_ptr()).set_next_dynamic(self.free, encrypted, cookie);
             }
