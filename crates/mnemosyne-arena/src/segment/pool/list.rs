@@ -109,6 +109,9 @@ impl NodeSegmentPool {
     /// Pops a segment from the pool, if available.
     #[inline]
     pub fn pop(&self) -> Option<*mut Segment> {
+        if self.retained.value.load(Ordering::Relaxed) == 0 {
+            return None;
+        }
         self.lock.lock();
         // Safety: We hold the spinlock, so we have exclusive access to the state.
         let segment = unsafe {

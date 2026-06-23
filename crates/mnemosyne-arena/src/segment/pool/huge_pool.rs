@@ -242,6 +242,9 @@ impl GlobalHugePool {
 
         for bucket_idx in start_bucket..HUGE_SIZE_BUCKETS {
             let bucket = &pool_node.buckets[bucket_idx];
+            if bucket.count.load(core::sync::atomic::Ordering::Relaxed) == 0 {
+                continue;
+            }
             bucket.lock.lock();
             unsafe {
                 let state = &mut *bucket.state.get();
