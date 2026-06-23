@@ -177,7 +177,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                                     std::process::abort();
                                 }
                                 if page_free.is_some()
-                                    && (page_alloc_count != 1 || (*segment).is_current)
+                                    && (page_alloc_count != 1 || alloc.is_current_segment(segment))
                                 {
                                     (*block).set_next::<P>(page_free, cookie);
                                     page_ref.free = Some(NonNull::new_unchecked(block));

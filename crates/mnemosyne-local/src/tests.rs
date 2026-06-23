@@ -834,8 +834,10 @@ fn test_thread_free_cycle_aborts_process() {
             };
 
             // Push block2 then block1 to build list block1 -> block2 -> None
-            page.thread_free.push::<StandardPolicy>(NonNull::new_unchecked(block2));
-            page.thread_free.push::<StandardPolicy>(NonNull::new_unchecked(block1));
+            page.thread_free
+                .push::<StandardPolicy>(NonNull::new_unchecked(block2));
+            page.thread_free
+                .push::<StandardPolicy>(NonNull::new_unchecked(block1));
 
             // Manually link block2 to block1 to form cycle block1 -> block2 -> block1
             (*block2).set_next::<StandardPolicy>(NonNull::new(block1), cookie);

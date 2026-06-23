@@ -128,6 +128,7 @@ unsafe fn thread_free_classified<
         if Some(NonNull::new_unchecked(block)) == page.free {
             std::process::abort();
         }
+        let alloc = unsafe { &mut *(owner_allocator as *mut ThreadAllocator<B>) };
         let page_free = page.free;
         let page_alloc_count = page.alloc_count;
         let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
@@ -136,7 +137,7 @@ unsafe fn thread_free_classified<
             0
         };
         let can_free_in_place = if page_alloc_count == 1 {
-            unsafe { (*segment).is_current }
+            alloc.is_current_segment(segment)
         } else {
             page.list_state != 2
         };
@@ -149,7 +150,6 @@ unsafe fn thread_free_classified<
             return;
         }
 
-        let alloc = unsafe { &mut *(owner_allocator as *mut ThreadAllocator<B>) };
         if page.list_state == 2 && page_alloc_count != 1 && !alloc.is_allocating {
             unsafe {
                 (*block).set_next::<P>(page_free, cookie);
