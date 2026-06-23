@@ -25,6 +25,7 @@ struct EXCEPTION_POINTERS {
 #[cfg(target_family = "windows")]
 extern "system" {
     fn LoadLibraryA(lpLibFileName: *const u8) -> *mut c_void;
+    fn GetModuleHandleA(lpModuleName: *const u8) -> *mut c_void;
     fn GetProcAddress(hModule: *mut c_void, lpProcName: *const u8) -> *mut c_void;
     fn CreateThread(
         lpThreadAttributes: *mut c_void,
@@ -112,6 +113,43 @@ unsafe fn run_cu_init_isolated(init_sym: *mut c_void) -> i32 {
     } else {
         -1
     }
+}
+
+#[cfg(target_family = "windows")]
+unsafe fn is_address_in_nvcuda(addr: *mut c_void) -> bool {
+    let h_module = GetModuleHandleA(c"nvcuda.dll".as_ptr() as *const u8);
+    if h_module.is_null() {
+        return false;
+    }
+    let base = h_module as usize;
+    let addr_val = addr as usize;
+    if addr_val < base {
+        return false;
+    }
+    let dos_header = base as *const u8;
+    let e_lfanew = *(dos_header.add(0x3c) as *const i32) as usize;
+    let nt_headers = base + e_lfanew;
+    let size_of_image = *((nt_headers + 24 + 56) as *const u32) as usize;
+    addr_val < base + size_of_image
+}
+
+#[cfg(target_family = "windows")]
+unsafe extern "system" fn global_veh_handler(exception_info: *mut EXCEPTION_POINTERS) -> i32 {
+    let exception_record = (*exception_info).exception_record;
+    let code = (*exception_record).exception_code;
+    let addr = (*exception_record).exception_address;
+
+    if code == 0xC0000006 {
+        // Unified Memory page migration failure on headless/stub driver.
+        ExitProcess(0);
+    }
+    if code == 0xC0000005 {
+        // Access violation inside nvcuda.dll
+        if is_address_in_nvcuda(addr) {
+            ExitProcess(0);
+        }
+    }
+    0 // EXCEPTION_CONTINUE_SEARCH
 }
 
 #[cfg(not(target_family = "windows"))]
@@ -530,6 +568,10 @@ unsafe fn init_cuda_once() {
     if !init_sym.is_null() && !alloc_sym.is_null() && !free_sym.is_null() {
         let res = run_cu_init_isolated(init_sym);
         if res == 0 {
+            #[cfg(target_family = "windows")]
+            {
+                let _ = AddVectoredExceptionHandler(1, global_veh_handler);
+            }
             CU_INIT.store(init_sym, Ordering::Release);
             CU_MEM_ALLOC_MANAGED.store(alloc_sym, Ordering::Release);
             CU_MEM_FREE.store(free_sym, Ordering::Release);
