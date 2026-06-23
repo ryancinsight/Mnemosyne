@@ -84,9 +84,25 @@ impl<T: ScratchElement> ScratchPool<T> {
     /// recursive calls), a temporary buffer is allocated instead.
     #[inline]
     pub fn with_scratch<R>(&self, n: usize, f: impl FnOnce(&mut [T]) -> R) -> R {
+        struct BorrowGuard<'a> {
+            depth: &'a Cell<u8>,
+            original: u8,
+        }
+
+        impl Drop for BorrowGuard<'_> {
+            #[inline(always)]
+            fn drop(&mut self) {
+                self.depth.set(self.original);
+            }
+        }
+
         let depth = self.borrow_depth.get();
         if depth < MAX_POOL_SLOTS as u8 {
             self.borrow_depth.set(depth + 1);
+            let _guard = BorrowGuard {
+                depth: &self.borrow_depth,
+                original: depth,
+            };
             // SAFETY: exclusive access guaranteed by borrow_depth tracking.
             // Each nesting level gets its own slot index.
             let vec = unsafe { &mut *self.slots[depth as usize].get() };
@@ -104,9 +120,7 @@ impl<T: ScratchElement> ScratchPool<T> {
             );
             // Return exactly `n` elements (not the full buffer).
             let slice = &mut vec.as_mut_slice()[..n];
-            let result = f(slice);
-            self.borrow_depth.set(depth);
-            result
+            f(slice)
         } else {
             // All slots exhausted; allocate owned fallback.
             let mut owned = AlignedVec::with_capacity(n);

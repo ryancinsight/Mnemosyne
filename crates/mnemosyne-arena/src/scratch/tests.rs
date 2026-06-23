@@ -153,3 +153,21 @@ fn scratch_bank_slots_are_independent() {
     assert_eq!(bank.borrow_depth::<0>(), 0);
     assert_eq!(bank.borrow_depth::<1>(), 0);
 }
+
+#[test]
+fn test_scratch_pool_panic_resilience() {
+    let pool = ScratchPool::<f64>::new();
+    let pool_ref = std::panic::AssertUnwindSafe(&pool);
+    let result = std::panic::catch_unwind(move || {
+        pool_ref.with_scratch(128, |_scratch| {
+            assert_eq!(pool_ref.borrow_depth(), 1);
+            panic!("intended panic inside closure");
+        });
+    });
+    assert!(result.is_err());
+    assert_eq!(
+        pool.borrow_depth(),
+        0,
+        "borrow depth must be restored to 0 after panic!"
+    );
+}
