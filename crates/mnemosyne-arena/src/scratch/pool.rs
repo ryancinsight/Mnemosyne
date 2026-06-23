@@ -31,6 +31,12 @@ pub struct ScratchPool<T: ScratchElement> {
     borrow_depth: Cell<u8>,
 }
 
+// SAFETY: a `ScratchPool` uniquely owns its slot buffers (each `AlignedVec` owns
+// its heap storage with no aliasing), so moving the whole pool to another thread
+// is sound. It is deliberately *not* `Sync`: the `UnsafeCell` slots and the
+// `Cell<u8>` borrow-depth counter are guarded only by single-threaded
+// `borrow_depth` tracking, which assumes one thread at a time (`thread_local!`
+// storage), so it must never be shared by reference across threads.
 unsafe impl<T: ScratchElement> Send for ScratchPool<T> {}
 
 impl<T: ScratchElement> Default for ScratchPool<T> {
@@ -138,7 +144,10 @@ impl<T: ScratchElement> ScratchPool<T> {
     /// Returns the capacity of the first slot (primary buffer).
     #[inline]
     pub fn capacity(&self) -> usize {
-        // SAFETY: reading capacity is safe.
+        // SAFETY: `ScratchPool` is `!Sync`, so there is no concurrent access; this
+        // diagnostic accessor only reads slot 0's `capacity` field and copies out
+        // a `usize` without mutating the buffer, so the transient shared reference
+        // does not alias any live `&mut` from a non-reentrant `with_scratch` call.
         unsafe { (*self.slots[0].get()).capacity() }
     }
 }

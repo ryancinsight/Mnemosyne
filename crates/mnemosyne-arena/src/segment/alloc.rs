@@ -81,6 +81,8 @@ unsafe fn try_return_to_pool<B: HasSegmentPool>(segment: *mut Segment) -> bool {
         !segment.is_null(),
         "try_return_to_pool received null segment"
     );
+    // SAFETY: by this function's contract `segment` is a valid, initialized,
+    // exclusively-owned `Segment`, satisfying `try_push_retained`'s own contract.
     unsafe { B::global_segment_pool().try_push_retained(segment) }
 }
 
@@ -145,6 +147,9 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
     }
 
     let numa_node = current_numa_node();
+    // SAFETY: `raw_ptr` is the non-null `SEGMENT_MAPPING_SIZE` mapping just
+    // returned by `B::allocate`, which is exclusively owned and writable —
+    // exactly `initialize_allocated_segment`'s contract.
     let (aligned_ptr, aligned_addr, tail_slack_start, mapping_end) =
         match unsafe { initialize_allocated_segment(raw_ptr, numa_node) } {
             Some(val) => val,
@@ -253,6 +258,9 @@ pub unsafe fn deallocate_segment<B: HasSegmentPool>(segment: *mut Segment) {
             match unsafe { release_segment_mapping::<B>(segment) } {
                 SegmentRelease::Released => {}
                 SegmentRelease::RetainedAfterFailure => {
+                    // SAFETY: the backend declined to release `segment`, so it
+                    // remains a valid, initialized, exclusively-owned `Segment`;
+                    // returning it to the pool keeps it live and reusable.
                     unsafe { B::global_segment_pool().push_unbounded(segment) };
                 }
             }
@@ -310,6 +318,9 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
         match unsafe { release_segment_mapping::<B>(segment) } {
             SegmentRelease::Released => purged += 1,
             SegmentRelease::RetainedAfterFailure => {
+                // SAFETY: the backend declined to release `segment`, so it is
+                // still a valid, exclusively-owned `Segment`; re-cache it rather
+                // than record a purge for a mapping we still own.
                 unsafe { pool.push_unbounded(segment) };
                 break;
             }
@@ -349,6 +360,9 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
     let pool = B::global_segment_pool();
     let mut list_head: *mut Segment = core::ptr::null_mut();
     while let Some(segment) = pool.pop() {
+        // SAFETY: each `segment` is freshly popped from the pool and thus a valid,
+        // exclusively-owned `Segment`; threading it onto the local `list_head`
+        // chain via `next_free_segment` only writes its own header field.
         unsafe {
             (*segment).next_free_segment = list_head;
             list_head = segment;
@@ -363,6 +377,12 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
     let mut curr = list_head;
     while !curr.is_null() {
         let segment = curr;
+        // SAFETY: `segment` is a node of the locally-owned `list_head` chain, so
+        // it is a valid, exclusively-owned `Segment`. `next` is read before the
+        // links are cleared. Per this function's contract the segment is unused,
+        // so resetting `[segment + PAGE_SIZE, segment + SEGMENT_SIZE)` — its user
+        // pages, never the page-0 header — discards no live data, and pushing it
+        // back keeps it cached for reuse.
         unsafe {
             curr = (*segment).next_free_segment;
             (*segment).next_free_segment = core::ptr::null_mut();

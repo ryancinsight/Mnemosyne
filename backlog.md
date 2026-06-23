@@ -28,8 +28,24 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
   semantics, const-evaluability test. Remaining: shared-memory arena
   budgeting (the literal-allocation part) pairs with Stage D1 device pools.
 
+## Open
+
+- [ ] [patch] Extend the unsafe-discipline `// SAFETY:` closure to
+  `mnemosyne-local` and `mnemosyne-core`. Highest-value sites: the Windows TEB
+  `gs:[0x48]` inline-asm thread-id reads (`free.rs`, `local_alloc.rs`), the
+  masked-segment derefs, and the `NonNull::new_unchecked(block)` double-free
+  guards. Deferred from the arena closure to keep that change atomic and off the
+  hot local files (concurrent-edit-sensitive). Verification: same robust
+  contiguous-comment scan + full workspace gate.
+
 ## Completed
 
+- [patch] Close the unsafe-discipline `// SAFETY:` gap across `mnemosyne-arena`
+  (arena coordination, segment alloc/pools, and the scratch buffer module);
+  every `unsafe` block and `unsafe impl Send/Sync` now documents its invariant,
+  with two behavior-neutral consolidations (huge-pool purge drain loop, cached
+  huge-segment header read) and the vacuous `ScratchPool::capacity` comment
+  replaced by the real `!Sync` invariant.
 - [patch] Consolidate initialized large/huge allocation fallback branches into
   one allocator helper in `mnemosyne-local::alloc`.
 - [patch] Bound per-CPU cache CPU-id refresh retries after failed CAS attempts

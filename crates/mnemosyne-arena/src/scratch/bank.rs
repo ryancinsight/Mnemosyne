@@ -14,6 +14,11 @@ pub struct ScratchBank<T: ScratchElement, const N: usize> {
     pools: [ScratchPool<T>; N],
 }
 
+// SAFETY: a `ScratchBank` owns its `N` `ScratchPool`s by value with no shared
+// aliasing, and each `ScratchPool<T>` is itself `Send` (its buffers uniquely own
+// their storage). Transferring the whole bank to another thread is therefore
+// sound. Like `ScratchPool` it is deliberately not `Sync` (single-thread,
+// `thread_local!`-owned access only).
 unsafe impl<T: ScratchElement, const N: usize> Send for ScratchBank<T, N> {}
 
 impl<T: ScratchElement, const N: usize> Default for ScratchBank<T, N> {

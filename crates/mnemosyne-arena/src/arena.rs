@@ -115,16 +115,22 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(
     };
 
     let numa_node = crate::numa::current_numa_node() as usize;
+    // SAFETY: `B: HasSegmentPool` exposes a valid global huge pool; `pop`
+    // returns either `None` or a segment it exclusively transfers to this caller.
     let cached = unsafe { B::global_huge_pool().pop(total_alloc_size, numa_node) };
     let is_cache_hit = cached.is_some();
 
     let (raw_ptr, block_size) = match cached {
         Some(segment) => {
-            let r = unsafe { (*segment).raw_alloc_ptr };
-            let s = unsafe { (*segment).pages[0].block_size };
-            (r, s)
+            // SAFETY: `segment` was just popped from the huge pool, so it points
+            // to a valid, initialized, exclusively-owned `Segment` whose header
+            // fields (`raw_alloc_ptr`, page-0 `block_size`) are live.
+            unsafe { ((*segment).raw_alloc_ptr, (*segment).pages[0].block_size) }
         }
         None => {
+            // SAFETY: `total_alloc_size <= MAX_ALLOC_SIZE` is non-zero (validated
+            // by `derive_large_or_huge_layout`); `B::allocate` is the backend's
+            // raw mapping primitive and the null result is handled below.
             let ptr = unsafe { B::allocate(total_alloc_size) };
             if ptr.is_null() {
                 return core::ptr::null_mut();
@@ -133,11 +139,18 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(
         }
     };
 
+    // SAFETY: `raw_ptr` is a live mapping of at least `block_size` bytes (either a
+    // pooled segment's recorded mapping or a fresh `B::allocate`), and
+    // `is_cache_hit` correctly distinguishes the two so the header is only
+    // re-initialized for fresh mappings.
     let (user_ptr, aligned_addr, tail_slack_start, mapping_end) = match unsafe {
         initialize_large_or_huge_segment(raw_ptr, block_size, alignment, size, is_cache_hit)
     } {
         Some(val) => val,
         None => {
+            // SAFETY: `raw_ptr`/`block_size` name the mapping just acquired above;
+            // releasing it on the initialization-failure path matches the
+            // allocating backend `B`.
             let _released = unsafe { B::deallocate(raw_ptr, block_size) };
             return core::ptr::null_mut();
         }
@@ -191,6 +204,11 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
         if ptr.is_null() {
             return false;
         }
+        // SAFETY: per this function's contract, a `ptr` with a null `segment_ptr`
+        // was returned by `allocate_large_or_huge`, which writes the owning
+        // `Segment` pointer into the pointer-aligned metadata slot immediately
+        // preceding `ptr`. Reading that slot recovers the segment; the value is
+        // validated (non-null, segment-aligned) immediately below before use.
         let s = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
         if s.is_null() || (s as usize) & (SEGMENT_ALIGN - 1) != 0 {
             #[cfg(any(feature = "std", test))]
@@ -211,6 +229,9 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
         return false;
     }
 
+    // SAFETY: `resolved_segment_ptr` is non-null (checked above) and is either
+    // the caller-supplied `segment_ptr` or the validated metadata-slot pointer,
+    // both of which name a valid `Segment` exclusively owned by this free.
     let segment = unsafe { &mut *resolved_segment_ptr };
     let raw_ptr = segment.raw_alloc_ptr;
     let aligned_addr = resolved_segment_ptr as usize;
@@ -234,11 +255,16 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
     if huge_size > 0 {
         // It is a huge allocation. Try to cache it first.
         let node = segment.numa_node as usize;
+        // SAFETY: `resolved_segment_ptr` is a valid, initialized huge-allocation
+        // segment exclusively owned here; `try_push` either takes ownership into
+        // the pool (returns true) or leaves it untouched (returns false).
         if unsafe { B::global_huge_pool().try_push(resolved_segment_ptr, node) } {
             return true;
         }
-        // Safety: Releasing raw memory back to custom backend using the recorded size.
         let raw_ptr = segment.raw_alloc_ptr;
+        // SAFETY: the pool declined to cache this huge segment, so `raw_ptr`/
+        // `huge_size` name its still-live OS mapping, released here through the
+        // allocating backend `B`.
         unsafe { B::deallocate(raw_ptr, huge_size) }
     } else {
         // It is a standard segment containing page allocations.

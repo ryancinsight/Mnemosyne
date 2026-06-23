@@ -23,6 +23,11 @@ pub struct NodeHugeBucket {
     count: core::sync::atomic::AtomicUsize,
 }
 
+// SAFETY: the raw `head` pointer inside the `UnsafeCell` state is only ever
+// accessed while the bucket's `SpinLock` is held, which serializes all reads and
+// writes across threads; the `count` atomic is independently synchronized. That
+// discipline makes shared cross-thread access (`Sync`) and ownership transfer
+// (`Send`) of a `NodeHugeBucket` data-race free.
 unsafe impl Send for NodeHugeBucket {}
 unsafe impl Sync for NodeHugeBucket {}
 
@@ -151,6 +156,9 @@ impl GlobalHugePool {
     /// representing a huge allocation.
     #[inline]
     pub unsafe fn try_push(&self, segment: *mut Segment, numa_node: usize) -> bool {
+        // SAFETY: by this function's contract `segment` is a valid, initialized,
+        // exclusively-owned huge-allocation `Segment`, so reading its page-0
+        // `block_size` is sound.
         let size = unsafe { (*segment).pages[0].block_size };
         if size > Self::MAX_CACHED_HUGE_SIZE {
             return false;
@@ -246,6 +254,10 @@ impl GlobalHugePool {
                 continue;
             }
             bucket.lock.lock();
+            // SAFETY: the bucket spinlock is held, granting exclusive access to
+            // its `UnsafeCell` state and to the intrusive `next_free_segment`
+            // links of every cached segment reachable from `state.head`; each
+            // segment was pushed as a valid, exclusively-owned huge `Segment`.
             unsafe {
                 let state = &mut *bucket.state.get();
                 if bucket_idx == start_bucket {
@@ -313,6 +325,9 @@ impl GlobalHugePool {
                     bucket.lock.unlock();
                     continue;
                 }
+                // SAFETY: the bucket spinlock is held, so accessing its
+                // `UnsafeCell` state is exclusive; detaching the list head leaves
+                // the bucket empty for the drain below.
                 let mut head = unsafe {
                     let state = &mut *bucket.state.get();
                     let h = state.head;
@@ -326,10 +341,19 @@ impl GlobalHugePool {
                 bucket.lock.unlock();
 
                 while !head.is_null() {
-                    let next = unsafe { (*head).next_free_segment };
-                    let raw_ptr = unsafe { (*head).raw_alloc_ptr };
-                    let block_size = unsafe { (*head).pages[0].block_size };
-                    let _ = unsafe { B::deallocate(raw_ptr, block_size) };
+                    // SAFETY: `head` is a segment detached from this bucket under
+                    // the lock and is no longer reachable by any other thread (the
+                    // caller guarantees no concurrent access during purge), so it
+                    // is exclusively owned here. Reading its links/size and
+                    // releasing its recorded mapping through the allocating backend
+                    // `B` is sound; `next` is captured before the mapping is freed.
+                    let next = unsafe {
+                        let next = (*head).next_free_segment;
+                        let raw_ptr = (*head).raw_alloc_ptr;
+                        let block_size = (*head).pages[0].block_size;
+                        let _ = B::deallocate(raw_ptr, block_size);
+                        next
+                    };
                     head = next;
                 }
             }

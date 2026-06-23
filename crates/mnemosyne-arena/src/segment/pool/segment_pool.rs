@@ -48,6 +48,8 @@ impl GlobalSegmentPool {
     /// `Segment` structure.
     #[inline]
     pub unsafe fn push_unbounded(&self, segment: *mut Segment) {
+        // SAFETY: by this function's contract `segment` is a valid, initialized,
+        // exclusively-owned `Segment`, so reading its `numa_node` field is sound.
         let node = numa_bucket(unsafe { (*segment).numa_node });
         self.nodes[node].push_unbounded(segment);
     }
@@ -60,6 +62,8 @@ impl GlobalSegmentPool {
     /// `Segment` structure.
     #[inline]
     pub unsafe fn try_push_retained(&self, segment: *mut Segment) -> bool {
+        // SAFETY: by this function's contract `segment` is a valid, initialized,
+        // exclusively-owned `Segment`, so reading its `numa_node` field is sound.
         let node = numa_bucket(unsafe { (*segment).numa_node });
         self.nodes[node].try_push_retained(segment)
     }

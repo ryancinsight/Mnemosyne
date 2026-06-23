@@ -4,6 +4,30 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Close the unsafe-discipline `// SAFETY:` gap across the
+  `mnemosyne-arena` crate. Every `unsafe` block and `unsafe impl Send/Sync`
+  in `arena.rs`, `segment/alloc.rs`, `segment/pool/{huge_pool,segment_pool,
+  list}.rs`, and the entire `scratch/{aligned_vec,pool,bank}.rs` module now
+  carries a grounded SAFETY comment stating the invariant relied on
+  (allocation/layout validity, lock-held exclusive `UnsafeCell` access,
+  documented `unsafe fn` segment-ownership contracts, POD/`Copy`/non-`Drop`
+  `ScratchElement` validity for the aligned scratch buffer). Two behavior-
+  neutral consolidations accompany the comments: the huge-pool `purge` drain
+  loop's four per-node `unsafe` reads collapse to one documented block, and the
+  cached huge-segment header read in `allocate_large_or_huge` collapses two
+  reads to one tuple block. The vacuous `ScratchPool::capacity` "reading
+  capacity is safe" comment is replaced with the real `!Sync`/no-aliasing
+  invariant. No runtime behavior changes (comments + structural consolidation
+  only). Verification: robust contiguous-comment scan reports zero genuinely
+  undocumented `unsafe` blocks/impls (remaining awk hits are the
+  clippy-accepted comment-above-statement idiom); `cargo fmt -p
+  mnemosyne-arena -- --check`; `cargo clippy --workspace --all-targets
+  --all-features -- -D warnings`; `cargo nextest run --workspace
+  --all-features` (210 passed, incl. arena `test_concurrent_aba_safeness`,
+  `purge_retains_segment_when_backend_release_fails`, huge-allocation
+  round-trip, and the local corruption-abort suite); `cargo test --doc -p
+  mnemosyne-arena --all-features`; `cargo doc -p mnemosyne-arena
+  --all-features --no-deps`.
 - [x] [patch] Consolidate initialized large/huge allocation fallbacks in
   `allocate_large_or_huge_initialized`. Alignment overflow, adjusted-size
   fallback, missing allocator-slot fallback, reentrant allocator fallback, and

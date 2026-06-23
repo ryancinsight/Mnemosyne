@@ -31,6 +31,11 @@ pub struct NodeSegmentPool {
     reset_calls: core::sync::atomic::AtomicUsize,
 }
 
+// SAFETY: the raw `head` pointer inside the `UnsafeCell` state is only accessed
+// while the pool's `SpinLock` is held, serializing all cross-thread reads and
+// writes; the retention/telemetry counters are independently synchronized
+// atomics. That discipline makes shared cross-thread access (`Sync`) and
+// ownership transfer (`Send`) of a `NodeSegmentPool` data-race free.
 unsafe impl Send for NodeSegmentPool {}
 unsafe impl Sync for NodeSegmentPool {}
 

@@ -407,3 +407,33 @@
 - [patch] `mnemosyne-prof` dump reporting cloned every retained `Sample`, including its exact boxed stack slice, into temporary snapshot vectors before resolving symbols. `dump_profile` also built `symbol_names` and `filtered_symbols` vectors before joining. Replaced this with shard-local borrowed iteration, direct folded-stack construction in reverse frame order, lazy leak-report file creation, direct sample streaming, and scoped `Path::to_string_lossy` `Cow` output for filenames. Evidence tier: profiler integration tests plus clippy.
 - [minor] Latest `melinoe` changed benchmark binary code layout enough to regress Mnemosyne allocator cycle rows when the benchmark crate linked the top-level `mnemosyne` default heap-branded API. The allocator benchmarks do not use branded heap types, so made `mnemosyne-heap` an optional `mnemosyne/branded` default feature and set `mnemosyne-benchmarks` to `default-features = false` for the top-level allocator dependency. Default users still receive the branded re-exports; allocator-only builds can now omit them. Evidence tier: feature-mode compile checks, heap tests with latest `melinoe`, and focused Criterion restoring latest-lock large cycle to `2.695 ns` with no significant small/medium cycle regression.
 - [patch] The `usable size latency` table showed `large_8192` faster than `medium_1024` and `small_32` because the combined benchmark helper passed the fresh allocation pointer directly from `alloc` into `usable_size` and `dealloc` inside an `#[inline(always)]` helper. That allowed cross-optimization of the allocation/query/free sequence and produced a non-representative large row. The helper now consumes the pointer through `black_box` before the size query and again at deallocation, and the cycle helper uses the consumed `black_box` result. Focused Criterion after the harness fix reports Mnemosyne `small/32` `2.307 ns`, `medium/1024` `2.350 ns`, and `large/8192` `5.196 ns`; regenerated comparison artifacts report `2.297 ns`, `2.340 ns`, and `5.206 ns`. Evidence tier: empirical Criterion validation plus benchmark-harness data-dependency fix; no allocator algorithm proof was required because isolated `usable size query latency` was already size-independent.
+- [patch] Deep contention/safety/memory audit pass over `mnemosyne-arena` and
+  `mnemosyne-local` (lock-free `AtomicFreeList`, `SpinLock`, NUMA segment/huge
+  pools, per-CPU cache, TLS). Conclusions: (1) lock-free memory ordering is
+  sound — `AtomicFreeList::push` Release / `pop_all` swap Acquire pair
+  correctly, the 48-bit packed push counter hardens against ABA, exposed-
+  provenance round-trips are explicit; the per-CPU CAS uses Acquire-on-alloc /
+  Release-on-free; segment/huge pool fast-path Relaxed loads are all
+  re-validated under the bucket `SpinLock` before any pointer is published or
+  consumed. No Relaxed-where-Acquire/Release-required defect and no over-strong
+  `SeqCst` found. (2) Contention is bounded — every critical section is a short
+  intrusive-list splice or counter update under a single (never nested) lock,
+  so no lock-ordering deadlock; `SpinLock` is correct TTAS with `spin_loop()`.
+  (3) No per-allocation/per-free heap allocation on any hot path; intrusive
+  lists + ZST branded tokens compile away. (4) `options.rs`
+  `swap(true, Acquire)` init guard is benign: the store half publishes nothing
+  (each env-tuned option atomic is independently Acquire/Release at its use
+  site and carries a valid default), so no happens-before edge is required —
+  not a defect. The one concrete, real defect against the project's own
+  unsafe-discipline gate was the systematic absence of `// SAFETY:` comments;
+  closed for the whole `mnemosyne-arena` crate this sprint.
+  Residual risk / follow-on: the same `// SAFETY:` gap remains in
+  `mnemosyne-local` (notably the Windows TEB `gs:[0x48]` inline-asm thread-id
+  reads in `free.rs`/`local_alloc.rs`, the masked-segment derefs, and the
+  `NonNull::new_unchecked(block)` double-free guards) and in `mnemosyne-core`;
+  deferred as a separate [patch] to keep this change atomic and off the hot
+  local files. The `per_cpu.rs` always-resident `PER_CPU_CACHE` static
+  (`MAX_CPUS = 256` × `NUM_SIZE_CLASSES` × 8 `AtomicUsize`, BSS/zero-page
+  backed) is a deliberate memory-safe design tradeoff, not a defect — left
+  unchanged because resizing it trades address-space for added fast-path
+  bounds/branch logic with no measured win.
