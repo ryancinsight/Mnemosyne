@@ -136,48 +136,25 @@ unsafe fn thread_free_classified<
         } else {
             0
         };
-        let can_free_in_place = if page_alloc_count == 1 {
-            alloc.is_current_segment(segment)
-        } else {
-            page.list_state != 2
-        };
-        if can_free_in_place {
-            unsafe {
-                (*block).set_next::<P>(page_free, cookie);
-                page.free = Some(NonNull::new_unchecked(block));
-                page.alloc_count = page_alloc_count - 1;
-            }
-            return;
-        }
 
-        if page.list_state == 2 && page_alloc_count != 1 && !alloc.is_allocating {
-            unsafe {
-                (*block).set_next::<P>(page_free, cookie);
-                page.free = Some(NonNull::new_unchecked(block));
-                page.alloc_count = page_alloc_count - 1;
+        if page.list_state != 2 {
+            // Page is active
+            if page_alloc_count > 1 || alloc.is_current_segment(segment) {
+                // Free in-place (either remains active, or is current segment)
+                unsafe {
+                    (*block).set_next::<P>(page_free, cookie);
+                    page.free = Some(NonNull::new_unchecked(block));
+                    page.alloc_count = page_alloc_count - 1;
+                }
+                return;
+            } else if !alloc.is_allocating {
+                // Page is not current segment, and becomes empty
+                alloc.is_allocating = true;
+                unsafe {
+                    (*block).set_next::<P>(page_free, cookie);
+                    page.free = Some(NonNull::new_unchecked(block));
+                    page.decrement_alloc_count_for_segment(segment, page_index);
 
-                let class = page.size_class as usize;
-                let page_ptr = NonNull::new_unchecked(page as *mut Page);
-                with_page_list_token::<B, _>(|mut token| {
-                    let branded_page = token.page(page_ptr);
-                    move_full_page_to_active_branded(
-                        &mut token,
-                        alloc.full_pages.get_unchecked_mut(class),
-                        alloc.active_pages.get_unchecked_mut(class),
-                        branded_page,
-                    );
-                });
-            }
-            return;
-        }
-        if page.list_state != 2 && page_alloc_count == 1 && !alloc.is_allocating {
-            alloc.is_allocating = true;
-            unsafe {
-                (*block).set_next::<P>(page_free, cookie);
-                page.free = Some(NonNull::new_unchecked(block));
-                page.decrement_alloc_count_for_segment(segment, page_index);
-
-                if !alloc.is_current_segment(segment) {
                     let class = page.size_class as usize;
                     let page_ptr = NonNull::new_unchecked(page as *mut Page);
                     with_page_list_token::<B, _>(|mut token| {
@@ -196,23 +173,31 @@ unsafe fn thread_free_classified<
                             );
                         }
                     });
+
+                    alloc.record_defrag_operation::<P>();
                 }
-
-                alloc.record_defrag_operation::<P>();
+                alloc.is_allocating = false;
+                return;
             }
-            alloc.is_allocating = false;
-            return;
-        }
-        if !alloc.is_allocating {
-            alloc.is_allocating = true;
-            let became_empty =
-                do_local_free_internal::<P, B>(alloc, block, page, segment, page_index);
+        } else if !alloc.is_allocating {
+            // Page is full, transitions to active (count > 1 is guaranteed since max_blocks >= 8)
+            unsafe {
+                (*block).set_next::<P>(page_free, cookie);
+                page.free = Some(NonNull::new_unchecked(block));
+                page.alloc_count = page_alloc_count - 1;
 
-            if became_empty {
-                unsafe { alloc.record_defrag_operation::<P>() };
+                let class = page.size_class as usize;
+                let page_ptr = NonNull::new_unchecked(page as *mut Page);
+                with_page_list_token::<B, _>(|mut token| {
+                    let branded_page = token.page(page_ptr);
+                    move_full_page_to_active_branded(
+                        &mut token,
+                        alloc.full_pages.get_unchecked_mut(class),
+                        alloc.active_pages.get_unchecked_mut(class),
+                        branded_page,
+                    );
+                });
             }
-
-            alloc.is_allocating = false;
             return;
         }
     }

@@ -181,7 +181,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                                 {
                                     (*block).set_next::<P>(page_free, cookie);
                                     page_ref.free = Some(NonNull::new_unchecked(block));
-                                    page_ref.decrement_alloc_count_for_segment(segment, page_index);
+                                    page_ref.alloc_count = page_alloc_count - 1;
                                 } else {
                                     let _became_empty = do_local_free_internal::<P, B>(
                                         alloc, block, page_ref, segment, page_index,
