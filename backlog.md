@@ -4,7 +4,7 @@
 
 mnemosyne is the allocation SSOT. The GPU program (coeus/apollo using wgpu + cuda-oxide)
 needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBackend`:
-- [ ] [arch] Stage D1: device-memory strategy consumed by the `hephaestus` GPU substrate
+- [x] [arch] Stage D1: device-memory strategy consumed by the `hephaestus` GPU substrate
   (atlas ADR 0001) — device buffer pools, page-locked/pinned host staging, explicit
   unified-vs-discrete policy through the `MemoryBackend` seam. Compose cuda-oxide
   allocation interop with the existing dlopen `cuMemAllocManaged` path; add wgpu
