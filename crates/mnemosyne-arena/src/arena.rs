@@ -37,6 +37,96 @@ fn derive_large_or_huge_layout(size: usize, align: usize) -> Option<(usize, usiz
     }
 }
 
+/// Performs the metadata initialization common to **both** fresh allocations and
+/// cache-hit segments: computes the aligned user pointer, writes the metadata
+/// slot, and returns the layout triple `(user_ptr, aligned_addr,
+/// tail_slack_start, mapping_end)`.
+///
+/// # Safety
+/// `raw_ptr` must be a live mapping of at least `total_alloc_size` bytes.
+#[inline(always)]
+unsafe fn init_segment_layout(
+    raw_ptr: *mut u8,
+    total_alloc_size: usize,
+    alignment: usize,
+    size: usize,
+) -> Option<(*mut u8, usize, usize, usize)> {
+    let aligned_addr = checked_align_up(raw_ptr as usize, SEGMENT_ALIGN)?;
+    let aligned_ptr = aligned_addr as *mut Segment;
+    let reserved_prefix_end = aligned_addr.checked_add(PAGE_SIZE)?;
+    let user_addr = checked_align_up(reserved_prefix_end, alignment)?;
+    let user_ptr = user_addr as *mut u8;
+    let metadata_addr = user_addr - core::mem::size_of::<*mut Segment>();
+    let payload_end = user_addr.checked_add(size)?;
+    let mapping_end = (raw_ptr as usize).checked_add(total_alloc_size)?;
+
+    debug_assert_eq!(user_addr % core::mem::align_of::<*mut Segment>(), 0,
+        "user pointer must be aligned to *mut Segment");
+    debug_assert!(metadata_addr >= aligned_addr && metadata_addr < user_addr,
+        "metadata slot {metadata_addr:#x} must remain inside reserved prefix");
+    debug_assert!(payload_end <= mapping_end,
+        "payload end {payload_end:#x} must remain inside backend mapping end {mapping_end:#x}");
+
+    // Write the back-pointer and update alloc_count (live for both paths).
+    unsafe {
+        (*aligned_ptr).pages[0].alloc_count = size;
+        let metadata_slot = (user_ptr as *mut *mut Segment).sub(1);
+        metadata_slot.write(aligned_ptr);
+    }
+
+    let tail_slack_start = checked_align_up(payload_end, PAGE_SIZE)?;
+    Some((user_ptr, aligned_addr, tail_slack_start, mapping_end))
+}
+
+/// Initialise a **fresh** large/huge segment from a new OS mapping.
+///
+/// Writes invariant header fields (`raw_alloc_ptr`, `numa_node`, and
+/// `block_size`) that are set once and never change; then calls the shared
+/// layout helper to set `alloc_count` and write the back-pointer.
+///
+/// # Safety
+/// `raw_ptr` must be a live, freshly mapped region of at least
+/// `total_alloc_size` bytes with no prior segment header.
+#[inline(always)]
+unsafe fn initialize_large_or_huge_segment_fresh(
+    raw_ptr: *mut u8,
+    total_alloc_size: usize,
+    alignment: usize,
+    size: usize,
+) -> Option<(*mut u8, usize, usize, usize)> {
+    let aligned_addr = checked_align_up(raw_ptr as usize, SEGMENT_ALIGN)?;
+    let aligned_ptr = aligned_addr as *mut Segment;
+    // SAFETY: fresh mapping — write invariant header fields.
+    unsafe {
+        let node = crate::current_numa_node();
+        Segment::initialize(aligned_ptr, raw_ptr, node);
+        (*aligned_ptr).pages[0].block_size = total_alloc_size;
+    }
+    // SAFETY: same contract as the caller's unsafe block.
+    unsafe { init_segment_layout(raw_ptr, total_alloc_size, alignment, size) }
+}
+
+/// Initialise a **cached** large/huge segment reused from the huge-pool.
+///
+/// Invariant header fields (`raw_alloc_ptr`, `block_size`) are already live
+/// from the original allocation; only `alloc_count` and the back-pointer need
+/// refreshing.  Skipping the full `Segment::initialize` path removes a cluster
+/// of header writes on every cache-hit allocation.
+///
+/// # Safety
+/// `raw_ptr` must be a live region holding a valid, previously-initialized
+/// `Segment` header at the SEGMENT_ALIGN-aligned base of the mapping.
+#[inline(always)]
+unsafe fn initialize_large_or_huge_segment_cached(
+    raw_ptr: *mut u8,
+    total_alloc_size: usize,
+    alignment: usize,
+    size: usize,
+) -> Option<(*mut u8, usize, usize, usize)> {
+    // SAFETY: same contract as the caller's unsafe block.
+    unsafe { init_segment_layout(raw_ptr, total_alloc_size, alignment, size) }
+}
+
 #[inline(always)]
 unsafe fn initialize_large_or_huge_segment(
     raw_ptr: *mut u8,
@@ -45,48 +135,15 @@ unsafe fn initialize_large_or_huge_segment(
     size: usize,
     is_cache_hit: bool,
 ) -> Option<(*mut u8, usize, usize, usize)> {
-    let aligned_addr = checked_align_up(raw_ptr as usize, SEGMENT_ALIGN)?;
-    let aligned_ptr = aligned_addr as *mut Segment;
-
-    let reserved_prefix_end = aligned_addr.checked_add(PAGE_SIZE)?;
-    let user_addr = checked_align_up(reserved_prefix_end, alignment)?;
-    let user_ptr = user_addr as *mut u8;
-
-    let metadata_addr = user_addr - core::mem::size_of::<*mut Segment>();
-    let payload_end = user_addr.checked_add(size)?;
-    let mapping_end = (raw_ptr as usize).checked_add(total_alloc_size)?;
-
-    debug_assert_eq!(
-        user_addr % core::mem::align_of::<*mut Segment>(),
-        0,
-        "user pointer must be aligned to *mut Segment"
-    );
-    debug_assert!(
-        metadata_addr >= aligned_addr && metadata_addr < user_addr,
-        "metadata slot {metadata_addr:#x} must remain inside reserved prefix [{aligned_addr:#x}, {user_addr:#x})"
-    );
-    debug_assert!(
-        payload_end <= mapping_end,
-        "payload end {payload_end:#x} must remain inside backend mapping end {mapping_end:#x}"
-    );
-
-    // Safety: aligned_ptr is within the allocated region and aligned to a segment boundary.
-    // We initialize the segment header fields and set Page 0's block_size to mark huge allocations.
-    // We also write the segment pointer right before the user pointer in the unused Page 0 padding space.
-    unsafe {
-        if !is_cache_hit {
-            let node = crate::current_numa_node();
-            Segment::initialize(aligned_ptr, raw_ptr, node);
-            (*aligned_ptr).pages[0].block_size = total_alloc_size;
+    if is_cache_hit {
+        unsafe {
+            initialize_large_or_huge_segment_cached(raw_ptr, total_alloc_size, alignment, size)
         }
-        (*aligned_ptr).pages[0].alloc_count = size;
-
-        let metadata_slot = (user_ptr as *mut *mut Segment).sub(1);
-        metadata_slot.write(aligned_ptr);
+    } else {
+        unsafe {
+            initialize_large_or_huge_segment_fresh(raw_ptr, total_alloc_size, alignment, size)
+        }
     }
-
-    let tail_slack_start = checked_align_up(payload_end, PAGE_SIZE)?;
-    Some((user_ptr, aligned_addr, tail_slack_start, mapping_end))
 }
 
 /// Allocates a block of memory of the given size and alignment.
