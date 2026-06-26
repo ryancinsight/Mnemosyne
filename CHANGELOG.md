@@ -29,6 +29,17 @@
 
 ### Changed
 
+- Huge-pool retention is now bounded by bytes per bucket, not just block count.
+  A flat `MAX_CACHED_HUGE_BLOCKS` (1024) count cap let a large-size bucket retain
+  up to ~16 GiB of idle mappings (1024 × 16 MiB); `bucket_block_cap` now caps each
+  bucket at `min(MAX_CACHED_HUGE_BLOCKS, MAX_CACHED_HUGE_BYTES_PER_BUCKET / max
+  block size)`, bounding any one bucket to ~256 MiB while leaving the small-huge
+  buckets at the full count cap (no warm-cache regression). Verified by a
+  value-semantic test on the per-bucket budget invariant.
+- `GlobalHugePool::pop` no longer pre-loads each node's `total_count` before
+  calling `pop_from_node` (which already early-returns on an empty node), removing
+  one redundant atomic load per huge pop on the hit path and per probed node on
+  the steal path.
 - Small allocations requiring alignment above `MIN_BLOCK_SIZE` (16) now use the
   small thread-cache path instead of always falling back to the large/huge path.
   `thread_alloc_checked` rounds the request up to a multiple of `align` and

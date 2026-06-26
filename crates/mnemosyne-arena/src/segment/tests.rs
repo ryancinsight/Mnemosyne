@@ -508,3 +508,33 @@ fn test_huge_pool_log2_bucketing() {
     assert_eq!(huge_bucket_index(16 * 1024 * 1024 + 1), 11);
     assert_eq!(huge_bucket_index(512 * 1024 * 1024), 15); // Large sizes saturate to max bucket
 }
+
+#[test]
+fn test_huge_bucket_block_cap_bounds_retained_bytes() {
+    use super::pool::huge_pool::bucket_block_cap;
+    use super::pool::GlobalHugePool;
+
+    const BUDGET: usize = GlobalHugePool::MAX_CACHED_HUGE_BYTES_PER_BUCKET;
+
+    // Small-huge buckets keep the full count cap (no perf regression there):
+    // 256 MiB / 16 KiB = 16384, clamped to MAX_CACHED_HUGE_BLOCKS.
+    assert_eq!(bucket_block_cap(0), GlobalHugePool::MAX_CACHED_HUGE_BLOCKS);
+    // 1 MiB blocks (bucket 6): 256 MiB / 1 MiB = 256.
+    assert_eq!(bucket_block_cap(6), 256);
+    // 16 MiB blocks (bucket 10): 256 MiB / 16 MiB = 16.
+    assert_eq!(bucket_block_cap(10), 16);
+    // Saturated large bucket retains at least one block.
+    assert_eq!(bucket_block_cap(15), 1);
+
+    // Invariant: every bucket's retained bytes (cap × max block size) stay within
+    // the per-bucket budget, and never exceed the flat count cap.
+    for idx in 0..16usize {
+        let cap = bucket_block_cap(idx);
+        assert!(cap >= 1 && cap <= GlobalHugePool::MAX_CACHED_HUGE_BLOCKS);
+        let max_block = 1usize << (idx + 14);
+        assert!(
+            cap == 1 || cap * max_block <= BUDGET,
+            "bucket {idx}: cap {cap} x {max_block} exceeds budget {BUDGET}"
+        );
+    }
+}

@@ -111,6 +111,27 @@ pub(crate) fn huge_bucket_index(size: usize) -> usize {
     }
 }
 
+/// Per-bucket retained-block cap, derived from a per-bucket byte budget.
+///
+/// A flat `MAX_CACHED_HUGE_BLOCKS` count cap lets a large-size bucket retain
+/// `1024 × (block size)` bytes — up to ~16 GiB for the 16 MiB bucket. Capping
+/// each bucket's *retained bytes* instead (block count ≤ budget / max block size
+/// in the bucket) bounds idle RSS while leaving the small-huge buckets at the
+/// full count cap, so the warm cache for the common case is preserved. Bucket
+/// `b` holds sizes in `(2^(b+13), 2^(b+14)]`, so `2^(b+14)` upper-bounds a block.
+#[inline(always)]
+pub(crate) const fn bucket_block_cap(bucket_idx: usize) -> usize {
+    let max_block = 1usize << (bucket_idx + 14);
+    let cap = GlobalHugePool::MAX_CACHED_HUGE_BYTES_PER_BUCKET / max_block;
+    if cap == 0 {
+        1
+    } else if cap > GlobalHugePool::MAX_CACHED_HUGE_BLOCKS {
+        GlobalHugePool::MAX_CACHED_HUGE_BLOCKS
+    } else {
+        cap
+    }
+}
+
 impl Default for GlobalHugePool {
     #[inline]
     fn default() -> Self {
@@ -123,6 +144,11 @@ impl GlobalHugePool {
     pub const MAX_CACHED_HUGE_BLOCKS: usize = 1024;
     /// Maximum size class we cache (16MB).
     pub const MAX_CACHED_HUGE_SIZE: usize = 16 * 1024 * 1024;
+    /// Per-bucket retained-byte budget. The effective per-bucket block cap is
+    /// `min(MAX_CACHED_HUGE_BLOCKS, this / max-block-size-in-bucket)`, so a single
+    /// node bucket never retains more than ~256 MiB of idle huge mappings (vs. up
+    /// to ~16 GiB under a flat count cap). See [`bucket_block_cap`].
+    pub const MAX_CACHED_HUGE_BYTES_PER_BUCKET: usize = 256 * 1024 * 1024;
 
     /// Creates a new empty `GlobalHugePool` with 16 NUMA node sub-pools.
     pub const fn new() -> Self {
@@ -171,7 +197,7 @@ impl GlobalHugePool {
 
         bucket.lock.lock();
         let count = bucket.count.load(core::sync::atomic::Ordering::Relaxed);
-        if count >= Self::MAX_CACHED_HUGE_BLOCKS {
+        if count >= bucket_block_cap(bucket_idx) {
             bucket.lock.unlock();
             return false;
         }
@@ -203,29 +229,18 @@ impl GlobalHugePool {
         let start_node = numa_bucket(numa_node);
         let bucket_idx = huge_bucket_index(size);
 
-        // 1. Try local NUMA node first
-        if self.nodes[start_node]
-            .total_count
-            .load(core::sync::atomic::Ordering::Relaxed)
-            > 0
-        {
-            if let Some(res) = self.pop_from_node(size, start_node, bucket_idx) {
-                return Some(res);
-            }
+        // `pop_from_node` already early-returns on an empty node (its leading
+        // `total_count == 0` check), so a redundant pre-load here would only
+        // re-read the same atomic. Call it directly: local node first, then steal.
+        if let Some(res) = self.pop_from_node(size, start_node, bucket_idx) {
+            return Some(res);
         }
 
-        // 2. Steal from other nodes
         let start = NumaNodeId::new(start_node as u32).bucket_index::<NUMA_BUCKETS>();
         for i in 1..NUMA_BUCKETS {
             let other_node = start.wrapping_add(i).index();
-            if self.nodes[other_node]
-                .total_count
-                .load(core::sync::atomic::Ordering::Relaxed)
-                > 0
-            {
-                if let Some(res) = self.pop_from_node(size, other_node, bucket_idx) {
-                    return Some(res);
-                }
+            if let Some(res) = self.pop_from_node(size, other_node, bucket_idx) {
+                return Some(res);
             }
         }
 
