@@ -1,3 +1,4 @@
+use crate::alloc::small_path_class;
 use crate::usable_size;
 use crate::{
     do_local_free_internal, initialize_allocated_bytes, poison_freed_bytes, thread_alloc_layout,
@@ -10,7 +11,6 @@ use mnemosyne_core::constants::{
     MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT, SEGMENT_SIZE,
 };
 use mnemosyne_core::policy::AllocPolicy;
-use mnemosyne_core::size_class::size_to_class_nonzero;
 use mnemosyne_core::types::{Block, Segment};
 
 #[inline(always)]
@@ -125,7 +125,13 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     }
 
     let new_adjusted = core::cmp::max(new_size, layout.align());
-    let new_class = size_to_class_nonzero(new_adjusted);
+    // Use the shared routing decision so the in-place small-realloc target class
+    // honours the requested alignment. `size_to_class_nonzero(new_adjusted)`
+    // alone could pick a class whose stride does not carry `align` (e.g. class
+    // 224 for a 64-byte-aligned 200-byte request), yielding a misaligned block.
+    // `None` falls through to the `thread_alloc_layout` path below, which routes
+    // correctly (small or huge) for the alignment.
+    let new_class = small_path_class(new_size, layout.align());
 
     let ptr_val = ptr as usize;
     let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);

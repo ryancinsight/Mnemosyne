@@ -56,6 +56,39 @@ pub unsafe fn thread_alloc_layout<P: AllocPolicy, B: HasSegmentPool + LocalAlloc
     ptr
 }
 
+/// Size-class routing decision shared by the alloc and free paths (SSOT).
+///
+/// Returns `Some(class)` when `(size, align)` is served by the small
+/// thread-cache path, or `None` when it must use the large/huge path.
+///
+/// The small path can serve an allocation requiring `align` bytes whenever the
+/// chosen class's block stride is a multiple of `align`: pages start
+/// `PAGE_SIZE`-aligned and blocks are carved at `block_size` stride, so
+/// `block_size % align == 0` makes every block `align`-aligned (`align` is a
+/// validated power of two). Rounding the request up to a multiple of `align`
+/// first lets the lookup land on such a class for most sizes; non-power-of-two
+/// stride classes (48/80/96/…) return `None` and route to the huge path. This
+/// keeps small high-alignment allocations — e.g. 64-byte-aligned SIMD buffers —
+/// out of the ~2 MiB-per-allocation huge path, which previously caught every
+/// `align > 16` request regardless of size.
+///
+/// `alloc` routes on this; `free` derives its `LAYOUT_PROVES_SMALL` fast path
+/// from the same decision, so the two can never disagree on whether a block is
+/// small (a disagreement would be undefined behavior).
+#[inline(always)]
+pub(crate) fn small_path_class(size: usize, align: usize) -> Option<usize> {
+    let adjusted_size = core::cmp::max(size, align);
+    if align <= MIN_BLOCK_SIZE {
+        // Every block is at least `MIN_BLOCK_SIZE`-aligned; no stride check.
+        return size_to_class_nonzero(adjusted_size);
+    }
+    let rounded = (adjusted_size + align - 1) & !(align - 1);
+    match size_to_class_nonzero(rounded) {
+        Some(c) if class_to_size(c) & (align - 1) == 0 => Some(c),
+        _ => None,
+    }
+}
+
 #[inline(always)]
 unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
     size: usize,
@@ -63,34 +96,10 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
 ) -> *mut u8 {
     let adjusted_size = core::cmp::max(size, align);
 
-    // Alignment-aware size-class selection.
-    //
-    // The small thread-cache path can serve an allocation requiring `align`
-    // bytes whenever the chosen size class's block stride is a multiple of
-    // `align`: pages start `PAGE_SIZE`-aligned and blocks are carved at
-    // `block_size` stride, so `block_size % align == 0` makes every block in the
-    // class `align`-aligned (`align` is a validated power of two). Rounding the
-    // request up to a multiple of `align` first lets the lookup land on such a
-    // class for most sizes; classes whose stride cannot carry the alignment (the
-    // non-power-of-two classes, e.g. 48/80/96) correctly fall through to the
-    // large/huge path. This keeps small high-alignment allocations — e.g.
-    // 64-byte-aligned SIMD buffers — out of the ~2 MiB-per-allocation huge path,
-    // which previously caught every `align > 16` request regardless of size.
-    let class = if align <= MIN_BLOCK_SIZE {
-        // Every block is at least `MIN_BLOCK_SIZE`-aligned; no stride check.
-        match size_to_class_nonzero(adjusted_size) {
-            Some(c) => c,
-            None => {
-                return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
-            }
-        }
-    } else {
-        let rounded = (adjusted_size + align - 1) & !(align - 1);
-        match size_to_class_nonzero(rounded) {
-            Some(c) if class_to_size(c) & (align - 1) == 0 => c,
-            _ => {
-                return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
-            }
+    let class = match small_path_class(size, align) {
+        Some(c) => c,
+        None => {
+            return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
         }
     };
 

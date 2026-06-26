@@ -310,3 +310,32 @@ fn test_realloc_to_zero_size_frees() {
     let null = unsafe { ALLOCATOR.realloc(ptr, layout, 0) };
     assert!(null.is_null(), "realloc(_, 0) must return null after free");
 }
+
+#[test]
+fn test_realloc_preserves_alignment_for_aligned_small() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("global allocator test lock was poisoned");
+    // A 64-byte-aligned small block grown to a size whose natural size class
+    // stride is NOT a multiple of 64 (200 -> class 224). The realloc result must
+    // still be 64-aligned and preserve the original bytes.
+    unsafe {
+        let layout = Layout::from_size_align(128, 64).expect("valid layout");
+        let p = ALLOCATOR.alloc(layout);
+        assert!(!p.is_null(), "initial aligned alloc failed");
+        assert_eq!((p as usize) & 63, 0, "initial block not 64-aligned");
+        core::ptr::write_bytes(p, 0xCD, 128);
+
+        let p2 = ALLOCATOR.realloc(p, layout, 200);
+        assert!(!p2.is_null(), "realloc failed");
+        assert_eq!(
+            (p2 as usize) & 63,
+            0,
+            "realloc must preserve 64-byte alignment"
+        );
+        assert_eq!(*p2, 0xCD, "realloc must preserve leading bytes");
+        assert_eq!(*p2.add(127), 0xCD, "realloc must preserve trailing bytes");
+
+        ALLOCATOR.dealloc(p2, Layout::from_size_align(200, 64).expect("valid layout"));
+    }
+}

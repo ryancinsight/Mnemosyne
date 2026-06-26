@@ -6,9 +6,7 @@ use crate::per_cpu;
 use crate::{poison_freed_bytes, LocalAllocatorSelector, ThreadAllocator};
 use core::ptr::NonNull;
 use mnemosyne_arena::{deallocate_large_or_huge, HasSegmentPool};
-use mnemosyne_core::constants::{
-    MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT, PAGE_SIZE, SEGMENT_SIZE,
-};
+use mnemosyne_core::constants::{PAGES_PER_SEGMENT, PAGE_SHIFT, PAGE_SIZE, SEGMENT_SIZE};
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::types::{Block, Page, Segment};
 
@@ -40,7 +38,12 @@ pub unsafe fn thread_free_layout<P: AllocPolicy, B: HasSegmentPool + LocalAlloca
     size: usize,
     align: usize,
 ) {
-    if size != 0 && size <= MAX_SMALL_ALLOC_SIZE && align <= MIN_BLOCK_SIZE {
+    // Derive the layout-proven small fast path from the same routing decision
+    // `alloc` used, so the two never disagree on whether a block is small
+    // (a disagreement would treat a huge allocation as small — UB). This now
+    // also covers `align > MIN_BLOCK_SIZE` small allocations served by the
+    // alignment-aware small path.
+    if size != 0 && crate::alloc::small_path_class(size, align).is_some() {
         unsafe { thread_free_classified::<P, B, true>(ptr) };
     } else {
         unsafe { thread_free_classified::<P, B, false>(ptr) };

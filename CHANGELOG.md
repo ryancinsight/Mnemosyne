@@ -40,9 +40,15 @@
   `align > 16` request — e.g. 64-byte-aligned SIMD buffers — took the
   ~2 MiB-per-allocation huge path regardless of size; a downstream consumer
   measured 512 live 256-byte/64-aligned allocations dropping from ~1056 MiB to
-  ~4 MiB mapped. Verified by a value-semantic test asserting returned-pointer
-  alignment and usability across alignments {16,32,64,128,256} and sizes
-  spanning the non-power-of-two classes.
+  ~4 MiB mapped. The alloc, free, and realloc paths now share one routing
+  decision (`small_path_class`, SSOT), so they can never disagree on whether a
+  block is small (a disagreement would be UB): the free fast path
+  (`LAYOUT_PROVES_SMALL`) and the in-place realloc target class are both derived
+  from it, and realloc no longer picks a class whose stride cannot carry the
+  alignment. Verified by value-semantic tests asserting returned-pointer
+  alignment and usability across alignments {16,32,64,128,256} (including the
+  non-power-of-two classes) and an aligned-realloc-grow alignment-preservation
+  test.
 - Large/huge allocation fallback paths in `mnemosyne-local` now share one
   helper that performs the real allocation and policy-selected byte
   initialization.
