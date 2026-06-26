@@ -76,3 +76,35 @@ fn test_zero_size_allocation_returns_null() {
         "zero-size generic allocator returned {generic_ptr:?}"
     );
 }
+
+#[test]
+fn test_small_aligned_allocations_are_aligned() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("global allocator test lock was poisoned");
+    // Alignments above MIN_BLOCK_SIZE (16) on the small path must return
+    // correctly aligned, usable memory. Sizes include ones whose natural size
+    // class has a non-power-of-two stride (40->48, 96, 100->112, 400->416),
+    // which must still honour the alignment (via a class bump or the huge
+    // fallback) — a misaligned return here would be UB for SIMD consumers.
+    for &align in &[16usize, 32, 64, 128, 256] {
+        for &size in &[1usize, 8, 40, 48, 50, 96, 100, 200, 256, 400, 1000, 4096] {
+            let layout = Layout::from_size_align(size, align).expect("valid layout");
+            unsafe {
+                let p = ALLOCATOR.alloc(layout);
+                assert!(!p.is_null(), "alloc failed size={size} align={align}");
+                assert_eq!(
+                    (p as usize) & (align - 1),
+                    0,
+                    "pointer not {align}-aligned for size={size}"
+                );
+                // Write and read back the full requested range to prove the
+                // block is usable for `size` bytes at the requested alignment.
+                core::ptr::write_bytes(p, 0xAB, size);
+                assert_eq!(*p, 0xAB);
+                assert_eq!(*p.add(size - 1), 0xAB);
+                ALLOCATOR.dealloc(p, layout);
+            }
+        }
+    }
+}

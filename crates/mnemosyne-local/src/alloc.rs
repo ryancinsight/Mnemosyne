@@ -3,7 +3,7 @@ use crate::{initialize_allocated_bytes, LocalAllocatorSelector, ThreadAllocator}
 use mnemosyne_arena::{allocate_large_or_huge, HasSegmentPool};
 use mnemosyne_core::constants::MIN_BLOCK_SIZE;
 use mnemosyne_core::policy::AllocPolicy;
-use mnemosyne_core::size_class::size_to_class_nonzero;
+use mnemosyne_core::size_class::{class_to_size, size_to_class_nonzero};
 use mnemosyne_core::validation::{is_valid_alloc_request, is_valid_layout_alloc_request};
 
 /// Allocates a memory block of the given size and alignment.
@@ -61,16 +61,36 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     size: usize,
     align: usize,
 ) -> *mut u8 {
-    if align > MIN_BLOCK_SIZE {
-        return unsafe { allocate_large_or_huge_initialized::<P, B>(size, align) };
-    }
-
     let adjusted_size = core::cmp::max(size, align);
 
-    let class = match size_to_class_nonzero(adjusted_size) {
-        Some(c) => c,
-        None => {
-            return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
+    // Alignment-aware size-class selection.
+    //
+    // The small thread-cache path can serve an allocation requiring `align`
+    // bytes whenever the chosen size class's block stride is a multiple of
+    // `align`: pages start `PAGE_SIZE`-aligned and blocks are carved at
+    // `block_size` stride, so `block_size % align == 0` makes every block in the
+    // class `align`-aligned (`align` is a validated power of two). Rounding the
+    // request up to a multiple of `align` first lets the lookup land on such a
+    // class for most sizes; classes whose stride cannot carry the alignment (the
+    // non-power-of-two classes, e.g. 48/80/96) correctly fall through to the
+    // large/huge path. This keeps small high-alignment allocations — e.g.
+    // 64-byte-aligned SIMD buffers — out of the ~2 MiB-per-allocation huge path,
+    // which previously caught every `align > 16` request regardless of size.
+    let class = if align <= MIN_BLOCK_SIZE {
+        // Every block is at least `MIN_BLOCK_SIZE`-aligned; no stride check.
+        match size_to_class_nonzero(adjusted_size) {
+            Some(c) => c,
+            None => {
+                return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
+            }
+        }
+    } else {
+        let rounded = (adjusted_size + align - 1) & !(align - 1);
+        match size_to_class_nonzero(rounded) {
+            Some(c) if class_to_size(c) & (align - 1) == 0 => c,
+            _ => {
+                return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
+            }
         }
     };
 

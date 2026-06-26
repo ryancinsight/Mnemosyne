@@ -29,6 +29,20 @@
 
 ### Changed
 
+- Small allocations requiring alignment above `MIN_BLOCK_SIZE` (16) now use the
+  small thread-cache path instead of always falling back to the large/huge path.
+  `thread_alloc_checked` rounds the request up to a multiple of `align` and
+  accepts a size class whose block stride carries the alignment
+  (`class_to_size(c) % align == 0`); page starts are `PAGE_SIZE`-aligned and
+  blocks are carved at `block_size` stride, so this guarantees every block is
+  `align`-aligned. Non-power-of-two-stride classes (48/80/96/…) still fall
+  through to the large/huge path, preserving correctness. Previously every
+  `align > 16` request — e.g. 64-byte-aligned SIMD buffers — took the
+  ~2 MiB-per-allocation huge path regardless of size; a downstream consumer
+  measured 512 live 256-byte/64-aligned allocations dropping from ~1056 MiB to
+  ~4 MiB mapped. Verified by a value-semantic test asserting returned-pointer
+  alignment and usability across alignments {16,32,64,128,256} and sizes
+  spanning the non-power-of-two classes.
 - Large/huge allocation fallback paths in `mnemosyne-local` now share one
   helper that performs the real allocation and policy-selected byte
   initialization.
