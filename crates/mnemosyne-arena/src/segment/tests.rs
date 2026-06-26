@@ -150,6 +150,52 @@ fn purge_retains_segment_when_backend_release_fails() {
     );
 }
 
+#[test]
+fn node_segment_pool_take_all_detaches_whole_chain_in_one_lock() {
+    use crate::segment::pool::list::NodeSegmentPool;
+
+    let pool = NodeSegmentPool::new();
+    let mut segs = [
+        core::mem::MaybeUninit::<Segment>::uninit(),
+        core::mem::MaybeUninit::<Segment>::uninit(),
+        core::mem::MaybeUninit::<Segment>::uninit(),
+    ];
+    for s in segs.iter_mut() {
+        let p = s.as_mut_ptr();
+        // SAFETY: `p` is a unique stack slot; `push_unbounded` only threads it
+        // onto the pool's intrusive list. The segments are never released (the
+        // test drops the pool without deallocating), so stack storage is fine.
+        unsafe {
+            Segment::initialize(p, 0x1000 as *mut u8, 0);
+            pool.push_unbounded(p);
+        }
+    }
+    assert_eq!(pool.retained_count(), 3);
+
+    let (mut head, count) = pool.take_all();
+    assert_eq!(count, 3, "take_all must report the detached count");
+    assert_eq!(
+        pool.retained_count(),
+        0,
+        "pool must be empty after take_all"
+    );
+
+    let mut walked = 0usize;
+    while !head.is_null() {
+        walked += 1;
+        // SAFETY: `head` is a node of the chain just detached from `pool`.
+        head = unsafe { (*head).next_free_segment };
+    }
+    assert_eq!(
+        walked, 3,
+        "detached chain must contain every pushed segment"
+    );
+
+    let (empty_head, empty_count) = pool.take_all();
+    assert!(empty_head.is_null());
+    assert_eq!(empty_count, 0);
+}
+
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 #[test]
 fn fresh_segment_install_increments_guard_telemetry_and_round_trips() {

@@ -16,27 +16,12 @@ pub struct GlobalSegmentPool {
 }
 
 impl GlobalSegmentPool {
-    /// Creates a new empty `GlobalSegmentPool` with 16 NUMA node sub-pools.
+    /// Creates a new empty `GlobalSegmentPool` with `NUMA_BUCKETS` node sub-pools.
     pub const fn new() -> Self {
+        // Derive the array length from the `NUMA_BUCKETS` SSOT rather than a
+        // hand-written literal, so the fan-out can never drift from the constant.
         Self {
-            nodes: [
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-                NodeSegmentPool::new(),
-            ],
+            nodes: [const { NodeSegmentPool::new() }; NUMA_BUCKETS],
         }
     }
 
@@ -122,6 +107,13 @@ impl GlobalSegmentPool {
             }
         }
         None
+    }
+
+    /// The per-NUMA-node sub-pools, for sweeps that detach each node's chain
+    /// under a single lock (see [`NodeSegmentPool::take_all`]).
+    #[inline]
+    pub(crate) fn nodes(&self) -> &[NodeSegmentPool] {
+        &self.nodes
     }
 
     #[inline]

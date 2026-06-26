@@ -150,27 +150,12 @@ impl GlobalHugePool {
     /// to ~16 GiB under a flat count cap). See [`bucket_block_cap`].
     pub const MAX_CACHED_HUGE_BYTES_PER_BUCKET: usize = 256 * 1024 * 1024;
 
-    /// Creates a new empty `GlobalHugePool` with 16 NUMA node sub-pools.
+    /// Creates a new empty `GlobalHugePool` with `NUMA_BUCKETS` node sub-pools.
     pub const fn new() -> Self {
+        // Derive the array length from the `NUMA_BUCKETS` SSOT rather than a
+        // hand-written literal, so the fan-out can never drift from the constant.
         Self {
-            nodes: [
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-                NodeHugePool::new(),
-            ],
+            nodes: [const { NodeHugePool::new() }; NUMA_BUCKETS],
         }
     }
 

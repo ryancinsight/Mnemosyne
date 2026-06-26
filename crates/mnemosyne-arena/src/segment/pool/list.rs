@@ -111,6 +111,32 @@ impl NodeSegmentPool {
         true
     }
 
+    /// Detaches the entire retained chain under a single lock acquisition,
+    /// returning its head (or null) and the number of segments detached, and
+    /// leaving the pool empty.
+    ///
+    /// This lets a purge/reset sweep take one lock per node instead of one per
+    /// segment (mirroring [`super::huge_pool::GlobalHugePool::purge`]), so it no
+    /// longer serializes round-by-round with allocators contending the same
+    /// per-node lock. Ownership of every detached segment transfers to the
+    /// caller, which must release or re-cache them.
+    #[inline]
+    pub fn take_all(&self) -> (*mut Segment, usize) {
+        self.lock.lock();
+        // Safety: We hold the spinlock, so we have exclusive access to the state.
+        let head = unsafe {
+            let state = &mut *self.state.get();
+            let h = state.head;
+            state.head = core::ptr::null_mut();
+            h
+        };
+        // `retained` is maintained equal to the chain length under the lock, so
+        // the swapped-out value is the detached count.
+        let count = self.retained.value.swap(0, Ordering::Relaxed);
+        self.lock.unlock();
+        (head, count)
+    }
+
     /// Pops a segment from the pool, if available.
     #[inline]
     pub fn pop(&self) -> Option<*mut Segment> {

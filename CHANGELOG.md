@@ -29,6 +29,17 @@
 
 ### Changed
 
+- `purge_segment_pool`/`reset_segment_pool` now detach each NUMA node's retained
+  chain under a single lock (new `NodeSegmentPool::take_all`) and run the OS
+  release/reset off-lock, instead of one lock acquire/release per segment. With
+  up to `MAX_RETAINED_SEGMENTS_LIMIT` (1024) segments this replaces up to ~1024
+  lock round-trips on the per-node spinlock with one per node, so the decay
+  thread no longer serializes round-by-round with allocators on the segment-refill
+  hot path (mirrors `GlobalHugePool::purge`). Telemetry (`purge_calls`/`purged`/
+  `reset_*`) is unchanged. Covered by a `take_all` value-semantic test.
+- `GlobalSegmentPool::new`/`GlobalHugePool::new` build their node arrays from the
+  `NUMA_BUCKETS` SSOT (`[const { Node*Pool::new() }; NUMA_BUCKETS]`) instead of a
+  hand-written 16-element literal, so the fan-out can never drift from the constant.
 - Huge-pool retention is now bounded by bytes per bucket, not just block count.
   A flat `MAX_CACHED_HUGE_BLOCKS` (1024) count cap let a large-size bucket retain
   up to ~16 GiB of idle mappings (1024 × 16 MiB); `bucket_block_cap` now caps each

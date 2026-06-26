@@ -309,23 +309,41 @@ pub unsafe fn release_segment_mapping<B: HasSegmentPool>(segment: *mut Segment) 
 /// The caller must ensure that no threads are concurrently mutating the segment pool
 /// or accessing purged segment memory.
 pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
-    let mut purged = 0;
     let pool = B::global_segment_pool();
-    while let Some(segment) = pool.pop() {
-        // Safety: segment is a valid allocated Segment popped from the global pool.
-        // We retain ownership if the backend reports release failure, so pool
-        // metadata never claims a purge for a still-owned mapping.
-        match unsafe { release_segment_mapping::<B>(segment) } {
-            SegmentRelease::Released => purged += 1,
-            SegmentRelease::RetainedAfterFailure => {
-                // SAFETY: the backend declined to release `segment`, so it is
-                // still a valid, exclusively-owned `Segment`; re-cache it rather
-                // than record a purge for a mapping we still own.
-                unsafe { pool.push_unbounded(segment) };
-                break;
+    // Detach each node's retained chain under a single lock, then run the
+    // OS-release syscalls lock-free on the detached chain. This takes one lock
+    // per node instead of one per segment, so the decay thread no longer
+    // serializes round-by-round with allocators contending the same per-node
+    // lock (mirrors `GlobalHugePool::purge`).
+    let mut purged = 0usize;
+    for node in pool.nodes() {
+        let (mut head, _count) = node.take_all();
+        while !head.is_null() {
+            let segment = head;
+            // SAFETY: `segment` is a node of the chain detached from this pool
+            // under its lock, so it is a valid, exclusively-owned `Segment`;
+            // `next` is read before the mapping is released.
+            head = unsafe { (*segment).next_free_segment };
+            match unsafe { release_segment_mapping::<B>(segment) } {
+                SegmentRelease::Released => purged += 1,
+                SegmentRelease::RetainedAfterFailure => {
+                    // The backend declined to release `segment`; re-cache it and
+                    // every still-unprocessed segment for this node, then stop
+                    // sweeping it (matching the prior stop-on-failure behavior so
+                    // pool metadata never claims a purge for a mapping we own).
+                    unsafe { node.push_unbounded(segment) };
+                    while !head.is_null() {
+                        let s = head;
+                        head = unsafe { (*s).next_free_segment };
+                        unsafe { node.push_unbounded(s) };
+                    }
+                    break;
+                }
             }
         }
     }
+    // One purge "call" per invocation, with the total released count (preserves
+    // the prior telemetry contract).
     pool.record_purge(purged);
 
     // Safety: Releases all cached huge blocks back to the OS.
@@ -358,42 +376,33 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
     }
 
     let pool = B::global_segment_pool();
-    let mut list_head: *mut Segment = core::ptr::null_mut();
-    while let Some(segment) = pool.pop() {
-        // SAFETY: each `segment` is freshly popped from the pool and thus a valid,
-        // exclusively-owned `Segment`; threading it onto the local `list_head`
-        // chain via `next_free_segment` only writes its own header field.
-        unsafe {
-            (*segment).next_free_segment = list_head;
-            list_head = segment;
-        }
-    }
-
-    // Reset each segment's mapping and push it back. The reset result is
-    // advisory: a backend without `page_reset` support (or a kernel that
-    // declines the advice) returns false, in which case we leave the
-    // mapping untouched and simply re-cache the segment.
+    // Detach each node's chain under one lock, reset each segment's user pages,
+    // and re-cache it (segments stay owned by the allocator; only RSS drops).
+    // Batch-detaching avoids one lock acquisition per segment on the drain.
     let mut reset_count = 0usize;
-    let mut curr = list_head;
-    while !curr.is_null() {
-        let segment = curr;
-        // SAFETY: `segment` is a node of the locally-owned `list_head` chain, so
-        // it is a valid, exclusively-owned `Segment`. `next` is read before the
-        // links are cleared. Per this function's contract the segment is unused,
-        // so resetting `[segment + PAGE_SIZE, segment + SEGMENT_SIZE)` — its user
-        // pages, never the page-0 header — discards no live data, and pushing it
-        // back keeps it cached for reuse.
-        unsafe {
-            curr = (*segment).next_free_segment;
-            (*segment).next_free_segment = core::ptr::null_mut();
-            let reset_ptr = (segment as usize + PAGE_SIZE) as *mut u8;
-            let reset_size = SEGMENT_SIZE - PAGE_SIZE;
-            if B::page_reset(reset_ptr, reset_size) {
-                reset_count += 1;
+    for node in pool.nodes() {
+        let (mut head, _count) = node.take_all();
+        while !head.is_null() {
+            let segment = head;
+            // SAFETY: `segment` is a node of the chain detached from this pool
+            // under its lock, so it is a valid, exclusively-owned `Segment`.
+            // `next` is read before the links are cleared. Per this function's
+            // contract the segment is unused, so resetting
+            // `[segment + PAGE_SIZE, segment + SEGMENT_SIZE)` — its user pages,
+            // never the page-0 header — discards no live data, and pushing it
+            // back keeps it cached for reuse.
+            head = unsafe { (*segment).next_free_segment };
+            unsafe {
+                (*segment).next_free_segment = core::ptr::null_mut();
+                let reset_ptr = (segment as usize + PAGE_SIZE) as *mut u8;
+                let reset_size = SEGMENT_SIZE - PAGE_SIZE;
+                if B::page_reset(reset_ptr, reset_size) {
+                    reset_count += 1;
+                }
+                node.push_unbounded(segment);
             }
-            pool.push_unbounded(segment);
         }
     }
-
+    // One reset "call" per invocation, with the total reset count.
     pool.record_reset(reset_count);
 }
