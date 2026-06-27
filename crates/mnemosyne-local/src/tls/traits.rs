@@ -40,11 +40,9 @@ pub trait TlsProvider<B: HasSegmentPool>: 'static {
     /// Friendly identifier for diagnostics and benchmarking.
     const IDENTIFIER: &'static str;
 
-    /// Runs `f` with a mutable reference to the thread-local allocator cache.
+    /// Runs `f` with a mutable reference to the thread-local allocator cache,
+    /// arming the re-entrancy guard.
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R>;
-
-    /// Runs `f` with the thread-local allocator cache, arming the re-entrancy guard.
-    fn with_allocator_guard<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R>;
 
     /// Runs `f` with the thread-local allocator cache without arming the re-entrancy guard.
     ///

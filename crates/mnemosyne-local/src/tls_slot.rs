@@ -209,15 +209,11 @@ fn cold_arm_thread_exit<B: HasSegmentPool>(
 
 /// Trait resolving dynamic backend-specific thread-local cache selection.
 pub trait LocalAllocatorSelector<B: HasSegmentPool>: HasSegmentPool {
-    /// Evaluates the closure with a mutable reference to the thread-local allocator cache.
+    /// Evaluates the closure with a mutable reference to the thread-local allocator cache,
+    /// arming the re-entrancy guard.
     ///
     /// Returns `None` if the allocator is already borrowed (re-entrancy detected).
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R>;
-
-    /// Runs `f` with the thread-local allocator when the allocation guard is clear.
-    ///
-    /// Returns `None` when allocation is already in progress on this thread.
-    fn with_allocator_guard<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R>;
 
     /// Runs `f` with the thread-local allocator cache **without** arming the
     /// re-entrancy guard, returning `None` on same-thread re-entry.

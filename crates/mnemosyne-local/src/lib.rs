@@ -188,13 +188,6 @@ macro_rules! impl_local_allocator_selector {
                 }
 
                 #[inline(always)]
-                fn with_allocator_guard<R>(
-                    f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
-                ) -> Option<R> {
-                    <SelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator_guard(f)
-                }
-
-                #[inline(always)]
                 unsafe fn with_allocator_unguarded<R>(
                     f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
                 ) -> Option<R> {

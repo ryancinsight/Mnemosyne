@@ -34,16 +34,15 @@ Filed from the 2026-06-27 deep contention/memory audit (read-only fan-out over
 arena/local/core/heap/backend). Ranked by value; each carries a testable
 acceptance criterion and named blocker so it is Definition-of-Ready.
 
-- [ ] [patch] Consolidate the three `TlsProvider` impls (`NativeOsTls`,
-  `AsmTls`, `NightlyTls` in `crates/mnemosyne-local/src/tls/`) into default
-  trait methods (or one blanket impl over `S: TlsSlotAccess<B>`). The slot
-  access is already abstracted behind `S`; the duplicated `~60-80` LOC is the
-  guard / unguarded / null-fallback wrapping across `with_allocator*` /
-  `get_allocator_ptr*`. Acceptance: one authoritative wrapping body, each
-  provider supplying only its distinguishing accessor; the hot-path codegen is
-  unchanged (verify `allocator cycle latency` + `saturated threaded` rows are
-  non-regressing). Concurrent-edit-sensitive (hot local TLS files) — schedule
-  when no peer agent is editing `mnemosyne-local`.
+- [ ] [patch] (Optional, low value) The cached-pointer fast path (check cell/OS
+  slot; if non-null reconstitute + `is_allocating` guard + run; else init) is
+  structurally repeated between `with_allocator` and `with_allocator_unguarded`
+  within `CachedCellTls` and `NativeOsTls`/`AsmTls`. A shared helper
+  parameterized over the slot accessor could factor it, but the providers
+  genuinely differ in slot mechanism (OS key vs TEB asm vs `thread_local!` cell
+  vs nightly static) and in guard-vs-unguard semantics, so the remaining overlap
+  is small and a helper risks obscuring the hot path. Re-evaluate only if a
+  fourth caching provider appears.
 
 - [ ] [patch] Collapse the duplicated wrap-around NUMA bucket-stealing loop
   shared by `huge_pool.rs` and `segment_pool.rs` into one generic
@@ -69,6 +68,20 @@ acceptance criterion and named blocker so it is Definition-of-Ready.
   indirectly through the two pool conservation stress tests.
 
 ## Completed
+
+- [patch] Remove the redundant `with_allocator_guard` TLS entry point (DRY/SSOT).
+  It was an exact, zero-caller alias of `with_allocator` (which already arms the
+  re-entrancy guard) propagated through two public traits (`TlsProvider`,
+  `LocalAllocatorSelector`) — and implemented inconsistently: `native.rs`
+  delegated to `with_allocator` while `stable.rs` carried full *duplicated* copies
+  of the unsafe `&mut *(ptr as *mut ThreadAllocator)` cached-pointer reconstitution.
+  Deleted the method from both trait definitions, the backend-selector macro arm,
+  and all six provider impls, shrinking both the API surface and the unsafe-code
+  surface to one guarded entry point. Live hot paths (`with_allocator`,
+  `with_allocator_unguarded`) untouched, so hot-path codegen is byte-identical
+  (the removed method had no callers and emitted no code). Verification: workspace
+  builds with no broken caller (proving it was dead), fmt/clippy `-D warnings`,
+  239 workspace tests, doctests, `cargo doc` clean.
 
 - [arch] Close the ABA-immunity gap in the lock-free **segment** cache
   (`NodeSegmentPool`), the complement to the huge-pool tagged fix above. Its
