@@ -1,4 +1,10 @@
 //! Telemetry and stats tracking for OS virtual memory mappings.
+//!
+//! Pure recorder counters and the per-concern unit tests for `record_*`.
+//! The recorder is exposed as `pub(crate)` so sibling concern modules
+//! ([`crate::mapping`], [`crate::guard`], [`crate::reset`]) can update
+//! counters on confirmed OS outcomes; external consumers reach the
+//! snapshot through [`backend_memory_stats`] and [`BackendMemoryStats`].
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -132,7 +138,6 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use crate::MemoryBackendWrapper;
 
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -243,75 +248,6 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_page_reset_round_trips_on_active_mapping() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
-        use mnemosyne_core::MemoryBackend;
-        // Allocate, reset a sub-range, write through the reset region,
-        // and release. Demonstrates that the wrapper telemetry tracks
-        // confirmed resets while leaving the mapping committed and
-        // writable.
-        let size = 64 * 1024;
-        // Safety: requesting a multiple of the system page size.
-        let ptr = unsafe { MemoryBackendWrapper::allocate(size) };
-        assert!(!ptr.is_null());
-
-        let stats_before = backend_memory_stats();
-        // Safety: ptr covers `size` bytes; the reset request is valid
-        // for the full mapping.
-        let reset = unsafe { MemoryBackendWrapper::page_reset(ptr, size) };
-        let stats_after = backend_memory_stats();
-
-        if reset {
-            assert_eq!(
-                stats_after.page_reset_calls,
-                stats_before.page_reset_calls + 1
-            );
-            assert_eq!(
-                stats_after.page_reset_bytes,
-                stats_before.page_reset_bytes + size
-            );
-        }
-        // current_mapped_bytes must not change regardless of reset outcome.
-        assert_eq!(
-            stats_after.current_mapped_bytes, stats_before.current_mapped_bytes,
-            "page_reset must never alter current_mapped_bytes"
-        );
-
-        // The mapping remains writable after reset. Touch a byte to prove
-        // the kernel did not unmap the region.
-        // Safety: ptr is still a valid committed mapping of `size` bytes.
-        unsafe {
-            ptr.write_volatile(0xCC);
-            assert_eq!(ptr.read_volatile(), 0xCC);
-        }
-
-        // Safety: ptr is the exact base of the mapping.
-        let released = unsafe { MemoryBackendWrapper::deallocate(ptr, size) };
-        assert!(released);
-    }
-
-    #[test]
-    fn wrapper_page_reset_rejects_null_and_zero() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
-        use mnemosyne_core::MemoryBackend;
-        let null_reset = unsafe { MemoryBackendWrapper::page_reset(core::ptr::null_mut(), 4096) };
-        assert!(!null_reset, "null pointer must not be accepted for reset");
-
-        // Allocate a small mapping just for the size==0 check; size==0 must
-        // be rejected before reaching the platform API.
-        // Safety: requesting a system-page-aligned size.
-        let ptr = unsafe { MemoryBackendWrapper::allocate(4096) };
-        assert!(!ptr.is_null());
-        let zero_reset = unsafe { MemoryBackendWrapper::page_reset(ptr, 0) };
-        assert!(!zero_reset, "zero-size reset must not be accepted");
-        let _ = unsafe { MemoryBackendWrapper::deallocate(ptr, 4096) };
-    }
-
-    #[test]
     fn decommit_telemetry_increments_call_and_byte_counters_only() {
         let _guard = TEST_LOCK
             .lock()
@@ -344,54 +280,6 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_decommit_returns_slack_and_keeps_reservation_releasable() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
-        use mnemosyne_core::MemoryBackend;
-        // Allocate a multi-page mapping, decommit the trailing half, confirm
-        // telemetry, and prove the base reservation still releases cleanly
-        // (VirtualFree(MEM_RELEASE) / munmap cover decommitted subranges). The
-        // decommitted range is intentionally never touched afterward, since on
-        // Windows it faults until re-committed.
-        let size = 128 * 1024;
-        // Safety: requesting a multiple of the system page size.
-        let ptr = unsafe { MemoryBackendWrapper::allocate(size) };
-        assert!(!ptr.is_null());
-
-        let half = size / 2;
-        // Safety: [ptr + half, ptr + size) is a page-aligned subrange of the
-        // mapping holding no live data.
-        let tail = unsafe { ptr.add(half) };
-
-        let before = backend_memory_stats();
-        // Safety: tail covers `half` bytes inside the live mapping.
-        let decommitted = unsafe { MemoryBackendWrapper::decommit(tail, half) };
-        let after = backend_memory_stats();
-
-        if decommitted {
-            assert_eq!(after.decommit_calls, before.decommit_calls + 1);
-            assert_eq!(after.decommit_bytes, before.decommit_bytes + half);
-        }
-        assert_eq!(
-            after.current_mapped_bytes, before.current_mapped_bytes,
-            "decommit must never alter current_mapped_bytes"
-        );
-
-        // The still-committed first half remains writable.
-        // Safety: [ptr, ptr + half) was not decommitted and stays committed.
-        unsafe {
-            ptr.write_volatile(0x5A);
-            assert_eq!(ptr.read_volatile(), 0x5A);
-        }
-
-        // The base reservation releases cleanly despite the decommitted tail.
-        // Safety: ptr is the exact base of the mapping.
-        let released = unsafe { MemoryBackendWrapper::deallocate(ptr, size) };
-        assert!(released, "release failed after decommitting a subrange");
-    }
-
-    #[test]
     fn guard_telemetry_increments_call_and_byte_counters_only() {
         let _guard = TEST_LOCK
             .lock()
@@ -418,69 +306,5 @@ mod tests {
         );
         assert_eq!(after.page_reset_calls, before.page_reset_calls);
         assert_eq!(after.unmap_calls, before.unmap_calls);
-    }
-
-    #[test]
-    fn wrapper_make_guard_records_confirmed_install_and_keeps_mapping_reserved() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
-        use mnemosyne_core::MemoryBackend;
-        // Allocate, guard the whole region, confirm telemetry, then
-        // release. The mapping must still be releasable after a guard
-        // install because VirtualFree/munmap only require a valid
-        // reservation, not RW access.
-        let size = 64 * 1024;
-        let ptr = unsafe { MemoryBackendWrapper::allocate(size) };
-        assert!(!ptr.is_null());
-
-        // Touch the mapping before guarding to confirm it is initially
-        // accessible.
-        unsafe {
-            ptr.write_volatile(0xAA);
-            assert_eq!(ptr.read_volatile(), 0xAA);
-        }
-
-        let stats_before = backend_memory_stats();
-        let guarded = unsafe { MemoryBackendWrapper::make_guard(ptr, size) };
-        let stats_after = backend_memory_stats();
-
-        assert!(
-            guarded,
-            "make_guard reported failure on a fresh writable mapping"
-        );
-        assert_eq!(
-            stats_after.guard_install_calls,
-            stats_before.guard_install_calls + 1
-        );
-        assert_eq!(
-            stats_after.guard_install_bytes,
-            stats_before.guard_install_bytes + size
-        );
-        assert_eq!(
-            stats_after.current_mapped_bytes, stats_before.current_mapped_bytes,
-            "make_guard must never alter current_mapped_bytes"
-        );
-
-        // Release the mapping. VirtualFree(MEM_RELEASE) / munmap accept
-        // a region regardless of its protection state.
-        let released = unsafe { MemoryBackendWrapper::deallocate(ptr, size) };
-        assert!(released);
-    }
-
-    #[test]
-    fn wrapper_make_guard_rejects_null_and_zero() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
-        use mnemosyne_core::MemoryBackend;
-        let null_guard = unsafe { MemoryBackendWrapper::make_guard(core::ptr::null_mut(), 4096) };
-        assert!(!null_guard, "null pointer must not be accepted for guard");
-
-        let ptr = unsafe { MemoryBackendWrapper::allocate(4096) };
-        assert!(!ptr.is_null());
-        let zero_guard = unsafe { MemoryBackendWrapper::make_guard(ptr, 0) };
-        assert!(!zero_guard, "zero-size guard must not be accepted");
-        let _ = unsafe { MemoryBackendWrapper::deallocate(ptr, 4096) };
     }
 }

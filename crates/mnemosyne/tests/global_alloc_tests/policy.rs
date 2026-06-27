@@ -119,7 +119,7 @@ fn test_cuda_unified_backend() {
         if !is_cuda_available() {
             return;
         }
-        let ctx = unsafe { mnemosyne_backend::cuda::create_temp_context() };
+        let ctx = unsafe { mnemosyne_backend::backends::cuda::create_temp_context() };
         if ctx.is_null() {
             return;
         }
@@ -181,6 +181,6 @@ fn test_cuda_unified_backend() {
         // Verify is_cuda_available is callable
         let _ = is_cuda_available();
 
-        unsafe { mnemosyne_backend::cuda::destroy_temp_context(ctx) };
+        unsafe { mnemosyne_backend::backends::cuda::destroy_temp_context(ctx) };
     }
 }

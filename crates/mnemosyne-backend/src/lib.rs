@@ -1,193 +1,55 @@
 //! Low-level OS page allocation backend mapping interface.
+//!
+//! The crate is organized by concern so each leaf is one Rust
+//! feature/concern with zero behavior change and zero benchmark risk:
+//!
+//! - [`mapping`] owns the [`MemoryBackendWrapper`] struct shape and the
+//!   `allocate` / `deallocate` impl block (page-aligned mapping
+//!   creation and release), forwarding confirmed OS releases to the
+//!   [`recorders`] layer.
+//! - [`guard`] owns the `make_guard` impl block
+//!   (`PROT_NONE` / `PAGE_NOACCESS` install).
+//! - [`reset`] owns the `page_reset` and `decommit` impl blocks
+//!   (content-discard and commit-charge release).
+//! - [`recorders`] owns the telemetry counters, the
+//!   [`BackendMemoryStats`] snapshot, and the per-concern unit tests
+//!   for the `record_*` family.
+//! - [`backends`] owns the per-OS / per-platform backend
+//!   implementations (`UnixBackend`, `WindowsBackend`, the CUDA
+//!   variants, and `WgpuStagingBackend`).
+//!
+//! Public re-exports at the crate root keep the canonical
+//! `mnemosyne_backend::CudaUnifiedBackend`, `MemoryBackendWrapper`,
+//! and `backend_memory_stats` paths while backend-specific helpers
+//! live under [`backends`].
 
 #![no_std]
 
-#[cfg(target_family = "windows")]
-mod windows;
-#[cfg(target_family = "windows")]
-pub use windows::WindowsBackend as DefaultBackend;
+pub mod backends;
+pub mod guard;
+pub mod mapping;
+pub mod recorders;
+pub mod reset;
 
-#[cfg(target_family = "unix")]
-mod unix;
-#[cfg(target_family = "unix")]
-pub use unix::UnixBackend as DefaultBackend;
-
-pub mod cuda;
-pub use cuda::{is_cuda_available, CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend};
-
-pub mod telemetry;
-pub use telemetry::{backend_memory_stats, BackendMemoryStats};
+pub use backends::cuda::{
+    is_cuda_available, CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend,
+};
+pub use backends::wgpu::WgpuStagingBackend;
+pub use backends::DefaultBackend;
+pub use mapping::MemoryBackendWrapper;
+pub use recorders::{backend_memory_stats, BackendMemoryStats};
 
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::AtomicPtr;
 
-/// Global static callbacks for hooking a third-party allocator (like wgpu) into Mnemosyne.
+/// Global static callback for hooking a third-party allocator's
+/// allocate path (typically wgpu's staging allocation hook) into
+/// Mnemosyne. [`crate::backends::wgpu::WgpuStagingBackend`] reads
+/// this pointer on every `allocate`; consumers (e.g.
+/// `hephaestus-wgpu`) register their own function pointer at startup.
 pub static WGPU_ALLOCATE_CALLBACK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Global static callback for hooking a third-party allocator's
+/// deallocate path into Mnemosyne. Mirror of
+/// [`WGPU_ALLOCATE_CALLBACK`] for the release side.
 pub static WGPU_DEALLOCATE_CALLBACK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
-
-/// A memory backend that delegates allocation/deallocation to registered callbacks.
-/// Used to hook wgpu buffer staging/allocation into Mnemosyne.
-pub struct WgpuStagingBackend;
-
-impl mnemosyne_core::MemoryBackend for WgpuStagingBackend {
-    const SUPPORTS_PAGE_RESET: bool = false;
-    const SUPPORTS_MAKE_GUARD: bool = false;
-    const SUPPORTS_DECOMMIT: bool = false;
-
-    #[inline]
-    unsafe fn allocate(size: usize) -> *mut u8 {
-        let callback = WGPU_ALLOCATE_CALLBACK.load(Ordering::Acquire);
-        if !callback.is_null() {
-            type AllocFn = unsafe extern "C" fn(usize) -> *mut u8;
-            let alloc_fn: AllocFn = unsafe { core::mem::transmute(callback) };
-            unsafe { alloc_fn(size) }
-        } else {
-            core::ptr::null_mut()
-        }
-    }
-
-    #[inline]
-    unsafe fn deallocate(ptr: *mut u8, size: usize) -> bool {
-        let callback = WGPU_DEALLOCATE_CALLBACK.load(Ordering::Acquire);
-        if !callback.is_null() {
-            type DeallocFn = unsafe extern "C" fn(*mut u8, usize) -> bool;
-            let dealloc_fn: DeallocFn = unsafe { core::mem::transmute(callback) };
-            unsafe { dealloc_fn(ptr, size) }
-        } else {
-            false
-        }
-    }
-}
-
-/// High-level OS page mapping backend helper.
-pub struct MemoryBackendWrapper;
-
-impl mnemosyne_core::MemoryBackend for MemoryBackendWrapper {
-    const SUPPORTS_PAGE_RESET: bool = DefaultBackend::SUPPORTS_PAGE_RESET;
-    const SUPPORTS_MAKE_GUARD: bool = DefaultBackend::SUPPORTS_MAKE_GUARD;
-    const SUPPORTS_DECOMMIT: bool = DefaultBackend::SUPPORTS_DECOMMIT;
-    const ENABLE_CPU_CACHE: bool = DefaultBackend::ENABLE_CPU_CACHE;
-
-    /// Allocates memory from the OS.
-    ///
-    /// # Safety
-    ///
-    /// Size must be greater than zero and page-aligned.
-    #[inline(always)]
-    unsafe fn allocate(size: usize) -> *mut u8 {
-        // Safety: The size must be page-aligned and greater than zero.
-        // We forward the allocation request to the target platform's backend safely.
-        let ptr = unsafe {
-            #[cfg(target_family = "windows")]
-            {
-                <DefaultBackend as mnemosyne_core::MemoryBackend>::allocate(size)
-            }
-            #[cfg(target_family = "unix")]
-            {
-                <DefaultBackend as mnemosyne_core::MemoryBackend>::allocate(size)
-            }
-            #[cfg(not(any(target_family = "windows", target_family = "unix")))]
-            {
-                compile_error!("Unsupported target OS family");
-            }
-        };
-        if !ptr.is_null() {
-            telemetry::record_map(size);
-        }
-        ptr
-    }
-
-    /// Releases memory to the OS.
-    ///
-    /// # Safety
-    ///
-    /// The ptr must be valid and size must match the allocated size.
-    #[inline(always)]
-    unsafe fn deallocate(ptr: *mut u8, size: usize) -> bool {
-        if ptr.is_null() {
-            return false;
-        }
-        // Safety: The ptr must be valid and size must match the allocated size.
-        // We forward the deallocation request to the target platform's backend
-        // safely and only record an "unmapped bytes" delta when the OS release
-        // confirms success, so the live mapping set always agrees with
-        // `current_mapped_bytes`.
-        let released = unsafe {
-            #[cfg(target_family = "windows")]
-            {
-                <DefaultBackend as mnemosyne_core::MemoryBackend>::deallocate(ptr, size)
-            }
-            #[cfg(target_family = "unix")]
-            {
-                <DefaultBackend as mnemosyne_core::MemoryBackend>::deallocate(ptr, size)
-            }
-            #[cfg(not(any(target_family = "windows", target_family = "unix")))]
-            {
-                compile_error!("Unsupported target OS family")
-            }
-        };
-        if released {
-            telemetry::record_unmap(size);
-        } else {
-            telemetry::record_unmap_failure();
-        }
-        released
-    }
-
-    /// Drops the physical backing of an idle page range while keeping the
-    /// virtual mapping committed. Telemetry records confirmed resets only
-    /// (call count and byte count); `current_mapped_bytes` is intentionally
-    /// not decremented because the address space remains owned by the
-    /// allocator.
-    #[inline(always)]
-    unsafe fn page_reset(ptr: *mut u8, size: usize) -> bool {
-        if ptr.is_null() || size == 0 {
-            return false;
-        }
-        // Safety: caller upholds the per-platform page_reset contract.
-        let reset =
-            unsafe { <DefaultBackend as mnemosyne_core::MemoryBackend>::page_reset(ptr, size) };
-        if reset {
-            telemetry::record_page_reset(size);
-        }
-        reset
-    }
-
-    /// Installs a `PROT_NONE` / `PAGE_NOACCESS` guard region on an
-    /// active mapping. Telemetry records confirmed installs only
-    /// (`guard_install_calls`, `guard_install_bytes`);
-    /// `current_mapped_bytes` is intentionally not decremented because
-    /// the mapping remains reserved.
-    #[inline(always)]
-    unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
-        if ptr.is_null() || size == 0 {
-            return false;
-        }
-        // Safety: caller upholds the per-platform make_guard contract.
-        let guarded =
-            unsafe { <DefaultBackend as mnemosyne_core::MemoryBackend>::make_guard(ptr, size) };
-        if guarded {
-            telemetry::record_guard_install(size);
-        }
-        guarded
-    }
-
-    /// Releases the commit charge / resident backing of a page-aligned range
-    /// while keeping the reservation. Telemetry records confirmed decommits
-    /// only (`decommit_calls`, `decommit_bytes`); `current_mapped_bytes` is
-    /// intentionally not decremented because the address space stays reserved
-    /// until `deallocate`.
-    #[inline(always)]
-    unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
-        if ptr.is_null() || size == 0 {
-            return false;
-        }
-        // Safety: caller upholds the per-platform decommit contract.
-        let decommitted =
-            unsafe { <DefaultBackend as mnemosyne_core::MemoryBackend>::decommit(ptr, size) };
-        if decommitted {
-            telemetry::record_decommit(size);
-        }
-        decommitted
-    }
-}
