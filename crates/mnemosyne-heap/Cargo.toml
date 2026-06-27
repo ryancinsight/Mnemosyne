@@ -20,6 +20,15 @@ mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-arena = { path = "../mnemosyne-arena" }
 mnemosyne-local = { path = "../mnemosyne-local" }
 mnemosyne-prof = { path = "../mnemosyne-prof" }
+# Phase 3 Stage D1 device-memory integration: themis owns PlacementHint +
+# MemoryTier (atlas ADR 0002). Used here as the typed placement vocabulary
+# and the host-allocatable / budget-only classification
+# (MemoryTier::is_host_allocatable). Unpinned git dep: resolves to the
+# default branch's tip on `cargo update`, so the heap always builds against
+# the latest law semantics. `default-features = false, features = ["std"]`
+# matches `mnemosyne-local`/`mnemosyne-arena` so a single themis build is
+# shared by all three.
+themis = { git = "https://github.com/ryancinsight/themis", version = "0.9", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 mnemosyne = { path = "../mnemosyne" }

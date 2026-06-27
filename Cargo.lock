@@ -457,6 +457,7 @@ dependencies = [
  "mnemosyne-core",
  "mnemosyne-local",
  "mnemosyne-prof",
+ "themis",
 ]
 
 [[package]]

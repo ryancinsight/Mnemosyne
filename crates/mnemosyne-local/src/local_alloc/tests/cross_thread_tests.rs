@@ -303,3 +303,73 @@ fn test_periodic_defragmentation_segment_reclaim() {
         assert!(alloc.is_current_segment(seg1));
     }
 }
+
+/// Anchors the Phase 1 SAFETY closure on `thread_free_cold`'s
+/// `page.thread_free.push` site. Allocates on the owning thread and
+/// frees on a non-owning thread, exercising the cross-thread path
+/// (`is_owner == false`), and asserts that exactly one block landed
+/// in `(*page).thread_free` for the owning thread's later reclamation.
+///
+/// Under `#[cfg(test)]` the per-CPU cache is disabled
+/// (`PER_CPU_CACHE_ENABLED = false`), so the cold path's
+/// `try_free_cpu` early-return never fires and the atomic push runs
+/// unconditionally — making this a direct regression anchor for the
+/// SAFETY comment:
+/// > `block` came from this allocator under the same backend;
+/// > non-nullness is the allocator invariant.
+/// > The page-local atomic free list takes ownership of the pointer.
+#[test]
+fn cross_thread_free_pushes_block_to_page_thread_free_queue() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("local allocator test lock was poisoned");
+    use std::thread;
+
+    let mut owner = ThreadAllocator::<DefaultBackend>::new();
+    // Safety: owner is initialized and valid.
+    let ptr = unsafe { owner.alloc::<StandardPolicy>(32) };
+    assert!(
+        !ptr.is_null(),
+        "owner alloc for thread_free queue anchor failed"
+    );
+    let ptr_val = ptr as usize;
+
+    let segment_addr = ptr_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+    let segment = segment_addr as *mut Segment;
+    let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+
+    // Pre-condition: no cross-thread frees have been issued yet.
+    let page = unsafe { &(*segment).pages[page_index] };
+    assert!(
+        page.thread_free.is_empty(),
+        "thread_free must be empty before any remote free; alloc_count={}",
+        page.alloc_count,
+    );
+
+    let handle = thread::spawn(move || unsafe {
+        // Safety: ptr was returned by Mnemosyne under DefaultBackend.
+        // Thread B is not the segment owner, so `thread_free<...>`
+        // routes through `thread_free_cold`'s `page.thread_free.push`
+        // rather than the in-place active/full/empty path.
+        crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(ptr_val as *mut u8);
+    });
+    handle.join().expect("cross-thread free worker panicked");
+
+    let page = unsafe { &mut (*segment).pages[page_index] };
+    assert!(
+        !page.thread_free.is_empty(),
+        "cross-thread free did not enqueue the block on page.thread_free",
+    );
+
+    let before_alloc_count = page.alloc_count;
+    // SAFETY: caller owns the page through the still-live owner segment;
+    // the typed wrapper recomputes `segment`/`page_index` and reads
+    // `StandardPolicy::ENABLE_FREE_LIST_ENCRYPTION` for the cookie.
+    let reclaimed = unsafe { page.reclaim_thread_free::<StandardPolicy>() };
+    assert_eq!(
+        reclaimed, 1,
+        "expected exactly one block from the cross-thread free on this page; got {} \
+         (alloc_count before drain = {})",
+        reclaimed, before_alloc_count,
+    );
+}

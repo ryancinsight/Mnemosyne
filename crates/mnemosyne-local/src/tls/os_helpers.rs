@@ -123,6 +123,8 @@ pub(crate) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
 pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
     if index < 64 {
         let val: *mut core::ffi::c_void;
+        // SAFETY: `index < 64` is a `TlsAlloc`-allocated key in the
+        // TEB's 64-slot inline TLS array at TEB+0x1480.
         core::arch::asm!(
             "mov {}, gs:[0x1480 + {} * 8]",
             out(reg) val,
@@ -132,6 +134,9 @@ pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
         val
     } else {
         let teb: *mut u8;
+        // SAFETY: `gs:[0x30]` reads the TEB `Self` pointer; the
+        // follow-up expansion-slot pointer at TEB+0x1780 is
+        // null-checked before any dereference.
         core::arch::asm!(
             "mov {}, gs:[0x30]",
             out(reg) teb,
@@ -154,6 +159,8 @@ pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
 #[inline(always)]
 pub(crate) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
     if index < 64 {
+        // SAFETY: `index < 64` is a `TlsAlloc`-allocated slot in the
+        // TEB's 64-slot inline TLS array.
         core::arch::asm!(
             "mov gs:[0x1480 + {} * 8], {}",
             in(reg) index as usize,
@@ -162,6 +169,9 @@ pub(crate) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void)
         );
     } else {
         let teb: *mut u8;
+        // SAFETY: `gs:[0x30]` reads the TEB `Self` pointer; the
+        // follow-up expansion-slot pointer is null-checked before
+        // any dereference or write.
         core::arch::asm!(
             "mov {}, gs:[0x30]",
             out(reg) teb,

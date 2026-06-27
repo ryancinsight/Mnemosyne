@@ -69,6 +69,10 @@ unsafe fn push_owned_segment_front<'id, B: HasSegmentPool>(
     segment: BrandedSegment<'id>,
 ) {
     let raw_segment = segment.ptr();
+    // SAFETY: `segment` and the list rooted at `head_slot` belong to
+    // the allocator permission represented by `token`; no other
+    // GhostCell permission may touch them, so the prev/next link
+    // writes plus the head-slot update are exclusive here.
     unsafe {
         (*raw_segment).prev_owned_segment = core::ptr::null_mut();
         (*raw_segment).next_owned_segment = *head_slot;
@@ -130,6 +134,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             let tid = {
                 let val: u32;
                 unsafe {
+                    // SAFETY: `gs:[0x48]` reads TEB ClientId.UniqueThread;
+                    // seeds `SegmentOwner::from_thread_id` only.
                     core::arch::asm!(
                         "mov {0:e}, gs:[0x48]",
                         out(reg) val,
@@ -138,6 +144,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 }
                 val
             };
+            // SAFETY: `segment` is the live caller-passed segment;
+            // `self` is the owning allocator. The writes are not
+            // aliased by any concurrent thread-and-permission accessor.
             unsafe {
                 (*segment).owner = SegmentOwner::from_thread_id(tid);
                 (*segment).owner_allocator = (self as *mut ThreadAllocator<B>).cast();
@@ -159,6 +168,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         self.owned_segment_count += 1;
 
         if P::ENABLE_FREE_LIST_ENCRYPTION {
+            // SAFETY: `segment` is the just-pushed live segment, owned
+            // exclusively by `self`. `initialize_segment_keys` writes
+            // per-page XOR keys derived from the TLS seed into
+            // `(*segment).keys[i]` for every page of the segment; the
+            // segment mapping is already initialized by the arena.
             unsafe { self.initialize_segment_keys(segment) };
         }
     }

@@ -60,12 +60,19 @@ unsafe fn init_segment_layout(
     let payload_end = user_addr.checked_add(size)?;
     let mapping_end = (raw_ptr as usize).checked_add(total_alloc_size)?;
 
-    debug_assert_eq!(user_addr % core::mem::align_of::<*mut Segment>(), 0,
-        "user pointer must be aligned to *mut Segment");
-    debug_assert!(metadata_addr >= aligned_addr && metadata_addr < user_addr,
-        "metadata slot {metadata_addr:#x} must remain inside reserved prefix");
-    debug_assert!(payload_end <= mapping_end,
-        "payload end {payload_end:#x} must remain inside backend mapping end {mapping_end:#x}");
+    debug_assert_eq!(
+        user_addr % core::mem::align_of::<*mut Segment>(),
+        0,
+        "user pointer must be aligned to *mut Segment"
+    );
+    debug_assert!(
+        metadata_addr >= aligned_addr && metadata_addr < user_addr,
+        "metadata slot {metadata_addr:#x} must remain inside reserved prefix"
+    );
+    debug_assert!(
+        payload_end <= mapping_end,
+        "payload end {payload_end:#x} must remain inside backend mapping end {mapping_end:#x}"
+    );
 
     // Write the back-pointer and update alloc_count (live for both paths).
     unsafe {

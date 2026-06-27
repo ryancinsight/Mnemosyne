@@ -36,5 +36,6 @@ impl Drop for ZstDrop {
 mod boxed;
 mod cell;
 mod heap;
+mod tiered;
 mod traits;
 mod vec;

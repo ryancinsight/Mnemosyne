@@ -68,12 +68,23 @@ unsafe fn thread_free_classified<
 
     let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
 
+    // SAFETY: `ptr` was previously returned by this allocator; masking
+    // `ptr_val` down by `SEGMENT_SIZE` recovers a live segment header
+    // initialized at allocation time. The page index is bounded by the
+    // `(PAGES_PER_SEGMENT - 1)` mask.
     let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
     if mnemosyne_prof::is_active() {
         unsafe { record_free_profile(ptr, page, page_index) };
     }
 
     if !LAYOUT_PROVES_SMALL && page.block_size == 0 {
+        // SAFETY: huge-allocation metadata layout. `segment` is recovered
+        // from the metadata slot one pointer slot directly preceding the
+        // user payload (`(ptr as *mut *mut Segment) - 1`); every huge
+        // allocation writes this slot at `allocate_large_or_huge` time.
+        // The `pages[0].alloc_count` / `huge_mapping_suffix_from` reads,
+        // the `poison_freed_bytes` write, and the `deallocate_large_or_huge`
+        // call all stay inside the originating huge mapping.
         let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
         if P::ENABLE_POISONING {
             let size = unsafe { (*segment).pages[0].alloc_count };
@@ -104,6 +115,9 @@ unsafe fn thread_free_classified<
     #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
     let (is_owner, owner_allocator) = {
         let tid = unsafe {
+            // SAFETY: `gs:[0x48]` reads TEB ClientId.UniqueThread;
+            // the output is the current thread id used only for
+            // owner comparison. Stack/flags preserved by asm options.
             let val: u32;
             core::arch::asm!(
                 "mov {0:e}, gs:[0x48]",
@@ -128,9 +142,16 @@ unsafe fn thread_free_classified<
         if page.alloc_count == 0 {
             std::process::abort();
         }
+        // SAFETY: `block` is a user pointer previously returned by the
+        // allocator; non-nullness is the allocator invariant. Equality
+        // with `page.free` is the double-free guard.
         if Some(NonNull::new_unchecked(block)) == page.free {
             std::process::abort();
         }
+        // SAFETY: the surrounding `is_owner && !owner_allocator.is_null()`
+        // was just confirmed against `segment.owner`, so `owner_allocator`
+        // is the owning allocator pointer and no concurrent accessors
+        // exist for the current thread.
         let alloc = unsafe { &mut *(owner_allocator as *mut ThreadAllocator<B>) };
         let page_free = page.free;
         let page_alloc_count = page.alloc_count;
@@ -144,6 +165,9 @@ unsafe fn thread_free_classified<
             // Page is active
             if page_alloc_count > 1 || alloc.is_current_segment(segment) {
                 // Free in-place (either remains active, or is current segment)
+                // SAFETY: `block` is non-null by the alloc_count /
+                // page.free corruption guard above; the free-list head
+                // mutation stays inside the page this caller owns.
                 unsafe {
                     (*block).set_next::<P>(page_free, cookie);
                     page.free = Some(NonNull::new_unchecked(block));
@@ -153,6 +177,12 @@ unsafe fn thread_free_classified<
             } else if !alloc.is_allocating {
                 // Page is not current segment, and becomes empty
                 alloc.is_allocating = true;
+                // SAFETY: `block` is non-null by the alloc_count /
+                // page.free guard above; the free-list head set, the
+                // alloc_count decrement, and the branded
+                // active→empty page-list move all stay within this
+                // page and the brand-guarded page-list permission
+                // carried by `with_page_list_token`.
                 unsafe {
                     (*block).set_next::<P>(page_free, cookie);
                     page.free = Some(NonNull::new_unchecked(block));
@@ -184,6 +214,12 @@ unsafe fn thread_free_classified<
             }
         } else if !alloc.is_allocating {
             // Page is full, transitions to active (count > 1 is guaranteed since max_blocks >= 8)
+            // SAFETY: `block` is non-null by the alloc_count /
+            // page.free guard above; the free-list head and
+            // alloc_count decrement stay inside this page, and the
+            // branded `move_full_page_to_active_branded` carries the
+            // page-list token granting exclusive access to the
+            // full/active page lists.
             unsafe {
                 (*block).set_next::<P>(page_free, cookie);
                 page.free = Some(NonNull::new_unchecked(block));
@@ -205,6 +241,10 @@ unsafe fn thread_free_classified<
         }
     }
 
+    // SAFETY: `ptr`/`page`/`block` are the function's validated
+    // contract inputs from the embodiment of `thread_free`'s `// # Safety`
+    // rustdoc; the `#[cold]` helper handles the cross-thread / re-entrant
+    // push path.
     unsafe { thread_free_cold::<P, B>(ptr, page, block) };
 }
 
@@ -237,6 +277,9 @@ unsafe fn thread_free_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
     }
 
     unsafe {
+        // SAFETY: `block` came from this allocator under the same
+        // backend; non-nullness is the allocator invariant. The page-
+        // local atomic free list takes ownership of the pointer.
         page.thread_free.push::<P>(NonNull::new_unchecked(block));
     }
 }
