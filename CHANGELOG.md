@@ -29,6 +29,9 @@
 
 ### Changed
 
+- Split `mnemosyne-backend` by concern into five sibling leaf modules: [`mapping`](crates/mnemosyne-backend/src/mapping.rs) owns the `MemoryBackendWrapper` shape and central `impl MemoryBackend` block, [`guard`](crates/mnemosyne-backend/src/guard.rs) owns guard-region installation, [`reset`](crates/mnemosyne-backend/src/reset.rs) owns page-reset/decommit helpers, [`recorders`](crates/mnemosyne-backend/src/recorders.rs) owns telemetry counters and snapshots, and [`backends`](crates/mnemosyne-backend/src/backends/mod.rs) owns the per-OS / per-platform implementations. Public re-exports keep the canonical `mnemosyne_backend::*` import paths unchanged. Evidence tier: source-level static dispatch plus the backend unit suite and allocator benchmark threshold gate.
+- Added the opt-in `mnemosyne-local/dealloc-probe` feature for deallocation branch-mix auditing. Default builds compile out the probe; feature builds expose `dealloc_counters::{reset, record, snapshot, total}` and record one Relaxed atomic increment at each committed `thread_free` arm. The integration test drives real `thread_alloc` / `thread_free_layout` calls and asserts layout-proven same-owner small frees all record as `InPlaceSmall` with zero huge-classifier or cold-path hits. Evidence tier: value-semantic integration test plus feature-gated unit tests.
+- Extended the benchmark-summary enforcement set to include five realloc latency rows (`within_class_24_to_32`, `cross_class_32_to_64`, `within_class_6k_to_8k`, `cross_class_8k_to_16k`, `huge_shrink_4m_to_2m`) so future allocator changes cannot regress those paths outside the selected gate. Evidence tier: benchmark-summary config tests plus threshold-gate execution.
 - `purge_segment_pool`/`reset_segment_pool` now detach each NUMA node's retained
   chain under a single lock (new `NodeSegmentPool::take_all`) and run the OS
   release/reset off-lock, instead of one lock acquire/release per segment. With
