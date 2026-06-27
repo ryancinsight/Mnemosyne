@@ -30,13 +30,49 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Open
 
-- [ ] [patch] Extend the unsafe-discipline `// SAFETY:` closure to
-  `mnemosyne-local` and `mnemosyne-core`. Highest-value sites: the Windows TEB
-  `gs:[0x48]` inline-asm thread-id reads (`free.rs`, `local_alloc.rs`), the
-  masked-segment derefs, and the `NonNull::new_unchecked(block)` double-free
-  guards. Deferred from the arena closure to keep that change atomic and off the
-  hot local files (concurrent-edit-sensitive). Verification: same robust
-  contiguous-comment scan + full workspace gate.
+Filed from the 2026-06-27 deep contention/memory audit (read-only fan-out over
+arena/local/core/heap/backend). Ranked by value; each carries a testable
+acceptance criterion and named blocker so it is Definition-of-Ready.
+
+- [ ] [perf] Convert the `NodeHugeBucket` `SpinLock` to a lock-free Treiber
+  stack (`crates/mnemosyne-arena/src/segment/pool/huge_pool.rs`). It is the only
+  lock left on an allocation path — warm, not hot (huge/large >16 KiB caching
+  only), but the structural outlier after the `NodeSegmentPool` conversion in
+  `ba6f2a2`. Acceptance: `try_push` (advisory soft-limit `fetch_add`/load count,
+  overshoot tolerated, mirroring `NodeSegmentPool::try_push_retained`) and the
+  higher-size-bucket `pop` become lock-free Treiber ops; the exact-bucket
+  first-fit interior-unlink either keeps a narrow lock or switches to a pop-head
+  policy (records the fit-policy change). On lock removal, cache-pad the
+  bucket's `head`/`count` atomics onto separate lines (the contention audit
+  flags `lock`/`state`/`count` sharing one 64 B line). Named blocker: decide the
+  interior-unlink strategy first (ADR-light note). Verification: arena
+  `test_concurrent_aba_safeness` + huge round-trip + `--enforce-thresholds`
+  non-regression on the huge/cross-thread rows.
+
+- [ ] [patch] Consolidate the three `TlsProvider` impls (`NativeOsTls`,
+  `AsmTls`, `NightlyTls` in `crates/mnemosyne-local/src/tls/`) into default
+  trait methods (or one blanket impl over `S: TlsSlotAccess<B>`). The slot
+  access is already abstracted behind `S`; the duplicated `~60-80` LOC is the
+  guard / unguarded / null-fallback wrapping across `with_allocator*` /
+  `get_allocator_ptr*`. Acceptance: one authoritative wrapping body, each
+  provider supplying only its distinguishing accessor; the hot-path codegen is
+  unchanged (verify `allocator cycle latency` + `saturated threaded` rows are
+  non-regressing). Concurrent-edit-sensitive (hot local TLS files) — schedule
+  when no peer agent is editing `mnemosyne-local`.
+
+- [ ] [patch] Decide and document the `NodeHugeBucket` `#[repr(align(64))]`
+  tradeoff (huge_pool.rs). The blanket align costs ~70 KiB static BSS
+  (256 buckets x 6 backend statics x 47 B padding) but is zero-RSS until first
+  touch and prevents inter-bucket false sharing between adjacent size-buckets on
+  one NUMA node. Acceptance: either keep with a one-line rationale comment, or —
+  paired with the lock-free conversion above, which changes the false-sharing
+  surface — pad only the contended atomics; record the decision in gap_audit.
+
+- [ ] [patch] Collapse the duplicated wrap-around NUMA bucket-stealing loop
+  shared by `huge_pool.rs` and `segment_pool.rs` into one generic
+  `numa_steal<Pop>(start, pop_fn)` helper, and centralize the `NUMA_BUCKETS`
+  constant currently defined independently in both files (SSOT). Acceptance: one
+  steal routine, one constant; arena tests green.
 
 ## Completed
 

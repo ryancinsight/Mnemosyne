@@ -1,5 +1,32 @@
 # Gap Audit
 
+## Residual risk / open findings
+
+2026-06-27 deep audit (safety, contention-free performance, memory efficiency),
+read-only fan-out across arena/local/core/heap/backend. Tracked items filed in
+backlog.md `## Open`. Verified-clean results recorded so they are not re-audited:
+
+- Safety: the `mnemosyne-local` + `mnemosyne-core` unsafe surface is now fully
+  `// SAFETY:`-documented (this sprint), matching the prior `mnemosyne-arena`
+  closure. The 7 `unsafe impl Send/Sync` (Segment, Page, SegmentOwner, Block,
+  ThreadAllocator) each ground cross-thread soundness in the ownership-token +
+  per-page `AtomicFreeList` protocol; the `gs:[0x48]` TEB read, the
+  `cookie | 1` non-null cookie encoding, and the `do_local_free_internal`
+  double-free guards are individually justified. No site was found unsound.
+- Contention: only one lock remains on any allocation path — the warm
+  `NodeHugeBucket` SpinLock (filed). All other synchronization (AtomicFreeList,
+  per-CPU cache, NodeSegmentPool, orphan pool, telemetry) is lock-free or cold
+  with correctly-weak orderings. No over-strong `SeqCst` exists in production
+  code (every occurrence is in tests). Atomic-ordering review found one
+  low-severity smell only: `options.rs` `OPTIONS_INIT.swap(true, Acquire)`
+  publish gate is weaker than `AcqRel`, but each option store carries its own
+  `Release` so per-option visibility holds — not a data race.
+- Memory: no hot-path allocation, no removable load-bearing `PhantomData`
+  (`TieredHeap`'s redundant `_brand` was already dropped this sprint), and
+  tight integer sizing throughout. The one quantified static-size finding
+  (`NodeHugeBucket` align padding, ~70 KiB BSS) is filed with its
+  false-sharing caveat — it is zero-RSS until touched, so low priority.
+
 ## Closed
 
 - [arch] The `mnemosyne-backend` crate had grown into a mixed-concern backend module. Split the crate by concern into five sibling leaves: [`mapping`](crates/mnemosyne-backend/src/mapping.rs) owns the `MemoryBackendWrapper` shape and central `impl MemoryBackend` block; [`guard`](crates/mnemosyne-backend/src/guard.rs) owns `do_make_guard`; [`reset`](crates/mnemosyne-backend/src/reset.rs) owns `do_page_reset` and `do_decommit`; [`recorders`](crates/mnemosyne-backend/src/recorders.rs) owns telemetry counters and snapshots; [`backends`](crates/mnemosyne-backend/src/backends/mod.rs) owns the per-OS / per-platform implementations and `DefaultBackend` selector. Public re-exports keep the canonical `mnemosyne_backend::*` import paths unchanged. Evidence tier: source-level static dispatch, backend unit tests, and allocator benchmark threshold gate.
