@@ -576,7 +576,7 @@ fn test_huge_bucket_block_cap_bounds_retained_bytes() {
     // the per-bucket budget, and never exceed the flat count cap.
     for idx in 0..16usize {
         let cap = bucket_block_cap(idx);
-        assert!(cap >= 1 && cap <= GlobalHugePool::MAX_CACHED_HUGE_BLOCKS);
+        assert!((1..=GlobalHugePool::MAX_CACHED_HUGE_BLOCKS).contains(&cap));
         let max_block = 1usize << (idx + 14);
         assert!(
             cap == 1 || cap * max_block <= BUDGET,
