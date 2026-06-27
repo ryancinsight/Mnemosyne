@@ -60,6 +60,11 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
         let ptr = S::get_cached_cell(|cell| cell.get());
         if !ptr.is_null() {
+            // SAFETY: a non-null `ptr` in this thread's cache cell was written by
+            // this thread's own `slot.allocator_ptr()` in the init branch below.
+            // The cell is a thread-local `Cell`, so the pointee is exclusive to
+            // the current thread (no cross-thread aliasing); `is_allocating`
+            // rejects nested same-thread access before a second `&mut` exists.
             let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
             if alloc.is_allocating {
                 return None;
@@ -82,6 +87,10 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
     fn with_allocator_guard<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
         let ptr = S::get_cached_cell(|cell| cell.get());
         if !ptr.is_null() {
+            // SAFETY: `ptr` is this thread's own allocator pointer cached in its
+            // thread-local cell (written in the init branch below); no other
+            // thread aliases it. `is_allocating` gates same-thread re-entry, so
+            // no second live `&mut` to the cache can be created.
             let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
             if alloc.is_allocating {
                 return None;
@@ -106,6 +115,11 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
     ) -> Option<R> {
         let ptr = S::get_cached_cell(|cell| cell.get());
         if !ptr.is_null() {
+            // SAFETY: `ptr` is this thread's own allocator pointer cached in its
+            // thread-local cell; the pointee is exclusive to the current thread.
+            // `is_allocating` gates same-thread re-entry, and the caller of this
+            // `unsafe fn` upholds the no-re-entry contract of
+            // `with_allocator_unguarded`, so no aliasing `&mut` can be formed.
             let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
             if alloc.is_allocating {
                 return None;

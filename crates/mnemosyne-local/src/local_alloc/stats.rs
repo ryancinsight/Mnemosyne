@@ -68,11 +68,17 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         };
 
         for class in 0..NUM_SIZE_CLASSES {
+            // SAFETY: `active_pages[class]`/`full_pages[class]` are the heads of
+            // this allocator's own intrusive page lists; every linked `Page` is
+            // live and owned by this thread, satisfying the read-only walk's
+            // precondition.
             unsafe { accumulate_active_list(&mut snapshot, self.active_pages[class]) };
             unsafe { accumulate_active_list(&mut snapshot, self.full_pages[class]) };
         }
         // Empty pages are tracked separately: they retain stale size_class/block_size
         // from their last use, so they must not be counted as live active pages.
+        // SAFETY: `empty_pages` is the head of this allocator's own empty-page
+        // list; every linked `Page` is live and owned by this thread.
         unsafe { accumulate_empty_list(&mut snapshot, self.empty_pages) };
 
         snapshot
@@ -81,11 +87,21 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
 /// Accumulates stats for pages in an active or full list.
 /// Empty pages must not pass through this function — use `accumulate_empty_list`.
+///
+/// # Safety
+///
+/// `current` must be the head of an intrusive page list owned by the calling
+/// thread's allocator; every `Page` reachable via `next_page` must be live for
+/// the duration of the walk and not mutably aliased elsewhere.
 unsafe fn accumulate_active_list(
     snapshot: &mut ThreadAllocatorStats,
     mut current: Option<NonNull<Page>>,
 ) {
     while let Some(page_ptr) = current {
+        // SAFETY: `page_ptr` is a live, non-null `Page` from the caller-owned
+        // list (its head, then each `next_page`); the shared `&` is sound
+        // because no mutable borrow of the page is live during this read-only
+        // diagnostic walk.
         let page = unsafe { page_ptr.as_ref() };
         if page.block_size > 0 {
             let class = page.size_class as usize;
@@ -107,11 +123,20 @@ unsafe fn accumulate_active_list(
 ///
 /// Empty pages retain stale `size_class`/`block_size` from their last active
 /// use, so they must not be counted as live active pages or add to total_slots.
+///
+/// # Safety
+///
+/// `current` must be the head of the calling thread's allocator's empty-page
+/// list; every `Page` reachable via `next_page` must be live for the duration
+/// of the walk and not mutably aliased elsewhere.
 unsafe fn accumulate_empty_list(
     snapshot: &mut ThreadAllocatorStats,
     mut current: Option<NonNull<Page>>,
 ) {
     while let Some(page_ptr) = current {
+        // SAFETY: `page_ptr` is a live, non-null `Page` from the caller-owned
+        // empty list; the shared `&` is sound because no mutable borrow of the
+        // page is live during this read-only diagnostic walk.
         let page = unsafe { page_ptr.as_ref() };
         if page.block_size > 0 {
             let class = page.size_class as usize;

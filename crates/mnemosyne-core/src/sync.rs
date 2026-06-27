@@ -81,6 +81,11 @@ impl AtomicFreeList {
             let segment_addr = block_addr & !(crate::constants::SEGMENT_SIZE - 1);
             let page_index =
                 (block_addr & (crate::constants::SEGMENT_SIZE - 1)) >> crate::constants::PAGE_SHIFT;
+            // SAFETY: `block` is a live allocation, so `segment_addr` (its
+            // address masked down to `SEGMENT_SIZE`) is the base of the valid,
+            // initialized parent segment header, and `page_index` is the block's
+            // page offset within that segment, which is `< PAGES_PER_SEGMENT` —
+            // so reading the per-page encryption key from `keys` is a valid read.
             unsafe { (*(segment_addr as *const crate::types::Segment)).keys[page_index] }
         } else {
             0
@@ -161,6 +166,9 @@ impl AtomicFreeList {
             let segment_addr = block_addr & !(crate::constants::SEGMENT_SIZE - 1);
             let page_index =
                 (block_addr & (crate::constants::SEGMENT_SIZE - 1)) >> crate::constants::PAGE_SHIFT;
+            // SAFETY: as in the 64-bit `push`, `segment_addr` is the valid parent
+            // segment header for the live `block` and `page_index <
+            // PAGES_PER_SEGMENT`, so the per-page key read is valid.
             unsafe { (*(segment_addr as *const crate::types::Segment)).keys[page_index] }
         } else {
             0
@@ -216,6 +224,11 @@ impl AtomicFreeList {
                         panic!("Cycle detected in AtomicFreeList");
                     }
                 }
+                // SAFETY: `node` is `head` or a successor reached through this
+                // list, i.e. a block previously published to this `AtomicFreeList`
+                // by `push` (a valid, aligned `Block`); the `swap` above gave this
+                // thread exclusive ownership of the detached chain, so reading the
+                // next-link is sound. The cycle guard above bounds the walk.
                 current = unsafe { (*node.as_ptr()).get_next_dynamic(encrypted, cookie) };
             }
             (head, count)

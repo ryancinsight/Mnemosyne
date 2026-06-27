@@ -6,16 +6,15 @@
 //! `impl MemoryBackend for MemoryBackendWrapper` block. Per-method
 //! bodies delegate to per-concern helpers:
 //!
-//! - [`do_allocate`]/[`do_deallocate`] (mapping concern) live here.
-//! - [`crate::guard::do_make_guard`] handles `make_guard`.
-//! - [`crate::reset::do_page_reset`] / [`crate::reset::do_decommit`]
+//! - `do_allocate`/`do_deallocate` (mapping concern) live here.
+//! - `crate::guard::do_make_guard` handles `make_guard`.
+//! - `crate::reset::do_page_reset` / `crate::reset::do_decommit`
 //!   handle `page_reset` / `decommit`.
 //!
 //! Rust's trait coherence rule keeps the `impl` block in one file; the
-//! `#[inline(always)]` glue keeps the per-method delegation
-//! zero-cost at every optimization level. The resulting machine code
-//! matches the pre-split wrapper exactly, so the change is a pure
-//! structural refactor with no behavior change and no benchmark risk.
+//! `#[inline(always)]` glue keeps the per-method delegation statically
+//! dispatched with no vtable or heap allocation. Benchmark threshold
+//! gates are the empirical evidence for non-regression.
 
 use crate::recorders::{record_map, record_unmap, record_unmap_failure};
 use crate::DefaultBackend;
@@ -31,9 +30,8 @@ pub struct MemoryBackendWrapper;
 /// delegate the platform call to `B`, then forward the confirmed
 /// mapping to [`crate::recorders::record_map`].
 ///
-/// `#[inline(always)]` keeps this wrapper zero-cost at every
-/// optimization level; the resulting machine code is identical to a
-/// direct `B::allocate` + `record_map` call.
+/// `#[inline(always)]` keeps this wrapper statically dispatched at
+/// the call site.
 #[inline(always)]
 pub(crate) fn do_allocate<B: MemoryBackend>(size: usize) -> *mut u8 {
     // Safety: forwarded to the platform backend; the size contract
@@ -53,8 +51,8 @@ pub(crate) fn do_allocate<B: MemoryBackend>(size: usize) -> *mut u8 {
 /// (so `current_mapped_bytes` stays consistent with the live mapping
 /// set).
 ///
-/// `#[inline(always)]` keeps this wrapper zero-cost at every
-/// optimization level.
+/// `#[inline(always)]` keeps this wrapper statically dispatched at
+/// the call site.
 #[inline(always)]
 pub(crate) fn do_deallocate<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool {
     if ptr.is_null() {
@@ -97,8 +95,8 @@ impl MemoryBackend for MemoryBackendWrapper {
 
     /// Installs a `PROT_NONE` / `PAGE_NOACCESS` guard region.
     ///
-    /// Delegates to [`crate::guard::do_make_guard`] which records the
-    /// confirmed install through [`crate::recorders::record_guard_install`].
+    /// Delegates to `crate::guard::do_make_guard` which records the
+    /// confirmed install through `crate::recorders::record_guard_install`.
     #[inline(always)]
     unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
         crate::guard::do_make_guard::<DefaultBackend>(ptr, size)
@@ -107,8 +105,8 @@ impl MemoryBackend for MemoryBackendWrapper {
     /// Drops the physical backing of an idle page range while keeping
     /// the virtual mapping committed.
     ///
-    /// Delegates to [`crate::reset::do_page_reset`] which records the
-    /// confirmed reset through [`crate::recorders::record_page_reset`].
+    /// Delegates to `crate::reset::do_page_reset` which records the
+    /// confirmed reset through `crate::recorders::record_page_reset`.
     #[inline(always)]
     unsafe fn page_reset(ptr: *mut u8, size: usize) -> bool {
         crate::reset::do_page_reset::<DefaultBackend>(ptr, size)
@@ -117,8 +115,8 @@ impl MemoryBackend for MemoryBackendWrapper {
     /// Releases the commit charge / physical backing of a page-aligned
     /// range while keeping the reservation.
     ///
-    /// Delegates to [`crate::reset::do_decommit`] which records the
-    /// confirmed decommit through [`crate::recorders::record_decommit`].
+    /// Delegates to `crate::reset::do_decommit` which records the
+    /// confirmed decommit through `crate::recorders::record_decommit`.
     #[inline(always)]
     unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
         crate::reset::do_decommit::<DefaultBackend>(ptr, size)

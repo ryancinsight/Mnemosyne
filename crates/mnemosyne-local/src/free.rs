@@ -314,20 +314,35 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     if page.alloc_count == 0 {
         std::process::abort();
     }
+    // SAFETY: `block` is a user pointer the `# Safety` contract guarantees was
+    // returned by a prior allocation in `page`/`segment`; non-nullness is the
+    // allocator invariant, so `new_unchecked` is sound. Equality with
+    // `page.free` is the double-free guard (the head was just freed).
     if Some(NonNull::new_unchecked(block)) == page.free {
         std::process::abort();
     }
     let was_full = page.list_state == 2;
+    // SAFETY: `segment` is the live segment header owning `page` per the
+    // `# Safety` contract; `page_index` indexes its `keys` array, sized
+    // `PAGES_PER_SEGMENT`, and the caller passed the page's own index.
     let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
         unsafe { (*segment).keys[page_index] }
     } else {
         0
     };
+    // SAFETY: `block` points to a valid block in `page` per the `# Safety`
+    // contract; writing its embedded next pointer reinitializes the free-list
+    // link and stays inside the block this caller now owns.
     unsafe {
         (*block).set_next::<P>(page.free, cookie);
     }
+    // SAFETY: `block` is non-null (allocator invariant, re-confirmed by the
+    // double-free guard above); publishing it as the new free-list head.
     page.free = Some(NonNull::new_unchecked(block));
 
+    // SAFETY: `segment`/`page`/`page_index` are the matching segment, page, and
+    // its index per the `# Safety` contract; the decrement updates this page's
+    // and segment's occupancy bookkeeping under the caller's exclusive access.
     unsafe { page.decrement_alloc_count_for_segment(segment, page_index) };
     let becomes_empty = page.alloc_count == 0;
 

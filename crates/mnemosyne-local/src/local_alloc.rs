@@ -150,6 +150,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     pub unsafe fn record_defrag_operation<P: mnemosyne_core::AllocPolicy>(&mut self) {
         self.defrag_counter += 1;
         if self.defrag_counter >= 64 {
+            // SAFETY: the caller holds exclusive access to this allocator per the
+            // `# Safety` contract, which is the precondition the cold sweep needs.
             unsafe { self.run_periodic_defragmentation::<P>() };
         }
     }
@@ -159,11 +161,18 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     unsafe fn run_periodic_defragmentation<P: mnemosyne_core::AllocPolicy>(&mut self) {
         self.defrag_counter = 0;
         if self.is_allocating {
+            // SAFETY: `&mut self` is the exclusive borrow of this thread-affine
+            // allocator; the sweep walks only this allocator's own page/segment
+            // lists. The early return preserves the in-progress `is_allocating`
+            // flag so the re-entrant caller restores it.
             unsafe { self.periodic_defragmentation_sweep::<P>() };
             return;
         }
 
         self.is_allocating = true;
+        // SAFETY: as above, `&mut self` grants exclusive access to this
+        // allocator's lists; `is_allocating` is raised across the sweep to bar
+        // re-entrant fast-path mutation and lowered immediately after.
         unsafe { self.periodic_defragmentation_sweep::<P>() };
         self.is_allocating = false;
     }
@@ -180,6 +189,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             return;
         }
         if let Some(current) = self.current_segment {
+            // SAFETY: `current` is a segment exclusively owned by this allocator
+            // per the `# Safety` contract; clearing `is_current` and pruning
+            // empty pages from `page_occupied_mask` touches only its own header.
+            // Each `i` comes from the live mask so `pages[i]` is in bounds.
             unsafe {
                 let seg_ptr = current.as_ptr();
                 (*seg_ptr).is_current = false;
@@ -194,6 +207,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
         }
         if let Some(next) = segment {
+            // SAFETY: `next` is a segment exclusively owned by this allocator per
+            // the `# Safety` contract; marking it current writes only its header.
             unsafe {
                 (*next.as_ptr()).is_current = true;
             }
@@ -208,6 +223,17 @@ impl<B: HasSegmentPool> Drop for ThreadAllocator<B> {
     }
 }
 
+// SAFETY: `ThreadAllocator` is thread-affine: each instance lives in a
+// per-thread `LocalAllocatorSlot` (a `#[thread_local]` static under
+// `nightly_tls`, otherwise `std::thread_local!`) and is reached only through
+// that owning thread's TLS accessors. The raw `*mut Segment` owned-segment list
+// and `NonNull<Page>` arrays it holds are valid only for, and mutated only by,
+// that one thread. `Send` is asserted because TLS storage/initialization of the
+// slot value requires the contained type to be `Send`-eligible (the instance is
+// constructed for, and conceptually moved into, its owning thread's slot); it is
+// never shared across threads. The deliberate absence of a `Sync` impl prevents
+// `&ThreadAllocator` from crossing threads, so the thread-affine raw pointers are
+// never concurrently accessed — `Send`-but-`!Sync` is the exact required bound.
 unsafe impl<B: HasSegmentPool> Send for ThreadAllocator<B> {}
 
 #[cfg(test)]

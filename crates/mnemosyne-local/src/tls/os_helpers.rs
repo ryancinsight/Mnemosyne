@@ -21,6 +21,11 @@ pub(crate) fn get_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
 #[cold]
 #[inline(never)]
 fn init_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
+    // SAFETY: `TlsAlloc`/`TlsFree` (Windows) and `pthread_key_create`/
+    // `pthread_key_delete` (POSIX) take no caller-supplied pointers beyond the
+    // out-param `&mut key`, which is a valid stack slot; the destructor is
+    // `None`. `TlsFree`/`pthread_key_delete` are passed only a key this call
+    // just allocated, freeing it exactly once on the CAS-loser path.
     unsafe {
         #[cfg(windows)]
         {
@@ -68,6 +73,10 @@ fn init_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
 /// Reads the value stored in the OS TLS slot identified by `key`.
 #[inline(always)]
 pub(crate) fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
+    // SAFETY: `TlsGetValue`/`pthread_getspecific` read the calling thread's TLS
+    // slot identified by `key`. `key` originates from `get_os_tls_key`, i.e. a
+    // successful `TlsAlloc`/`pthread_key_create`, so it is a valid slot index;
+    // reading an unset slot returns null, which the FFI contract permits.
     unsafe {
         #[cfg(windows)]
         {
@@ -89,6 +98,10 @@ pub(crate) fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
 /// Writes a value into the OS TLS slot identified by `key`.
 #[inline(always)]
 pub(crate) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
+    // SAFETY: `TlsSetValue`/`pthread_setspecific` write `value` into the calling
+    // thread's TLS slot `key`. `key` is a valid slot from `get_os_tls_key`, and
+    // `value` is an opaque pointer the slot merely stores (never dereferenced by
+    // the OS). A non-zero/failure return aborts rather than proceeding.
     unsafe {
         #[cfg(windows)]
         {

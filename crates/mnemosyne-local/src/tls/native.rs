@@ -27,6 +27,12 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
         };
         let ptr = get_os_tls_value(key);
         if !ptr.is_null() {
+            // SAFETY: a non-null `ptr` in this thread's OS TLS slot `key` was
+            // written by this thread's own `slot.allocator_ptr()` in the init
+            // branch below; the slot lives in thread-local storage, so the
+            // pointee is exclusively owned by the current thread and no other
+            // thread aliases it. `is_allocating` rejects nested same-thread
+            // access before a second `&mut` is created.
             let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
             if alloc.is_allocating {
                 return None;
@@ -63,6 +69,13 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
         };
         let ptr = get_os_tls_value(key);
         if !ptr.is_null() {
+            // SAFETY: `ptr` is this thread's own allocator pointer stored in OS
+            // TLS slot `key`; the slot is thread-local, so the pointee is
+            // exclusive to the current thread (no cross-thread aliasing).
+            // `is_allocating` still gates same-thread re-entry, so no second
+            // live `&mut` to the cache can be created. The caller of this
+            // `unsafe fn` upholds the no-re-entry contract documented on
+            // `with_allocator_unguarded`.
             let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
             if alloc.is_allocating {
                 return None;
@@ -120,8 +133,16 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
                 slot.with_allocator(f)
             });
         };
+        // SAFETY: `key` is a `TlsAlloc`-allocated key (`get_os_tls_key`), the
+        // precondition of `get_teb_tls_slot`, which reads this thread's own TEB
+        // TLS slot.
         let ptr = unsafe { get_teb_tls_slot(key) };
         if !ptr.is_null() {
+            // SAFETY: a non-null TEB slot value was written by this thread's own
+            // `set_teb_tls_slot(key, slot.allocator_ptr())` in the init branch
+            // below. The TEB slot is per-thread, so the pointee is exclusive to
+            // the current thread; `is_allocating` rejects nested same-thread
+            // access before a second `&mut` is formed.
             let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
             if alloc.is_allocating {
                 return None;
@@ -133,6 +154,9 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
         } else {
             S::get_slot_standard(|slot| {
                 let alloc_ptr = slot.allocator_ptr();
+                // SAFETY: `key` is a `TlsAlloc`-allocated key, satisfying
+                // `set_teb_tls_slot`'s precondition; it writes this thread's
+                // own TEB slot.
                 unsafe { set_teb_tls_slot(key, alloc_ptr) };
                 slot.os_key.set(key);
                 S::arm_thread_exit(slot);
@@ -156,8 +180,15 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
                 unsafe { slot.with_allocator_unguarded(f) }
             });
         };
+        // SAFETY: `key` is a `TlsAlloc`-allocated key, satisfying
+        // `get_teb_tls_slot`'s precondition; it reads this thread's TEB slot.
         let ptr = unsafe { get_teb_tls_slot(key) };
         if !ptr.is_null() {
+            // SAFETY: `ptr` is this thread's own allocator pointer in its
+            // per-thread TEB slot; no other thread aliases it. `is_allocating`
+            // gates same-thread re-entry, and the caller of this `unsafe fn`
+            // upholds the no-re-entry contract of `with_allocator_unguarded`,
+            // so no second live `&mut` to the cache can exist.
             let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
             if alloc.is_allocating {
                 return None;
@@ -166,6 +197,8 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
         } else {
             S::get_slot_standard(|slot| {
                 let alloc_ptr = slot.allocator_ptr();
+                // SAFETY: `key` is a `TlsAlloc`-allocated key; writes this
+                // thread's own TEB slot.
                 unsafe { set_teb_tls_slot(key, alloc_ptr) };
                 slot.os_key.set(key);
                 S::arm_thread_exit(slot);
@@ -179,12 +212,16 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
         let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
             return S::get_slot_standard(|slot| slot.allocator_ptr());
         };
+        // SAFETY: `key` is a `TlsAlloc`-allocated key, satisfying
+        // `get_teb_tls_slot`'s precondition; it reads this thread's TEB slot.
         let ptr = unsafe { get_teb_tls_slot(key) };
         if !ptr.is_null() {
             ptr
         } else {
             S::get_slot_standard(|slot| {
                 let alloc_ptr = slot.allocator_ptr();
+                // SAFETY: `key` is a `TlsAlloc`-allocated key; writes this
+                // thread's own TEB slot.
                 unsafe { set_teb_tls_slot(key, alloc_ptr) };
                 slot.os_key.set(key);
                 alloc_ptr
@@ -194,6 +231,8 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
 
     #[inline(always)]
     fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
+        // SAFETY: `key` is a `TlsAlloc`-allocated key, satisfying
+        // `get_teb_tls_slot`'s precondition; it reads this thread's TEB slot.
         get_os_tls_key(S::get_os_tls_key()).map_or(core::ptr::null_mut(), |key| unsafe {
             get_teb_tls_slot(key)
         })

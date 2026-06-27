@@ -38,5 +38,13 @@ impl SegmentOwner {
     }
 }
 
+// SAFETY: `SegmentOwner` is a `#[repr(transparent)]` newtype over a plain
+// `usize` ownership token (an allocator pointer's address or a thread id). It is
+// a value, not a live reference — it confers no access to the pointee and is
+// only ever compared for equality (`matches`/`matches_thread_id`), so moving it
+// between threads (`Send`) cannot create a data race or dangling access.
 unsafe impl Send for SegmentOwner {}
+// SAFETY: the token is immutable plain-data (`usize`) read only via `Copy` and
+// equality comparison, so shared `&SegmentOwner` access across threads (`Sync`)
+// observes no mutation and no aliasing hazard.
 unsafe impl Sync for SegmentOwner {}

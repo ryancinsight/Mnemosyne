@@ -4,6 +4,43 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Add opt-in deallocation branch-mix instrumentation behind the
+  `mnemosyne-local/dealloc-probe` feature. Default builds compile the probe
+  module and every `record` call site out; feature builds expose
+  `dealloc_counters::{reset, record, snapshot, total}` and record one Relaxed
+  atomic increment at each committed `thread_free` arm. `snapshot()` derives
+  rows from the `DeallocPath::ALL` SSOT, and the feature-gated integration test
+  drives real `thread_alloc` / `thread_free_layout` calls, asserting 256
+  layout-proven same-owner small frees all record as `InPlaceSmall` with zero
+  huge-classifier or cold-path hits. Verification: `cargo nextest run -p
+  mnemosyne-local --features dealloc-probe dealloc_probe`; `cargo clippy
+  --workspace --all-targets --all-features -- -D warnings`; `cargo nextest run
+  --workspace --all-features`; `cargo test --doc --workspace --all-features`;
+  `cargo doc --workspace --all-features --no-deps`.
+- [x] [patch] Expand the benchmark-summary threshold gate to the five selected
+  realloc latency rows (`within_class_24_to_32`, `cross_class_32_to_64`,
+  `within_class_6k_to_8k`, `cross_class_8k_to_16k`,
+  `huge_shrink_4m_to_2m`). `BASELINE_BENCHMARKS` now names twelve rows, config
+  tests pin every row against `ACTIVE_GROUPS`, and
+  `benchmarks/allocator_baseline_excerpt.csv` contains matching realloc
+  baselines so enforcement produces twelve comparison rows instead of the old
+  seven. Verification: `cargo nextest run -p mnemosyne-benchmarks --bin
+  benchmark_summary`; `cargo run -p mnemosyne-benchmarks --features
+  system-jemalloc --bin benchmark_summary -- --refresh-baseline`; `cargo run -p
+  mnemosyne-benchmarks --features system-jemalloc --bin benchmark_summary --
+  --enforce-thresholds` (rows=12).
+- [x] [patch] Clean rustdoc evidence claims and private intra-doc links in the
+  backend, arena, and tiered-heap docs. Backend module docs now state the
+  evidence tier as source-level static dispatch plus unit/benchmark gates rather
+  than claiming machine-code identity without codegen inspection; public docs no
+  longer link to private helpers. Verification: `cargo doc --workspace
+  --all-features --no-deps` warning-clean.
+- [x] [patch] Continue the unsafe-discipline closure in `mnemosyne-core` and
+  `mnemosyne-local` by grounding the `Segment` `Send`/`Sync` impls, Windows TEB
+  thread-id read, `do_local_free_internal` unchecked pointer/cookie operations,
+  and native/ASM TLS allocator-pointer dereferences with concrete `SAFETY:`
+  invariants. No behavior change. Verification: covered by the same all-feature
+  clippy, nextest, doctest, and rustdoc gates above.
 - [x] [patch] Close the unsafe-discipline `// SAFETY:` gap across the
   `mnemosyne-arena` crate. Every `unsafe` block and `unsafe impl Send/Sync`
   in `arena.rs`, `segment/alloc.rs`, `segment/pool/{huge_pool,segment_pool,

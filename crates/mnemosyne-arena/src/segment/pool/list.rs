@@ -2,11 +2,9 @@
 //!
 //! The pool is a singly-linked stack of free [`Segment`] nodes whose head
 //! pointer is an [`AtomicPtr`]. Push and pop are lock-free CAS loops;
-//! [`take_all`] is a single atomic swap. No spinlock or mutex is acquired
+//! `take_all` is a single atomic swap. No spinlock or mutex is acquired
 //! on any path.
 //!
-//! [`take_all`]: NodeSegmentPool::take_all
-
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use mnemosyne_core::types::Segment;
 
@@ -31,7 +29,7 @@ impl CacheAlignedAtomicUsize {
 /// The pool maintains a singly-linked stack of free [`Segment`] pointers
 /// through the segment's `next_free_segment` field. All operations are
 /// lock-free: push and pop use CAS loops on the head atomic, and
-/// [`take_all`] uses a single atomic swap.
+/// [`Self::take_all`] uses a single atomic swap.
 #[repr(align(64))]
 pub struct NodeSegmentPool {
     /// Head of the Treiber stack (null when empty).

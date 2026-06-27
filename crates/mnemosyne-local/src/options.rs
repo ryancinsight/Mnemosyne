@@ -13,6 +13,10 @@ fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
     name_buf[..name.len()].copy_from_slice(name.as_bytes());
     name_buf[name.len()] = 0;
 
+    // SAFETY: `name_buf` is a stack array holding the NUL-terminated variable
+    // name (length bounded above by the `name.len() >= name_buf.len()` guard),
+    // and `buf` is a caller-owned writable slice of exactly `buf.len()` bytes;
+    // `nSize` is passed as that length, so the OS never writes out of bounds.
     let res =
         unsafe { GetEnvironmentVariableA(name_buf.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
 
@@ -36,12 +40,20 @@ fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
     name_buf[..name.len()].copy_from_slice(name.as_bytes());
     name_buf[name.len()] = 0;
 
+    // SAFETY: `name_buf` is a stack array holding the NUL-terminated variable
+    // name (bounded by the `name.len() >= name_buf.len()` guard above), the
+    // only contract `getenv` imposes on its argument.
     let ptr = unsafe { getenv(name_buf.as_ptr()) };
     if ptr.is_null() {
         return None;
     }
 
     let mut len = 0;
+    // SAFETY: `getenv` returned a non-null pointer to the libc-owned,
+    // NUL-terminated value string. `*ptr.add(len)` is read in-bounds because the
+    // scan stops at the first NUL byte; the additional `len < buf.len()` bound
+    // caps the copy at the destination capacity, so neither the source read nor
+    // the `buf[len]` write goes out of range.
     unsafe {
         while *ptr.add(len) != 0 && len < buf.len() {
             buf[len] = *ptr.add(len);

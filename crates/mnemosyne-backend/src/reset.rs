@@ -1,6 +1,6 @@
 //! Physical-backing release, the page-reset + decommit concern.
 //!
-//! Provides [`do_page_reset`] and [`do_decommit`] — the per-method
+//! Provides `do_page_reset` and `do_decommit` — the per-method
 //! bodies that the [`MemoryBackend::page_reset`] and
 //! [`MemoryBackend::decommit`] impl-block entries in
 //! [`crate::mapping`] delegate into. Both share the same accounting:
@@ -22,8 +22,8 @@ use mnemosyne_core::MemoryBackend;
 /// Delegates to `B::page_reset`; on a confirmed reset, records the
 /// outcome through [`crate::recorders::record_page_reset`].
 ///
-/// `#[inline(always)]` keeps the indirection zero-cost at every
-/// optimization level.
+/// `#[inline(always)]` keeps the helper statically dispatched at the
+/// call site.
 #[inline(always)]
 pub(crate) fn do_page_reset<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool {
     if ptr.is_null() || size == 0 {
@@ -40,8 +40,8 @@ pub(crate) fn do_page_reset<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool
 /// Delegates to `B::decommit`; on a confirmed decommit, records the
 /// outcome through [`crate::recorders::record_decommit`].
 ///
-/// `#[inline(always)]` keeps the indirection zero-cost at every
-/// optimization level.
+/// `#[inline(always)]` keeps the helper statically dispatched at the
+/// call site.
 #[inline(always)]
 pub(crate) fn do_decommit<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool {
     if ptr.is_null() || size == 0 {

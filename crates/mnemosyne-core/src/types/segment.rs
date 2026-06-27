@@ -48,7 +48,20 @@ pub struct Segment {
     pub pages: [Page; PAGES_PER_SEGMENT],
 }
 
+// SAFETY: `Segment` is a metadata header whose raw pointer fields
+// (`raw_alloc_ptr`, `owner_allocator`, the intrusive list links) and interior
+// mutability are gated by the segment-ownership protocol: a segment carries an
+// opaque `owner` token, and only the thread allocator that can prove token
+// equality (`SegmentOwner::matches`/`is_owned_by`) mutates its fields, while
+// cross-thread frees route through each page's `AtomicFreeList`. No field is
+// thread-affine, so transferring ownership of a `Segment` header between
+// threads (`Send`) is sound once the previous owner has released it.
 unsafe impl Send for Segment {}
+// SAFETY: shared `&Segment` access across threads is sound because the only
+// concurrently-mutated state reachable from a shared reference is each page's
+// `AtomicFreeList` (itself `Sync`); all non-atomic fields are mutated solely by
+// the proven owner under the ownership protocol described above, so a shared
+// reference observes no data race.
 unsafe impl Sync for Segment {}
 
 impl Segment {
@@ -149,7 +162,13 @@ impl Segment {
             let _ = get_slot_ptr;
             let tid = {
                 let val: u32;
-                // Safety: Inline assembly reading GS register is safe under Windows x86_64.
+                // SAFETY: On Windows x86_64 the `gs` segment base points at the
+                // current thread's TEB, and `gs:[0x48]` is the fixed offset of
+                // `ClientId.UniqueThread` (the OS thread id). The read is a
+                // single aligned 32-bit load from thread-local OS structure that
+                // is always mapped for a running thread, touches no caller
+                // memory, and has no side effects (`nostack`, `readonly`,
+                // `preserves_flags`), so it is sound on every running thread.
                 unsafe {
                     core::arch::asm!(
                         "mov {0:e}, gs:[0x48]",

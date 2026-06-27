@@ -16,10 +16,19 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     pub fn reclaim_owned_segments(&mut self) {
         // We must clear the current segment first before deallocating any segments,
         // to avoid a use-after-free if the current segment gets deallocated.
+        // SAFETY: `set_current_segment(None)` only clears this allocator's own
+        // `current_segment`/`is_current` state; no segment pointer is read.
         unsafe { self.set_current_segment(None) };
 
         let mut curr = self.owned_segments_head;
         while !curr.is_null() {
+            // SAFETY: `curr` walks this thread's own intrusive owned-segments
+            // chain (`owned_segments_head` then each `next_owned_segment`), so
+            // every node is a live segment owned exclusively by this allocator.
+            // `next` is captured before `curr` is deallocated or pushed to the
+            // orphan pool, so the walk never dereferences a freed segment. All
+            // `pages[i]` reads use `i` drawn from `page_occupied_mask` bits,
+            // which index valid entries of the segment's page array.
             unsafe {
                 let next = (*curr).next_owned_segment;
 
@@ -81,6 +90,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             return false;
         }
 
+        // SAFETY: `segment` is a live segment owned by this allocator (the
+        // caller's precondition; it is not `current_segment`, checked above).
+        // Each `i` comes from a set bit of `page_occupied_mask`, so it indexes a
+        // valid, occupied entry of the segment's page array, and `&mut pages[i]`
+        // is unaliased because the segment is exclusive to this thread.
         unsafe {
             let dynamic_encrypted = (*segment).free_list_encrypted;
             let mut mask = (*segment).page_occupied_mask;
@@ -107,11 +121,19 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
         }
 
+        // SAFETY: every occupied page of `segment` was just confirmed to have
+        // zero live allocations, so detaching them from this allocator's page
+        // lists and unlinking the segment from the owned chain leaves no live
+        // references; both helpers operate only on this thread's own structures.
         unsafe {
             unlink_segment_pages(self, segment);
             self.unlink_owned_segment(segment);
         }
 
+        // SAFETY: `segment` is now fully detached (no page-list or owned-list
+        // membership), so clearing its owner fields and returning it via
+        // `deallocate_segment` hands a segment with no live references back to
+        // the pool exactly once.
         unsafe {
             (*segment).owner = SegmentOwner::NONE;
             (*segment).owner_allocator = core::ptr::null_mut();
@@ -131,16 +153,28 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let mut curr = self.owned_segments_head;
         while !curr.is_null() {
             let segment = curr;
+            // SAFETY: `segment` is a live node of this thread's own
+            // owned-segments chain; reading its `next_owned_segment` before any
+            // teardown advances the walk without dereferencing a freed segment.
             curr = unsafe { (*segment).next_owned_segment };
 
             if self.is_current_segment(segment) {
                 continue;
             }
 
+            // SAFETY: `segment` is a live segment owned exclusively by this
+            // thread, so reading its `free_list_encrypted` flag and
+            // `page_occupied_mask` is a valid, unaliased load.
             let dynamic_encrypted = unsafe { (*segment).free_list_encrypted };
             let mut total_allocations = 0;
 
             if unsafe { (*segment).page_occupied_mask != 0 } {
+                // SAFETY: `segment` is owned by this thread; each `i` is a set
+                // bit of `page_occupied_mask`, indexing a valid occupied page,
+                // so `&mut pages[i]` is in-bounds and unaliased. The page-list
+                // token scopes the active/full/empty list mutations to this
+                // allocator's own lists, and every `NonNull::new_unchecked`
+                // wraps a non-null interior page pointer.
                 unsafe {
                     with_page_list_token::<B, _>(|mut token| {
                         let mut mask = (*segment).page_occupied_mask;
@@ -197,6 +231,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
 
             if total_allocations == 0 && self.owned_segment_count >= RECLAIM_THRESHOLD_SEGMENTS {
+                // SAFETY: the sweep above observed zero live allocations across
+                // every occupied page of `segment`, so detaching its pages and
+                // unlinking it from the owned chain leaves no live references;
+                // clearing the owner fields and `deallocate_segment` then return
+                // the fully detached segment to the pool exactly once. The next
+                // node was captured into `curr` before this teardown.
                 unsafe {
                     unlink_segment_pages(self, segment);
                     self.unlink_owned_segment(segment);
@@ -210,20 +250,37 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     }
 }
 
+/// Detaches every page of `segment` from `alloc`'s active/full/empty page lists.
+///
+/// # Safety
+///
+/// `segment` must be a live segment owned exclusively by `alloc`, and its
+/// `page_linked_mask` must accurately mark the pages currently linked into
+/// `alloc`'s page lists. The caller must hold exclusive access to `alloc`.
 unsafe fn unlink_segment_pages<B: HasSegmentPool>(
     alloc: &mut ThreadAllocator<B>,
     segment: *mut Segment,
 ) {
+    // SAFETY: `segment` is a live segment owned by `alloc` (caller contract), so
+    // reading its `page_linked_mask` is a valid, unaliased load.
     let mut mask = unsafe { (*segment).page_linked_mask };
     while mask != 0 {
         let i = mask.trailing_zeros() as usize;
         mask &= mask - 1;
+        // SAFETY: `i` is a set bit of `page_linked_mask`, indexing a valid page
+        // of `segment`; the segment is exclusive to `alloc`, so `&mut pages[i]`
+        // is unaliased.
         let pg = unsafe { &mut (*segment).pages[i] };
         let state = pg.list_state;
         if state == 1 || state == 2 {
             let class = pg.size_class as usize;
+            // SAFETY: `list_state` 1/2 means `pg` is linked into the active/full
+            // list for `class`; unlinking it from that list is the matching
+            // operation on `alloc`'s own structures.
             unsafe { alloc.unlink_page(pg as *mut Page, class) };
         } else if state == 3 {
+            // SAFETY: `list_state == 3` means `pg` is linked into `alloc`'s
+            // empty-page list, the list this unlink operates on.
             unsafe { alloc.unlink_empty_page(pg as *mut Page) };
         }
     }

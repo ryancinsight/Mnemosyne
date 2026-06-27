@@ -40,6 +40,18 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Completed
 
+- [patch] Add opt-in `mnemosyne-local/dealloc-probe` branch-mix counters for
+  committed `thread_free` arms, with feature-gated value-semantic coverage that
+  layout-proven same-owner small frees record as `InPlaceSmall`.
+- [patch] Expand the benchmark-summary threshold gate to the selected realloc
+  latency rows and refresh `allocator_baseline_excerpt.csv` so enforcement now
+  compares twelve selected rows.
+- [patch] Clean backend/arena/tiered-heap rustdoc links and evidence wording so
+  `cargo doc --workspace --all-features --no-deps` is warning-clean.
+- [patch] Continue unsafe-discipline closure in `mnemosyne-core` and
+  `mnemosyne-local` by documenting the `Segment` `Send`/`Sync`, Windows TEB
+  thread-id read, local-free unchecked pointer/cookie updates, and native/ASM
+  TLS allocator-pointer dereference invariants.
 - [patch] Close the unsafe-discipline `// SAFETY:` gap across `mnemosyne-arena`
   (arena coordination, segment alloc/pools, and the scratch buffer module);
   every `unsafe` block and `unsafe impl Send/Sync` now documents its invariant,

@@ -1,14 +1,14 @@
 //! Low-level OS page allocation backend mapping interface.
 //!
-//! The crate is organized by concern so each leaf is one Rust
-//! feature/concern with zero behavior change and zero benchmark risk:
+//! The crate is organized by concern so each leaf owns one backend
+//! responsibility:
 //!
 //! - [`mapping`] owns the [`MemoryBackendWrapper`] struct shape and the
 //!   single `impl MemoryBackend for MemoryBackendWrapper` block.
 //!   `allocate` / `deallocate` bodies are inline here; `make_guard`,
 //!   `page_reset`, and `decommit` delegate into the per-concern helpers
-//!   in [`guard`] and [`reset`] via `#[inline(always)]` calls, keeping
-//!   the resulting machine code identical to a direct implementation.
+//!   in [`guard`] and [`reset`] via `#[inline(always)]` static-dispatch
+//!   calls.
 //! - [`guard`] owns `do_make_guard` — the per-method helper for
 //!   `PROT_NONE` / `PAGE_NOACCESS` guard-region installation — called
 //!   by the `make_guard` entry in [`mapping`]'s impl block.

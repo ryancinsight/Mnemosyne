@@ -1,9 +1,9 @@
 //! Guard-region installation, the `PROT_NONE` / `PAGE_NOACCESS` concern.
 //!
-//! Provides [`do_make_guard`] — the per-method body that the
+//! Provides `do_make_guard` — the per-method body that the
 //! [`MemoryBackend::make_guard`] impl-block in [`crate::mapping`]
 //! delegates into. Confirmed installs are forwarded to
-//! [`crate::recorders::record_guard_install`] for telemetry.
+//! `crate::recorders::record_guard_install` for telemetry.
 //!
 //! Wrapper composite tests live here because they anchor the guard
 //! concern end-to-end (allocate → make_guard → write survives → release).
@@ -15,9 +15,8 @@ use mnemosyne_core::MemoryBackend;
 /// Delegates to `B::make_guard`; on a confirmed install, records the
 /// outcome through [`crate::recorders::record_guard_install`].
 ///
-/// `#[inline(always)]` keeps the indirection zero-cost at every
-/// optimization level; the resulting machine code is identical to a
-/// direct `B::make_guard` + `record_guard_install` call.
+/// `#[inline(always)]` keeps the helper statically dispatched at the
+/// call site.
 #[inline(always)]
 pub(crate) fn do_make_guard<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool {
     if ptr.is_null() || size == 0 {

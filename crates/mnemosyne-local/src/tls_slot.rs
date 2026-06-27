@@ -113,6 +113,11 @@ impl<B: HasSegmentPool> Drop for LocalAllocatorSlot<B> {
         let key = self.os_key.get();
         if key != u32::MAX {
             #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
+            // SAFETY: `key != u32::MAX` was set by this thread when it published
+            // its allocator pointer (`os_key.set(key)`), so it is a valid
+            // `TlsAlloc` key. This slot is dropped on its owning thread, so the
+            // write clears the current thread's own TEB slot, severing the now-
+            // dangling cached pointer to the slot being destroyed.
             unsafe {
                 crate::tls::os_helpers::set_teb_tls_slot(key, core::ptr::null_mut());
             }

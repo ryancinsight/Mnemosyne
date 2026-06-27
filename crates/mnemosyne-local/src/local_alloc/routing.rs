@@ -33,7 +33,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         }
 
         // Outline the cold allocation path to keep alloc() small and fast.
-        // Safety: Cold allocation path request is routed safely within bounds.
+        // SAFETY: `class` is the same caller-validated size-class index
+        // (< `NUM_SIZE_CLASSES`, the contract of `alloc_class`) that indexed
+        // `active_pages` above, satisfying `alloc_cold`'s bounds precondition.
         unsafe { self.alloc_cold::<P>(class) }
     }
 
@@ -105,7 +107,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             if let Some(block) = block_opt {
                 if page.alloc_count < page.max_blocks() {
                     // Page is no longer full! Move it back to active list.
-                    // Safety: page_ptr and class are valid.
+                    // SAFETY: `page_ptr` is a live `Page` owned by this
+                    // allocator (just walked from `full_pages[class]`), and
+                    // `class` is the caller-validated size-class index keying
+                    // that list, so it matches the page's own size class.
                     unsafe {
                         let _ = self.move_full_page_to_active(page_ptr, class);
                     }
@@ -116,14 +121,18 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         }
 
         // 3. Allocate a brand new page
-        // Safety: get_new_page is called to retrieve a page.
+        // SAFETY: `class` is the caller-validated size-class index, satisfying
+        // `get_new_page`'s implicit bounds expectation; it returns either null
+        // (handled below) or a page freshly installed into `active_pages`.
         let new_page_ptr = self.get_new_page::<P>(class);
         if new_page_ptr.is_null() {
             return core::ptr::null_mut();
         }
         self.page_refills += 1;
 
-        // Safety: new_page_ptr is valid and points to a Page inside a segment owned by us.
+        // SAFETY: `new_page_ptr` is the non-null pointer just returned by
+        // `get_new_page`, pointing to a freshly initialized `Page` inside a
+        // segment owned exclusively by this thread, so the `&mut` is unaliased.
         let page = &mut *new_page_ptr;
         // Safety: `get_new_page` guarantees a freshly initialized page whose
         // `initialize_free_list` populated `free` with at least one block.
@@ -133,7 +142,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // If it becomes full immediately, move to full list
         if page.alloc_count == page.max_blocks() {
-            // Safety: new_page_ptr and class are valid.
+            // SAFETY: `new_page_ptr` is the non-null page from `get_new_page`,
+            // so `NonNull::new_unchecked` is valid; `class` is the
+            // caller-validated size class the page was installed under, keeping
+            // the unlink-then-push consistent with the page's list membership.
             unsafe {
                 let ptr = NonNull::new_unchecked(new_page_ptr);
                 self.unlink_page(ptr.as_ptr(), class);
@@ -178,12 +190,23 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             if let Some(seg_ptr) = unsafe { allocate_segment::<B>() } {
                 // Determine if this is an orphaned segment vs a fresh/reinitialized segment.
                 // An orphaned segment has pages[1].block_size > 0.
+                // SAFETY: `seg_ptr` is the non-null segment just returned by
+                // `allocate_segment`; reading `pages[1].block_size` from its
+                // initialized mapping distinguishes a previously-used (orphan)
+                // segment from a fresh one.
                 let is_orphan = unsafe { (*seg_ptr).pages[1].block_size > 0 };
 
                 if is_orphan {
                     self.orphan_segments_adopted += 1;
                     let mut found_page: *mut Page = core::ptr::null_mut();
-                    // Safety: We claim ownership of this orphaned segment. We scan and register pages.
+                    // SAFETY: `seg_ptr` is a live, mapped segment from
+                    // `allocate_segment` and is now claimed exclusively by this
+                    // thread; `push_owned_segment` stamps ownership before any
+                    // other thread can observe it. Every `pages[i]` for
+                    // `i in 1..PAGES_PER_SEGMENT` is within the segment's page
+                    // array, so each `&mut (*seg_ptr).pages[i]` is in-bounds and
+                    // unaliased, and each `NonNull::new_unchecked(page_ptr)`
+                    // wraps a non-null interior pointer into that array.
                     unsafe {
                         self.push_owned_segment::<P>(seg_ptr);
 
@@ -238,7 +261,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         page.block_size = block_size;
                         page.size_class = class as u8;
                         let page_start = page.page_start();
-                        // Safety: initializing free list for the repurposed page
+                        // SAFETY: `found_page` is a non-null interior pointer
+                        // into this segment's page array (set in the scan loop
+                        // above); `page_start` is its mapped backing region, so
+                        // `initialize_free_list` writes only within the page, and
+                        // `NonNull::new_unchecked(found_page)` is valid for the
+                        // active-list insertion under the just-set `class`.
                         unsafe {
                             page.initialize_free_list::<P>(page_start, random_value);
                             self.push_active_page(NonNull::new_unchecked(found_page), class);

@@ -105,26 +105,46 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
 
     let slot_ptr = B::get_allocator_ptr_raw();
     if !slot_ptr.is_null() {
+        // SAFETY: `get_allocator_ptr_raw` returns this thread's TLS allocator
+        // slot; the non-null check confirms it is initialized, and the slot is
+        // thread-affine so this `&mut` is the sole live reference.
         let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
         if !alloc.is_allocating {
+            // SAFETY: `class` is a valid size-class index from `small_path_class`
+            // (bounded by `NUM_SIZE_CLASSES`), so indexing the fixed-size
+            // `active_pages` array unchecked is in bounds.
             if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
+                // SAFETY: `page_ptr` is a live `NonNull<Page>` taken from this
+                // thread's active-page list; `alloc` holds exclusive access, so
+                // no aliasing `&mut` to the page exists.
                 let page = unsafe { page_ptr.as_mut() };
+                // SAFETY: `page` is a valid, exclusively-borrowed page of `class`;
+                // the page-local fast path only touches that page's free list.
                 if let Some(block) =
                     unsafe { crate::local_alloc::page::try_allocate_page_local::<P>(page) }
                 {
                     let ptr = block.as_ptr() as *mut u8;
+                    // SAFETY: `ptr` is a freshly carved block of at least
+                    // `adjusted_size` bytes; initialization writes only within it.
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
                     return ptr;
                 }
+                // SAFETY: same valid `page`; reclaim path adopts cross-thread
+                // frees back into this page's local free list before allocating.
                 if let Some(block) =
                     unsafe { crate::local_alloc::page::try_reclaim_and_allocate::<P>(page) }
                 {
                     let ptr = block.as_ptr() as *mut u8;
+                    // SAFETY: as above, `ptr` is a fresh block of at least
+                    // `adjusted_size` bytes owned by the caller.
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
                     return ptr;
                 }
             }
         }
+        // SAFETY: `alloc` is the live, non-null TLS allocator borrowed above, so
+        // `new_unchecked` produces a valid `NonNull` the cold path reuses
+        // without re-reading the TLS slot.
         unsafe {
             thread_alloc_cold::<P, B>(
                 class,

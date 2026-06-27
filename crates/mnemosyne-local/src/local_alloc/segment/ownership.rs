@@ -97,6 +97,10 @@ unsafe fn unlink_owned_segment_from_list<'id, B: HasSegmentPool>(
     segment: BrandedSegment<'id>,
 ) {
     let raw_segment = segment.ptr();
+    // SAFETY: `segment` is branded by `token` (caller contract) and is linked in
+    // the list rooted at `head_slot`; its `prev`/`next` neighbours carry the
+    // same token permission, so reading the link fields and rewriting the
+    // neighbours' and head's pointers is exclusive and unaliased here.
     unsafe {
         let prev = (*raw_segment).prev_owned_segment;
         let next = (*raw_segment).next_owned_segment;
@@ -186,6 +190,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     pub unsafe fn initialize_segment_keys(&mut self, segment: *mut Segment) {
         let seed = super::super::get_tls_seed();
         let segment_addr = segment as usize;
+        // SAFETY: `segment` is a valid, writable `Segment` (caller contract)
+        // owned exclusively by this allocator. `i` ranges over
+        // `0..PAGES_PER_SEGMENT`, the exact length of the `keys` array, so every
+        // `keys[i]` write is in-bounds and unaliased.
         unsafe {
             (*segment).free_list_encrypted = true;
             for i in 0..PAGES_PER_SEGMENT {

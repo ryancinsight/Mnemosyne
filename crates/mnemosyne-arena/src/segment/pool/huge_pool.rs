@@ -147,7 +147,8 @@ impl GlobalHugePool {
     /// Per-bucket retained-byte budget. The effective per-bucket block cap is
     /// `min(MAX_CACHED_HUGE_BLOCKS, this / max-block-size-in-bucket)`, so a single
     /// node bucket never retains more than ~256 MiB of idle huge mappings (vs. up
-    /// to ~16 GiB under a flat count cap). See [`bucket_block_cap`].
+    /// to ~16 GiB under a flat count cap). The private `bucket_block_cap`
+    /// helper derives the effective per-bucket limit.
     pub const MAX_CACHED_HUGE_BYTES_PER_BUCKET: usize = 256 * 1024 * 1024;
 
     /// Creates a new empty `GlobalHugePool` with `NUMA_BUCKETS` node sub-pools.
