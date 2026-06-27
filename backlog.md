@@ -51,7 +51,35 @@ acceptance criterion and named blocker so it is Definition-of-Ready.
   constant currently defined independently in both files (SSOT). Acceptance: one
   steal routine, one constant; arena tests green.
 
+- [ ] [patch] Encapsulate the tagged Treiber push/pop CAS loop into a shared
+  `TaggedSegmentStack` primitive (DRY). Both `NodeHugeBucket` and
+  `NodeSegmentPool` now hand-drive near-identical CAS loops over
+  `CacheAlignedAtomicPtr::{ptr,tagged_successor,compare_exchange_weak,swap_null}`,
+  differing only by the per-pool count field. The dangerous tag-packing is
+  already SSOT in `cache_aligned.rs`; the loop boilerplate is not. Acceptance:
+  one `push`/`pop`/`take_all` on an encapsulated stack; both pools layer only
+  count/cap/telemetry on top; codegen unchanged. Also rename
+  `CacheAlignedAtomicPtr` (it is a tagged head, not a bare ptr). Deferred: the
+  target `huge_pool.rs` is under active concurrent edit — schedule when the
+  arena pool files are quiescent.
+
+- [ ] [patch] Add direct unit coverage for the tagged head primitive
+  (`CacheAlignedAtomicPtr`): `ptr`/`tagged_successor` round-trip, monotonic tag
+  increment, and the 48-bit overflow-abort guard. Currently exercised only
+  indirectly through the two pool conservation stress tests.
+
 ## Completed
+
+- [arch] Close the ABA-immunity gap in the lock-free **segment** cache
+  (`NodeSegmentPool`), the complement to the huge-pool tagged fix above. Its
+  plain `AtomicPtr` head left single-element `pop` ABA-exposed (a stale
+  `head X -> next Y` CAS after X is popped+re-pushed orphans the chain and loses
+  segments). New `tests/segment_pool_concurrency.rs` provoked the loss; the
+  pre-existing `test_concurrent_aba_safeness` missed it by never asserting
+  conservation. Head now uses the tagged `CacheAlignedAtomicPtr` (48-bit addr +
+  wrapping tag, mirroring `mnemosyne-core::sync::AtomicFreeList`). Stress test
+  passes 15/15 (was non-deterministic loss); 239 workspace tests + threshold
+  gate clean. Commit `241b795`.
 
 - [patch] Add opt-in `mnemosyne-local/dealloc-probe` branch-mix counters for
   committed `thread_free` arms, with feature-gated value-semantic coverage that
