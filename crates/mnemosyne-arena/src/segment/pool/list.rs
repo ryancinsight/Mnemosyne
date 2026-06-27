@@ -5,24 +5,9 @@
 //! `take_all` is a single atomic swap. No spinlock or mutex is acquired
 //! on any path.
 //!
+use super::cache_aligned::CacheAlignedAtomicUsize;
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use mnemosyne_core::types::Segment;
-
-/// Cache-line aligned atomic counter to avoid false sharing between
-/// adjacent per-node pools.
-#[repr(align(64))]
-pub(crate) struct CacheAlignedAtomicUsize {
-    pub(crate) value: AtomicUsize,
-}
-
-impl CacheAlignedAtomicUsize {
-    #[inline(always)]
-    pub(crate) const fn new(val: usize) -> Self {
-        Self {
-            value: AtomicUsize::new(val),
-        }
-    }
-}
 
 /// A lock-free segment pool for a single NUMA node (Treiber stack).
 ///

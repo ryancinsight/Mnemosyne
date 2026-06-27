@@ -151,6 +151,14 @@
 - Replaced runtime size-class leading-zero arithmetic with a compile-time-generated `u8` lookup table for every small allocation size.
 - Removed per-row allocator-name `Vec`, owned comparison-key, formatted-cell, lowercase, and Criterion path-normalization allocations from `benchmark_summary` by using borrowed slices, copy-sized display adapters, and direct writes into existing output buffers.
 - Removed profiler dump snapshot clones and intermediate symbol vectors: `dump_profile` and `dump_leaks` now borrow active samples shard-by-shard, reuse exact retained stack slices, and stream report output directly.
+- Converted the huge-allocation cache's `NodeHugeBucket` from a
+  spinlock-protected intrusive list to a lock-free Treiber stack. The exact
+  same-size bucket still finds a fitting segment behind undersized heads by
+  restoring temporarily rejected segments, while higher buckets pop the head
+  directly. `NodeSegmentPool` and `NodeHugeBucket` now share cache-line-aligned
+  atomic wrappers from `segment/pool/cache_aligned.rs`; the huge-pool head uses
+  a tagged pointer on 64-bit targets to prevent stale-head ABA under concurrent
+  pop/push stress.
 
 ### Fixed
 

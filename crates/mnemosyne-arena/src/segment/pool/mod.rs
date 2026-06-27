@@ -1,3 +1,4 @@
+mod cache_aligned;
 pub mod huge_pool;
 pub mod list;
 pub mod segment_pool;

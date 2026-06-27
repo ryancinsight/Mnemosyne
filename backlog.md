@@ -34,21 +34,6 @@ Filed from the 2026-06-27 deep contention/memory audit (read-only fan-out over
 arena/local/core/heap/backend). Ranked by value; each carries a testable
 acceptance criterion and named blocker so it is Definition-of-Ready.
 
-- [ ] [perf] Convert the `NodeHugeBucket` `SpinLock` to a lock-free Treiber
-  stack (`crates/mnemosyne-arena/src/segment/pool/huge_pool.rs`). It is the only
-  lock left on an allocation path — warm, not hot (huge/large >16 KiB caching
-  only), but the structural outlier after the `NodeSegmentPool` conversion in
-  `ba6f2a2`. Acceptance: `try_push` (advisory soft-limit `fetch_add`/load count,
-  overshoot tolerated, mirroring `NodeSegmentPool::try_push_retained`) and the
-  higher-size-bucket `pop` become lock-free Treiber ops; the exact-bucket
-  first-fit interior-unlink either keeps a narrow lock or switches to a pop-head
-  policy (records the fit-policy change). On lock removal, cache-pad the
-  bucket's `head`/`count` atomics onto separate lines (the contention audit
-  flags `lock`/`state`/`count` sharing one 64 B line). Named blocker: decide the
-  interior-unlink strategy first (ADR-light note). Verification: arena
-  `test_concurrent_aba_safeness` + huge round-trip + `--enforce-thresholds`
-  non-regression on the huge/cross-thread rows.
-
 - [ ] [patch] Consolidate the three `TlsProvider` impls (`NativeOsTls`,
   `AsmTls`, `NightlyTls` in `crates/mnemosyne-local/src/tls/`) into default
   trait methods (or one blanket impl over `S: TlsSlotAccess<B>`). The slot
@@ -59,14 +44,6 @@ acceptance criterion and named blocker so it is Definition-of-Ready.
   unchanged (verify `allocator cycle latency` + `saturated threaded` rows are
   non-regressing). Concurrent-edit-sensitive (hot local TLS files) — schedule
   when no peer agent is editing `mnemosyne-local`.
-
-- [ ] [patch] Decide and document the `NodeHugeBucket` `#[repr(align(64))]`
-  tradeoff (huge_pool.rs). The blanket align costs ~70 KiB static BSS
-  (256 buckets x 6 backend statics x 47 B padding) but is zero-RSS until first
-  touch and prevents inter-bucket false sharing between adjacent size-buckets on
-  one NUMA node. Acceptance: either keep with a one-line rationale comment, or —
-  paired with the lock-free conversion above, which changes the false-sharing
-  surface — pad only the contended atomics; record the decision in gap_audit.
 
 - [ ] [patch] Collapse the duplicated wrap-around NUMA bucket-stealing loop
   shared by `huge_pool.rs` and `segment_pool.rs` into one generic
@@ -79,6 +56,15 @@ acceptance criterion and named blocker so it is Definition-of-Ready.
 - [patch] Add opt-in `mnemosyne-local/dealloc-probe` branch-mix counters for
   committed `thread_free` arms, with feature-gated value-semantic coverage that
   layout-proven same-owner small frees record as `InPlaceSmall`.
+- [patch] Convert the huge-allocation cache's `NodeHugeBucket` from a
+  spinlock-protected intrusive list to a lock-free Treiber stack. Exact-bucket
+  pops still find a fitting segment behind undersized heads by restoring
+  temporarily rejected segments, and shared cache-line atomic wrappers now live
+  in `segment/pool/cache_aligned.rs`. The head carries a 64-bit tagged-pointer
+  mutation counter to prevent stale-head ABA under concurrent pop/push stress.
+- [patch] Resolve the `NodeHugeBucket` alignment tradeoff by replacing
+  whole-struct `#[repr(align(64))]` with per-atomic cache-line isolation for the
+  contended `head` and `count` fields.
 - [patch] Expand the benchmark-summary threshold gate to the selected realloc
   latency rows and refresh `allocator_baseline_excerpt.csv` so enforcement now
   compares twelve selected rows.

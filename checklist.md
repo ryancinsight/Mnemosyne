@@ -4,6 +4,21 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Convert `NodeHugeBucket` from a spinlock-protected intrusive list
+  to a lock-free Treiber stack and move cache-line-aligned atomic wrappers into
+  `segment/pool/cache_aligned.rs` so `NodeSegmentPool` and the huge pool share
+  one padding primitive. Huge exact-bucket pops preserve the first-fitting
+  cache contract by temporarily detaching undersized heads and restoring them
+  before returning. The head is tagged on 64-bit targets so stale-head ABA
+  cannot install an obsolete next link under push/pop contention. Verification:
+  `cargo nextest run -p mnemosyne-arena huge_pool` (includes
+  `huge_pool_concurrent_push_pop_conserves_every_segment`); `cargo clippy -p
+  mnemosyne-arena --all-targets --all-features -- -D warnings`; `cargo fmt
+  --check`; `cargo clippy --workspace --all-targets --all-features -- -D
+  warnings`; `cargo nextest run --workspace --all-features` (237 passed);
+  `cargo test --doc --workspace --all-features`; `cargo doc --workspace
+  --all-features --no-deps`; `cargo run -p mnemosyne-benchmarks --features
+  system-jemalloc --bin benchmark_summary -- --enforce-thresholds`.
 - [x] [patch] Add opt-in deallocation branch-mix instrumentation behind the
   `mnemosyne-local/dealloc-probe` feature. Default builds compile the probe
   module and every `record` call site out; feature builds expose

@@ -584,3 +584,52 @@ fn test_huge_bucket_block_cap_bounds_retained_bytes() {
         );
     }
 }
+
+#[test]
+fn test_huge_pool_exact_bucket_restores_rejected_head() {
+    fn boxed_huge_segment(raw: usize, block_size: usize) -> *mut Segment {
+        let segment = Box::into_raw(Box::new(Segment {
+            raw_alloc_ptr: raw as *mut u8,
+            next_free_segment: core::ptr::null_mut(),
+            // SAFETY: this test immediately initializes the only field read by
+            // the huge-pool implementation (`pages[0].block_size`) and never
+            // exposes the zeroed metadata to allocator code that relies on the
+            // full production `Segment::initialize` invariant.
+            ..unsafe { core::mem::zeroed() }
+        }));
+        // SAFETY: `segment` is the live Box allocation just created above, so
+        // mutating its page-0 size metadata through the raw pointer is exclusive.
+        unsafe {
+            (*segment).pages[0].block_size = block_size;
+        }
+        segment
+    }
+
+    let pool = GlobalHugePool::new();
+    let fitting = boxed_huge_segment(0x20000, 24 * 1024);
+    let too_small = boxed_huge_segment(0x30000, 18 * 1024);
+
+    unsafe {
+        assert!(pool.try_push(fitting, 0), "fitting segment must be cached");
+        assert!(
+            pool.try_push(too_small, 0),
+            "undersized same-bucket segment must be cached"
+        );
+    }
+
+    let popped = unsafe { pool.pop(20 * 1024, 0) }
+        .expect("same-size bucket must scan past an undersized head");
+    assert_eq!(popped, fitting);
+    unsafe {
+        assert_eq!((*popped).next_free_segment, core::ptr::null_mut());
+    }
+
+    let restored =
+        unsafe { pool.pop(16 * 1024, 0) }.expect("rejected head must be restored to the bucket");
+    assert_eq!(restored, too_small);
+    unsafe {
+        assert_eq!((*restored).next_free_segment, core::ptr::null_mut());
+        let _ = Box::from_raw(popped);
+        let _ = Box::from_raw(restored);
+    }
+}

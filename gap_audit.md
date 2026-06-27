@@ -13,22 +13,42 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
   per-page `AtomicFreeList` protocol; the `gs:[0x48]` TEB read, the
   `cookie | 1` non-null cookie encoding, and the `do_local_free_internal`
   double-free guards are individually justified. No site was found unsound.
-- Contention: only one lock remains on any allocation path — the warm
-  `NodeHugeBucket` SpinLock (filed). All other synchronization (AtomicFreeList,
-  per-CPU cache, NodeSegmentPool, orphan pool, telemetry) is lock-free or cold
-  with correctly-weak orderings. No over-strong `SeqCst` exists in production
-  code (every occurrence is in tests). Atomic-ordering review found one
-  low-severity smell only: `options.rs` `OPTIONS_INIT.swap(true, Acquire)`
-  publish gate is weaker than `AcqRel`, but each option store carries its own
-  `Release` so per-option visibility holds — not a data race.
+- Contention: no spinlock remains on an allocation cache path after the
+  `NodeHugeBucket` conversion to a Treiber stack. Synchronization
+  (AtomicFreeList, per-CPU cache, NodeSegmentPool, NodeHugeBucket, orphan pool,
+  telemetry) is lock-free or cold with correctly weak orderings. No over-strong
+  `SeqCst` exists in production code (every occurrence is in tests).
+  Atomic-ordering review found one low-severity smell only: `options.rs`
+  `OPTIONS_INIT.swap(true, Acquire)` publish gate is weaker than `AcqRel`, but
+  each option store carries its own `Release` so per-option visibility holds —
+  not a data race.
 - Memory: no hot-path allocation, no removable load-bearing `PhantomData`
   (`TieredHeap`'s redundant `_brand` was already dropped this sprint), and
-  tight integer sizing throughout. The one quantified static-size finding
-  (`NodeHugeBucket` align padding, ~70 KiB BSS) is filed with its
-  false-sharing caveat — it is zero-RSS until touched, so low priority.
+  tight integer sizing throughout. The prior `NodeHugeBucket` whole-struct
+  alignment finding is superseded: the huge bucket now pads only the contended
+  `head` and `count` atomics through the same `cache_aligned` SSOT used by
+  `NodeSegmentPool`, trading a bounded zero-RSS BSS increase for false-sharing
+  isolation between independent CAS head traffic and advisory count updates.
 
 ## Closed
 
+- [patch] The huge-allocation cache was the last allocation-cache path using a
+  spinlock (`NodeHugeBucket` in
+  `crates/mnemosyne-arena/src/segment/pool/huge_pool.rs`). Replaced the bucket
+  state with a lock-free Treiber stack using cache-line-isolated `head` and
+  `count` atomics from a shared `segment/pool/cache_aligned.rs` module. Exact
+  bucket pops retain first-fitting behavior by temporarily popping undersized
+  heads into a private rejected chain and restoring them before returning; higher
+  buckets pop the head directly because their size class is guaranteed to fit.
+  The head is a tagged pointer on 64-bit targets, matching the existing
+  `AtomicFreeList` ABA defense: low bits hold the segment address and high bits
+  hold a wrapping mutation tag, so a stale CAS cannot publish an obsolete
+  `next_free_segment` link after another thread pops and re-pushes the same
+  segment. Evidence tier: source-level memory-ordering invariant plus
+  value-semantic `test_huge_pool_exact_bucket_restores_rejected_head`,
+  integration stress `huge_pool_concurrent_push_pop_conserves_every_segment`,
+  arena huge round-trip, full workspace nextest, and benchmark-summary threshold
+  non-regression.
 - [arch] The `mnemosyne-backend` crate had grown into a mixed-concern backend module. Split the crate by concern into five sibling leaves: [`mapping`](crates/mnemosyne-backend/src/mapping.rs) owns the `MemoryBackendWrapper` shape and central `impl MemoryBackend` block; [`guard`](crates/mnemosyne-backend/src/guard.rs) owns `do_make_guard`; [`reset`](crates/mnemosyne-backend/src/reset.rs) owns `do_page_reset` and `do_decommit`; [`recorders`](crates/mnemosyne-backend/src/recorders.rs) owns telemetry counters and snapshots; [`backends`](crates/mnemosyne-backend/src/backends/mod.rs) owns the per-OS / per-platform implementations and `DefaultBackend` selector. Public re-exports keep the canonical `mnemosyne_backend::*` import paths unchanged. Evidence tier: source-level static dispatch, backend unit tests, and allocator benchmark threshold gate.
 - [patch] Added an opt-in `mnemosyne-local/dealloc-probe` feature to audit `thread_free` branch mix without changing default builds. Feature builds expose `dealloc_counters::{reset, record, snapshot, total}` and record one Relaxed atomic increment at each committed deallocation arm. The feature-gated integration test drives real `thread_alloc` / `thread_free_layout` calls and asserts layout-proven same-owner small frees all record as `InPlaceSmall`, with zero huge-classifier and cold-path hits. Evidence tier: value-semantic integration test plus feature-gated unit tests.
 - [patch] Expanded `benchmark_summary --enforce-thresholds` coverage from the original retained allocator rows to include the five realloc latency rows that track within-class, cross-class, 8k-to-16k, and huge-shrink behavior. Evidence tier: benchmark-summary config tests plus threshold-gate execution.
