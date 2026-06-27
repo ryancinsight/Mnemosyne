@@ -19,6 +19,16 @@ nightly_tls = []
 std_tls = []
 segment-tail-guards = ["mnemosyne-arena/segment-tail-guards"]
 segment-header-guards = ["mnemosyne-arena/segment-header-guards"]
+# Optional per-branch atomic counters for the dealloc commit paths in
+# `thread_free_classified`. Off by default. Enable for benchmark-suite
+# A/B sessions that surface branch-mix data through
+# `mnemosyne_local::dealloc_counters::snapshot`.
+#
+# IMPORTANT: any `benchmark_summary --enforce-thresholds` invocation
+# that gates an allocator change must run on the default-feature build,
+# not on `--features dealloc-probe`; the probe intentionally adds one
+# Relaxed atomic increment per deallocation commit.
+dealloc-probe = []
 
 
 [dependencies]

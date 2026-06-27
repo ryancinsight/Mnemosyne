@@ -12,6 +12,12 @@ pub mod local_alloc;
 pub mod per_cpu;
 pub mod tls;
 
+// Phase 4 instrumentation probe. Opt-in via the `dealloc-probe`
+// Cargo feature; production builds compile the module out and pay
+// zero cost in `thread_free`.
+#[cfg(feature = "dealloc-probe")]
+pub mod dealloc_counters;
+
 mod alloc;
 mod free;
 mod options;

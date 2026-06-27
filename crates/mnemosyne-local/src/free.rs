@@ -96,6 +96,8 @@ unsafe fn thread_free_classified<
             unsafe { poison_freed_bytes::<P>(ptr, size) };
         }
         let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
+        #[cfg(feature = "dealloc-probe")]
+        crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::HugeClassifier);
         return;
     }
 
@@ -173,6 +175,8 @@ unsafe fn thread_free_classified<
                     page.free = Some(NonNull::new_unchecked(block));
                     page.alloc_count = page_alloc_count - 1;
                 }
+                #[cfg(feature = "dealloc-probe")]
+                crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::InPlaceSmall);
                 return;
             } else if !alloc.is_allocating {
                 // Page is not current segment, and becomes empty
@@ -210,6 +214,10 @@ unsafe fn thread_free_classified<
                     alloc.record_defrag_operation::<P>();
                 }
                 alloc.is_allocating = false;
+                #[cfg(feature = "dealloc-probe")]
+                crate::dealloc_counters::record(
+                    crate::dealloc_counters::DeallocPath::ActiveFreeLastBlock,
+                );
                 return;
             }
         } else if !alloc.is_allocating {
@@ -237,6 +245,8 @@ unsafe fn thread_free_classified<
                     );
                 });
             }
+            #[cfg(feature = "dealloc-probe")]
+            crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::FullToActive);
             return;
         }
     }
@@ -273,6 +283,8 @@ unsafe fn thread_free_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
     block: *mut Block,
 ) {
     if B::ENABLE_CPU_CACHE && per_cpu::try_free_cpu::<P>(ptr, page.size_class as usize) {
+        #[cfg(feature = "dealloc-probe")]
+        crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::ColdOrRecursing);
         return;
     }
 
@@ -282,6 +294,8 @@ unsafe fn thread_free_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
         // local atomic free list takes ownership of the pointer.
         page.thread_free.push::<P>(NonNull::new_unchecked(block));
     }
+    #[cfg(feature = "dealloc-probe")]
+    crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::ColdOrRecursing);
 }
 
 /// Internal implementation of local deallocation.
