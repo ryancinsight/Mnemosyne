@@ -4,13 +4,17 @@
 //! feature/concern with zero behavior change and zero benchmark risk:
 //!
 //! - [`mapping`] owns the [`MemoryBackendWrapper`] struct shape and the
-//!   `allocate` / `deallocate` impl block (page-aligned mapping
-//!   creation and release), forwarding confirmed OS releases to the
-//!   [`recorders`] layer.
-//! - [`guard`] owns the `make_guard` impl block
-//!   (`PROT_NONE` / `PAGE_NOACCESS` install).
-//! - [`reset`] owns the `page_reset` and `decommit` impl blocks
-//!   (content-discard and commit-charge release).
+//!   single `impl MemoryBackend for MemoryBackendWrapper` block.
+//!   `allocate` / `deallocate` bodies are inline here; `make_guard`,
+//!   `page_reset`, and `decommit` delegate into the per-concern helpers
+//!   in [`guard`] and [`reset`] via `#[inline(always)]` calls, keeping
+//!   the resulting machine code identical to a direct implementation.
+//! - [`guard`] owns `do_make_guard` — the per-method helper for
+//!   `PROT_NONE` / `PAGE_NOACCESS` guard-region installation — called
+//!   by the `make_guard` entry in [`mapping`]'s impl block.
+//! - [`reset`] owns `do_page_reset` and `do_decommit` — the per-method
+//!   helpers for content-discard and commit-charge release — called by
+//!   the `page_reset` and `decommit` entries in [`mapping`]'s impl block.
 //! - [`recorders`] owns the telemetry counters, the
 //!   [`BackendMemoryStats`] snapshot, and the per-concern unit tests
 //!   for the `record_*` family.
