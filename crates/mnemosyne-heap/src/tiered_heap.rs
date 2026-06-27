@@ -1,7 +1,7 @@
-//! Tier-aware heap façade on top of [`crate::raw_heap::RawHeap`].
+//! Tier-aware heap façade on top of the internal raw heap.
 //!
 //! [`TieredHeap`] owns three typed [`crate::heap::Heap`] instances,
-//! each a thin wrapper over one monomorphization of [`RawHeap`]:
+//! each a thin wrapper over one raw-heap monomorphization:
 //!
 //! | `TierSelection`     | Sub-heap backend                              |
 //! |---------------------|-----------------------------------------------|
@@ -26,7 +26,7 @@
 //! surfaces at the call site rather than silently allocating in the
 //! wrong pool.
 
-use crate::brand::{BrandedBlock, InvariantLifetime, ThreadLocalToken};
+use crate::brand::{BrandedBlock, ThreadLocalToken};
 use crate::heap::Heap;
 use crate::raw_heap::RawHeap;
 use crate::tier::{tier_for, MemoryTier, PlacementHint};
@@ -52,21 +52,18 @@ pub struct TieredHeap<'brand, P: AllocPolicy> {
     host: Heap<'brand, P, mnemosyne_backend::MemoryBackendWrapper>,
     device: Heap<'brand, P, mnemosyne_backend::CudaDeviceBackend>,
     pinned: Heap<'brand, P, mnemosyne_backend::CudaHostPinnedBackend>,
-    _brand: InvariantLifetime<'brand>,
 }
 
-// SAFETY: `TieredHeap<'brand, P>` is `Send` because
-// - each sub-heap is `Heap<'brand, P, B>: Send` per the existing
-//   `unsafe impl<'brand, P, B: HasSegmentPool> Send for Heap<'brand, P, B>`
-//   (`MemoryBackendWrapper`, `CudaDeviceBackend`, `CudaHostPinnedBackend`
-//   each implement `HasSegmentPool` in `mnemosyne-arena`); the sub-heaps'
-//   `Send` derives from the underlying `RawHeap::Send` (which is
-//   `unsafe impl<P, B: HasSegmentPool> Send for RawHeap<P, B>`), and
-// - `_brand: InvariantLifetime<'brand>` is `PhantomData<...>`, which
-//   is unconditionally `Send + Sync` for any inner marker (`PhantomData`
-//   is the canonical "marker type" the std library uses for variance
-//   and `Send`/`Sync` bits that don't depend on `T`), so the `'brand`
-//   lifetime does not gate `Send`.
+// SAFETY: `TieredHeap<'brand, P>` is `Send` because each sub-heap
+// `Heap<'brand, P, B>` is `Send` per the existing
+// `unsafe impl<'brand, P, B: HasSegmentPool> Send for Heap<'brand, P, B>`
+// (`MemoryBackendWrapper`, `CudaDeviceBackend`, `CudaHostPinnedBackend`
+// each implement `HasSegmentPool` in `mnemosyne-arena`); the sub-heaps'
+// `Send` derives from the underlying `RawHeap`'s
+// `unsafe impl<P, B: HasSegmentPool> Send for RawHeap<P, B>`. The
+// `'brand` lifetime is captured by the sub-heaps' `_phantom` fields —
+// no extra `PhantomData` is needed on this struct since `'brand` only
+// appears transitively through the sub-heap types.
 //
 // The `'brand` invariant lifetime also enforces thread-locality at the
 // API surface: the only way to mint a `'brand` is through
@@ -276,7 +273,6 @@ where
                 raw: RawHeap::<P, mnemosyne_backend::CudaHostPinnedBackend>::new(),
                 _phantom: PhantomData,
             },
-            _brand: PhantomData,
         };
         f(heap, token)
     })
