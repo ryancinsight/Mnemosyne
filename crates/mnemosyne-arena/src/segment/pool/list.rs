@@ -1,12 +1,14 @@
 //! Lock-free per-NUMA-node segment pool (Treiber stack).
 //!
-//! The pool is a singly-linked stack of free [`Segment`] nodes whose head
-//! pointer is an [`AtomicPtr`]. Push and pop are lock-free CAS loops;
-//! `take_all` is a single atomic swap. No spinlock or mutex is acquired
-//! on any path.
+//! The pool is a singly-linked stack of free [`Segment`] nodes whose head is a
+//! tagged `CacheAlignedAtomicPtr` (address + wrapping mutation tag). Push and
+//! pop are lock-free CAS loops; `take_all` is a single atomic swap. No spinlock
+//! or mutex is acquired on any path. The tag makes single-element `pop`
+//! ABA-immune: a stale CAS fails on the tag even if the head address has cycled
+//! back, so no segment is ever lost under contention.
 //!
-use super::cache_aligned::CacheAlignedAtomicUsize;
-use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use super::cache_aligned::{CacheAlignedAtomicPtr, CacheAlignedAtomicUsize};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::types::Segment;
 
 /// A lock-free segment pool for a single NUMA node (Treiber stack).
@@ -17,8 +19,9 @@ use mnemosyne_core::types::Segment;
 /// [`Self::take_all`] uses a single atomic swap.
 #[repr(align(64))]
 pub struct NodeSegmentPool {
-    /// Head of the Treiber stack (null when empty).
-    head: AtomicPtr<Segment>,
+    /// Tagged head of the Treiber stack (null when empty). The high-bit tag
+    /// increments on every push/pop, closing the single-element-pop ABA window.
+    head: CacheAlignedAtomicPtr,
     /// Advisory count of segments currently in the pool.
     retained: CacheAlignedAtomicUsize,
     purged: AtomicUsize,
@@ -27,13 +30,13 @@ pub struct NodeSegmentPool {
     reset_calls: AtomicUsize,
 }
 
-// SAFETY: The `head` atomic pointer is accessed via CAS loops that ensure
-// only one thread mutates a given segment's `next_free_segment` at a time
-// (the producer writes `next` before the CAS publishes the segment; the
-// consumer reads `next` after a successful CAS claims the segment). The
-// telemetry counters are independently synchronized atomics. This discipline
-// makes shared cross-thread access (`Sync`) and ownership transfer (`Send`)
-// of a `NodeSegmentPool` data-race free.
+// SAFETY: The tagged `head` is accessed via CAS loops that ensure only one
+// thread mutates a given segment's `next_free_segment` at a time (the producer
+// writes `next` before the CAS publishes the segment; the consumer reads `next`
+// after a successful CAS claims the segment, and the head tag rejects a stale
+// ABA CAS). The telemetry counters are independently synchronized atomics. This
+// discipline makes shared cross-thread access (`Sync`) and ownership transfer
+// (`Send`) of a `NodeSegmentPool` data-race free.
 unsafe impl Send for NodeSegmentPool {}
 unsafe impl Sync for NodeSegmentPool {}
 
@@ -48,7 +51,7 @@ impl NodeSegmentPool {
     /// Creates a new empty `NodeSegmentPool`.
     pub const fn new() -> Self {
         Self {
-            head: AtomicPtr::new(core::ptr::null_mut()),
+            head: CacheAlignedAtomicPtr::new(core::ptr::null_mut()),
             retained: CacheAlignedAtomicUsize::new(0),
             purged: AtomicUsize::new(0),
             purge_calls: AtomicUsize::new(0),
@@ -66,22 +69,24 @@ impl NodeSegmentPool {
     /// the pool.
     #[inline]
     pub unsafe fn push_unbounded(&self, segment: *mut Segment) {
-        // SAFETY: by this function's contract `segment` is a valid, exclusively
-        // owned `Segment`. We write `next_free_segment` before publishing via
-        // CAS, so no other thread can observe a stale `next` value.
-        unsafe {
-            let mut current = self.head.load(Ordering::Relaxed);
-            loop {
-                (*segment).next_free_segment = current;
-                match self.head.compare_exchange_weak(
-                    current,
-                    segment,
-                    Ordering::Release,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => break,
-                    Err(actual) => current = actual,
-                }
+        let mut current = self.head.load(Ordering::Relaxed);
+        loop {
+            let current_ptr = CacheAlignedAtomicPtr::ptr(current);
+            // SAFETY: by this function's contract `segment` is a valid,
+            // exclusively owned `Segment`. Writing `next_free_segment` before
+            // the publishing CAS is unobservable by other threads until then.
+            unsafe {
+                (*segment).next_free_segment = current_ptr;
+            }
+            let next = CacheAlignedAtomicPtr::tagged_successor(segment, current);
+            match self.head.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
             }
         }
         self.retained.value.fetch_add(1, Ordering::Relaxed);
@@ -107,20 +112,23 @@ impl NodeSegmentPool {
         if retained >= mnemosyne_core::options::MAX_RETAINED_SEGMENTS.load(Ordering::Relaxed) {
             return false;
         }
-        // SAFETY: same contract as `push_unbounded`.
-        unsafe {
-            let mut current = self.head.load(Ordering::Relaxed);
-            loop {
-                (*segment).next_free_segment = current;
-                match self.head.compare_exchange_weak(
-                    current,
-                    segment,
-                    Ordering::Release,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => break,
-                    Err(actual) => current = actual,
-                }
+        let mut current = self.head.load(Ordering::Relaxed);
+        loop {
+            let current_ptr = CacheAlignedAtomicPtr::ptr(current);
+            // SAFETY: same contract as `push_unbounded` — `segment` is
+            // exclusively owned until the publishing CAS.
+            unsafe {
+                (*segment).next_free_segment = current_ptr;
+            }
+            let next = CacheAlignedAtomicPtr::tagged_successor(segment, current);
+            match self.head.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
             }
         }
         self.retained.value.fetch_add(1, Ordering::Relaxed);
@@ -137,7 +145,7 @@ impl NodeSegmentPool {
     /// must release or re-cache them.
     #[inline]
     pub fn take_all(&self) -> (*mut Segment, usize) {
-        let head = self.head.swap(core::ptr::null_mut(), Ordering::Acquire);
+        let head = CacheAlignedAtomicPtr::ptr(self.head.swap_null(Ordering::Acquire));
         // `retained` is maintained equal to the chain length, so the
         // swapped-out value is the detached count.
         let count = self.retained.value.swap(0, Ordering::Relaxed);
@@ -153,18 +161,20 @@ impl NodeSegmentPool {
         }
         let mut current = self.head.load(Ordering::Acquire);
         loop {
-            if current.is_null() {
+            let current_ptr = CacheAlignedAtomicPtr::ptr(current);
+            if current_ptr.is_null() {
                 return None;
             }
-            // SAFETY: `current` is a non-null pointer loaded from the head
+            // SAFETY: `current_ptr` is a non-null pointer unpacked from the head
             // atomic. Between our load and our CAS, no other consumer can
             // pop this same segment (they would see the same head and
             // compete on the CAS). A producer might push a new segment on
             // top, but that changes `head`, causing our CAS to fail and
-            // retry — it does not invalidate `current`. Reading
+            // retry — it does not invalidate `current_ptr`. Reading
             // `next_free_segment` is safe because the producer that pushed
-            // `current` wrote `next` before publishing via CAS.
-            let next = unsafe { (*current).next_free_segment };
+            // `current_ptr` wrote `next` before publishing via CAS.
+            let next_ptr = unsafe { (*current_ptr).next_free_segment };
+            let next = CacheAlignedAtomicPtr::tagged_successor(next_ptr, current);
             match self.head.compare_exchange_weak(
                 current,
                 next,
@@ -176,8 +186,8 @@ impl NodeSegmentPool {
                     // Clear the next pointer so the returned segment is clean.
                     // SAFETY: we now exclusively own `current` (CAS succeeded,
                     // so no other thread can access it through the pool).
-                    unsafe { (*current).next_free_segment = core::ptr::null_mut() };
-                    return Some(current);
+                    unsafe { (*current_ptr).next_free_segment = core::ptr::null_mut() };
+                    return Some(current_ptr);
                 }
                 Err(actual) => current = actual,
             }
