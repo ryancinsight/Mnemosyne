@@ -37,17 +37,16 @@ acceptance criterion and named blocker so it is Definition-of-Ready.
 Added from the 2026-06-27 deep audit of the under-examined crates
 (`mnemosyne-prof`, `mnemosyne-c-shim`, `mnemosyne-heap` containers):
 
-- [ ] [patch] `mnemosyne-prof` leak-detector memory: it stores one un-interned
-  `Box<[usize]>` stack per *live* allocation, so its metadata grows with the
-  app's live-allocation count (hundreds of MB under load) and heap-allocates a
-  boxed stack on every sampled insert. Intern identical call-site stacks behind
-  an interner (store one stack + a refcount, not N copies); typical workloads
-  have few distinct alloc sites. Acceptance: leak-map memory scales with
-  distinct call sites, not live allocations; per-insert boxed-stack alloc
-  removed for repeat sites. Pairs with: in `dump_*`, snapshot each shard under
-  its lock then release before `backtrace::resolve` + file I/O (currently the
-  shard mutex is held across symbolication + `writeln!`, stalling live
-  allocators on that shard during a dump).
+- [ ] [patch] `mnemosyne-prof` leak-detector memory: it still stores one
+  un-interned `Box<[usize]>` stack per *live* allocation, so metadata grows with
+  the app's live-allocation count and heap-allocates a boxed stack on every
+  sampled insert. Intern identical call-site stacks behind an interner (store
+  one stack + a refcount, not N copies); typical workloads have few distinct
+  alloc sites. Acceptance: leak-map memory scales with distinct call sites, not
+  live allocations; per-insert boxed-stack allocation is removed for repeat
+  sites. The paired dump-lock contention item is closed below: `dump_profile`
+  and `dump_leaks` now snapshot each shard under lock and perform
+  `backtrace::resolve` + file I/O after releasing shard mutexes.
 
 - [ ] [patch] `mnemosyne-c-shim` FFI contract polish (boundary is already
   memory-safe — calloc uses `checked_mul`, sizes capped at `isize::MAX`, no
@@ -120,6 +119,18 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   Net subtractive (removed two now-dead imports in `ops.rs`). Verification: fmt,
   clippy `-D warnings`, 51 heap tests, 239 workspace tests, 8 heap doctests,
   `cargo doc` clean.
+
+- [patch] Reduce `mnemosyne-prof` dump contention and consolidate sampled
+  allocation insertion. `dump_profile` and `dump_leaks` now clone active samples
+  into an `ActiveSample` snapshot while holding each shard mutex, then release
+  the lock before symbolication and file writes. This removes
+  `backtrace::resolve` and `writeln!` from the allocator-facing shard critical
+  sections. The duplicated nightly/stable TLS sample-insert body now routes
+  through `maybe_record_sample`, and pointer-to-shard routing is centralized in
+  `sample_shard`. Verification: fmt, stable and nightly-TLS checks, clippy `-D
+  warnings`, 6 prof nextest tests including
+  `active_sample_snapshot_is_detached_from_live_shards`, prof doctests, and
+  `cargo doc`.
 
 - [patch] Close the `// SAFETY:` discipline gap across the **`mnemosyne-prof`**
   crate (25 sites: `tls.rs` 14, `lib.rs` 10, `sampler.rs` 1). The fragile sites

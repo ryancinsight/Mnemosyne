@@ -63,6 +63,12 @@ pub struct Sample {
     pub stack: Box<[usize]>,
 }
 
+#[derive(Clone)]
+struct ActiveSample {
+    ptr: usize,
+    sample: Sample,
+}
+
 const SHARDS: usize = 64;
 
 #[repr(align(64))]
@@ -106,25 +112,8 @@ pub(crate) fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
     #[cfg(nightly_tls_active)]
     {
         let mut val = crate::get_bytes_until_sample();
-        if leak_active || val <= debit {
-            if !leak_active {
-                let mean = SAMPLE_INTERVAL.load(Ordering::Relaxed);
-                val = next_sample_interval(mean) as isize;
-            }
-
-            let stack = capture_stack();
-
-            let shard = (ptr as usize >> 6) % SHARDS;
-            let mut lock = get_map(shard);
-            if let Some(ref mut map) = *lock {
-                if map.insert(ptr as usize, Sample { size, stack }).is_none() {
-                    ACTIVE_SAMPLES_COUNT.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-        }
-        if !leak_active {
-            crate::set_bytes_until_sample(val.saturating_sub(debit));
-        }
+        maybe_record_sample(ptr, size, leak_active, debit, &mut val);
+        crate::set_bytes_until_sample(val);
     }
 
     // SAFETY: `get_profiler_state()` returns this thread's own thread-local
@@ -134,26 +123,35 @@ pub(crate) fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
     #[cfg(not(nightly_tls_active))]
     unsafe {
         let state = &mut *crate::get_profiler_state();
-        let mut val = state.bytes_until_sample;
-        if leak_active || val <= debit {
-            if !leak_active {
-                let mean = SAMPLE_INTERVAL.load(Ordering::Relaxed);
-                val = next_sample_interval(mean) as isize;
-            }
+        maybe_record_sample(ptr, size, leak_active, debit, &mut state.bytes_until_sample);
+    }
+}
 
-            let stack = capture_stack();
-
-            let shard = (ptr as usize >> 6) % SHARDS;
-            let mut lock = get_map(shard);
-            if let Some(ref mut map) = *lock {
-                if map.insert(ptr as usize, Sample { size, stack }).is_none() {
-                    ACTIVE_SAMPLES_COUNT.fetch_add(1, Ordering::Relaxed);
-                }
-            }
-        }
+fn maybe_record_sample(
+    ptr: *mut u8,
+    size: usize,
+    leak_active: bool,
+    debit: isize,
+    bytes_until_sample: &mut isize,
+) {
+    if leak_active || *bytes_until_sample <= debit {
         if !leak_active {
-            state.bytes_until_sample = val.saturating_sub(debit);
+            let mean = SAMPLE_INTERVAL.load(Ordering::Relaxed);
+            *bytes_until_sample = next_sample_interval(mean) as isize;
         }
+
+        let stack = capture_stack();
+        let shard = sample_shard(ptr as usize);
+        let mut lock = get_map(shard);
+        if let Some(ref mut map) = *lock {
+            if map.insert(ptr as usize, Sample { size, stack }).is_none() {
+                ACTIVE_SAMPLES_COUNT.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    if !leak_active {
+        *bytes_until_sample = (*bytes_until_sample).saturating_sub(debit);
     }
 }
 
@@ -178,13 +176,18 @@ pub(crate) fn capture_stack() -> Box<[usize]> {
 }
 
 pub(crate) fn sample_free_inner(ptr: *mut u8) {
-    let shard = (ptr as usize >> 6) % SHARDS;
+    let shard = sample_shard(ptr as usize);
     let mut lock = get_map(shard);
     if let Some(ref mut map) = *lock {
         if map.remove(&(ptr as usize)).is_some() {
             ACTIVE_SAMPLES_COUNT.fetch_sub(1, Ordering::Relaxed);
         }
     }
+}
+
+#[inline]
+fn sample_shard(ptr: usize) -> usize {
+    (ptr >> 6) % SHARDS
 }
 
 fn next_sample_interval(mean: usize) -> usize {
@@ -229,16 +232,9 @@ pub fn dump_profile(path: &str) -> std::io::Result<()> {
 
 fn dump_profile_inner(path: &str) -> std::io::Result<()> {
     let mut folded: HashMap<String, usize> = HashMap::new();
-    for shard in &ACTIVE_SAMPLES {
-        let lock = shard
-            .mutex
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(ref map) = *lock {
-            for (_, sample) in map.iter() {
-                fold_sample_stack(sample, &mut folded);
-            }
-        }
+    let samples = active_sample_snapshot();
+    for sample in &samples {
+        fold_sample_stack(&sample.sample, &mut folded);
     }
 
     let mut file = std::fs::File::create(path)?;
@@ -302,22 +298,31 @@ pub fn dump_leaks(path: &str) -> std::io::Result<usize> {
 
 fn dump_leaks_inner(path: &str) -> std::io::Result<usize> {
     let mut file = None;
-    let mut total_leaks = 0usize;
+    let samples = active_sample_snapshot();
+    for sample in &samples {
+        let file = leak_report_file(path, &mut file)?;
+        write_leak_sample(file, sample.ptr, &sample.sample)?;
+    }
+
+    Ok(samples.len())
+}
+
+fn active_sample_snapshot() -> Vec<ActiveSample> {
+    let total = ACTIVE_SAMPLES_COUNT.load(Ordering::Relaxed);
+    let mut samples = Vec::with_capacity(total);
     for shard in &ACTIVE_SAMPLES {
         let lock = shard
             .mutex
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(ref map) = *lock {
-            for (&ptr, sample) in map.iter() {
-                let file = leak_report_file(path, &mut file)?;
-                write_leak_sample(file, ptr, sample)?;
-                total_leaks += 1;
-            }
+            samples.extend(map.iter().map(|(&ptr, sample)| ActiveSample {
+                ptr,
+                sample: sample.clone(),
+            }));
         }
     }
-
-    Ok(total_leaks)
+    samples
 }
 
 fn leak_report_file<'a>(
@@ -368,4 +373,34 @@ fn write_leak_sample(file: &mut std::fs::File, ptr: usize, sample: &Sample) -> s
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_sample_snapshot_is_detached_from_live_shards() {
+        crate::reset_profiler_for_testing();
+
+        let ptr = 0x1000usize as *mut u8;
+        sample_alloc_inner(ptr, 64, true);
+
+        let snapshot = active_sample_snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].ptr, ptr as usize);
+        assert_eq!(snapshot[0].sample.size, 64);
+
+        sample_free_inner(ptr);
+        assert!(
+            active_sample_snapshot().is_empty(),
+            "live shard map must be empty after freeing the sampled pointer"
+        );
+        assert_eq!(
+            snapshot[0].sample.size, 64,
+            "snapshot must retain a value copy after the live sample is removed"
+        );
+
+        crate::reset_profiler_for_testing();
+    }
 }

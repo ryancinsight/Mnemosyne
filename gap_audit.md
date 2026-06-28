@@ -32,6 +32,17 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
 
 ## Closed
 
+- [patch] `mnemosyne-prof` dump paths held shard mutexes while resolving
+  symbols and writing report output, stalling allocator activity on the same
+  shard during `dump_profile`/`dump_leaks`. Both dump paths now snapshot active
+  samples under each shard mutex and perform `backtrace::resolve` plus file I/O
+  after releasing the lock. The sampled allocation insert path is also a single
+  `maybe_record_sample` helper shared by the nightly and stable TLS cfgs, with
+  `sample_shard` as the pointer-to-shard SSOT. Evidence tier: value-semantic
+  unit coverage for detached snapshots plus package clippy, nextest, doctest,
+  rustdoc, and stable/nightly-TLS compile checks. Residual memory risk remains
+  open in `backlog.md`: stack interning is still needed to scale retained stack
+  storage by distinct call site rather than live allocation count.
 - [patch] `mnemosyne-prof/nightly_tls` had a hidden compile break: `lib.rs`
   referenced `tls.rs`'s private `THREAD_STATE` directly in `on_alloc`.
   `tls::should_skip_alloc_fast_path` now owns the reentrancy and sample-budget
