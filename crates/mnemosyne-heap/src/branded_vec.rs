@@ -98,40 +98,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             };
         }
 
-        if self.cap > self.len {
-            if self.len == 0 {
-                // SAFETY: `self.cap > self.len == 0` with `size_of::<T>() != 0`
-                // implies `self.cap > 0`, so `self.ptr` is a live block allocated
-                // from `self.heap` (never the dangling sentinel). No element is
-                // initialized (`len == 0`), so freeing the raw block drops
-                // nothing. `self.ptr`/`self.cap` are reset to the dangling
-                // sentinel immediately after, so the freed block is never reused.
-                unsafe {
-                    self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
-                }
-                self.ptr = NonNull::dangling();
-                self.cap = 0;
-            } else {
-                let old_layout = Layout::array::<T>(self.cap).unwrap_or_else(|_| {
-                    debug_assert!(false, "Layout array calculation failed for valid capacity");
-                    // SAFETY: `self.cap` is the capacity of an allocation that
-                    // already succeeded via `Layout::array::<T>(self.cap)` (in
-                    // `with_capacity`/`reserve`), so recomputing the identical
-                    // layout here cannot overflow and the `Err` arm is
-                    // unreachable.
-                    unsafe { core::hint::unreachable_unchecked() }
-                });
-                let block = BrandedBlock {
-                    ptr: self.ptr,
-                    _marker: PhantomData,
-                };
-                let new_size = core::mem::size_of::<T>() * self.len;
-                if let Some(new_block) = self.heap.realloc(token, block, old_layout, new_size) {
-                    self.ptr = new_block.ptr.cast();
-                    self.cap = self.len;
-                }
-            }
-        }
+        // Best-effort shrink to fit via the shared SSOT helper; a failed realloc
+        // leaves the (larger) block in place and the boxed slice still owns it
+        // correctly, so the `Err` is intentionally ignored here.
+        let _ = self.shrink_to_len(token);
 
         // SAFETY: for non-ZST `T`, `self.ptr` addresses a live allocation of at
         // least `self.len` initialized `T` (after the shrink above, `self.cap`
@@ -255,16 +225,33 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     #[inline]
     #[allow(clippy::result_unit_err)]
     pub fn shrink_to_fit(&mut self, token: &mut ThreadLocalToken<'brand>) -> Result<(), ()> {
-        if core::mem::size_of::<T>() == 0 || self.cap <= self.len {
+        if core::mem::size_of::<T>() == 0 {
+            return Ok(());
+        }
+        self.shrink_to_len(token)
+    }
+
+    /// Shrinks the backing allocation so its capacity equals `self.len` — the
+    /// single authoritative shrink path shared by
+    /// [`shrink_to_fit`](BrandedVec::shrink_to_fit) and
+    /// [`into_boxed_slice`](BrandedVec::into_boxed_slice), so the
+    /// free-when-empty / realloc-to-len mechanics cannot drift between them.
+    ///
+    /// Callers guarantee `T` is non-ZST. A no-op when `cap <= len`; frees the
+    /// block when `len == 0`; otherwise reallocates down to `len` elements.
+    /// Returns `Err(())` only if the shrinking realloc fails, leaving the vector
+    /// valid and unchanged (the over-sized block is retained).
+    #[inline]
+    fn shrink_to_len(&mut self, token: &mut ThreadLocalToken<'brand>) -> Result<(), ()> {
+        if self.cap <= self.len {
             return Ok(());
         }
         if self.len == 0 {
-            // SAFETY: reached only when `size_of::<T>() != 0` and
-            // `self.cap > self.len == 0`, so `self.cap > 0` and `self.ptr` is a
-            // live block allocated from `self.heap` (not the dangling sentinel).
-            // No element is initialized (`len == 0`), so freeing drops nothing.
-            // `self.ptr`/`self.cap` are reset to the dangling sentinel right
-            // after, so the freed block is never reused.
+            // SAFETY: reached only with non-ZST `T` and `self.cap > self.len == 0`,
+            // so `self.cap > 0` and `self.ptr` is a live block from `self.heap`
+            // (not the dangling sentinel). No element is initialized, so freeing
+            // drops nothing; `self.ptr`/`self.cap` reset to the dangling sentinel
+            // right after, so the freed block is never reused.
             unsafe {
                 self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
             }
@@ -278,12 +265,13 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             _marker: PhantomData,
         };
         let new_size = core::mem::size_of::<T>() * self.len;
-        if let Some(new_block) = self.heap.realloc(token, block, old_layout, new_size) {
-            self.ptr = new_block.ptr.cast();
-            self.cap = self.len;
-            Ok(())
-        } else {
-            Err(())
+        match self.heap.realloc(token, block, old_layout, new_size) {
+            Some(new_block) => {
+                self.ptr = new_block.ptr.cast();
+                self.cap = self.len;
+                Ok(())
+            }
+            None => Err(()),
         }
     }
 }
