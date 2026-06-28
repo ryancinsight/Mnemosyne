@@ -9,7 +9,7 @@ mod sampler;
 mod tests;
 mod tls;
 
-pub use sampler::{dump_leaks, dump_profile, Sample};
+pub use sampler::{dump_leaks, dump_profile, Sample, StackId};
 
 pub(crate) use tls::{
     enter_hook, exit_hook, get_profiler_state, sample_debit, should_skip_alloc_fast_path,

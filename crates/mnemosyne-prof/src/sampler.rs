@@ -3,7 +3,7 @@ use core::sync::atomic::Ordering;
 use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
 use std::io::Write;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::{ACTIVE_SAMPLES_COUNT, SAMPLE_INTERVAL};
 
@@ -54,19 +54,131 @@ impl BuildHasher for FastBuildHasher {
     }
 }
 
+/// Maximum captured stack depth (instruction pointers per sample).
+pub(crate) const MAX_STACK_FRAMES: usize = 32;
+
+/// Interned identity of a captured stack trace.
+///
+/// Samples store this `u32` handle instead of an owned `Box<[usize]>`, so the
+/// per-live-allocation metadata is a fixed 4 bytes regardless of stack depth and
+/// the actual frame arrays are deduplicated: the leak detector's retained memory
+/// scales with the number of *distinct call sites*, not the number of live
+/// allocations (which can differ by orders of magnitude).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct StackId(u32);
+
 /// Representation of a sampled memory allocation.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Sample {
     /// Allocated size of the block in bytes.
     pub size: usize,
-    /// Exact retained stack trace represented as instruction pointers.
-    pub stack: Box<[usize]>,
+    /// Interned identity of the retained stack trace (resolve via the interner).
+    pub stack: StackId,
 }
 
 #[derive(Clone)]
 struct ActiveSample {
     ptr: usize,
-    sample: Sample,
+    size: usize,
+    stack: Arc<[usize]>,
+}
+
+/// Global stack-trace interner shared by every sampled allocation.
+///
+/// Each distinct live frame sequence is stored exactly once as an `Arc<[usize]>`.
+/// Repeat call sites increment a reference count without allocating; the last
+/// free removes the content-keyed entry and recycles the id slot.
+struct StackInterner {
+    forward: HashMap<Arc<[usize]>, StackId, FastBuildHasher>,
+    entries: Vec<Option<StackEntry>>,
+    free_ids: Vec<u32>,
+}
+
+struct StackEntry {
+    frames: Arc<[usize]>,
+    refs: usize,
+}
+
+static STACK_INTERNER: Mutex<Option<StackInterner>> = Mutex::new(None);
+
+/// Interns `frames`, returning its stable [`StackId`]. Allocates only on a
+/// first-seen call site; repeat sites are a hash lookup with no allocation.
+fn intern_stack(frames: &[usize]) -> StackId {
+    let mut guard = STACK_INTERNER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let interner = guard.get_or_insert_with(|| StackInterner {
+        forward: HashMap::with_hasher(FastBuildHasher),
+        entries: Vec::new(),
+        free_ids: Vec::new(),
+    });
+    if let Some(&id) = interner.forward.get(frames) {
+        let entry = interner
+            .entries
+            .get_mut(id.0 as usize)
+            .and_then(Option::as_mut)
+            .expect("invariant: stack interner forward map points at a live entry");
+        entry.refs = entry
+            .refs
+            .checked_add(1)
+            .expect("invariant: stack interner reference count overflow");
+        return id;
+    }
+    let arc: Arc<[usize]> = Arc::from(frames);
+    let id = if let Some(id) = interner.free_ids.pop() {
+        interner.entries[id as usize] = Some(StackEntry {
+            frames: Arc::clone(&arc),
+            refs: 1,
+        });
+        id
+    } else {
+        let id = u32::try_from(interner.entries.len())
+            .expect("invariant: stack interner id count exceeds u32::MAX");
+        interner.entries.push(Some(StackEntry {
+            frames: Arc::clone(&arc),
+            refs: 1,
+        }));
+        id
+    };
+    interner.forward.insert(arc, StackId(id));
+    StackId(id)
+}
+
+fn release_stack(id: StackId) {
+    let mut guard = STACK_INTERNER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(interner) = guard.as_mut() else {
+        return;
+    };
+    interner.release(id);
+}
+
+impl StackInterner {
+    fn resolve(&self, id: StackId) -> Option<Arc<[usize]>> {
+        self.entries
+            .get(id.0 as usize)
+            .and_then(Option::as_ref)
+            .map(|entry| Arc::clone(&entry.frames))
+    }
+
+    fn release(&mut self, id: StackId) {
+        let Some(entry_slot) = self.entries.get_mut(id.0 as usize) else {
+            return;
+        };
+        let Some(entry) = entry_slot.as_mut() else {
+            return;
+        };
+        if entry.refs > 1 {
+            entry.refs -= 1;
+            return;
+        }
+
+        let frames = Arc::clone(&entry.frames);
+        *entry_slot = None;
+        self.forward.remove(frames.as_ref());
+        self.free_ids.push(id.0);
+    }
 }
 
 const SHARDS: usize = 64;
@@ -104,6 +216,10 @@ pub(crate) fn reset_sampler_state() {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *lock = None;
     }
+    let mut interner = STACK_INTERNER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *interner = None;
 }
 
 pub(crate) fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
@@ -142,11 +258,20 @@ fn maybe_record_sample(
 
         let stack = capture_stack();
         let shard = sample_shard(ptr as usize);
-        let mut lock = get_map(shard);
-        if let Some(ref mut map) = *lock {
-            if map.insert(ptr as usize, Sample { size, stack }).is_none() {
-                ACTIVE_SAMPLES_COUNT.fetch_add(1, Ordering::Relaxed);
+        let replaced = {
+            let mut lock = get_map(shard);
+            if let Some(ref mut map) = *lock {
+                let replaced = map.insert(ptr as usize, Sample { size, stack });
+                if replaced.is_none() {
+                    ACTIVE_SAMPLES_COUNT.fetch_add(1, Ordering::Relaxed);
+                }
+                replaced
+            } else {
+                None
             }
+        };
+        if let Some(replaced) = replaced {
+            release_stack(replaced.stack);
         }
     }
 
@@ -155,8 +280,12 @@ fn maybe_record_sample(
     }
 }
 
-pub(crate) fn capture_stack() -> Box<[usize]> {
-    const MAX_STACK_FRAMES: usize = 32;
+pub(crate) fn capture_stack() -> StackId {
+    let (frames, len) = capture_stack_frames();
+    intern_stack(&frames[..len])
+}
+
+fn capture_stack_frames() -> ([usize; MAX_STACK_FRAMES], usize) {
     let mut frames = [0usize; MAX_STACK_FRAMES];
     let mut len = 0usize;
 
@@ -172,16 +301,25 @@ pub(crate) fn capture_stack() -> Box<[usize]> {
         len < MAX_STACK_FRAMES
     });
 
-    Box::from(&frames[..len])
+    (frames, len)
 }
 
 pub(crate) fn sample_free_inner(ptr: *mut u8) {
     let shard = sample_shard(ptr as usize);
-    let mut lock = get_map(shard);
-    if let Some(ref mut map) = *lock {
-        if map.remove(&(ptr as usize)).is_some() {
-            ACTIVE_SAMPLES_COUNT.fetch_sub(1, Ordering::Relaxed);
+    let removed = {
+        let mut lock = get_map(shard);
+        if let Some(ref mut map) = *lock {
+            let removed = map.remove(&(ptr as usize));
+            if removed.is_some() {
+                ACTIVE_SAMPLES_COUNT.fetch_sub(1, Ordering::Relaxed);
+            }
+            removed
+        } else {
+            None
         }
+    };
+    if let Some(sample) = removed {
+        release_stack(sample.stack);
     }
 }
 
@@ -234,7 +372,7 @@ fn dump_profile_inner(path: &str) -> std::io::Result<()> {
     let mut folded: HashMap<String, usize> = HashMap::new();
     let samples = active_sample_snapshot();
     for sample in &samples {
-        fold_sample_stack(&sample.sample, &mut folded);
+        fold_sample_stack(sample, &mut folded);
     }
 
     let mut file = std::fs::File::create(path)?;
@@ -245,7 +383,7 @@ fn dump_profile_inner(path: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-fn fold_sample_stack(sample: &Sample, folded: &mut HashMap<String, usize>) {
+fn fold_sample_stack(sample: &ActiveSample, folded: &mut HashMap<String, usize>) {
     let mut stack = String::new();
     for &ip in sample.stack.iter().rev() {
         let mut symbol = String::new();
@@ -301,7 +439,7 @@ fn dump_leaks_inner(path: &str) -> std::io::Result<usize> {
     let samples = active_sample_snapshot();
     for sample in &samples {
         let file = leak_report_file(path, &mut file)?;
-        write_leak_sample(file, sample.ptr, &sample.sample)?;
+        write_leak_sample(file, sample)?;
     }
 
     Ok(samples.len())
@@ -310,15 +448,24 @@ fn dump_leaks_inner(path: &str) -> std::io::Result<usize> {
 fn active_sample_snapshot() -> Vec<ActiveSample> {
     let total = ACTIVE_SAMPLES_COUNT.load(Ordering::Relaxed);
     let mut samples = Vec::with_capacity(total);
+    let interner = STACK_INTERNER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(interner) = interner.as_ref() else {
+        return samples;
+    };
     for shard in &ACTIVE_SAMPLES {
         let lock = shard
             .mutex
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(ref map) = *lock {
-            samples.extend(map.iter().map(|(&ptr, sample)| ActiveSample {
-                ptr,
-                sample: sample.clone(),
+            samples.extend(map.iter().filter_map(|(&ptr, sample)| {
+                interner.resolve(sample.stack).map(|stack| ActiveSample {
+                    ptr,
+                    size: sample.size,
+                    stack,
+                })
             }));
         }
     }
@@ -347,8 +494,12 @@ fn write_leak_report_header(file: &mut std::fs::File) -> std::io::Result<()> {
     writeln!(file, "======================")
 }
 
-fn write_leak_sample(file: &mut std::fs::File, ptr: usize, sample: &Sample) -> std::io::Result<()> {
-    writeln!(file, "\nLeak of {} bytes at {:#x}:", sample.size, ptr)?;
+fn write_leak_sample(file: &mut std::fs::File, sample: &ActiveSample) -> std::io::Result<()> {
+    writeln!(
+        file,
+        "\nLeak of {} bytes at {:#x}:",
+        sample.size, sample.ptr
+    )?;
     for (idx, &ip) in sample.stack.iter().enumerate() {
         let mut name = String::new();
         let mut file_path = String::new();
@@ -380,6 +531,63 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stack_interner_reuses_ids_and_releases_last_reference() {
+        crate::reset_profiler_for_testing();
+
+        let first = intern_stack(&[1, 2, 3]);
+        let repeat = intern_stack(&[1, 2, 3]);
+        assert_eq!(first, repeat);
+
+        {
+            let guard = STACK_INTERNER
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let interner = guard.as_ref().expect("stack interner must be initialized");
+            let entry = interner.entries[first.0 as usize]
+                .as_ref()
+                .expect("interned stack id must point to a live entry");
+            assert_eq!(entry.refs, 2);
+            assert_eq!(interner.forward.len(), 1);
+        }
+
+        release_stack(first);
+        {
+            let guard = STACK_INTERNER
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let interner = guard
+                .as_ref()
+                .expect("stack interner must stay initialized");
+            let entry = interner.entries[first.0 as usize]
+                .as_ref()
+                .expect("one remaining reference must keep the entry live");
+            assert_eq!(entry.refs, 1);
+            assert_eq!(interner.forward.len(), 1);
+        }
+
+        release_stack(repeat);
+        {
+            let guard = STACK_INTERNER
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let interner = guard
+                .as_ref()
+                .expect("stack interner must stay initialized");
+            assert!(interner.entries[first.0 as usize].is_none());
+            assert!(interner.forward.is_empty());
+            assert_eq!(interner.free_ids.as_slice(), &[first.0]);
+        }
+
+        let reused = intern_stack(&[4, 5]);
+        assert_eq!(
+            reused, first,
+            "released stack ids should be recycled instead of growing the table"
+        );
+
+        crate::reset_profiler_for_testing();
+    }
+
+    #[test]
     fn active_sample_snapshot_is_detached_from_live_shards() {
         crate::reset_profiler_for_testing();
 
@@ -389,7 +597,11 @@ mod tests {
         let snapshot = active_sample_snapshot();
         assert_eq!(snapshot.len(), 1);
         assert_eq!(snapshot[0].ptr, ptr as usize);
-        assert_eq!(snapshot[0].sample.size, 64);
+        assert_eq!(snapshot[0].size, 64);
+        assert!(
+            !snapshot[0].stack.is_empty(),
+            "snapshot must retain resolved stack frames"
+        );
 
         sample_free_inner(ptr);
         assert!(
@@ -397,7 +609,7 @@ mod tests {
             "live shard map must be empty after freeing the sampled pointer"
         );
         assert_eq!(
-            snapshot[0].sample.size, 64,
+            snapshot[0].size, 64,
             "snapshot must retain a value copy after the live sample is removed"
         );
 

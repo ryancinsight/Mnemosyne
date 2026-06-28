@@ -4,15 +4,20 @@ Target version: 0.2.0
 
 ## Verified
 
-- [x] [patch] Reduce `mnemosyne-prof` dump contention by snapshotting active
-  samples under each shard mutex and doing stack symbolication/file I/O after
-  releasing the lock. `sample_alloc_inner` also routes the formerly duplicated
-  nightly/stable TLS insertion body through `maybe_record_sample`, and
-  `sample_shard` is the single pointer-to-shard formula. Verification: `cargo
-  fmt -p mnemosyne-prof --check`; `cargo check -p mnemosyne-prof`; `rustup run
-  nightly cargo check -p mnemosyne-prof --features nightly_tls`; `cargo clippy
-  -p mnemosyne-prof --all-targets --all-features -- -D warnings`; `cargo
-  nextest run -p mnemosyne-prof --all-features` (6 passed, including
+- [x] [patch] Reduce `mnemosyne-prof` leak/dump memory pressure and contention.
+  Live samples now store fixed-width `StackId` handles instead of owned
+  `Box<[usize]>` stacks; a refcounted `StackInterner` stores one `Arc<[usize]>`
+  per distinct live call stack, releases it on the last free, and recycles id
+  slots. Stack capture uses a fixed stack buffer, repeat call sites avoid boxed
+  frame allocation, and dump paths snapshot active samples under each shard
+  mutex before symbolication/file I/O. `sample_alloc_inner` also routes the
+  formerly duplicated nightly/stable TLS insertion body through
+  `maybe_record_sample`, and `sample_shard` is the single pointer-to-shard
+  formula. Verification: `cargo fmt -p mnemosyne-prof --check`; `cargo check -p
+  mnemosyne-prof`; `rustup run nightly cargo check -p mnemosyne-prof --features
+  nightly_tls`; `cargo clippy -p mnemosyne-prof --all-targets --all-features
+  -- -D warnings`; `cargo nextest run -p mnemosyne-prof --all-features` (7 passed,
+  including `stack_interner_reuses_ids_and_releases_last_reference` and
   `active_sample_snapshot_is_detached_from_live_shards`); `cargo test --doc -p
   mnemosyne-prof --all-features`; `cargo doc -p mnemosyne-prof --all-features
   --no-deps`.

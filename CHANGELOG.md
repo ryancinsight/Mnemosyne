@@ -29,13 +29,15 @@
 
 ### Changed
 
-- Reduced `mnemosyne-prof` dump contention: `dump_profile` and `dump_leaks`
-  snapshot active samples under each shard mutex, then release the lock before
-  symbolication and file I/O. The sampled allocation insert path is now shared
-  by the nightly and stable TLS cfgs through `maybe_record_sample`, with
-  `sample_shard` as the pointer-to-shard SSOT. Evidence tier: value-semantic
-  snapshot unit test plus package clippy, nextest, doctest, rustdoc, and
-  stable/nightly-TLS compile checks.
+- Reduced `mnemosyne-prof` leak/dump memory pressure and contention. Live
+  samples now store fixed-width `StackId` handles instead of owned
+  `Box<[usize]>` stacks; a refcounted `StackInterner` stores one `Arc<[usize]>`
+  per distinct live call stack, releases it on the last free, and recycles id
+  slots. Stack capture uses a fixed stack buffer, repeat call sites avoid boxed
+  frame allocation, and dump paths release shard mutexes before symbolication
+  and file I/O. Evidence tier: value-semantic interner and snapshot unit tests
+  plus package clippy, nextest, doctest, rustdoc, and stable/nightly-TLS compile
+  checks.
 - Fixed the hidden `mnemosyne-prof/nightly_tls` allocation fast path by routing
   `on_alloc` through `tls::should_skip_alloc_fast_path` instead of reaching into
   `tls.rs`'s private `THREAD_STATE`. The TLS module now owns the reentrancy and
