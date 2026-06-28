@@ -135,12 +135,25 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
     /// Accesses the value immutably using the allocator token.
     #[inline(always)]
     pub fn borrow<'a>(&self, _token: &'a ThreadLocalToken<'brand>) -> &'a T {
+        // SAFETY: `self.ptr` addresses a live, initialized `T` owned within this
+        // brand. There is exactly one `ThreadLocalToken<'brand>` per `'brand`,
+        // so a shared `&'a token` proves no `&mut` to the same value can
+        // coexist for `'a`. The returned `&'a T` is bound to the token borrow,
+        // so the shared reference cannot outlive that exclusivity guarantee —
+        // the GhostCell token-aliasing invariant for shared access.
         unsafe { self.ptr.as_ref() }
     }
 
     /// Accesses the value mutably using the allocator token.
     #[inline(always)]
     pub fn borrow_mut<'a>(&self, _token: &'a mut ThreadLocalToken<'brand>) -> &'a mut T {
+        // SAFETY: `self.ptr` addresses a live, initialized `T` owned within this
+        // brand. There is exactly one `ThreadLocalToken<'brand>` per `'brand`,
+        // and an exclusive `&'a mut token` borrows that sole token, so for `'a`
+        // no other `borrow`/`borrow_mut` against this brand can run and no other
+        // reference to this value can coexist. The returned `&'a mut T` is bound
+        // to the token's exclusive borrow, upholding the unique-mutable-access
+        // half of the GhostCell token-aliasing invariant.
         unsafe { &mut *self.ptr.as_ptr() }
     }
 
@@ -159,6 +172,13 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
             cell2.ptr.as_ptr() as *const (),
             "borrow_mut_2: cells must be distinct"
         );
+        // SAFETY: the `assert_ne!` above proves `cell1` and `cell2` address
+        // disjoint blocks, so the two `&mut` references never alias. Both cells
+        // share `'brand`, and the single exclusive `&'a mut token` proves no
+        // other access to this brand runs for `'a`. Each pointer addresses a
+        // live, initialized value owned within this brand, so simultaneously
+        // forming the two mutable references is sound (token-mediated exclusion
+        // plus distinctness gives the non-aliasing guarantee).
         unsafe { (&mut *cell1.ptr.as_ptr(), &mut *cell2.ptr.as_ptr()) }
     }
 
@@ -180,6 +200,13 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
             p1 != p2 && p2 != p3 && p1 != p3,
             "borrow_mut_3: cells must be distinct"
         );
+        // SAFETY: the `assert!` above proves `cell1`, `cell2`, `cell3` address
+        // pairwise-distinct blocks, so the three `&mut` references never alias.
+        // All cells share `'brand`, and the single exclusive `&'a mut token`
+        // proves no other access to this brand runs for `'a`. Each pointer
+        // addresses a live, initialized value owned within this brand, so
+        // simultaneously forming the three mutable references is sound
+        // (token-mediated exclusion plus pairwise distinctness).
         unsafe {
             (
                 &mut *cell1.ptr.as_ptr(),

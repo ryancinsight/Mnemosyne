@@ -75,6 +75,15 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         token: &mut ThreadLocalToken<'brand>,
     ) -> BrandedBox<'brand, 'heap, [T], P, B> {
         if core::mem::size_of::<T>() == 0 {
+            // SAFETY: `T` is zero-sized, so a `[T]` of any length occupies no
+            // bytes; `NonNull::dangling()` is a valid, aligned base for a
+            // zero-sized slice of `self.len` ZST elements. `from_raw_parts_mut`
+            // requires the pointer be non-null and aligned (dangling satisfies
+            // both for a ZST) and the resulting fat pointer is never read/written
+            // for storage. The base pointer is non-null, so `new_unchecked` is
+            // sound. Ownership of the `len` logical elements transfers to the
+            // returned `BrandedBox` (`self` is forgotten below), so no element is
+            // dropped twice.
             let slice_ptr = unsafe {
                 let raw_slice =
                     core::slice::from_raw_parts_mut(NonNull::<T>::dangling().as_ptr(), self.len);
@@ -91,6 +100,12 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
 
         if self.cap > self.len {
             if self.len == 0 {
+                // SAFETY: `self.cap > self.len == 0` with `size_of::<T>() != 0`
+                // implies `self.cap > 0`, so `self.ptr` is a live block allocated
+                // from `self.heap` (never the dangling sentinel). No element is
+                // initialized (`len == 0`), so freeing the raw block drops
+                // nothing. `self.ptr`/`self.cap` are reset to the dangling
+                // sentinel immediately after, so the freed block is never reused.
                 unsafe {
                     self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
                 }
@@ -99,6 +114,11 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             } else {
                 let old_layout = Layout::array::<T>(self.cap).unwrap_or_else(|_| {
                     debug_assert!(false, "Layout array calculation failed for valid capacity");
+                    // SAFETY: `self.cap` is the capacity of an allocation that
+                    // already succeeded via `Layout::array::<T>(self.cap)` (in
+                    // `with_capacity`/`reserve`), so recomputing the identical
+                    // layout here cannot overflow and the `Err` arm is
+                    // unreachable.
                     unsafe { core::hint::unreachable_unchecked() }
                 });
                 let block = BrandedBlock {
@@ -113,6 +133,14 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             }
         }
 
+        // SAFETY: for non-ZST `T`, `self.ptr` addresses a live allocation of at
+        // least `self.len` initialized `T` (after the shrink above, `self.cap`
+        // is either unchanged or equal to `self.len`, and `[0, self.len)` is
+        // always the initialized prefix). `slice_from_raw_parts_mut` builds a fat
+        // pointer over exactly those `self.len` elements; `self.ptr` is non-null
+        // (`NonNull`), so `new_unchecked` is sound. Ownership of the elements and
+        // the backing block transfers to the returned `BrandedBox` (`self` is
+        // forgotten below), so the block is freed exactly once.
         let slice_ptr = unsafe {
             let raw_slice = core::ptr::slice_from_raw_parts_mut(self.ptr.as_ptr(), self.len);
             NonNull::new_unchecked(raw_slice)
@@ -137,6 +165,13 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         let heap = boxed_slice.heap;
         let block = boxed_slice.into_raw();
         Self {
+            // SAFETY: `block.ptr` originates from a `BrandedBox<[T]>`'s
+            // `NonNull<[T]>` and is therefore non-null; reinterpreting the slice
+            // base address as the element pointer `*mut T` preserves
+            // non-nullness (and, for non-ZST `T`, the original allocation's
+            // alignment for `T`), so `new_unchecked` is sound. Ownership of the
+            // block transfers from the consumed box to the new vector with no
+            // copy.
             ptr: unsafe { NonNull::new_unchecked(block.ptr.as_ptr() as *mut T) },
             cap: if core::mem::size_of::<T>() == 0 {
                 usize::MAX
@@ -179,6 +214,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         } else {
             let old_layout = Layout::array::<T>(self.cap).unwrap_or_else(|_| {
                 debug_assert!(false, "Layout array calculation failed for valid capacity");
+                // SAFETY: this branch is reached only when `self.cap != 0`, which
+                // means a `Layout::array::<T>(self.cap)` already succeeded at the
+                // prior allocation site; recomputing the identical layout cannot
+                // fail, so the `Err` arm is unreachable.
                 unsafe { core::hint::unreachable_unchecked() }
             });
             let block = BrandedBlock {
@@ -206,6 +245,12 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             return Ok(());
         }
         if self.len == 0 {
+            // SAFETY: reached only when `size_of::<T>() != 0` and
+            // `self.cap > self.len == 0`, so `self.cap > 0` and `self.ptr` is a
+            // live block allocated from `self.heap` (not the dangling sentinel).
+            // No element is initialized (`len == 0`), so freeing drops nothing.
+            // `self.ptr`/`self.cap` are reset to the dangling sentinel right
+            // after, so the freed block is never reused.
             unsafe {
                 self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
             }

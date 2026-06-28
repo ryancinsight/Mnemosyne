@@ -34,6 +34,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     ) -> Option<Self> {
         if core::mem::size_of::<T>() == 0 {
             let ptr: NonNull<T> = NonNull::dangling();
+            // SAFETY: `T` is zero-sized, so `NonNull::dangling()` is a valid,
+            // aligned pointer for a zero-byte write. `write` moves `val` into the
+            // (zero-sized) location, conceptually transferring ownership to the
+            // box; no storage is allocated, read, or aliased.
             unsafe {
                 ptr.as_ptr().write(val);
             }
@@ -73,6 +77,11 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     #[inline(always)]
     pub fn into_cell(self) -> BrandedCell<'brand, T> {
         let block = self.into_raw();
+        // SAFETY: `from_block` requires the block to be initialized with a valid
+        // `T`. `self` is a live `BrandedBox`, whose invariant is that `self.ptr`
+        // points to an initialized `T`; `into_raw` transfers that block out
+        // without dropping or freeing, so the initialized-value invariant carries
+        // over unchanged.
         unsafe { BrandedCell::from_block(block) }
     }
 
@@ -109,6 +118,10 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     type Target = T;
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
+        // SAFETY: the `BrandedBox` invariant guarantees `self.ptr` points to an
+        // initialized, live, aligned `T` owned by this box. `&self` ties the
+        // returned reference's lifetime to the borrow, and `BrandedBox` is
+        // `!Send`/`!Sync`, so no aliasing mutable access can occur concurrently.
         unsafe { self.ptr.as_ref() }
     }
 }
@@ -118,6 +131,10 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
 {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
+        // SAFETY: the `BrandedBox` invariant guarantees `self.ptr` points to an
+        // initialized, live, aligned `T` uniquely owned by this box. `&mut self`
+        // proves exclusive access, so the returned unique reference cannot alias
+        // any other reference for its lifetime.
         unsafe { self.ptr.as_mut() }
     }
 }
@@ -127,6 +144,13 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
 {
     #[inline]
     fn drop(&mut self) {
+        // SAFETY: the `BrandedBox` invariant guarantees `self.ptr` points to an
+        // initialized, live `T` (possibly unsized) uniquely owned by this box.
+        // `as_ref` reads the metadata to compute the value's size; `drop_in_place`
+        // runs the value's destructor exactly once (drop is invoked at most once
+        // per box). The block is freed only for non-ZST values (`size != 0`),
+        // because ZST values were never allocated (their pointer is the dangling
+        // sentinel); the live block is freed exactly once back to `self.heap`.
         unsafe {
             let size = core::mem::size_of_val(self.ptr.as_ref());
             core::ptr::drop_in_place(self.ptr.as_ptr());

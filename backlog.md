@@ -34,6 +34,54 @@ Filed from the 2026-06-27 deep contention/memory audit (read-only fan-out over
 arena/local/core/heap/backend). Ranked by value; each carries a testable
 acceptance criterion and named blocker so it is Definition-of-Ready.
 
+Added from the 2026-06-27 deep audit of the under-examined crates
+(`mnemosyne-prof`, `mnemosyne-c-shim`, `mnemosyne-heap` containers):
+
+- [ ] [patch] Close the `// SAFETY:` gap in `mnemosyne-prof` (the next crate
+  after the heap closure). `tls.rs` has ~20 undocumented `unsafe` blocks — the
+  TEB-slot inline `asm!` reads (`gs:[0x1480]`/`0x1780` hard-coded Windows TEB
+  offsets), the `#[thread_local] static mut THREAD_STATE` `&mut` formations, and
+  `lib.rs`'s `core::mem::transmute(hook_ptr)` of a `*mut c_void` into an
+  `extern "C" fn`. State the published-fn-pointer invariant, the thread-local
+  non-reentrancy invariant (the `in_hook`/`enter_hook` guard), and the
+  TEB-layout assumption (pin the Windows versions it holds for). Comments only.
+
+- [ ] [patch] `mnemosyne-prof` leak-detector memory: it stores one un-interned
+  `Box<[usize]>` stack per *live* allocation, so its metadata grows with the
+  app's live-allocation count (hundreds of MB under load) and heap-allocates a
+  boxed stack on every sampled insert. Intern identical call-site stacks behind
+  an interner (store one stack + a refcount, not N copies); typical workloads
+  have few distinct alloc sites. Acceptance: leak-map memory scales with
+  distinct call sites, not live allocations; per-insert boxed-stack alloc
+  removed for repeat sites. Pairs with: in `dump_*`, snapshot each shard under
+  its lock then release before `backtrace::resolve` + file I/O (currently the
+  shard mutex is held across symbolication + `writeln!`, stalling live
+  allocators on that shard during a dump).
+
+- [ ] [patch] `mnemosyne-c-shim` FFI contract polish (boundary is already
+  memory-safe — calloc uses `checked_mul`, sizes capped at `isize::MAX`, no
+  `as`-truncation, panic-free). Real gaps: `posix_memalign` returns `ENOMEM`
+  for an alignment `> SEGMENT_SIZE` (2 MiB) that the allocator rejects — it
+  should return `EINVAL` (wrong fault class); and the `align <= SEGMENT_SIZE`
+  ceiling enforced upstream is undocumented in the rustdoc and
+  `include/mnemosyne.h`. Add a `cargo-fuzz` target over arbitrary
+  `(op, size, nmemb, alignment)` asserting null-or-valid-aligned + no panic
+  (the repo mandates a fuzz target per hostile-input FFI surface), plus unit
+  tests for `aligned_alloc(align > 2 MiB)`, `aligned_alloc(0, n)`, `realloc`
+  shrink byte-preservation, and `posix_memalign` EINVAL/ENOMEM.
+
+- [ ] [patch] `mnemosyne-heap` `BrandedVec` has two divergent capacity-growth
+  policies — `push` grows by ~×4 while `reserve` uses `max(cap*2, needed)` — so
+  `push`-in-a-loop and `reserve(n)+push` realloc differently (a latent
+  inconsistency + DRY/SSOT violation). The grow sequence (`Layout::array` →
+  branch alloc-vs-realloc → update ptr/cap) is copy-pasted across `push`,
+  `reserve`, `insert`, and the shrink path across `shrink_to_fit` /
+  `into_boxed_slice`. Consolidate to one `grow_to(min_cap)` + one
+  `realloc_to_len` with a single documented growth policy; add an
+  `extend_trusted` fast path that skips the per-element capacity recheck after a
+  guaranteed reserve. Acceptance: one growth policy, one grow helper; container
+  tests green; no regression in any heap benchmark row.
+
 - [ ] [patch] (Optional, low value) The cached-pointer fast path (check cell/OS
   slot; if non-null reconstitute + `is_allocating` guard + run; else init) is
   structurally repeated between `with_allocator` and `with_allocator_unguarded`
@@ -68,6 +116,24 @@ acceptance criterion and named blocker so it is Definition-of-Ready.
   indirectly through the two pool conservation stress tests.
 
 ## Completed
+
+- [patch] Close the `// SAFETY:` discipline gap across the **`mnemosyne-heap`**
+  crate — the crate the prior arena/local/core closures had missed. Every
+  `unsafe` block in `raw_heap.rs` (45 sites), `heap.rs`, `brand.rs`,
+  `branded_vec.rs`, `branded_vec/{ops,traits}.rs`, and `branded_box.rs` now
+  carries a grounded `// SAFETY:` comment, and both bare `unsafe impl Send`
+  (`heap.rs` `Heap`, `raw_heap.rs` `RawHeap`) state the brand-token
+  thread-confinement invariant (`ThreadLocalToken<'brand>` is `!Send + !Sync`, so
+  the heap cannot be *used* on another thread even if moved; the only interior
+  state is `UnsafeCell<ThreadAllocator>` reached under that confinement). The
+  GhostCell-style `BrandedCell::borrow`/`borrow_mut`/`borrow_mut_{2,3}` sites
+  state the token-aliasing invariant; the raw `*_owned_unchecked` paths state the
+  mask-recovered-segment and metadata-slot conventions. Comments only — 382
+  insertions, 0 deletions, verified no non-comment line added. The audit also
+  re-examined the suspected `insert` panic-safety and `extend` partial-state
+  concerns and confirmed both sound (memory-safe contract warts, not bugs).
+  Verification: fmt, clippy `-D warnings`, 239 workspace tests, 8 heap doctests,
+  `cargo doc` clean.
 
 - [patch] Remove the redundant `with_allocator_guard` TLS entry point (DRY/SSOT).
   It was an exact, zero-caller alias of `with_allocator` (which already arms the

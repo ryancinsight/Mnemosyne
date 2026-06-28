@@ -17,6 +17,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
                 Some(len) => len,
                 None => return Err(val),
             };
+            // SAFETY: `T` is zero-sized, so `self.ptr` (the `NonNull::dangling()`
+            // sentinel, always aligned) is valid for a zero-byte write. The write
+            // consumes `val` by move and records it logically by the `len`
+            // increment above; no storage is read or aliased.
             unsafe {
                 self.ptr.as_ptr().write(val);
             }
@@ -46,6 +50,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             } else {
                 let old_layout = Layout::array::<T>(self.cap).unwrap_or_else(|_| {
                     debug_assert!(false, "Layout array calculation failed for valid capacity");
+                    // SAFETY: this branch runs only when `self.cap != 0`, so a
+                    // `Layout::array::<T>(self.cap)` already succeeded when the
+                    // current block was allocated; recomputing the same layout
+                    // cannot fail and the `Err` arm is unreachable.
                     unsafe { core::hint::unreachable_unchecked() }
                 });
                 let block = crate::brand::BrandedBlock {
@@ -63,6 +71,12 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
                 self.cap = new_cap;
             }
         }
+        // SAFETY: the block above guarantees `self.len < self.cap` for non-ZST
+        // `T`, so the slot at offset `self.len` lies within the allocation and is
+        // currently uninitialized. `self.ptr.add(self.len)` stays in bounds of
+        // the live block and is properly aligned for `T`. `write` moves `val`
+        // into that slot without reading or dropping prior contents; the `len`
+        // increment then claims it as initialized.
         unsafe {
             self.ptr.as_ptr().add(self.len).write(val);
         }
@@ -77,6 +91,12 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             None
         } else {
             self.len -= 1;
+            // SAFETY: `self.len` was `> 0` and is decremented above, so the new
+            // `self.len` indexes the last initialized element (for ZST `T`,
+            // `add` is a no-op on the dangling sentinel and `read` reconstructs a
+            // value with no storage). The slot is in bounds and holds an
+            // initialized `T`; `read` moves it out, and the decremented `len`
+            // ensures that slot is never read again (no double-drop).
             unsafe { Some(self.ptr.as_ptr().add(self.len).read()) }
         }
     }
@@ -105,6 +125,12 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         if self.len == 0 {
             &[]
         } else {
+            // SAFETY: `self.len > 0` here, so `self.ptr` addresses a live
+            // allocation whose prefix `[0, self.len)` is fully initialized `T`
+            // (for ZST `T`, the dangling sentinel is a valid base for a
+            // zero-sized slice). The pointer is aligned for `T`. `&self` borrows
+            // the vector for the returned slice's lifetime, and `BrandedVec` is
+            // `!Send`/`!Sync`, so no concurrent mutation can occur.
             unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
         }
     }
@@ -115,6 +141,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         if self.len == 0 {
             &mut []
         } else {
+            // SAFETY: same validity argument as `as_slice` — `[0, self.len)` is
+            // initialized `T` over a live, aligned allocation. `&mut self` proves
+            // exclusive access for the returned slice's lifetime, so the unique
+            // borrow required by `from_raw_parts_mut` holds.
             unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
         }
     }
@@ -133,6 +163,13 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     #[inline]
     pub fn truncate(&mut self, len: usize) {
         if len < self.len {
+            // SAFETY: `len < self.len`, so the tail range `[len, self.len)` lies
+            // within the initialized prefix of the live allocation; `add(len)`
+            // stays in bounds and aligned, and `remaining = self.len - len`
+            // elements are all initialized `T`. `self.len` is truncated to `len`
+            // *before* `drop_in_place`, so the tail is logically removed first: a
+            // panic in an element's `Drop` cannot cause the same slots to be
+            // dropped again. `&mut self` guarantees exclusive access.
             unsafe {
                 let remaining = self.len - len;
                 let tail = core::slice::from_raw_parts_mut(self.ptr.as_ptr().add(len), remaining);
@@ -232,6 +269,16 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         if self.len == self.cap && self.reserve(token, 1).is_err() {
             return Err(element);
         }
+        // SAFETY: `index <= self.len` (asserted) and the block above ensured
+        // `self.len < self.cap`, so `self.len + 1 <= self.cap`: both the source
+        // range `[index, self.len)` and the shifted destination
+        // `[index + 1, self.len + 1)` lie within the live, aligned allocation.
+        // `copy` (overlap-safe) moves the `self.len - index` initialized tail
+        // elements up by one, leaving slot `index` logically vacant;
+        // `p.write(element)` fills it without dropping (the prior occupant was
+        // moved, not overwritten in place), and the `len` increment claims the
+        // new element. Each element is bitwise-moved exactly once, so no
+        // double-drop or leak occurs.
         unsafe {
             let p = self.ptr.as_ptr().add(index);
             if index < self.len {
@@ -250,6 +297,14 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     #[inline]
     pub fn remove(&mut self, index: usize) -> T {
         assert!(index < self.len, "remove index out of bounds");
+        // SAFETY: `index < self.len` (asserted), so slot `index` holds an
+        // initialized `T` within the live, aligned allocation. `read` moves it
+        // out (the slot becomes logically vacant); `self.len` is then
+        // decremented, after which the overlap-safe `copy` shifts the
+        // `self.len - index` initialized tail elements at `[index + 1, old_len)`
+        // down by one into `[index, new_len)`. Every element is bitwise-moved
+        // exactly once and the removed value is returned by move, so no element
+        // is dropped twice or leaked.
         unsafe {
             let p = self.ptr.as_ptr().add(index);
             let val = core::ptr::read(p);
