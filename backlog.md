@@ -37,17 +37,18 @@ acceptance criterion and named blocker so it is Definition-of-Ready.
 Added from the 2026-06-27 deep audit of the under-examined crates
 (`mnemosyne-prof`, `mnemosyne-c-shim`, `mnemosyne-heap` containers):
 
-- [ ] [patch] `mnemosyne-c-shim` FFI contract polish (boundary is already
-  memory-safe — calloc uses `checked_mul`, sizes capped at `isize::MAX`, no
-  `as`-truncation, panic-free). Real gaps: `posix_memalign` returns `ENOMEM`
-  for an alignment `> SEGMENT_SIZE` (2 MiB) that the allocator rejects — it
-  should return `EINVAL` (wrong fault class); and the `align <= SEGMENT_SIZE`
-  ceiling enforced upstream is undocumented in the rustdoc and
-  `include/mnemosyne.h`. Add a `cargo-fuzz` target over arbitrary
-  `(op, size, nmemb, alignment)` asserting null-or-valid-aligned + no panic
-  (the repo mandates a fuzz target per hostile-input FFI surface), plus unit
-  tests for `aligned_alloc(align > 2 MiB)`, `aligned_alloc(0, n)`, `realloc`
-  shrink byte-preservation, and `posix_memalign` EINVAL/ENOMEM.
+- [ ] [patch] (Residual) `mnemosyne-c-shim`: two small items remain after the
+  adversarial unit-test hardening landed (see Completed). (1) Add a real
+  `cargo-fuzz` target over arbitrary `(op, size, nmemb, alignment)` for
+  continuous coverage beyond the deterministic in-suite sweep — needs the
+  nightly `fuzz/` crate scaffold, so it is its own infra increment, not a code
+  change. (2) Document the `align <= SEGMENT_SIZE` (2 MiB) ceiling in the
+  `aligned_alloc`/`posix_memalign` rustdoc and `include/mnemosyne.h` so callers
+  know an over-large alignment yields null/ENOMEM. NOTE — correcting the prior
+  filing: `posix_memalign` returning `ENOMEM` (not `EINVAL`) for a valid-but-too-
+  large alignment is CORRECT (matches glibc/POSIX — `EINVAL` is reserved for
+  non-power-of-two / non-multiple-of-`sizeof(void*)`, which it already handles);
+  there is no errno bug to fix.
 
 - [ ] [patch] (Optional, smaller residual) Consolidate the *shrinking* realloc
   path duplicated between `BrandedVec::shrink_to_fit` and `into_boxed_slice`
@@ -93,6 +94,21 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   indirectly through the two pool conservation stress tests.
 
 ## Completed
+
+- [patch] Harden the `mnemosyne-c-shim` C ABI surface with adversarial
+  hostile-input tests (the repo mandates panic-free, UB-free, no-unbounded-alloc
+  handling of every FFI input). Added 10 tests pinning the boundary contracts the
+  happy-path suite omitted: `aligned_alloc` zero/non-power-of-two/over-2-MiB-
+  alignment all return null without UB; `aligned_alloc(align, 0)` is null-or-
+  freeable; `realloc` shrink preserves `min(old_usable, new)` bytes;
+  `posix_memalign` null-memptr/non-pow2 → `EINVAL` (memptr untouched), unsupportable
+  alignment → `ENOMEM` (untouched, no UB); `malloc(usize::MAX/isize::MAX+1)` → null;
+  `calloc` overflow pairs → null; and a deterministic `(size, alignment)`-grid
+  sweep asserting every result is null-or-(aligned+writable+freeable). All pass —
+  the boundary is verified sound (no bug found), and the suite is now a regression
+  guard. Verification: fmt, clippy `-D warnings`, 23 c-shim tests, 251 workspace
+  tests, `cargo doc` clean. Corrected a false prior audit claim in the process
+  (`posix_memalign` ENOMEM-for-too-large-alignment is POSIX-correct, not a bug).
 
 - [patch] Consolidate the `BrandedVec` grow mechanics into one `grow_to(new_cap)`
   SSOT (DRY). `push` and `reserve` each open-coded the identical
