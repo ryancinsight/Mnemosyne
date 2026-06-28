@@ -1,7 +1,5 @@
 use crate::brand::{BrandedCell, ThreadLocalToken};
 use crate::BrandedVec;
-use core::alloc::Layout;
-use core::marker::PhantomData;
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::internal::HasSegmentPool;
 use mnemosyne_local::LocalAllocatorSelector;
@@ -28,6 +26,9 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         }
 
         if self.len == self.cap {
+            // Capacity policy lives here (initial 4, then amortized doubling);
+            // the alloc/realloc mechanics are the shared `grow_to` SSOT. A failed
+            // grow returns the element to the caller unconsumed.
             let new_cap = if self.cap == 0 {
                 4
             } else {
@@ -36,39 +37,8 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
                     None => return Err(val),
                 }
             };
-            let new_layout = match Layout::array::<T>(new_cap) {
-                Ok(l) => l,
-                Err(_) => return Err(val),
-            };
-            if self.cap == 0 {
-                let block = match self.heap.alloc(token, new_layout) {
-                    Some(b) => b,
-                    None => return Err(val),
-                };
-                self.ptr = block.ptr.cast();
-                self.cap = new_cap;
-            } else {
-                let old_layout = Layout::array::<T>(self.cap).unwrap_or_else(|_| {
-                    debug_assert!(false, "Layout array calculation failed for valid capacity");
-                    // SAFETY: this branch runs only when `self.cap != 0`, so a
-                    // `Layout::array::<T>(self.cap)` already succeeded when the
-                    // current block was allocated; recomputing the same layout
-                    // cannot fail and the `Err` arm is unreachable.
-                    unsafe { core::hint::unreachable_unchecked() }
-                });
-                let block = crate::brand::BrandedBlock {
-                    ptr: self.ptr,
-                    _marker: PhantomData,
-                };
-                let new_block = match self
-                    .heap
-                    .realloc(token, block, old_layout, new_layout.size())
-                {
-                    Some(b) => b,
-                    None => return Err(val),
-                };
-                self.ptr = new_block.ptr.cast();
-                self.cap = new_cap;
+            if self.grow_to(token, new_cap).is_err() {
+                return Err(val);
             }
         }
         // SAFETY: the block above guarantees `self.len < self.cap` for non-ZST

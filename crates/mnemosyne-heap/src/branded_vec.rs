@@ -184,6 +184,45 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         }
     }
 
+    /// Grows the backing allocation to exactly `new_cap` elements and updates
+    /// `ptr`/`cap` on success. This is the single authoritative grow path shared
+    /// by [`push`](BrandedVec::push) and [`reserve`](BrandedVec::reserve), so the
+    /// alloc-when-empty / realloc-otherwise mechanics cannot drift between them;
+    /// each caller keeps only its own capacity *policy* (push's initial-4
+    /// doubling vs reserve's `max(cap*2, needed)`).
+    ///
+    /// Callers guarantee `T` is non-ZST and `new_cap > self.cap`. On layout
+    /// overflow or allocation failure the vector is left unchanged and `Err(())`
+    /// is returned.
+    #[inline]
+    fn grow_to(&mut self, token: &mut ThreadLocalToken<'brand>, new_cap: usize) -> Result<(), ()> {
+        let new_layout = Layout::array::<T>(new_cap).map_err(|_| ())?;
+        if self.cap == 0 {
+            let block = self.heap.alloc(token, new_layout).ok_or(())?;
+            self.ptr = block.ptr.cast();
+        } else {
+            let old_layout = Layout::array::<T>(self.cap).unwrap_or_else(|_| {
+                debug_assert!(false, "Layout array calculation failed for valid capacity");
+                // SAFETY: this branch is reached only when `self.cap != 0`, which
+                // means a `Layout::array::<T>(self.cap)` already succeeded at the
+                // prior allocation site; recomputing the identical layout cannot
+                // fail, so the `Err` arm is unreachable.
+                unsafe { core::hint::unreachable_unchecked() }
+            });
+            let block = BrandedBlock {
+                ptr: self.ptr,
+                _marker: PhantomData,
+            };
+            let new_block = self
+                .heap
+                .realloc(token, block, old_layout, new_layout.size())
+                .ok_or(())?;
+            self.ptr = new_block.ptr.cast();
+        }
+        self.cap = new_cap;
+        Ok(())
+    }
+
     /// Reserves capacity for at least `additional` more elements to be inserted in the vector.
     ///
     /// # Errors
@@ -206,32 +245,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             return Ok(());
         }
         let new_cap = core::cmp::max(self.cap.checked_mul(2).unwrap_or(needed), needed);
-        let new_layout = Layout::array::<T>(new_cap).map_err(|_| ())?;
-        if self.cap == 0 {
-            let block = self.heap.alloc(token, new_layout).ok_or(())?;
-            self.ptr = block.ptr.cast();
-            self.cap = new_cap;
-        } else {
-            let old_layout = Layout::array::<T>(self.cap).unwrap_or_else(|_| {
-                debug_assert!(false, "Layout array calculation failed for valid capacity");
-                // SAFETY: this branch is reached only when `self.cap != 0`, which
-                // means a `Layout::array::<T>(self.cap)` already succeeded at the
-                // prior allocation site; recomputing the identical layout cannot
-                // fail, so the `Err` arm is unreachable.
-                unsafe { core::hint::unreachable_unchecked() }
-            });
-            let block = BrandedBlock {
-                ptr: self.ptr,
-                _marker: PhantomData,
-            };
-            let new_block = self
-                .heap
-                .realloc(token, block, old_layout, new_layout.size())
-                .ok_or(())?;
-            self.ptr = new_block.ptr.cast();
-            self.cap = new_cap;
-        }
-        Ok(())
+        self.grow_to(token, new_cap)
     }
 
     /// Shrinks the capacity of the vector as much as possible.

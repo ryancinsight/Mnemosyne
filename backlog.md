@@ -61,17 +61,15 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   tests for `aligned_alloc(align > 2 MiB)`, `aligned_alloc(0, n)`, `realloc`
   shrink byte-preservation, and `posix_memalign` EINVAL/ENOMEM.
 
-- [ ] [patch] `mnemosyne-heap` `BrandedVec` has two divergent capacity-growth
-  policies — `push` grows by ~×4 while `reserve` uses `max(cap*2, needed)` — so
-  `push`-in-a-loop and `reserve(n)+push` realloc differently (a latent
-  inconsistency + DRY/SSOT violation). The grow sequence (`Layout::array` →
-  branch alloc-vs-realloc → update ptr/cap) is copy-pasted across `push`,
-  `reserve`, `insert`, and the shrink path across `shrink_to_fit` /
-  `into_boxed_slice`. Consolidate to one `grow_to(min_cap)` + one
-  `realloc_to_len` with a single documented growth policy; add an
-  `extend_trusted` fast path that skips the per-element capacity recheck after a
-  guaranteed reserve. Acceptance: one growth policy, one grow helper; container
-  tests green; no regression in any heap benchmark row.
+- [ ] [patch] (Optional, smaller residual) Consolidate the *shrinking* realloc
+  path duplicated between `BrandedVec::shrink_to_fit` and `into_boxed_slice`
+  (the `len==0 → free_raw` / else `realloc to len` sequence) into a shared
+  `shrink_to(new_cap)` helper, mirroring the `grow_to` consolidation already
+  landed. Lower value than the grow path (only two callers, distinct
+  ownership-transfer in `into_boxed_slice`); do only if it reads cleanly without
+  obscuring the box ownership transfer. An `extend_trusted` fast path (skip the
+  per-element capacity recheck after a guaranteed `reserve`) is also possible but
+  unmeasured — gate on a benchmark showing the per-element check matters.
 
 - [ ] [patch] (Optional, low value) The cached-pointer fast path (check cell/OS
   slot; if non-null reconstitute + `is_allocating` guard + run; else init) is
@@ -107,6 +105,21 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   indirectly through the two pool conservation stress tests.
 
 ## Completed
+
+- [patch] Consolidate the `BrandedVec` grow mechanics into one `grow_to(new_cap)`
+  SSOT (DRY). `push` and `reserve` each open-coded the identical
+  `Layout::array → alloc-when-empty / realloc-otherwise → update ptr/cap`
+  sequence (~15 lines x2); now both call the single `grow_to` helper and keep
+  only their own capacity *policy* (push: initial-4 then ×2; reserve:
+  `max(cap*2, needed)`). Correction to the filing: the earlier audit's claim of
+  "divergent ×4 vs ×2 growth policies" was wrong — both already used `×2`; the
+  `4` in `push` is the initial capacity, and `reserve` sizing to exact `needed`
+  is correct, so there was no behavioral bug, only the mechanics duplication. The
+  change is behavior-preserving, verified by the existing growth tests that pin
+  `capacity()==4` after the first push and reserve sizing (`traits.rs`/`vec.rs`).
+  Net subtractive (removed two now-dead imports in `ops.rs`). Verification: fmt,
+  clippy `-D warnings`, 51 heap tests, 239 workspace tests, 8 heap doctests,
+  `cargo doc` clean.
 
 - [patch] Close the `// SAFETY:` discipline gap across the **`mnemosyne-prof`**
   crate (25 sites: `tls.rs` 14, `lib.rs` 10, `sampler.rs` 1). The fragile sites
