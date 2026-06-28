@@ -150,7 +150,9 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_vo
 /// C11 `aligned_alloc`: allocates `size` bytes aligned to `alignment`.
 ///
 /// Returns `NULL` when `alignment` is not a power of two or `size` is not
-/// a multiple of `alignment` (per the C11 contract).
+/// a multiple of `alignment` (per the C11 contract). Also returns `NULL`
+/// for an `alignment` above the 2 MiB segment size, which the allocator
+/// cannot satisfy.
 ///
 /// # Safety
 ///
@@ -170,9 +172,11 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
 /// POSIX `posix_memalign`: stores an `alignment`-aligned `size`-byte
 /// allocation in `*memptr`.
 ///
-/// Returns `0` on success, `EINVAL` when `alignment` is not a power-of-two
-/// multiple of `size_of::<*mut c_void>()`, or `ENOMEM` on allocation
-/// failure. `*memptr` is only written on success.
+/// Returns `0` on success, `EINVAL` when `alignment` is not a power of two
+/// or is below `size_of::<*mut c_void>()`, or `ENOMEM` on allocation
+/// failure. A valid power-of-two `alignment` above the 2 MiB segment size
+/// is unsupportable and yields `ENOMEM` (it is a valid POSIX alignment, so
+/// not `EINVAL`). `*memptr` is only written on success.
 ///
 /// # Safety
 ///

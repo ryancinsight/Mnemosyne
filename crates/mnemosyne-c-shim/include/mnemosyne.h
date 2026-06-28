@@ -12,9 +12,14 @@
  *   - calloc detects nmemb*size overflow and returns NULL.
  *   - realloc(NULL, n) == malloc(n); realloc(p, 0) frees p and returns NULL.
  *   - aligned_alloc requires `alignment` to be a power of two and `size`
- *     to be a multiple of `alignment` (C11), else returns NULL.
+ *     to be a multiple of `alignment` (C11), else returns NULL. An
+ *     `alignment` above 2 MiB (the segment size) cannot be satisfied and
+ *     also returns NULL.
  *   - posix_memalign requires `alignment` to be a power of two and at
- *     least sizeof(void*), returning 0 / EINVAL / ENOMEM.
+ *     least sizeof(void*), returning 0 / EINVAL / ENOMEM. A valid
+ *     power-of-two `alignment` above 2 MiB (the segment size) cannot be
+ *     satisfied and returns ENOMEM (the alignment is valid per POSIX, but
+ *     unsupportable — `*memptr` is left untouched).
  *   - malloc_usable_size(NULL) == 0; otherwise returns the block's usable
  *     capacity, which may exceed the original request because Mnemosyne
  *     rounds small requests up to the next size class.

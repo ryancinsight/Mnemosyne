@@ -37,18 +37,14 @@ acceptance criterion and named blocker so it is Definition-of-Ready.
 Added from the 2026-06-27 deep audit of the under-examined crates
 (`mnemosyne-prof`, `mnemosyne-c-shim`, `mnemosyne-heap` containers):
 
-- [ ] [patch] (Residual) `mnemosyne-c-shim`: two small items remain after the
-  adversarial unit-test hardening landed (see Completed). (1) Add a real
-  `cargo-fuzz` target over arbitrary `(op, size, nmemb, alignment)` for
-  continuous coverage beyond the deterministic in-suite sweep — needs the
-  nightly `fuzz/` crate scaffold, so it is its own infra increment, not a code
-  change. (2) Document the `align <= SEGMENT_SIZE` (2 MiB) ceiling in the
-  `aligned_alloc`/`posix_memalign` rustdoc and `include/mnemosyne.h` so callers
-  know an over-large alignment yields null/ENOMEM. NOTE — correcting the prior
-  filing: `posix_memalign` returning `ENOMEM` (not `EINVAL`) for a valid-but-too-
-  large alignment is CORRECT (matches glibc/POSIX — `EINVAL` is reserved for
-  non-power-of-two / non-multiple-of-`sizeof(void*)`, which it already handles);
-  there is no errno bug to fix.
+- [ ] [patch] (Residual, infra-only) `mnemosyne-c-shim`: add a real `cargo-fuzz`
+  target over arbitrary `(op, size, nmemb, alignment)` for continuous coverage
+  beyond the deterministic in-suite sweep — needs the nightly `fuzz/` crate
+  scaffold, so it is its own infra increment, not a code change. (The
+  `align <= SEGMENT_SIZE` ceiling documentation in the `aligned_alloc` /
+  `posix_memalign` rustdoc and `include/mnemosyne.h` is now done — see
+  Completed. The prior "errno bug" was a false claim: `posix_memalign` returning
+  `ENOMEM` for a valid-but-too-large alignment is POSIX-correct.)
 
 - [ ] [patch] (Optional, low value) The cached-pointer fast path (check cell/OS
   slot; if non-null reconstitute + `is_allocating` guard + run; else init) is
@@ -75,6 +71,18 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   not a bare ptr) when this lands.
 
 ## Completed
+
+- [patch] Document the `mnemosyne-c-shim` alignment ceiling. The `align <=
+  SEGMENT_SIZE` (2 MiB) bound enforced upstream is now stated in the
+  `aligned_alloc`/`posix_memalign` rustdoc and `include/mnemosyne.h`: an
+  over-large `alignment` yields `NULL` (aligned_alloc) / `ENOMEM`
+  (posix_memalign, with `*memptr` untouched), so callers can distinguish it from
+  OOM. Doc-only; `cargo doc` clean. The behavior was already covered by the
+  adversarial tests added previously; this closes the documentation half of that
+  residual (the `cargo-fuzz` infra half remains filed). Also independently
+  verified the peer's freshly-merged `shrink_to_len` + NUMA-steal SSOT
+  (`numa_bucket.rs` `steal_from`) consolidations: full gate green (256 workspace
+  tests, fmt, clippy `-D warnings`), both sound.
 
 - [patch] Consolidate `BrandedVec` shrinking into one `shrink_to_len` helper.
   `shrink_to_fit` and `into_boxed_slice` now share the free-empty/realloc-to-len
