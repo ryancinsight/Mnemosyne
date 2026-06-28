@@ -32,6 +32,13 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
 
 ## Closed
 
+- [patch] `BrandedVec::shrink_to_fit` and `BrandedVec::into_boxed_slice`
+  carried duplicate shrink mechanics for the `len == 0` free path and
+  realloc-to-length path. Added one private `shrink_to_len` helper inside the
+  core `BrandedVec` impl, so both call sites share the allocation transition
+  while boxed-slice conversion still owns slice pointer construction and
+  `mem::forget` transfer. Evidence tier: compile-time trait resolution plus
+  existing value-semantic branded-vector tests and package gates.
 - [patch] `huge_pool.rs` and `segment_pool.rs` duplicated the same
   Themis-backed 16-bucket NUMA wrap traversal and carried independent
   `NUMA_BUCKETS` constants. Added `segment/pool/numa_bucket.rs` as the SSOT for

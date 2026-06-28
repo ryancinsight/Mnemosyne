@@ -50,16 +50,6 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   non-power-of-two / non-multiple-of-`sizeof(void*)`, which it already handles);
   there is no errno bug to fix.
 
-- [ ] [patch] (Optional, smaller residual) Consolidate the *shrinking* realloc
-  path duplicated between `BrandedVec::shrink_to_fit` and `into_boxed_slice`
-  (the `len==0 → free_raw` / else `realloc to len` sequence) into a shared
-  `shrink_to(new_cap)` helper, mirroring the `grow_to` consolidation already
-  landed. Lower value than the grow path (only two callers, distinct
-  ownership-transfer in `into_boxed_slice`); do only if it reads cleanly without
-  obscuring the box ownership transfer. An `extend_trusted` fast path (skip the
-  per-element capacity recheck after a guaranteed `reserve`) is also possible but
-  unmeasured — gate on a benchmark showing the per-element check matters.
-
 - [ ] [patch] (Optional, low value) The cached-pointer fast path (check cell/OS
   slot; if non-null reconstitute + `is_allocating` guard + run; else init) is
   structurally repeated between `with_allocator` and `with_allocator_unguarded`
@@ -85,6 +75,13 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   not a bare ptr) when this lands.
 
 ## Completed
+
+- [patch] Consolidate `BrandedVec` shrinking into one `shrink_to_len` helper.
+  `shrink_to_fit` and `into_boxed_slice` now share the free-empty/realloc-to-len
+  mechanics while `into_boxed_slice` keeps ownership-transfer-specific slice
+  construction in place. The residual `extend_trusted` fast path remains
+  unmeasured and unfiled until benchmark evidence shows the repeated capacity
+  check matters.
 
 - [patch] Consolidate wrap-around NUMA bucket stealing in
   `segment/pool/numa_bucket.rs`. `huge_pool.rs` and `segment_pool.rs` now share

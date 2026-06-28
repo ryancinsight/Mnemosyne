@@ -4,6 +4,16 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Consolidate `BrandedVec` shrinking into one `shrink_to_len` SSOT.
+  `shrink_to_fit` and `into_boxed_slice` now share free-empty and realloc-to-len
+  logic without changing boxed-slice ownership transfer. Evidence tier:
+  compile-time trait resolution plus existing value-semantic branded-vector
+  tests. Verification: `rustup run nightly cargo check -p mnemosyne-heap
+  --all-targets`; `rustup run nightly cargo fmt -p mnemosyne-heap --check`;
+  `rustup run nightly cargo clippy -p mnemosyne-heap --all-targets -- -D
+  warnings`; `rustup run nightly cargo nextest run -p mnemosyne-heap`;
+  `rustup run nightly cargo test --doc -p mnemosyne-heap`; `rustup run nightly
+  cargo doc -p mnemosyne-heap --no-deps`; `git diff --check`.
 - [x] [patch] Consolidate wrap-around NUMA bucket stealing for arena segment
   pools. `segment/pool/numa_bucket.rs` is now the SSOT for the 16-bucket
   Themis-backed NUMA index conversion and nonlocal steal traversal; the huge

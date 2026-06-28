@@ -29,6 +29,10 @@
 
 ### Changed
 
+- Consolidated `BrandedVec` shrink mechanics into a private `shrink_to_len`
+  helper shared by `shrink_to_fit` and `into_boxed_slice`. The boxed-slice
+  conversion still owns slice construction and ownership transfer; only the
+  free-empty/realloc-to-length allocation transition is shared.
 - Centralized arena NUMA bucket stealing in `segment/pool/numa_bucket.rs`.
   The huge pool and segment pool now share one `NUMA_BUCKETS` constant, one
   Themis-backed bucket conversion, and one generic nonlocal steal traversal.
