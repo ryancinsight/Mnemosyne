@@ -7,38 +7,25 @@
 //! ABA-immune: a stale CAS fails on the tag even if the head address has cycled
 //! back, so no segment is ever lost under contention.
 //!
-use super::cache_aligned::{CacheAlignedAtomicPtr, CacheAlignedAtomicUsize};
+use super::tagged_stack::TaggedSegmentStack;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::types::Segment;
 
 /// A lock-free segment pool for a single NUMA node (Treiber stack).
 ///
-/// The pool maintains a singly-linked stack of free [`Segment`] pointers
-/// through the segment's `next_free_segment` field. All operations are
-/// lock-free: push and pop use CAS loops on the head atomic, and
-/// [`Self::take_all`] uses a single atomic swap.
+/// The free-segment stack and its ABA-tag / ordering discipline live in the
+/// `TaggedSegmentStack`; this type layers the per-pool telemetry counters and
+/// the retention cap on top. `Send`/`Sync` are compiler-derived (the struct
+/// holds only atomics).
 #[repr(align(64))]
 pub struct NodeSegmentPool {
-    /// Tagged head of the Treiber stack (null when empty). The high-bit tag
-    /// increments on every push/pop, closing the single-element-pop ABA window.
-    head: CacheAlignedAtomicPtr,
-    /// Advisory count of segments currently in the pool.
-    retained: CacheAlignedAtomicUsize,
+    /// Lock-free, ABA-immune stack of free segments plus its retained count.
+    stack: TaggedSegmentStack,
     purged: AtomicUsize,
     purge_calls: AtomicUsize,
     reset_segments: AtomicUsize,
     reset_calls: AtomicUsize,
 }
-
-// SAFETY: The tagged `head` is accessed via CAS loops that ensure only one
-// thread mutates a given segment's `next_free_segment` at a time (the producer
-// writes `next` before the CAS publishes the segment; the consumer reads `next`
-// after a successful CAS claims the segment, and the head tag rejects a stale
-// ABA CAS). The telemetry counters are independently synchronized atomics. This
-// discipline makes shared cross-thread access (`Sync`) and ownership transfer
-// (`Send`) of a `NodeSegmentPool` data-race free.
-unsafe impl Send for NodeSegmentPool {}
-unsafe impl Sync for NodeSegmentPool {}
 
 impl Default for NodeSegmentPool {
     #[inline]
@@ -51,8 +38,7 @@ impl NodeSegmentPool {
     /// Creates a new empty `NodeSegmentPool`.
     pub const fn new() -> Self {
         Self {
-            head: CacheAlignedAtomicPtr::new(core::ptr::null_mut()),
-            retained: CacheAlignedAtomicUsize::new(0),
+            stack: TaggedSegmentStack::new(),
             purged: AtomicUsize::new(0),
             purge_calls: AtomicUsize::new(0),
             reset_segments: AtomicUsize::new(0),
@@ -69,27 +55,9 @@ impl NodeSegmentPool {
     /// the pool.
     #[inline]
     pub unsafe fn push_unbounded(&self, segment: *mut Segment) {
-        let mut current = self.head.load(Ordering::Relaxed);
-        loop {
-            let current_ptr = CacheAlignedAtomicPtr::ptr(current);
-            // SAFETY: by this function's contract `segment` is a valid,
-            // exclusively owned `Segment`. Writing `next_free_segment` before
-            // the publishing CAS is unobservable by other threads until then.
-            unsafe {
-                (*segment).next_free_segment = current_ptr;
-            }
-            let next = CacheAlignedAtomicPtr::tagged_successor(segment, current);
-            match self.head.compare_exchange_weak(
-                current,
-                next,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(actual) => current = actual,
-            }
-        }
-        self.retained.value.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: forwarded contract — `segment` is an exclusively-owned
+        // `Segment` whose ownership transfers to the stack.
+        unsafe { self.stack.push(segment) };
     }
 
     /// Pushes a segment back to the bounded reusable segment pool.
@@ -108,30 +76,13 @@ impl NodeSegmentPool {
         // under contention is acceptable for a cache. The alternative — holding
         // a lock to atomically check-and-push — is the contention source we are
         // eliminating.
-        let retained = self.retained.value.load(Ordering::Relaxed);
+        let retained = self.stack.len();
         if retained >= mnemosyne_core::options::MAX_RETAINED_SEGMENTS.load(Ordering::Relaxed) {
             return false;
         }
-        let mut current = self.head.load(Ordering::Relaxed);
-        loop {
-            let current_ptr = CacheAlignedAtomicPtr::ptr(current);
-            // SAFETY: same contract as `push_unbounded` — `segment` is
-            // exclusively owned until the publishing CAS.
-            unsafe {
-                (*segment).next_free_segment = current_ptr;
-            }
-            let next = CacheAlignedAtomicPtr::tagged_successor(segment, current);
-            match self.head.compare_exchange_weak(
-                current,
-                next,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(actual) => current = actual,
-            }
-        }
-        self.retained.value.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: same contract as `push_unbounded` — `segment` is an
+        // exclusively-owned `Segment` transferring ownership to the stack.
+        unsafe { self.stack.push(segment) };
         true
     }
 
@@ -145,58 +96,23 @@ impl NodeSegmentPool {
     /// must release or re-cache them.
     #[inline]
     pub fn take_all(&self) -> (*mut Segment, usize) {
-        let head = CacheAlignedAtomicPtr::ptr(self.head.swap_null(Ordering::Acquire));
-        // `retained` is maintained equal to the chain length, so the
-        // swapped-out value is the detached count.
-        let count = self.retained.value.swap(0, Ordering::Relaxed);
-        (head, count)
+        self.stack.take_all()
     }
 
     /// Pops a segment from the pool, if available.
     #[inline]
     pub fn pop(&self) -> Option<*mut Segment> {
-        // Fast path: if the advisory counter says empty, skip the CAS loop.
-        if self.retained.value.load(Ordering::Relaxed) == 0 {
-            return None;
-        }
-        let mut current = self.head.load(Ordering::Acquire);
-        loop {
-            let current_ptr = CacheAlignedAtomicPtr::ptr(current);
-            if current_ptr.is_null() {
-                return None;
-            }
-            // SAFETY: `current_ptr` is a non-null pointer unpacked from the head
-            // atomic. Between our load and our CAS, no other consumer can
-            // pop this same segment (they would see the same head and
-            // compete on the CAS). A producer might push a new segment on
-            // top, but that changes `head`, causing our CAS to fail and
-            // retry — it does not invalidate `current_ptr`. Reading
-            // `next_free_segment` is safe because the producer that pushed
-            // `current_ptr` wrote `next` before publishing via CAS.
-            let next_ptr = unsafe { (*current_ptr).next_free_segment };
-            let next = CacheAlignedAtomicPtr::tagged_successor(next_ptr, current);
-            match self.head.compare_exchange_weak(
-                current,
-                next,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    self.retained.value.fetch_sub(1, Ordering::Relaxed);
-                    // Clear the next pointer so the returned segment is clean.
-                    // SAFETY: we now exclusively own `current` (CAS succeeded,
-                    // so no other thread can access it through the pool).
-                    unsafe { (*current_ptr).next_free_segment = core::ptr::null_mut() };
-                    return Some(current_ptr);
-                }
-                Err(actual) => current = actual,
-            }
+        let popped = self.stack.pop();
+        if popped.is_null() {
+            None
+        } else {
+            Some(popped)
         }
     }
 
     #[inline]
     pub fn retained_count(&self) -> usize {
-        self.retained.value.load(Ordering::Relaxed)
+        self.stack.len()
     }
 
     #[inline]

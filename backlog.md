@@ -76,24 +76,41 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   constant currently defined independently in both files (SSOT). Acceptance: one
   steal routine, one constant; arena tests green.
 
-- [ ] [patch] Encapsulate the tagged Treiber push/pop CAS loop into a shared
-  `TaggedSegmentStack` primitive (DRY). Both `NodeHugeBucket` and
-  `NodeSegmentPool` now hand-drive near-identical CAS loops over
-  `CacheAlignedAtomicPtr::{ptr,tagged_successor,compare_exchange_weak,swap_null}`,
-  differing only by the per-pool count field. The dangerous tag-packing is
-  already SSOT in `cache_aligned.rs`; the loop boilerplate is not. Acceptance:
-  one `push`/`pop`/`take_all` on an encapsulated stack; both pools layer only
-  count/cap/telemetry on top; codegen unchanged. Also rename
-  `CacheAlignedAtomicPtr` (it is a tagged head, not a bare ptr). Deferred: the
-  target `huge_pool.rs` is under active concurrent edit — schedule when the
-  arena pool files are quiescent.
-
-- [ ] [patch] Add direct unit coverage for the tagged head primitive
-  (`CacheAlignedAtomicPtr`): `ptr`/`tagged_successor` round-trip, monotonic tag
-  increment, and the 48-bit overflow-abort guard. Currently exercised only
-  indirectly through the two pool conservation stress tests.
+- [ ] [perf-experiment] Benchmark whether combining the lock-free pool bucket's
+  `head` + `count` onto ONE cache line beats the current per-atomic isolation.
+  Every push/pop touches both atomics, so a single 64-byte line would touch one
+  line per op (not two) and halve the bucket BSS (64 B vs 128 B/bucket; ~96 KiB
+  across 256 buckets x 6 backends). The current `TaggedSegmentStack` keeps them
+  separate, matching the peer's deliberate "per-atomic cache-line isolation"
+  choice — overturning it needs a clean Criterion A/B on the warm pool rows
+  (huge cycle/dealloc, cross-thread handoff, segment cache eviction, burst
+  retention), not just the threshold gate. Acceptance: A/B shows neutral-or-
+  better on those rows -> combine + keep the BSS win; else keep separate +
+  document the measured reason. Needs a quiet benchmarking machine (noise-
+  sensitive, warm path). Rename `CacheAlignedAtomicPtr` (it is a tagged head,
+  not a bare ptr) when this lands.
 
 ## Completed
+
+- [patch] Consolidate the lock-free pool CAS loop into a `TaggedSegmentStack`
+  SSOT (`segment/pool/tagged_stack.rs`) and harden it with direct tests. Both
+  `NodeHugeBucket` and `NodeSegmentPool` open-coded the identical ABA-immune
+  tagged-pointer push/pop/`take_all` CAS loops over `CacheAlignedAtomicPtr`;
+  they now embed one `TaggedSegmentStack` (head + retained count) and layer only
+  their own cap/telemetry on top, so the ordering + ABA-tag discipline lives in
+  exactly one place (SSOT for the safety-critical contention-free path). Because
+  the new struct holds only atomics, the FOUR hand-written `unsafe impl
+  Send/Sync` (2 per pool) are deleted in favor of compiler-derived
+  `Send`/`Sync` — a real reduction of the unsafe surface. Added 3 direct tests
+  (LIFO + count, `take_all` chain/count, and a 4-thread×20k-iter conservation
+  stress proving the ABA-tag loses no segment), complementing the existing
+  pool-level conservation integration tests. Verification: fmt, clippy
+  `-D warnings`, 38 arena tests, 254 workspace tests, arena doctests, `cargo doc`
+  clean, and `benchmark_summary --enforce-thresholds` (all 12 gated rows within
+  threshold). The change is codegen-neutral (the `#[inline]` methods inline into
+  the same call sites), so it is a maintainability/safety/test consolidation —
+  not a perf change; the head/count cache-line layout is unchanged (a combine is
+  filed as a benchmark experiment above).
 
 - [patch] Harden the `mnemosyne-c-shim` C ABI surface with adversarial
   hostile-input tests (the repo mandates panic-free, UB-free, no-unbounded-alloc

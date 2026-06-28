@@ -1,5 +1,5 @@
-use super::cache_aligned::{CacheAlignedAtomicPtr, CacheAlignedAtomicUsize};
-use core::sync::atomic::Ordering;
+use super::cache_aligned::CacheAlignedAtomicUsize;
+use super::tagged_stack::TaggedSegmentStack;
 use mnemosyne_core::types::Segment;
 use themis::NumaNodeId;
 
@@ -14,33 +14,25 @@ fn numa_bucket(node: usize) -> usize {
 }
 
 /// A size-bucket for cached huge allocations.
+///
+/// `Send`/`Sync` are compiler-derived: the bucket holds only the atomics of
+/// the `TaggedSegmentStack`, whose lock-free / ABA-tag discipline is documented
+/// at the primitive.
 pub struct NodeHugeBucket {
-    /// Head of the Treiber stack (null when empty).
-    head: CacheAlignedAtomicPtr,
-    /// Advisory count of segments currently retained in this bucket.
-    count: CacheAlignedAtomicUsize,
+    stack: TaggedSegmentStack,
 }
-
-// SAFETY: the `head` atomic pointer is mutated only by CAS loops. A producer
-// writes a segment's `next_free_segment` before publishing it with `Release`;
-// a consumer reads the link after an `Acquire` load/CAS and clears it only
-// after a successful CAS gives it exclusive ownership. The count atomic is
-// advisory metadata and is independently synchronized.
-unsafe impl Send for NodeHugeBucket {}
-unsafe impl Sync for NodeHugeBucket {}
 
 impl NodeHugeBucket {
     /// Creates a new empty `NodeHugeBucket`.
     pub const fn new() -> Self {
         Self {
-            head: CacheAlignedAtomicPtr::new(core::ptr::null_mut()),
-            count: CacheAlignedAtomicUsize::new(0),
+            stack: TaggedSegmentStack::new(),
         }
     }
 
     #[inline(always)]
     fn count(&self) -> usize {
-        self.count.value.load(Ordering::Relaxed)
+        self.stack.len()
     }
 
     /// Pushes a segment onto this bucket's Treiber stack.
@@ -51,75 +43,26 @@ impl NodeHugeBucket {
     /// allocation segment. Ownership transfers to this bucket on success.
     #[inline]
     unsafe fn push(&self, segment: *mut Segment) {
-        let mut current = self.head.load(Ordering::Relaxed);
-        loop {
-            let current_ptr = CacheAlignedAtomicPtr::ptr(current);
-            // SAFETY: by this function's contract, the caller owns `segment`
-            // exclusively until the successful CAS publishes it.
-            unsafe {
-                (*segment).next_free_segment = current_ptr;
-            }
-            let next = CacheAlignedAtomicPtr::tagged_successor(segment, current);
-            match self.head.compare_exchange_weak(
-                current,
-                next,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(actual) => current = actual,
-            }
-        }
-        self.count.value.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: forwarded contract — `segment` is an exclusively-owned huge
+        // `Segment` whose ownership transfers to the stack.
+        unsafe { self.stack.push(segment) };
     }
 
     /// Pops the head segment from this bucket, if any.
     #[inline]
     fn pop_head(&self) -> Option<*mut Segment> {
-        if self.count() == 0 {
-            return None;
-        }
-
-        let mut current = self.head.load(Ordering::Acquire);
-        loop {
-            let current_ptr = CacheAlignedAtomicPtr::ptr(current);
-            if current_ptr.is_null() {
-                return None;
-            }
-
-            // SAFETY: `current` was read from the stack head. The producer
-            // wrote `next_free_segment` before publishing with `Release`; the
-            // `Acquire` load/CAS observes that initialized link. If another
-            // thread changes the head, our CAS fails and this read is retried
-            // against the current head.
-            let next_ptr = unsafe { (*current_ptr).next_free_segment };
-            let next = CacheAlignedAtomicPtr::tagged_successor(next_ptr, current);
-            match self.head.compare_exchange_weak(
-                current,
-                next,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    self.count.value.fetch_sub(1, Ordering::Relaxed);
-                    // SAFETY: the successful CAS removed `current` from the
-                    // shared stack, so this thread now owns the segment.
-                    unsafe {
-                        (*current_ptr).next_free_segment = core::ptr::null_mut();
-                    }
-                    return Some(current_ptr);
-                }
-                Err(actual) => current = actual,
-            }
+        let popped = self.stack.pop();
+        if popped.is_null() {
+            None
+        } else {
+            Some(popped)
         }
     }
 
     /// Detaches this bucket's full retained chain in one atomic operation.
     #[inline]
     fn take_all(&self) -> (*mut Segment, usize) {
-        let head = self.head.swap_null(Ordering::Acquire);
-        let count = self.count.value.swap(0, Ordering::Relaxed);
-        (CacheAlignedAtomicPtr::ptr(head), count)
+        self.stack.take_all()
     }
 }
 
