@@ -367,7 +367,10 @@ fn malloc_extreme_sizes_return_null_without_ub() {
     let _guard = SHIM_LOCK.lock().expect("shim test lock poisoned");
     for size in [usize::MAX, (isize::MAX as usize) + 1, isize::MAX as usize] {
         let p = unsafe { malloc(core::hint::black_box(size)) };
-        assert!(p.is_null(), "malloc({size}) must return null, not over-allocate");
+        assert!(
+            p.is_null(),
+            "malloc({size}) must return null, not over-allocate"
+        );
     }
 }
 

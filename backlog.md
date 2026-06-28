@@ -37,15 +37,6 @@ acceptance criterion and named blocker so it is Definition-of-Ready.
 Added from the 2026-06-27 deep audit of the under-examined crates
 (`mnemosyne-prof`, `mnemosyne-c-shim`, `mnemosyne-heap` containers):
 
-- [ ] [patch] (Residual, infra-only) `mnemosyne-c-shim`: add a real `cargo-fuzz`
-  target over arbitrary `(op, size, nmemb, alignment)` for continuous coverage
-  beyond the deterministic in-suite sweep — needs the nightly `fuzz/` crate
-  scaffold, so it is its own infra increment, not a code change. (The
-  `align <= SEGMENT_SIZE` ceiling documentation in the `aligned_alloc` /
-  `posix_memalign` rustdoc and `include/mnemosyne.h` is now done — see
-  Completed. The prior "errno bug" was a false claim: `posix_memalign` returning
-  `ENOMEM` for a valid-but-too-large alignment is POSIX-correct.)
-
 - [ ] [patch] (Optional, low value) The cached-pointer fast path (check cell/OS
   slot; if non-null reconstitute + `is_allocating` guard + run; else init) is
   structurally repeated between `with_allocator` and `with_allocator_unguarded`
@@ -71,6 +62,18 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   not a bare ptr) when this lands.
 
 ## Completed
+
+- [patch] Add `fuzz/c_shim_api` cargo-fuzz coverage for the
+  `mnemosyne-c-shim` ABI. The target accepts arbitrary `(op, size, nmemb,
+  alignment)` bytes, shapes them into resource-bounded hostile cases
+  (zero-size, invalid alignment, over-`SEGMENT_SIZE` alignment, overflow, exact
+  segment edge, and small writable requests), and routes every case through the
+  real exported C ABI functions. Assertions pin null-or-valid allocation
+  results, alignment, usable-size lower bounds, zeroed calloc prefixes, and
+  initialized realloc preservation. The executor also builds as a normal
+  no-libFuzzer library for local smoke tests. Local `cargo fuzz run` execution
+  is blocked on this Windows install because GNU lacks sanitizer coverage
+  support for the target and the MSVC SDK `kernel32.lib` is not installed.
 
 - [patch] Document the `mnemosyne-c-shim` alignment ceiling. The `align <=
   SEGMENT_SIZE` (2 MiB) bound enforced upstream is now stated in the

@@ -4,6 +4,23 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Add `fuzz/c_shim_api` cargo-fuzz coverage for the C ABI boundary.
+  `fuzz/src/c_shim_api.rs` owns the resource-bounded hostile input executor and
+  `fuzz/fuzz_targets/c_shim_api.rs` is the thin libFuzzer adapter. Evidence
+  tier: source-level ABI harness plus value-semantic executor smoke tests and
+  the existing c-shim adversarial test suite. Verification: `cargo fmt -p
+  mnemosyne-c-shim --check`; `cargo fmt --manifest-path fuzz/Cargo.toml
+  --check`; `cargo check --manifest-path fuzz/Cargo.toml --lib
+  --no-default-features`; `cargo test --manifest-path fuzz/Cargo.toml --lib
+  --no-default-features` (2 passed); `cargo clippy --manifest-path
+  fuzz/Cargo.toml --lib --no-default-features -- -D warnings`; `cargo clippy
+  -p mnemosyne-c-shim --all-targets --all-features -- -D warnings`; `cargo
+  nextest run -p mnemosyne-c-shim --all-features` (23 passed); `cargo test
+  --doc -p mnemosyne-c-shim --all-features`; `cargo doc -p mnemosyne-c-shim
+  --all-features --no-deps`. Local `cargo fuzz run c_shim_api -- -runs=1
+  -max_len=25` remains blocked by toolchain environment: Windows GNU reports no
+  address-sanitizer support / unresolved sanitizer coverage symbols, while MSVC
+  Build Tools lack the Windows SDK `kernel32.lib`.
 - [x] [patch] Consolidate `BrandedVec` shrinking into one `shrink_to_len` SSOT.
   `shrink_to_fit` and `into_boxed_slice` now share free-empty and realloc-to-len
   logic without changing boxed-slice ownership transfer. Evidence tier:

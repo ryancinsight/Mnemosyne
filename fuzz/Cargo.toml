@@ -1,0 +1,24 @@
+[package]
+name = "mnemosyne-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[features]
+default = ["libfuzzer"]
+libfuzzer = ["dep:libfuzzer-sys"]
+
+[dependencies]
+libfuzzer-sys = { version = "0.4.13", optional = true }
+mnemosyne-c-shim = { path = "../crates/mnemosyne-c-shim" }
+mnemosyne-core = { path = "../crates/mnemosyne-core" }
+
+[[bin]]
+name = "c_shim_api"
+path = "fuzz_targets/c_shim_api.rs"
+test = false
+doc = false
+bench = false

@@ -13,4 +13,5 @@ members = [
     "crates/mnemosyne-c-shim",
     "crates/mnemosyne-benchmarks",
 ]
+exclude = ["fuzz"]
 

@@ -4,6 +4,12 @@
 
 ### Added
 
+- `fuzz/c_shim_api`, a cargo-fuzz target for the `mnemosyne-c-shim` ABI over
+  arbitrary `(op, size, nmemb, alignment)` inputs. The resource-bounded executor
+  drives the real exported `malloc`/`calloc`/`realloc`/`aligned_alloc`/
+  `posix_memalign`/`malloc_usable_size` functions and asserts null-or-valid
+  allocation contracts, alignment, usable-size lower bounds, zeroed calloc
+  prefixes, and initialized realloc preservation.
 - Default `parallel` and `mnemosyne-memory` feature contracts across every
   Mnemosyne package. Leaf crates expose zero-dependency marker features; the
   top-level `mnemosyne/mnemosyne-memory` feature preserves the branded

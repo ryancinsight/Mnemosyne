@@ -29,9 +29,24 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
   `head` and `count` atomics through the same `cache_aligned` SSOT used by
   `NodeSegmentPool`, trading a bounded zero-RSS BSS increase for false-sharing
   isolation between independent CAS head traffic and advisory count updates.
+- Tooling: `fuzz/c_shim_api` now exists, but local libFuzzer execution remains
+  environment-blocked on this Windows install: GNU lacks sanitizer coverage
+  support for the target, and the installed MSVC Build Tools lack Windows SDK
+  libraries (`kernel32.lib`). The harness logic is still compiled and smoke
+  tested through its no-libFuzzer library path.
 
 ## Closed
 
+- [patch] `mnemosyne-c-shim` had deterministic adversarial tests but no
+  continuous fuzz target for arbitrary hostile ABI inputs. Added excluded
+  cargo-fuzz package `fuzz/` with `c_shim_api`: the libFuzzer adapter forwards
+  bytes into a shared executor that decodes `(op, size, nmemb, alignment)`,
+  shapes resource-bounded hostile cases, calls the real exported C ABI
+  functions, and asserts null-or-valid allocation behavior, alignment,
+  usable-size lower bounds, calloc zero prefixes, and realloc initialized-byte
+  preservation. Evidence tier: source-level fuzz harness plus value-semantic
+  executor smoke tests and existing c-shim adversarial nextest coverage; full
+  libFuzzer execution is pending a host with sanitizer-capable toolchain.
 - [patch] `BrandedVec::shrink_to_fit` and `BrandedVec::into_boxed_slice`
   carried duplicate shrink mechanics for the `len == 0` free path and
   realloc-to-length path. Added one private `shrink_to_len` helper inside the
