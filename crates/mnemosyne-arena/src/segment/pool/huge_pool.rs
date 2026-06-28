@@ -1,17 +1,9 @@
 use super::cache_aligned::CacheAlignedAtomicUsize;
+use super::numa_bucket::{bucket_from_usize as numa_bucket, steal_from, NUMA_BUCKETS};
 use super::tagged_stack::TaggedSegmentStack;
 use mnemosyne_core::types::Segment;
-use themis::NumaNodeId;
 
-const NUMA_BUCKETS: usize = 16;
 const HUGE_SIZE_BUCKETS: usize = 16;
-
-#[inline(always)]
-fn numa_bucket(node: usize) -> usize {
-    NumaNodeId::new(node as u32)
-        .bucket_index::<NUMA_BUCKETS>()
-        .index()
-}
 
 /// A size-bucket for cached huge allocations.
 ///
@@ -220,15 +212,11 @@ impl GlobalHugePool {
             return Some(res);
         }
 
-        let start = NumaNodeId::new(start_node as u32).bucket_index::<NUMA_BUCKETS>();
-        for i in 1..NUMA_BUCKETS {
-            let other_node = start.wrapping_add(i).index();
-            if let Some(res) = self.pop_from_node(size, other_node, bucket_idx) {
-                return Some(res);
-            }
-        }
-
-        None
+        steal_from(start_node, |other_node| {
+            // SAFETY: `pop_from_node` returns an exclusively-owned segment on
+            // success; this closure only chooses the NUMA node traversal order.
+            unsafe { self.pop_from_node(size, other_node, bucket_idx) }
+        })
     }
 
     #[inline]

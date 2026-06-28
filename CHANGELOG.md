@@ -29,6 +29,11 @@
 
 ### Changed
 
+- Centralized arena NUMA bucket stealing in `segment/pool/numa_bucket.rs`.
+  The huge pool and segment pool now share one `NUMA_BUCKETS` constant, one
+  Themis-backed bucket conversion, and one generic nonlocal steal traversal.
+  Evidence tier: value-semantic traversal tests plus `mnemosyne-arena` package
+  gates; no benchmark speedup is claimed.
 - Reduced `mnemosyne-prof` leak/dump memory pressure and contention. Live
   samples now store fixed-width `StackId` handles instead of owned
   `Box<[usize]>` stacks; a refcounted `StackInterner` stores one `Arc<[usize]>`

@@ -70,12 +70,6 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   is small and a helper risks obscuring the hot path. Re-evaluate only if a
   fourth caching provider appears.
 
-- [ ] [patch] Collapse the duplicated wrap-around NUMA bucket-stealing loop
-  shared by `huge_pool.rs` and `segment_pool.rs` into one generic
-  `numa_steal<Pop>(start, pop_fn)` helper, and centralize the `NUMA_BUCKETS`
-  constant currently defined independently in both files (SSOT). Acceptance: one
-  steal routine, one constant; arena tests green.
-
 - [ ] [perf-experiment] Benchmark whether combining the lock-free pool bucket's
   `head` + `count` onto ONE cache line beats the current per-atomic isolation.
   Every push/pop touches both atomics, so a single 64-byte line would touch one
@@ -91,6 +85,13 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   not a bare ptr) when this lands.
 
 ## Completed
+
+- [patch] Consolidate wrap-around NUMA bucket stealing in
+  `segment/pool/numa_bucket.rs`. `huge_pool.rs` and `segment_pool.rs` now share
+  one `NUMA_BUCKETS` constant, one Themis-backed bucket-index conversion, and
+  one generic `steal_from(start, pop_fn)` traversal, leaving each caller to own
+  only its pool-specific pop operation. Direct tests pin wrap order and
+  early-hit behavior; arena package gates are green.
 
 - [patch] Consolidate the lock-free pool CAS loop into a `TaggedSegmentStack`
   SSOT (`segment/pool/tagged_stack.rs`) and harden it with direct tests. Both

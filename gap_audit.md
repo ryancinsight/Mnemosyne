@@ -32,6 +32,14 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
 
 ## Closed
 
+- [patch] `huge_pool.rs` and `segment_pool.rs` duplicated the same
+  Themis-backed 16-bucket NUMA wrap traversal and carried independent
+  `NUMA_BUCKETS` constants. Added `segment/pool/numa_bucket.rs` as the SSOT for
+  bucket conversion and `steal_from(start, pop_fn)`, so the traversal order and
+  early-stop contract are tested once while callers keep their pool-specific pop
+  logic. Evidence tier: value-semantic unit tests for wrap order and first-hit
+  behavior plus `mnemosyne-arena` fmt/check/clippy/nextest/doctest/rustdoc
+  gates. No benchmark speedup is claimed.
 - [patch] `mnemosyne-prof` retained one boxed stack per live sample and held
   shard mutexes while resolving symbols/writing reports. Live samples now store
   fixed-width `StackId` handles; `StackInterner` stores one refcounted

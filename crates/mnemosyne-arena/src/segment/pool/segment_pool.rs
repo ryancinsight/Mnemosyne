@@ -1,14 +1,7 @@
 use crate::numa::current_numa_node;
 use crate::segment::pool::list::NodeSegmentPool;
+use crate::segment::pool::numa_bucket::{bucket_from_u32 as numa_bucket, steal_from, NUMA_BUCKETS};
 use mnemosyne_core::types::Segment;
-use themis::NumaNodeId;
-
-const NUMA_BUCKETS: usize = 16;
-
-#[inline(always)]
-fn numa_bucket(node: u32) -> usize {
-    NumaNodeId::new(node).bucket_index::<NUMA_BUCKETS>().index()
-}
 
 /// A NUMA-aware lock-free global pool of free segments partitioned by socket node.
 pub struct GlobalSegmentPool {
@@ -98,15 +91,8 @@ impl GlobalSegmentPool {
                 return Some(segment);
             }
         }
-        // 2. Steal from other nodes
-        let start = NumaNodeId::new(node as u32).bucket_index::<NUMA_BUCKETS>();
-        for i in 1..NUMA_BUCKETS {
-            let other = start.wrapping_add(i).index();
-            if let Some(segment) = self.nodes[other].pop() {
-                return Some(segment);
-            }
-        }
-        None
+        // 2. Steal from other nodes.
+        steal_from(node, |other| self.nodes[other].pop())
     }
 
     /// The per-NUMA-node sub-pools, for sweeps that detach each node's chain

@@ -210,7 +210,8 @@ mod tests {
         const ITERS: usize = 20_000;
 
         let stack = Arc::new(TaggedSegmentStack::new());
-        let originals: Vec<*mut Segment> = (0..NODES).map(|i| boxed(0x1_0000 + i * 0x100)).collect();
+        let originals: Vec<*mut Segment> =
+            (0..NODES).map(|i| boxed(0x1_0000 + i * 0x100)).collect();
         for &n in &originals {
             unsafe { stack.push(n) };
         }
@@ -242,7 +243,11 @@ mod tests {
             assert!(drained.insert(p), "segment {p:?} drained twice");
             p = stack.pop();
         }
-        assert_eq!(drained.len(), NODES, "lost or leaked a segment under contention");
+        assert_eq!(
+            drained.len(),
+            NODES,
+            "lost or leaked a segment under contention"
+        );
         for n in &originals {
             assert!(drained.contains(n), "original {n:?} not recovered");
         }

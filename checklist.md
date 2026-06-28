@@ -4,6 +4,17 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Consolidate wrap-around NUMA bucket stealing for arena segment
+  pools. `segment/pool/numa_bucket.rs` is now the SSOT for the 16-bucket
+  Themis-backed NUMA index conversion and nonlocal steal traversal; the huge
+  pool and segment pool supply only their pop closures. Evidence tier:
+  value-semantic unit tests for wrap order and first-hit termination plus
+  package gates. Verification: `cargo fmt -p mnemosyne-arena --check`; `cargo
+  check -p mnemosyne-arena`; `cargo nextest run -p mnemosyne-arena
+  numa_bucket`; `cargo clippy -p mnemosyne-arena --all-targets --all-features
+  -- -D warnings`; `cargo nextest run -p mnemosyne-arena --all-features` (40
+  passed); `cargo test --doc -p mnemosyne-arena --all-features`; `cargo doc -p
+  mnemosyne-arena --all-features --no-deps`; `git diff --check`.
 - [x] [patch] Reduce `mnemosyne-prof` leak/dump memory pressure and contention.
   Live samples now store fixed-width `StackId` handles instead of owned
   `Box<[usize]>` stacks; a refcounted `StackInterner` stores one `Arc<[usize]>`
