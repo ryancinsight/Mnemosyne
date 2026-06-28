@@ -32,6 +32,17 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
 
 ## Closed
 
+- [patch] `mnemosyne-prof/nightly_tls` had a hidden compile break: `lib.rs`
+  referenced `tls.rs`'s private `THREAD_STATE` directly in `on_alloc`.
+  `tls::should_skip_alloc_fast_path` now owns the reentrancy and sample-budget
+  fast path for both the nightly `#[thread_local]` backend and the stable TLS
+  backend, keeping raw TLS state private and preserving the caller's single
+  inline fast-path branch. The shared `sample_debit` helper saturates
+  `usize -> isize` conversion before subtracting from the signed sample budget,
+  preventing wraparound on oversized allocation requests. Evidence tier:
+  compile-time cfg verification (`rustup run nightly cargo check -p
+  mnemosyne-prof --features nightly_tls`) plus package clippy, nextest, and
+  rustdoc gates.
 - [patch] The huge-allocation cache was the last allocation-cache path using a
   spinlock (`NodeHugeBucket` in
   `crates/mnemosyne-arena/src/segment/pool/huge_pool.rs`). Replaced the bucket

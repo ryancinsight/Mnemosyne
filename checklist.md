@@ -4,6 +4,17 @@ Target version: 0.2.0
 
 ## Verified
 
+- [x] [patch] Fix the hidden `mnemosyne-prof/nightly_tls` allocation fast path
+  compile break by moving the direct `THREAD_STATE` reentrancy/sample-budget
+  check behind `tls::should_skip_alloc_fast_path`. `lib.rs::on_alloc` no longer
+  reaches into `tls.rs` private state, both TLS implementations share one
+  fast-path helper, and `sample_debit` saturates oversized allocation sizes
+  before sample-budget subtraction so hostile `usize` values cannot wrap the
+  signed budget. Verification: `cargo fmt -p mnemosyne-prof --check`; `cargo
+  check -p mnemosyne-prof`; `rustup run nightly cargo check -p mnemosyne-prof
+  --features nightly_tls`; `cargo clippy -p mnemosyne-prof --all-targets
+  --all-features -- -D warnings`; `cargo nextest run -p mnemosyne-prof`;
+  `cargo doc -p mnemosyne-prof --no-deps`.
 - [x] [patch] Convert `NodeHugeBucket` from a spinlock-protected intrusive list
   to a lock-free Treiber stack and move cache-line-aligned atomic wrappers into
   `segment/pool/cache_aligned.rs` so `NodeSegmentPool` and the huge pool share

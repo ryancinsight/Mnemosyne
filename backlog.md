@@ -37,19 +37,6 @@ acceptance criterion and named blocker so it is Definition-of-Ready.
 Added from the 2026-06-27 deep audit of the under-examined crates
 (`mnemosyne-prof`, `mnemosyne-c-shim`, `mnemosyne-heap` containers):
 
-- [ ] [bug?] Verify the `nightly_tls_active` build path of `mnemosyne-prof`
-  compiles. `lib.rs::on_alloc`'s nightly fast path references `THREAD_STATE`
-  (`.in_hook` / `.bytes_until_sample`) directly, but `THREAD_STATE` is a private
-  `static mut` in `tls.rs` and is NOT imported into `lib.rs` (only
-  `get_bytes_until_sample`/`set_bytes_until_sample` are, and there is no
-  `in_hook` accessor). This appears unresolvable under `--cfg nightly_tls_active`
-  — likely a latent compile break on the nightly TLS path that stable CI never
-  exercises. Spotted during the SAFETY closure; not fixed because it needs a
-  nightly toolchain to confirm and a code change (add the import or route through
-  accessors) rather than a comment. Acceptance: a nightly build with
-  `nightly_tls_active` compiles `on_alloc`, or the path is routed through public
-  `tls` accessors.
-
 - [ ] [patch] `mnemosyne-prof` leak-detector memory: it stores one un-interned
   `Box<[usize]>` stack per *live* allocation, so its metadata grows with the
   app's live-allocation count (hundreds of MB under load) and heap-allocates a
@@ -131,12 +118,13 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   (`register_*_hook` stored a real `unsafe extern "C" fn` under Release/Acquire);
   and every `&mut *get_profiler_state()` / `#[thread_local] static mut
   THREAD_STATE` access states the thread-local exclusivity + `in_hook`/`enter_hook`
-  re-entrancy-guard invariant. Comments only — 88 insertions, 0 deletions,
-  verified no non-comment line added. (Spotted a separate latent issue filed
-  above: the `nightly_tls_active` `on_alloc` path references the unimported
-  `tls::THREAD_STATE`.) Verification: fmt, clippy `-D warnings`, 239 workspace
-  tests, prof doctests, `cargo doc` clean. This completes the crate-by-crate
-  SAFETY sweep across arena/local/core/heap/prof.
+  re-entrancy-guard invariant. The same sprint also fixed the latent
+  `nightly_tls_active` `on_alloc` compile break by routing the allocation
+  fast-path state check through `tls::should_skip_alloc_fast_path` instead of
+  reaching into private TLS state from `lib.rs`. Verification: fmt, clippy `-D
+  warnings`, prof nextest, prof doctests, `cargo doc`, and nightly
+  `mnemosyne-prof --features nightly_tls` compile check. This completes the
+  crate-by-crate SAFETY sweep across arena/local/core/heap/prof.
 
 - [patch] Close the `// SAFETY:` discipline gap across the **`mnemosyne-heap`**
   crate — the crate the prior arena/local/core closures had missed. Every
