@@ -11,7 +11,9 @@ mod tls;
 
 pub use sampler::{dump_leaks, dump_profile, Sample};
 
-pub(crate) use tls::{enter_hook, exit_hook, get_profiler_state};
+pub(crate) use tls::{
+    enter_hook, exit_hook, get_profiler_state, sample_debit, should_skip_alloc_fast_path,
+};
 #[cfg(nightly_tls_active)]
 pub(crate) use tls::{get_bytes_until_sample, set_bytes_until_sample};
 
@@ -114,37 +116,10 @@ pub fn on_alloc(ptr: *mut u8, size: usize) {
         return;
     }
 
-    #[cfg(nightly_tls_active)]
-    unsafe {
-        if THREAD_STATE.in_hook {
-            return;
-        }
-        let hook_ptr = ALLOC_HOOK.load(Ordering::Relaxed);
-        let leak_active = LEAK_DETECTOR_ACTIVE.load(Ordering::Relaxed);
-        if hook_ptr.is_null() && !leak_active {
-            let val = THREAD_STATE.bytes_until_sample;
-            if val > size as isize {
-                THREAD_STATE.bytes_until_sample = val - size as isize;
-                return;
-            }
-        }
-    }
-
-    #[cfg(not(nightly_tls_active))]
-    unsafe {
-        let state = &mut *get_profiler_state();
-        if state.in_hook {
-            return;
-        }
-        let hook_ptr = ALLOC_HOOK.load(Ordering::Relaxed);
-        let leak_active = LEAK_DETECTOR_ACTIVE.load(Ordering::Relaxed);
-        if hook_ptr.is_null() && !leak_active {
-            let val = state.bytes_until_sample;
-            if val > size as isize {
-                state.bytes_until_sample = val - size as isize;
-                return;
-            }
-        }
+    let hook_ptr = ALLOC_HOOK.load(Ordering::Relaxed);
+    let leak_active = LEAK_DETECTOR_ACTIVE.load(Ordering::Relaxed);
+    if should_skip_alloc_fast_path(size, hook_ptr.is_null(), leak_active) {
+        return;
     }
 
     on_alloc_cold(ptr, size);
@@ -169,8 +144,15 @@ fn on_alloc_cold(ptr: *mut u8, size: usize) {
     }
 
     if !hook_ptr.is_null() {
+        // SAFETY: `hook_ptr` is non-null (just checked) and was published by
+        // `register_alloc_hook` as `f as *mut c_void` from a real
+        // `unsafe extern "C" fn(*mut c_void, usize)` under `Release`/`Acquire`
+        // ordering, so transmuting it back to that exact signature reconstructs
+        // a valid function pointer.
         let hook: unsafe extern "C" fn(*mut core::ffi::c_void, usize) =
             unsafe { core::mem::transmute(hook_ptr) };
+        // SAFETY: `ptr`/`size` are the just-completed allocation's address and
+        // size; the registered hook upholds its own `extern "C"` contract.
         unsafe { hook(ptr as *mut core::ffi::c_void, size) };
     }
 
@@ -218,8 +200,14 @@ fn on_free_cold(ptr: *mut u8, size: usize) {
     }
 
     if !hook_ptr.is_null() {
+        // SAFETY: `hook_ptr` is non-null and was published by
+        // `register_free_hook` as `f as *mut c_void` from a real
+        // `unsafe extern "C" fn(*mut c_void, usize)`, so transmuting it back to
+        // that exact signature reconstructs a valid function pointer.
         let hook: unsafe extern "C" fn(*mut core::ffi::c_void, usize) =
             unsafe { core::mem::transmute(hook_ptr) };
+        // SAFETY: `ptr`/`size` describe the allocation being freed; the
+        // registered hook upholds its own `extern "C"` contract.
         unsafe { hook(ptr as *mut core::ffi::c_void, size) };
     }
 

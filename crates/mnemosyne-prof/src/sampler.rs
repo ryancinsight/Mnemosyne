@@ -101,10 +101,12 @@ pub(crate) fn reset_sampler_state() {
 }
 
 pub(crate) fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
+    let debit = crate::sample_debit(size);
+
     #[cfg(nightly_tls_active)]
     {
         let mut val = crate::get_bytes_until_sample();
-        if leak_active || val <= size as isize {
+        if leak_active || val <= debit {
             if !leak_active {
                 let mean = SAMPLE_INTERVAL.load(Ordering::Relaxed);
                 val = next_sample_interval(mean) as isize;
@@ -121,15 +123,19 @@ pub(crate) fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
             }
         }
         if !leak_active {
-            crate::set_bytes_until_sample(val - size as isize);
+            crate::set_bytes_until_sample(val.saturating_sub(debit));
         }
     }
 
+    // SAFETY: `get_profiler_state()` returns this thread's own thread-local
+    // `ThreadState`; the `&mut` is exclusive (thread-local) and this runs inside
+    // the `enter_hook`/`exit_hook` re-entrancy guard, so no nested `&mut` to the
+    // same state can be live.
     #[cfg(not(nightly_tls_active))]
     unsafe {
         let state = &mut *crate::get_profiler_state();
         let mut val = state.bytes_until_sample;
-        if leak_active || val <= size as isize {
+        if leak_active || val <= debit {
             if !leak_active {
                 let mean = SAMPLE_INTERVAL.load(Ordering::Relaxed);
                 val = next_sample_interval(mean) as isize;
@@ -146,7 +152,7 @@ pub(crate) fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
             }
         }
         if !leak_active {
-            state.bytes_until_sample = val - size as isize;
+            state.bytes_until_sample = val.saturating_sub(debit);
         }
     }
 }

@@ -37,14 +37,18 @@ acceptance criterion and named blocker so it is Definition-of-Ready.
 Added from the 2026-06-27 deep audit of the under-examined crates
 (`mnemosyne-prof`, `mnemosyne-c-shim`, `mnemosyne-heap` containers):
 
-- [ ] [patch] Close the `// SAFETY:` gap in `mnemosyne-prof` (the next crate
-  after the heap closure). `tls.rs` has ~20 undocumented `unsafe` blocks — the
-  TEB-slot inline `asm!` reads (`gs:[0x1480]`/`0x1780` hard-coded Windows TEB
-  offsets), the `#[thread_local] static mut THREAD_STATE` `&mut` formations, and
-  `lib.rs`'s `core::mem::transmute(hook_ptr)` of a `*mut c_void` into an
-  `extern "C" fn`. State the published-fn-pointer invariant, the thread-local
-  non-reentrancy invariant (the `in_hook`/`enter_hook` guard), and the
-  TEB-layout assumption (pin the Windows versions it holds for). Comments only.
+- [ ] [bug?] Verify the `nightly_tls_active` build path of `mnemosyne-prof`
+  compiles. `lib.rs::on_alloc`'s nightly fast path references `THREAD_STATE`
+  (`.in_hook` / `.bytes_until_sample`) directly, but `THREAD_STATE` is a private
+  `static mut` in `tls.rs` and is NOT imported into `lib.rs` (only
+  `get_bytes_until_sample`/`set_bytes_until_sample` are, and there is no
+  `in_hook` accessor). This appears unresolvable under `--cfg nightly_tls_active`
+  — likely a latent compile break on the nightly TLS path that stable CI never
+  exercises. Spotted during the SAFETY closure; not fixed because it needs a
+  nightly toolchain to confirm and a code change (add the import or route through
+  accessors) rather than a comment. Acceptance: a nightly build with
+  `nightly_tls_active` compiles `on_alloc`, or the path is routed through public
+  `tls` accessors.
 
 - [ ] [patch] `mnemosyne-prof` leak-detector memory: it stores one un-interned
   `Box<[usize]>` stack per *live* allocation, so its metadata grows with the
@@ -116,6 +120,23 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   indirectly through the two pool conservation stress tests.
 
 ## Completed
+
+- [patch] Close the `// SAFETY:` discipline gap across the **`mnemosyne-prof`**
+  crate (25 sites: `tls.rs` 14, `lib.rs` 10, `sampler.rs` 1). The fragile sites
+  are now grounded: the TEB inline-`asm!` reads/writes state the Windows x86-64
+  TEB layout they rely on (`gs` = TEB base; `gs:[0x1480 + i*8]` = `TlsSlots[64]`;
+  `gs:[0x30]` = TEB self-pointer; `TEB+0x1780` = `TlsExpansionSlots`), with
+  `# Safety` rustdoc on the two `unsafe fn get/set_teb_tls_slot`; the
+  `core::mem::transmute(hook_ptr)` sites state the published-fn-pointer invariant
+  (`register_*_hook` stored a real `unsafe extern "C" fn` under Release/Acquire);
+  and every `&mut *get_profiler_state()` / `#[thread_local] static mut
+  THREAD_STATE` access states the thread-local exclusivity + `in_hook`/`enter_hook`
+  re-entrancy-guard invariant. Comments only — 88 insertions, 0 deletions,
+  verified no non-comment line added. (Spotted a separate latent issue filed
+  above: the `nightly_tls_active` `on_alloc` path references the unimported
+  `tls::THREAD_STATE`.) Verification: fmt, clippy `-D warnings`, 239 workspace
+  tests, prof doctests, `cargo doc` clean. This completes the crate-by-crate
+  SAFETY sweep across arena/local/core/heap/prof.
 
 - [patch] Close the `// SAFETY:` discipline gap across the **`mnemosyne-heap`**
   crate — the crate the prior arena/local/core closures had missed. Every
