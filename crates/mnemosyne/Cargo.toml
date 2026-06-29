@@ -13,6 +13,7 @@ mnemosyne-hardened = { path = "../mnemosyne-hardened" }
 mnemosyne-decay = { path = "../mnemosyne-decay" }
 mnemosyne-prof = { path = "../mnemosyne-prof" }
 num-complex = { version = "0.4", optional = true }
+eunomia = { git = "https://github.com/ryancinsight/eunomia", default-features = false, optional = true }
 
 [features]
 default = ["parallel", "mnemosyne-memory", "std_tls"]
@@ -22,5 +23,6 @@ branded = ["dep:mnemosyne-heap"]
 nightly_tls = ["mnemosyne-local/nightly_tls", "mnemosyne-prof/nightly_tls"]
 std_tls = ["mnemosyne-local/std_tls", "mnemosyne-prof/std_tls"]
 num-complex = ["dep:num-complex", "mnemosyne-arena/num-complex"]
+eunomia = ["dep:eunomia", "mnemosyne-arena/eunomia"]
 segment-tail-guards = ["mnemosyne-arena/segment-tail-guards"]
 segment-header-guards = ["mnemosyne-arena/segment-header-guards"]
