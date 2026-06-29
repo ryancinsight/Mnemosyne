@@ -44,6 +44,20 @@ impl ScratchElement for num_complex::Complex64 {
     const ALIGN_BYTES: usize = DEFAULT_SCRATCH_ALIGN;
 }
 
+#[cfg(feature = "eunomia")]
+impl sealed::ScratchElementSealed for eunomia::Complex<f32> {}
+#[cfg(feature = "eunomia")]
+impl ScratchElement for eunomia::Complex<f32> {
+    const ALIGN_BYTES: usize = DEFAULT_SCRATCH_ALIGN;
+}
+
+#[cfg(feature = "eunomia")]
+impl sealed::ScratchElementSealed for eunomia::Complex<f64> {}
+#[cfg(feature = "eunomia")]
+impl ScratchElement for eunomia::Complex<f64> {
+    const ALIGN_BYTES: usize = DEFAULT_SCRATCH_ALIGN;
+}
+
 /// Default alignment constant for external consumers.
 #[inline]
 pub const fn default_align() -> usize {
