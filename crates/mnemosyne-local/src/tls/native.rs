@@ -160,7 +160,6 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
         }
     }
 
-
     #[inline(always)]
     unsafe fn with_allocator_unguarded<R>(
         f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
@@ -238,7 +237,6 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
         <NativeOsTls<B, S> as TlsProvider<B>>::with_allocator(f)
     }
-
 
     #[inline(always)]
     unsafe fn with_allocator_unguarded<R>(
