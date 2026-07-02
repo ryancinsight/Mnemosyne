@@ -24,7 +24,7 @@
 
 use mnemosyne_backend::MemoryBackendWrapper as Backend;
 use mnemosyne_core::StandardPolicy as Policy;
-use mnemosyne_local::dealloc_counters::{reset, snapshot, total, DeallocPath};
+use mnemosyne_local::dealloc_counters::{DeallocPath, reset, snapshot, total};
 use mnemosyne_local::{thread_alloc, thread_free_layout};
 
 const ALIGN: usize = 16;

@@ -1,7 +1,7 @@
 use super::page::{pop_page_free_block, try_allocate_page_local, try_reclaim_and_allocate};
 use crate::local_alloc::ThreadAllocator;
 use core::ptr::NonNull;
-use mnemosyne_arena::{allocate_segment, HasSegmentPool};
+use mnemosyne_arena::{HasSegmentPool, allocate_segment};
 use mnemosyne_core::constants::PAGES_PER_SEGMENT;
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::class_to_size;
@@ -79,11 +79,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         unsafe { self.record_defrag_operation::<P>() };
         // 1. Move the current active page to full_pages if it is indeed full.
         if let Some(mut active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
-            let active_page = active_ptr.as_mut();
+            // Safety: `active_ptr` came from this allocator's own active list,
+            // so the page is live and exclusively owned by this thread.
+            let active_page = unsafe { active_ptr.as_mut() };
             // Safety: `active_page` is owned by this allocator.
-            if let Some(block) =
+            if let Some(block) = unsafe {
                 try_reclaim_and_allocate::<P>(active_page, &mut self.cross_thread_reclaimed)
-            {
+            } {
                 return block.as_ptr() as *mut u8;
             }
             // The page is truly full! Move it to full_pages.
@@ -95,7 +97,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // 1b. Check if the new head of active_pages can satisfy the allocation.
         if let Some(mut active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
-            let active_page = active_ptr.as_mut();
+            // Safety: `active_ptr` came from this allocator's own active list,
+            // so the page is live and exclusively owned by this thread.
+            let active_page = unsafe { active_ptr.as_mut() };
             if let Some(block) = unsafe { try_allocate_page_local::<P>(active_page) } {
                 return block.as_ptr() as *mut u8;
             }
@@ -115,7 +119,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 break;
             }
             checked += 1;
-            let page = page_ptr.as_mut();
+            // Safety: `page_ptr` was walked from this allocator's own
+            // `full_pages[class]` list, so the page is live and exclusively
+            // owned by this thread.
+            let page = unsafe { page_ptr.as_mut() };
             // Safety: `page` is owned by this allocator. Since it is in full_pages,
             // we know it has no local free blocks. We only need to check for cross-thread frees to reclaim.
             let block_opt =
@@ -140,7 +147,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // SAFETY: `class` is the caller-validated size-class index, satisfying
         // `get_new_page`'s implicit bounds expectation; it returns either null
         // (handled below) or a page freshly installed into `active_pages`.
-        let new_page_ptr = self.get_new_page::<P>(class);
+        let new_page_ptr = unsafe { self.get_new_page::<P>(class) };
         if new_page_ptr.is_null() {
             return core::ptr::null_mut();
         }
@@ -149,12 +156,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // SAFETY: `new_page_ptr` is the non-null pointer just returned by
         // `get_new_page`, pointing to a freshly initialized `Page` inside a
         // segment owned exclusively by this thread, so the `&mut` is unaliased.
-        let page = &mut *new_page_ptr;
+        let page = unsafe { &mut *new_page_ptr };
         // Safety: `get_new_page` guarantees a freshly initialized page whose
         // `initialize_free_list` populated `free` with at least one block.
-        let block = pop_page_free_block::<P>(page);
+        let block = unsafe { pop_page_free_block::<P>(page) };
 
-        page.increment_alloc_count();
+        // Safety: `page` is the freshly allocated page above with one block
+        // just popped, so the count increment matches an actual allocation.
+        unsafe { page.increment_alloc_count() };
 
         // If it becomes full immediately, move to full list
         if page.alloc_count == page.max_blocks() {
@@ -385,8 +394,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 /// initialized `Segment`s. The returned segment (if any) is exclusively owned
 /// by the caller.
 #[inline(never)]
-unsafe fn acquire_policy_compatible_segment<P: AllocPolicy, B: HasSegmentPool>(
-) -> Option<*mut Segment> {
+unsafe fn acquire_policy_compatible_segment<P: AllocPolicy, B: HasSegmentPool>()
+-> Option<*mut Segment> {
     let mut deferred: *mut Segment = core::ptr::null_mut();
     let chosen = loop {
         let Some(seg_ptr) = (unsafe { allocate_segment::<B>() }) else {

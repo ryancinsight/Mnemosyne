@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "crates/mnemosyne-core",
     "crates/mnemosyne-backend",
@@ -12,6 +12,7 @@ members = [
     "crates/mnemosyne",
     "crates/mnemosyne-c-shim",
     "crates/mnemosyne-benchmarks",
+    "crates/mnemosyne-build-util",
 ]
 exclude = ["fuzz"]
 

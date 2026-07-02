@@ -1,12 +1,12 @@
 use core::alloc::{GlobalAlloc, Layout};
 use criterion::black_box;
 use std::cell::UnsafeCell;
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread;
 
 use super::constants::{
-    CROSS_THREAD_ALLOCS, CROSS_THREAD_QUEUE_BOUND, THREADS, THREAD_ALLOCS, THREAD_WORK_QUEUE_BOUND,
+    CROSS_THREAD_ALLOCS, CROSS_THREAD_QUEUE_BOUND, THREAD_ALLOCS, THREAD_WORK_QUEUE_BOUND, THREADS,
 };
 use super::helpers::{alloc_dealloc, benchmark_failure, require_allocated};
 

@@ -1,5 +1,5 @@
 use core::alloc::GlobalAlloc;
-use criterion::{black_box, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box};
 
 #[cfg(jemalloc_available)]
 use super::compat::bench_jemalloc;

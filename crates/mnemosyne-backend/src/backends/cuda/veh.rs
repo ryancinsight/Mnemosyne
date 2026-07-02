@@ -58,7 +58,7 @@ struct EXCEPTION_POINTERS {
     context_record: *mut c_void,
 }
 
-extern "system" {
+unsafe extern "system" {
     fn GetModuleHandleA(lpModuleName: *const u8) -> *mut c_void;
     fn CreateThread(
         lpThreadAttributes: *mut c_void,

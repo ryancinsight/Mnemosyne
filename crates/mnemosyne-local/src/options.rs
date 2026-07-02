@@ -2,7 +2,7 @@ static OPTIONS_INIT: core::sync::atomic::AtomicBool = core::sync::atomic::Atomic
 
 #[cfg(windows)]
 fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
-    extern "system" {
+    unsafe extern "system" {
         fn GetEnvironmentVariableA(lpName: *const u8, lpBuffer: *mut u8, nSize: u32) -> u32;
     }
 
@@ -29,7 +29,7 @@ fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
 
 #[cfg(not(windows))]
 fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
-    extern "C" {
+    unsafe extern "C" {
         fn getenv(name: *const u8) -> *mut u8;
     }
 
@@ -60,11 +60,7 @@ fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
             len += 1;
         }
     }
-    if len == buf.len() {
-        None
-    } else {
-        Some(len)
-    }
+    if len == buf.len() { None } else { Some(len) }
 }
 
 fn parse_env_usize(name: &str) -> Option<usize> {

@@ -6,18 +6,18 @@
 //! behind an atomic state machine so concurrent first callers observe exactly
 //! one initialization.
 
-use core::ffi::{c_void, CStr};
+use core::ffi::{CStr, c_void};
 use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
 #[cfg(target_family = "windows")]
-extern "system" {
+unsafe extern "system" {
     fn LoadLibraryA(lpLibFileName: *const u8) -> *mut c_void;
     fn GetProcAddress(hModule: *mut c_void, lpProcName: *const u8) -> *mut c_void;
     fn SwitchToThread() -> i32;
 }
 
 #[cfg(target_family = "unix")]
-extern "C" {
+unsafe extern "C" {
     fn dlopen(filename: *const u8, flag: core::ffi::c_int) -> *mut c_void;
     fn dlsym(handle: *mut c_void, symbol: *const u8) -> *mut c_void;
     fn sched_yield() -> core::ffi::c_int;

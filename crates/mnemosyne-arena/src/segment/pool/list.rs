@@ -103,11 +103,7 @@ impl NodeSegmentPool {
     #[inline]
     pub fn pop(&self) -> Option<*mut Segment> {
         let popped = self.stack.pop();
-        if popped.is_null() {
-            None
-        } else {
-            Some(popped)
-        }
+        if popped.is_null() { None } else { Some(popped) }
     }
 
     #[inline]

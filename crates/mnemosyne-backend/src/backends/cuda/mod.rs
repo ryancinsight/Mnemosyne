@@ -31,8 +31,8 @@ use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 use mnemosyne_core::MemoryBackend;
 use registry::{
-    register_cuda_ptr_in, unregister_cuda_ptr_in, CUDA_ALLOCATIONS, CUDA_DEVICE_ALLOCATIONS,
-    CUDA_HOST_PINNED_ALLOCATIONS,
+    CUDA_ALLOCATIONS, CUDA_DEVICE_ALLOCATIONS, CUDA_HOST_PINNED_ALLOCATIONS, register_cuda_ptr_in,
+    unregister_cuda_ptr_in,
 };
 
 /// Zero-sized strategy surface for the shared CUDA allocate/deallocate

@@ -32,12 +32,14 @@ const SIZES: &[usize] = &[
 
 #[inline]
 unsafe fn alloc(size: usize) -> *mut u8 {
-    thread_alloc::<Policy, Backend>(size, ALIGN)
+    unsafe { thread_alloc::<Policy, Backend>(size, ALIGN) }
 }
 
 #[inline]
 unsafe fn free(ptr: *mut u8) {
-    thread_free::<Policy, Backend>(ptr);
+    unsafe {
+        thread_free::<Policy, Backend>(ptr);
+    }
 }
 
 /// Allocates many blocks of each size class at once, stamps each with a

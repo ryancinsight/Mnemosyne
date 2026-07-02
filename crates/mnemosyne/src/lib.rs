@@ -7,17 +7,17 @@ use mnemosyne_core::NUM_SIZE_CLASSES;
 use mnemosyne_local::{thread_alloc_layout, thread_free_layout, thread_realloc};
 
 pub use mnemosyne_backend::{
-    is_cuda_available, CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend,
-    MemoryBackendWrapper, WgpuStagingBackend,
+    CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend, MemoryBackendWrapper,
+    WgpuStagingBackend, is_cuda_available,
 };
-pub use mnemosyne_core::{options::MnemosyneOptions, AllocPolicy, StandardPolicy};
+pub use mnemosyne_core::{AllocPolicy, StandardPolicy, options::MnemosyneOptions};
 pub use mnemosyne_hardened::{HardenedPolicy, SecurePolicy};
 #[cfg(feature = "branded")]
 pub use mnemosyne_heap::{
-    scope as branded_scope, BrandedBlock, BrandedBox, BrandedCell, BrandedVec, Heap,
-    InvariantLifetime, ThreadLocalToken,
+    BrandedBlock, BrandedBox, BrandedCell, BrandedVec, Heap, InvariantLifetime, ThreadLocalToken,
+    scope as branded_scope,
 };
-pub use mnemosyne_local::{usable_size, LocalAllocatorSelector, SizeClassOccupancy};
+pub use mnemosyne_local::{LocalAllocatorSelector, SizeClassOccupancy, usable_size};
 pub use mnemosyne_prof::{
     disable_leak_detector, disable_profiling, dump_leaks, dump_profile, enable_leak_detector,
     enable_profiling, is_leak_detector_enabled, is_profiling_enabled, register_alloc_hook,
@@ -130,8 +130,8 @@ impl Default for MemoryStats {
 }
 
 /// Returns current Mnemosyne allocator memory counters for a specific backend.
-pub fn memory_stats_generic<B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>>(
-) -> MemoryStats {
+pub fn memory_stats_generic<B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>>()
+-> MemoryStats {
     let backend = mnemosyne_backend::backend_memory_stats();
     let arena = mnemosyne_arena::arena_memory_stats::<B>();
     let local = mnemosyne_local::thread_allocator_stats::<B>();

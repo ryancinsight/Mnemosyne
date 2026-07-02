@@ -1,7 +1,7 @@
 use crate::local_alloc::ThreadAllocator;
 use core::marker::PhantomData;
 use mnemosyne_arena::HasSegmentPool;
-use mnemosyne_core::constants::{PAGES_PER_SEGMENT, PAGE_SIZE};
+use mnemosyne_core::constants::{PAGE_SIZE, PAGES_PER_SEGMENT};
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::types::{Segment, SegmentOwner};
 

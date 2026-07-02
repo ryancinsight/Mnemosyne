@@ -1,4 +1,4 @@
-use crate::local_alloc::{ThreadAllocator, CROSS_THREAD_RECLAIMED_BLOCKS};
+use crate::local_alloc::{CROSS_THREAD_RECLAIMED_BLOCKS, ThreadAllocator};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 use mnemosyne_arena::HasSegmentPool;

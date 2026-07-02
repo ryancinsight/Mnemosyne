@@ -110,9 +110,12 @@ pub(crate) unsafe fn push_page_front<'id, B: HasSegmentPool>(
     page.prev_page = None;
     if let Some(mut head) = *head_slot {
         // Safety: the caller's token contract covers every page linked from
-        // `head_slot`.
-        let _head = unsafe { token.page(head) };
-        head.as_mut().prev_page = Some(raw_page);
+        // `head_slot`, so the head pointer is valid and exclusively reachable
+        // through this list walk.
+        unsafe {
+            let _head = token.page(head);
+            head.as_mut().prev_page = Some(raw_page);
+        }
     }
     *head_slot = Some(raw_page);
     page.list_state = list_state;
@@ -146,18 +149,24 @@ pub(crate) unsafe fn unlink_page_from_list<'id, B: HasSegmentPool>(
 
     if let Some(mut prev_ptr) = prev {
         // Safety: the caller's token contract covers adjacent pages in the
-        // same intrusive list.
-        let _prev = unsafe { token.page(prev_ptr) };
-        prev_ptr.as_mut().next_page = next;
+        // same intrusive list, so `prev_ptr` is valid and exclusively
+        // reachable through this list walk.
+        unsafe {
+            let _prev = token.page(prev_ptr);
+            prev_ptr.as_mut().next_page = next;
+        }
     } else {
         *head_slot = next;
     }
 
     if let Some(mut next_ptr) = next {
         // Safety: the caller's token contract covers adjacent pages in the
-        // same intrusive list.
-        let _next = unsafe { token.page(next_ptr) };
-        next_ptr.as_mut().prev_page = prev;
+        // same intrusive list, so `next_ptr` is valid and exclusively
+        // reachable through this list walk.
+        unsafe {
+            let _next = token.page(next_ptr);
+            next_ptr.as_mut().prev_page = prev;
+        }
     }
 
     page.next_page = None;
@@ -202,15 +211,23 @@ pub(crate) unsafe fn move_page_between_lists_branded<'id, B: HasSegmentPool>(
 
     // Unlink page from the source list.
     if let Some(mut prev_ptr) = prev {
-        let _prev = unsafe { token.page(prev_ptr) };
-        prev_ptr.as_mut().next_page = next;
+        // Safety: the caller's token contract covers every page reachable from
+        // either list, so `prev_ptr` is valid and exclusively reachable here.
+        unsafe {
+            let _prev = token.page(prev_ptr);
+            prev_ptr.as_mut().next_page = next;
+        }
     } else {
         *from_head_slot = next;
     }
 
     if let Some(mut next_ptr) = next {
-        let _next = unsafe { token.page(next_ptr) };
-        next_ptr.as_mut().prev_page = prev;
+        // Safety: the caller's token contract covers every page reachable from
+        // either list, so `next_ptr` is valid and exclusively reachable here.
+        unsafe {
+            let _next = token.page(next_ptr);
+            next_ptr.as_mut().prev_page = prev;
+        }
     }
 
     // Push page to the front of the destination list.
@@ -218,8 +235,12 @@ pub(crate) unsafe fn move_page_between_lists_branded<'id, B: HasSegmentPool>(
     page.next_page = head;
     page.prev_page = None;
     if let Some(mut head_ptr) = head {
-        let _head = unsafe { token.page(head_ptr) };
-        head_ptr.as_mut().prev_page = Some(raw_page);
+        // Safety: the caller's token contract covers every page reachable from
+        // either list, so `head_ptr` is valid and exclusively reachable here.
+        unsafe {
+            let _head = token.page(head_ptr);
+            head_ptr.as_mut().prev_page = Some(raw_page);
+        }
     }
     *to_head_slot = Some(raw_page);
     page.list_state = new_state;
@@ -274,7 +295,9 @@ unsafe fn unlink_empty_page_with_token<'id, B: HasSegmentPool>(
     head_slot: &mut Option<NonNull<Page>>,
     target: NonNull<Page>,
 ) -> bool {
-    if target.as_ref().list_state == 3 {
+    // Safety: the caller guarantees `target` is a valid page owned by this
+    // allocator; reading `list_state` is a plain field load.
+    if unsafe { target.as_ref() }.list_state == 3 {
         let page = unsafe { token.page(target) };
         unsafe { unlink_page_from_list(token, head_slot, page) };
         true
@@ -331,7 +354,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let Some(target) = NonNull::new(page_ptr) else {
             return false;
         };
-        if target.as_ref().list_state == 2 {
+        // Safety: `target` is non-null (checked above) and the caller
+        // guarantees it points to a valid page owned by this allocator.
+        if unsafe { target.as_ref() }.list_state == 2 {
             with_page_list_token::<B, _>(|mut token| {
                 let page = unsafe { token.page(target) };
                 unsafe {
@@ -361,7 +386,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         class: usize,
     ) -> bool {
         debug_assert!(class < NUM_SIZE_CLASSES);
-        if page_ptr.as_ref().list_state != 2 {
+        // Safety: the caller guarantees `page_ptr` points to a valid page
+        // owned by this allocator; reading `list_state` is a plain field load.
+        if unsafe { page_ptr.as_ref() }.list_state != 2 {
             return false;
         }
         with_page_list_token::<B, _>(|mut token| {
@@ -386,7 +413,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let Some(target) = NonNull::new(page_ptr) else {
             return;
         };
-        let page = target.as_ref();
+        // Safety: `target` is non-null (checked above) and the caller
+        // guarantees it points to a valid page owned by this allocator.
+        let page = unsafe { target.as_ref() };
         debug_assert_eq!(page.size_class as usize, class);
         let list_state = page.list_state;
         with_page_list_token::<B, _>(|mut token| {
@@ -417,7 +446,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let Some(target) = NonNull::new(page_ptr) else {
             return false;
         };
-        if target.as_ref().list_state == 3 {
+        // Safety: `target` is non-null (checked above) and the caller
+        // guarantees it points to a valid page owned by this allocator.
+        if unsafe { target.as_ref() }.list_state == 3 {
             with_page_list_token::<B, _>(|mut token| {
                 unsafe { unlink_empty_page_with_token(&mut token, &mut self.empty_pages, target) };
             });

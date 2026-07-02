@@ -1,11 +1,11 @@
-use crate::brand::{BrandedBlock, BrandedCell, ThreadLocalToken};
 use crate::Heap;
+use crate::brand::{BrandedBlock, BrandedCell, ThreadLocalToken};
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
-use mnemosyne_local::internal::HasSegmentPool;
 use mnemosyne_local::LocalAllocatorSelector;
+use mnemosyne_local::internal::HasSegmentPool;
 
 /// A uniquely owned, safe pointer to heap-allocated memory of type `T` from a `Heap`.
 ///
@@ -92,7 +92,7 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     /// are active or will be used.
     #[inline(always)]
     pub unsafe fn from_cell(heap: &'heap Heap<'brand, P, B>, cell: BrandedCell<'brand, T>) -> Self {
-        Self::from_raw(heap, cell.into_block())
+        unsafe { Self::from_raw(heap, cell.into_block()) }
     }
 
     /// Reconstructs a `BrandedBox` from a raw block.
@@ -174,12 +174,12 @@ impl<'brand, 'heap, T: Clone, P: AllocPolicy, B: HasSegmentPool + LocalAllocator
 }
 
 impl<
-        'brand,
-        'heap,
-        T: ?Sized + core::fmt::Debug,
-        P: AllocPolicy,
-        B: HasSegmentPool + LocalAllocatorSelector<B>,
-    > core::fmt::Debug for BrandedBox<'brand, 'heap, T, P, B>
+    'brand,
+    'heap,
+    T: ?Sized + core::fmt::Debug,
+    P: AllocPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+> core::fmt::Debug for BrandedBox<'brand, 'heap, T, P, B>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Debug::fmt(&**self, f)
@@ -187,12 +187,12 @@ impl<
 }
 
 impl<
-        'brand,
-        'heap,
-        T: ?Sized + core::fmt::Display,
-        P: AllocPolicy,
-        B: HasSegmentPool + LocalAllocatorSelector<B>,
-    > core::fmt::Display for BrandedBox<'brand, 'heap, T, P, B>
+    'brand,
+    'heap,
+    T: ?Sized + core::fmt::Display,
+    P: AllocPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+> core::fmt::Display for BrandedBox<'brand, 'heap, T, P, B>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(&**self, f)
@@ -208,48 +208,38 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
 }
 
 impl<
-        'brand,
-        'heap,
-        T: ?Sized + PartialEq,
-        P: AllocPolicy,
-        B: HasSegmentPool + LocalAllocatorSelector<B>,
-    > PartialEq for BrandedBox<'brand, 'heap, T, P, B>
+    'brand,
+    'heap,
+    T: ?Sized + PartialEq,
+    P: AllocPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+> PartialEq for BrandedBox<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         **self == **other
     }
 }
-impl<
-        'brand,
-        'heap,
-        T: ?Sized + Eq,
-        P: AllocPolicy,
-        B: HasSegmentPool + LocalAllocatorSelector<B>,
-    > Eq for BrandedBox<'brand, 'heap, T, P, B>
+impl<'brand, 'heap, T: ?Sized + Eq, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    Eq for BrandedBox<'brand, 'heap, T, P, B>
 {
 }
 
 impl<
-        'brand,
-        'heap,
-        T: ?Sized + PartialOrd,
-        P: AllocPolicy,
-        B: HasSegmentPool + LocalAllocatorSelector<B>,
-    > PartialOrd for BrandedBox<'brand, 'heap, T, P, B>
+    'brand,
+    'heap,
+    T: ?Sized + PartialOrd,
+    P: AllocPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+> PartialOrd for BrandedBox<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         (**self).partial_cmp(&**other)
     }
 }
-impl<
-        'brand,
-        'heap,
-        T: ?Sized + Ord,
-        P: AllocPolicy,
-        B: HasSegmentPool + LocalAllocatorSelector<B>,
-    > Ord for BrandedBox<'brand, 'heap, T, P, B>
+impl<'brand, 'heap, T: ?Sized + Ord, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    Ord for BrandedBox<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
@@ -257,12 +247,12 @@ impl<
     }
 }
 impl<
-        'brand,
-        'heap,
-        T: ?Sized + core::hash::Hash,
-        P: AllocPolicy,
-        B: HasSegmentPool + LocalAllocatorSelector<B>,
-    > core::hash::Hash for BrandedBox<'brand, 'heap, T, P, B>
+    'brand,
+    'heap,
+    T: ?Sized + core::hash::Hash,
+    P: AllocPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+> core::hash::Hash for BrandedBox<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {

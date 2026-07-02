@@ -1,8 +1,8 @@
 use crate::BrandedVec;
 use core::ops::{Deref, DerefMut};
 use mnemosyne_core::AllocPolicy;
-use mnemosyne_local::internal::HasSegmentPool;
 use mnemosyne_local::LocalAllocatorSelector;
+use mnemosyne_local::internal::HasSegmentPool;
 
 impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Deref
     for BrandedVec<'brand, 'heap, T, P, B>
@@ -49,25 +49,20 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
 }
 
 impl<
-        'brand,
-        'heap,
-        T: core::fmt::Debug,
-        P: AllocPolicy,
-        B: HasSegmentPool + LocalAllocatorSelector<B>,
-    > core::fmt::Debug for BrandedVec<'brand, 'heap, T, P, B>
+    'brand,
+    'heap,
+    T: core::fmt::Debug,
+    P: AllocPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+> core::fmt::Debug for BrandedVec<'brand, 'heap, T, P, B>
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Debug::fmt(self.as_slice(), f)
     }
 }
 
-impl<
-        'brand,
-        'heap,
-        T: PartialEq,
-        P: AllocPolicy,
-        B: HasSegmentPool + LocalAllocatorSelector<B>,
-    > PartialEq for BrandedVec<'brand, 'heap, T, P, B>
+impl<'brand, 'heap, T: PartialEq, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    PartialEq for BrandedVec<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -79,13 +74,8 @@ impl<'brand, 'heap, T: Eq, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
 {
 }
 
-impl<
-        'brand,
-        'heap,
-        T: PartialOrd,
-        P: AllocPolicy,
-        B: HasSegmentPool + LocalAllocatorSelector<B>,
-    > PartialOrd for BrandedVec<'brand, 'heap, T, P, B>
+impl<'brand, 'heap, T: PartialOrd, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
+    PartialOrd for BrandedVec<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
@@ -101,12 +91,12 @@ impl<'brand, 'heap, T: Ord, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
     }
 }
 impl<
-        'brand,
-        'heap,
-        T: core::hash::Hash,
-        P: AllocPolicy,
-        B: HasSegmentPool + LocalAllocatorSelector<B>,
-    > core::hash::Hash for BrandedVec<'brand, 'heap, T, P, B>
+    'brand,
+    'heap,
+    T: core::hash::Hash,
+    P: AllocPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+> core::hash::Hash for BrandedVec<'brand, 'heap, T, P, B>
 {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {

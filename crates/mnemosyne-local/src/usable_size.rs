@@ -1,6 +1,6 @@
 use crate::{LocalAllocatorSelector, ThreadAllocator, ThreadAllocatorStats};
 use mnemosyne_arena::HasSegmentPool;
-use mnemosyne_core::types::{locate_segment, Segment};
+use mnemosyne_core::types::{Segment, locate_segment};
 
 /// Returns the actual usable byte count of the allocation at `ptr`.
 ///
@@ -81,8 +81,8 @@ pub(crate) unsafe fn huge_allocation_size(ptr: *mut u8) -> usize {
 }
 
 /// Returns a statistics snapshot for the current thread allocator.
-pub fn thread_allocator_stats<B: HasSegmentPool + LocalAllocatorSelector<B>>(
-) -> ThreadAllocatorStats {
+pub fn thread_allocator_stats<B: HasSegmentPool + LocalAllocatorSelector<B>>()
+-> ThreadAllocatorStats {
     B::with_allocator(|alloc| alloc.stats()).unwrap_or_else(|| ThreadAllocatorStats {
         cross_thread_reclaimed_blocks: ThreadAllocator::<B>::cross_thread_reclaimed_blocks(),
         ..ThreadAllocatorStats::default()

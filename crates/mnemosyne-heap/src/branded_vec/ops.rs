@@ -1,8 +1,8 @@
-use crate::brand::{BrandedCell, ThreadLocalToken};
 use crate::BrandedVec;
+use crate::brand::{BrandedCell, ThreadLocalToken};
 use mnemosyne_core::AllocPolicy;
-use mnemosyne_local::internal::HasSegmentPool;
 use mnemosyne_local::LocalAllocatorSelector;
+use mnemosyne_local::internal::HasSegmentPool;
 
 impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
     BrandedVec<'brand, 'heap, T, P, B>

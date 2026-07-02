@@ -1,17 +1,17 @@
-use crate::raw_heap::RawHeap;
 use crate::Heap;
+use crate::raw_heap::RawHeap;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
-use mnemosyne_local::internal::HasSegmentPool;
 use mnemosyne_local::LocalAllocatorSelector;
+use mnemosyne_local::internal::HasSegmentPool;
 
 use melinoe::sync::thread_local_scope;
 
 // Brand vocabulary re-exported from melinoe so the heap's branded containers and
 // their consumers share one authoritative token + marker definition.
-pub use melinoe::sync::ThreadLocalToken;
 pub use melinoe::InvariantLifetime;
+pub use melinoe::sync::ThreadLocalToken;
 
 /// A wrapper representing a heap block branded with a compile-time unique lifetime.
 pub struct BrandedBlock<'brand, T: ?Sized> {

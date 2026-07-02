@@ -1,6 +1,6 @@
 use crate::numa::current_numa_node;
 use crate::segment::pool::list::NodeSegmentPool;
-use crate::segment::pool::numa_bucket::{bucket_from_u32 as numa_bucket, steal_from, NUMA_BUCKETS};
+use crate::segment::pool::numa_bucket::{NUMA_BUCKETS, bucket_from_u32 as numa_bucket, steal_from};
 use mnemosyne_core::types::Segment;
 
 /// A NUMA-aware lock-free global pool of free segments partitioned by socket node.
@@ -29,7 +29,9 @@ impl GlobalSegmentPool {
         // SAFETY: by this function's contract `segment` is a valid, initialized,
         // exclusively-owned `Segment`, so reading its `numa_node` field is sound.
         let node = numa_bucket(unsafe { (*segment).numa_node });
-        self.nodes[node].push_unbounded(segment);
+        // SAFETY: `segment` is valid, initialized, and exclusively owned per
+        // this function's contract, which is exactly the node pool's contract.
+        unsafe { self.nodes[node].push_unbounded(segment) };
     }
 
     /// Pushes a segment back to its originating NUMA node pool if retention limit permits.
@@ -43,7 +45,9 @@ impl GlobalSegmentPool {
         // SAFETY: by this function's contract `segment` is a valid, initialized,
         // exclusively-owned `Segment`, so reading its `numa_node` field is sound.
         let node = numa_bucket(unsafe { (*segment).numa_node });
-        self.nodes[node].try_push_retained(segment)
+        // SAFETY: `segment` is valid, initialized, and exclusively owned per
+        // this function's contract, which is exactly the node pool's contract.
+        unsafe { self.nodes[node].try_push_retained(segment) }
     }
 
     /// Pops a segment from the calling thread's NUMA node pool, stealing from other nodes if empty.

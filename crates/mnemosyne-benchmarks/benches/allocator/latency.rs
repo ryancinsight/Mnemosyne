@@ -6,8 +6,8 @@ use std::alloc::System;
 use super::compat::bench_jemalloc;
 use super::constants::{BATCH_ALLOCS, HUGE_LAYOUT, LARGE_LAYOUT, MEDIUM_LAYOUT, SMALL_LAYOUT};
 use super::helpers::{
-    alloc_dealloc, bench_batched_case, bench_iter_case, burst_alloc_dealloc, dealloc_only,
-    require_allocated, snmalloc_skips, AllocatedBlock,
+    AllocatedBlock, alloc_dealloc, bench_batched_case, bench_iter_case, burst_alloc_dealloc,
+    dealloc_only, require_allocated, snmalloc_skips,
 };
 
 pub fn bench_allocator_cycles(c: &mut Criterion) {

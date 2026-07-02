@@ -1,5 +1,5 @@
 use super::cache_aligned::CacheAlignedAtomicUsize;
-use super::numa_bucket::{bucket_from_usize as numa_bucket, steal_from, NUMA_BUCKETS};
+use super::numa_bucket::{NUMA_BUCKETS, bucket_from_usize as numa_bucket, steal_from};
 use super::tagged_stack::TaggedSegmentStack;
 use mnemosyne_core::types::Segment;
 
@@ -53,11 +53,7 @@ impl NodeHugeBucket {
     #[inline]
     fn pop_head(&self) -> Option<*mut Segment> {
         let popped = self.stack.pop();
-        if popped.is_null() {
-            None
-        } else {
-            Some(popped)
-        }
+        if popped.is_null() { None } else { Some(popped) }
     }
 
     /// Splices a pre-linked chain of `len` segments onto this bucket's Treiber
@@ -277,7 +273,9 @@ impl GlobalHugePool {
         // `pop_from_node` already early-returns on an empty node (its leading
         // `total_count == 0` check), so a redundant pre-load here would only
         // re-read the same atomic. Call it directly: local node first, then steal.
-        if let Some(res) = self.pop_from_node(size, start_node, bucket_idx) {
+        // SAFETY: `pop_from_node` returns an exclusively-owned segment on
+        // success, matching this function's ownership contract.
+        if let Some(res) = unsafe { self.pop_from_node(size, start_node, bucket_idx) } {
             return Some(res);
         }
 

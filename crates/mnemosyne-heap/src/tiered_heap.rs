@@ -29,7 +29,7 @@
 use crate::brand::{BrandedBlock, ThreadLocalToken};
 use crate::heap::Heap;
 use crate::raw_heap::RawHeap;
-use crate::tier::{tier_for, MemoryTier, PlacementHint};
+use crate::tier::{MemoryTier, PlacementHint, tier_for};
 use crate::tiered_backend::{TierSelection, TieredBackend};
 use core::alloc::Layout;
 use core::marker::PhantomData;

@@ -1,11 +1,11 @@
-use criterion::{black_box, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box};
 use std::alloc::System;
 
 #[cfg(jemalloc_available)]
 use super::compat::bench_jemalloc;
 use super::constants::{
     CROSS_THREAD_ALLOCS, HUGE_LAYOUT, LARGE_LAYOUT, MEDIUM_LAYOUT, SATURATED_THREAD_ALLOCS,
-    SMALL_LAYOUT, THREADS, THREAD_ALLOCS,
+    SMALL_LAYOUT, THREAD_ALLOCS, THREADS,
 };
 use super::helpers::{benchmark_failure, snmalloc_skips};
 use super::workers::{HandoffWorker, ThreadCycleWorkers};

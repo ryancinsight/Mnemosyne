@@ -4,19 +4,19 @@ extern crate std;
 
 #[allow(unused_imports)]
 use super::alloc::{
-    allocate_segment, deallocate_segment, purge_segment_pool, release_segment_mapping,
-    reset_segment_pool, SEGMENT_MAPPING_SIZE, SEGMENT_TAIL_GUARD_SIZE,
+    SEGMENT_MAPPING_SIZE, SEGMENT_TAIL_GUARD_SIZE, allocate_segment, deallocate_segment,
+    purge_segment_pool, release_segment_mapping, reset_segment_pool,
 };
 use super::pool::{BackendPools, GlobalHugePool, GlobalSegmentPool, HasSegmentPool};
-use super::stats::{arena_memory_stats, SegmentRelease};
+use super::stats::{SegmentRelease, arena_memory_stats};
 use core::sync::atomic::{AtomicUsize, Ordering};
+use mnemosyne_core::MemoryBackend;
 use mnemosyne_core::constants::{PAGE_SIZE, SEGMENT_ALIGN, SEGMENT_SIZE};
 use mnemosyne_core::types::Segment;
-use mnemosyne_core::MemoryBackend;
 use std::boxed::Box;
 
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 
 struct FailingReleaseBackend;
 
@@ -177,7 +177,7 @@ fn node_segment_pool_take_all_detaches_whole_chain_in_one_lock() {
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 #[test]
 fn fresh_segment_install_increments_guard_telemetry_and_round_trips() {
-    use mnemosyne_backend::{backend_memory_stats, MemoryBackendWrapper};
+    use mnemosyne_backend::{MemoryBackendWrapper, backend_memory_stats};
 
     // Purge to force the OS allocation path.
     unsafe {
@@ -517,15 +517,15 @@ fn test_huge_pool_log2_bucketing() {
     assert_eq!(huge_bucket_index(1048576), 6); // 1 MiB
     assert_eq!(huge_bucket_index(1048577), 7);
     assert_eq!(huge_bucket_index(16 * 1024 * 1024), 10); // 16 MiB
-                                                         // Sizes beyond MAX_CACHED_HUGE_SIZE saturate to the last live bucket
-                                                         // (they are never pushed; only over-sized pop requests reach here).
+    // Sizes beyond MAX_CACHED_HUGE_SIZE saturate to the last live bucket
+    // (they are never pushed; only over-sized pop requests reach here).
     assert_eq!(huge_bucket_index(16 * 1024 * 1024 + 1), 10);
     assert_eq!(huge_bucket_index(512 * 1024 * 1024), 10);
 }
 
 #[test]
 fn test_huge_pool_bucket_count_derived_from_max_cached_size() {
-    use super::pool::huge_pool::{huge_bucket_index, HUGE_SIZE_BUCKETS};
+    use super::pool::huge_pool::{HUGE_SIZE_BUCKETS, huge_bucket_index};
 
     // SSOT pin: the bucket fan-out is exactly index(MAX_CACHED_HUGE_SIZE) + 1,
     // so no bucket is unreachable dead state under `try_push`'s size gate.
@@ -539,8 +539,8 @@ fn test_huge_pool_bucket_count_derived_from_max_cached_size() {
 
 #[test]
 fn test_huge_bucket_block_cap_bounds_retained_bytes() {
-    use super::pool::huge_pool::{bucket_block_cap, HUGE_SIZE_BUCKETS};
     use super::pool::GlobalHugePool;
+    use super::pool::huge_pool::{HUGE_SIZE_BUCKETS, bucket_block_cap};
 
     const BUDGET: usize = GlobalHugePool::MAX_CACHED_HUGE_BYTES_PER_BUCKET;
 
@@ -710,7 +710,7 @@ fn test_huge_pool_pop_skips_over_provisioned_buckets() {
 
 #[test]
 fn test_arena_stats_report_runtime_retained_cap() {
-    use mnemosyne_core::options::{set_options, MnemosyneOptions};
+    use mnemosyne_core::options::{MnemosyneOptions, set_options};
 
     // Lower the runtime cap below the compile-time limit: the stat must track
     // the enforced runtime value (what `try_push_retained` reads), not the

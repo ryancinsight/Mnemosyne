@@ -49,7 +49,7 @@ const ENOMEM: i32 = 12;
 ///
 /// This is an `extern "C"` entry point. The returned pointer must be
 /// released with [`free`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     let request = if size == 0 { 1 } else { size };
     // Safety: MALLOC_ALIGN is a nonzero power of two; thread_alloc validates
@@ -68,7 +68,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
 ///
 /// `ptr` must be null or a pointer returned by this shim and not yet
 /// freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
     // thread_free is pointer-only (it derives the owning page/segment) and
     // tolerates null, so no layout is needed here.
@@ -82,7 +82,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 /// # Safety
 ///
 /// `extern "C"` entry point; release with [`free`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
     let Some(total) = nmemb.checked_mul(size) else {
         return core::ptr::null_mut();
@@ -113,7 +113,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
 ///
 /// `ptr` must be null or a live pointer from this shim; release the
 /// result with [`free`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
     if ptr.is_null() {
         return unsafe { malloc(new_size) };
@@ -158,7 +158,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_vo
 /// # Safety
 ///
 /// `extern "C"` entry point; release with [`free`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
     if alignment == 0 || !alignment.is_power_of_two() || !size.is_multiple_of(alignment) {
         return core::ptr::null_mut();
@@ -182,7 +182,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
 /// # Safety
 ///
 /// `memptr` must be a valid, writable `*mut *mut c_void`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn posix_memalign(
     memptr: *mut *mut c_void,
     alignment: usize,
@@ -215,7 +215,7 @@ pub unsafe extern "C" fn posix_memalign(
 /// # Safety
 ///
 /// `ptr` must be null or a live pointer from this shim.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
     // Safety: usable_size tolerates null and classifies live shim pointers.
     unsafe { usable_size(ptr as *mut u8) }
@@ -227,7 +227,7 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
 ///
 /// `hook` must be a valid function pointer adhering to the C calling convention,
 /// or `None` to unregister. The hook is invoked on every allocation.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn mnemosyne_register_alloc_hook(
     hook: Option<unsafe extern "C" fn(*mut c_void, usize)>,
 ) {
@@ -240,7 +240,7 @@ pub unsafe extern "C" fn mnemosyne_register_alloc_hook(
 ///
 /// `hook` must be a valid function pointer adhering to the C calling convention,
 /// or `None` to unregister. The hook is invoked on every deallocation.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn mnemosyne_register_free_hook(
     hook: Option<unsafe extern "C" fn(*mut c_void, usize)>,
 ) {
@@ -248,19 +248,19 @@ pub unsafe extern "C" fn mnemosyne_register_free_hook(
 }
 
 /// Enables the built-in Poisson heap sampler.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mnemosyne_enable_profiling(sample_interval: usize) {
     mnemosyne_prof::enable_profiling(sample_interval);
 }
 
 /// Disables the built-in Poisson heap sampler.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mnemosyne_disable_profiling() {
     mnemosyne_prof::disable_profiling();
 }
 
 /// Returns whether the built-in heap sampler is currently active.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mnemosyne_is_profiling_enabled() -> i32 {
     if mnemosyne_prof::is_profiling_enabled() {
         1
@@ -276,7 +276,7 @@ pub extern "C" fn mnemosyne_is_profiling_enabled() -> i32 {
 /// # Safety
 ///
 /// `path` must be a valid null-terminated UTF-8 C string.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn mnemosyne_dump_profile(path: *const core::ffi::c_char) -> i32 {
     if path.is_null() {
         return -1;
@@ -293,25 +293,25 @@ pub unsafe extern "C" fn mnemosyne_dump_profile(path: *const core::ffi::c_char) 
 }
 
 /// Resets the profiler state, trace hooks, and sampled data. Intended for testing.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mnemosyne_reset_profiler_for_testing() {
     mnemosyne_prof::reset_profiler_for_testing();
 }
 
 /// Enables the built-in memory leak detector, tracking every allocation with its backtrace.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mnemosyne_enable_leak_detector() {
     mnemosyne_prof::enable_leak_detector();
 }
 
 /// Disables the built-in memory leak detector.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mnemosyne_disable_leak_detector() {
     mnemosyne_prof::disable_leak_detector();
 }
 
 /// Returns whether the memory leak detector is currently active (1 if active, 0 if inactive).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mnemosyne_is_leak_detector_enabled() -> i32 {
     if mnemosyne_prof::is_leak_detector_enabled() {
         1
@@ -329,7 +329,7 @@ pub extern "C" fn mnemosyne_is_leak_detector_enabled() -> i32 {
 /// # Safety
 ///
 /// `path` must be a valid, null-terminated UTF-8 C string.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn mnemosyne_dump_leaks(path: *const core::ffi::c_char) -> i32 {
     if path.is_null() {
         return -1;

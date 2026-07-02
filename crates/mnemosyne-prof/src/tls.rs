@@ -60,7 +60,7 @@ fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
     unsafe {
         #[cfg(windows)]
         {
-            extern "system" {
+            unsafe extern "system" {
                 fn TlsAlloc() -> u32;
                 fn TlsFree(dwTlsIndex: u32) -> i32;
             }
@@ -78,7 +78,7 @@ fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
         }
         #[cfg(not(windows))]
         {
-            extern "C" {
+            unsafe extern "C" {
                 fn pthread_key_create(
                     key: *mut u32,
                     destructor: Option<unsafe extern "C" fn(*mut core::ffi::c_void)>,
@@ -111,14 +111,14 @@ fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
     unsafe {
         #[cfg(windows)]
         {
-            extern "system" {
+            unsafe extern "system" {
                 fn TlsGetValue(dwTlsIndex: u32) -> *mut core::ffi::c_void;
             }
             TlsGetValue(key)
         }
         #[cfg(not(windows))]
         {
-            extern "C" {
+            unsafe extern "C" {
                 fn pthread_getspecific(key: u32) -> *mut core::ffi::c_void;
             }
             pthread_getspecific(key)
@@ -136,14 +136,14 @@ fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
     unsafe {
         #[cfg(windows)]
         {
-            extern "system" {
+            unsafe extern "system" {
                 fn TlsSetValue(dwTlsIndex: u32, lpTlsValue: *mut core::ffi::c_void) -> i32;
             }
             TlsSetValue(key, value);
         }
         #[cfg(not(windows))]
         {
-            extern "C" {
+            unsafe extern "C" {
                 fn pthread_setspecific(key: u32, value: *const core::ffi::c_void) -> i32;
             }
             pthread_setspecific(key, value);
@@ -173,33 +173,37 @@ unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
         // `TlsSlots[64]` array (offset 0x1480 on x64). For `index < 64` this is
         // a single aligned load of this thread's own slot — always-mapped
         // thread-local OS storage, no side effects (`nostack`, `readonly`).
-        core::arch::asm!(
-            "mov {}, gs:[0x1480 + {} * 8]",
-            out(reg) val,
-            in(reg) index as usize,
-            options(nostack, preserves_flags, readonly)
-        );
+        unsafe {
+            core::arch::asm!(
+                "mov {}, gs:[0x1480 + {} * 8]",
+                out(reg) val,
+                in(reg) index as usize,
+                options(nostack, preserves_flags, readonly)
+            );
+        }
         val
     } else {
         let teb: *mut u8;
         // SAFETY: `gs:[0x30]` is the TEB self-pointer (`NtCurrentTeb`); a single
         // aligned read of an always-mapped field, no side effects.
-        core::arch::asm!(
-            "mov {}, gs:[0x30]",
-            out(reg) teb,
-            options(nostack, preserves_flags, readonly)
-        );
+        unsafe {
+            core::arch::asm!(
+                "mov {}, gs:[0x30]",
+                out(reg) teb,
+                options(nostack, preserves_flags, readonly)
+            );
+        }
         // SAFETY: `TEB + 0x1780` is the `TlsExpansionSlots` pointer field (fixed
         // x64 offset); reading it yields the (possibly null) base of the
         // expansion-slot array for indices >= 64.
-        let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
+        let expansion_slots = unsafe { *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void) };
         if expansion_slots.is_null() {
             core::ptr::null_mut()
         } else {
             // SAFETY: the expansion array is non-null (just checked) and was
             // sized to cover every allocated index >= 64, so `index - 64` is in
             // bounds for a slot reserved by `TlsAlloc`.
-            *expansion_slots.add(index as usize - 64)
+            unsafe { *expansion_slots.add(index as usize - 64) }
         }
     }
 }
@@ -222,27 +226,31 @@ unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
         // SAFETY: `gs:[0x1480 + index*8]` is this thread's own `TlsSlots[index]`
         // entry (TEB `TlsSlots[64]` array, fixed x64 offset 0x1480); a single
         // aligned store to always-mapped thread-local OS storage.
-        core::arch::asm!(
-            "mov gs:[0x1480 + {} * 8], {}",
-            in(reg) index as usize,
-            in(reg) value,
-            options(nostack, preserves_flags)
-        );
+        unsafe {
+            core::arch::asm!(
+                "mov gs:[0x1480 + {} * 8], {}",
+                in(reg) index as usize,
+                in(reg) value,
+                options(nostack, preserves_flags)
+            );
+        }
     } else {
         let teb: *mut u8;
         // SAFETY: `gs:[0x30]` is the TEB self-pointer; a single aligned read.
-        core::arch::asm!(
-            "mov {}, gs:[0x30]",
-            out(reg) teb,
-            options(nostack, preserves_flags, readonly)
-        );
+        unsafe {
+            core::arch::asm!(
+                "mov {}, gs:[0x30]",
+                out(reg) teb,
+                options(nostack, preserves_flags, readonly)
+            );
+        }
         // SAFETY: `TEB + 0x1780` is the `TlsExpansionSlots` pointer field; read
         // the (possibly null) expansion-array base.
-        let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
+        let expansion_slots = unsafe { *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void) };
         if !expansion_slots.is_null() {
             // SAFETY: the array is non-null (just checked) and covers every
             // allocated index >= 64, so `index - 64` is an in-bounds slot.
-            *expansion_slots.add(index as usize - 64) = value;
+            unsafe { *expansion_slots.add(index as usize - 64) = value };
         }
     }
 }
@@ -304,9 +312,18 @@ pub(crate) fn should_skip_alloc_fast_path(
     // SAFETY: `THREAD_STATE` is this thread's own `#[thread_local]` static, so
     // the reentrancy check and `bytes_until_sample` update cannot race another
     // thread; the `in_hook` guard prevents nested mutation within the thread.
+    // `&raw mut` sidesteps a direct `static mut` reference (`static_mut_refs`
+    // is deny-by-default in edition 2024); the exclusive reborrow is sound
+    // because the static is thread-local and no other reference to it is live
+    // across this call.
     #[cfg(nightly_tls_active)]
     unsafe {
-        should_skip_alloc_fast_path_state(&mut THREAD_STATE, size, hook_absent, leak_inactive)
+        should_skip_alloc_fast_path_state(
+            &mut *(&raw mut THREAD_STATE),
+            size,
+            hook_absent,
+            leak_inactive,
+        )
     }
     // SAFETY: `get_profiler_state()` returns this thread's own thread-local
     // `ThreadState`; the `&mut` is exclusive (thread-local) and the `in_hook`

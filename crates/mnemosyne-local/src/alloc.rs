@@ -1,6 +1,6 @@
 use crate::per_cpu;
-use crate::{initialize_allocated_bytes, LocalAllocatorSelector, ThreadAllocator};
-use mnemosyne_arena::{allocate_large_or_huge, HasSegmentPool};
+use crate::{LocalAllocatorSelector, ThreadAllocator, initialize_allocated_bytes};
+use mnemosyne_arena::{HasSegmentPool, allocate_large_or_huge};
 use mnemosyne_core::constants::MIN_BLOCK_SIZE;
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::{class_to_size, size_to_class_nonzero};

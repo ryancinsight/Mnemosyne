@@ -29,7 +29,7 @@ fn init_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
     unsafe {
         #[cfg(windows)]
         {
-            extern "system" {
+            unsafe extern "system" {
                 fn TlsAlloc() -> u32;
                 fn TlsFree(dwTlsIndex: u32) -> i32;
             }
@@ -47,7 +47,7 @@ fn init_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
         }
         #[cfg(not(windows))]
         {
-            extern "C" {
+            unsafe extern "C" {
                 fn pthread_key_create(
                     key: *mut u32,
                     destructor: Option<unsafe extern "C" fn(*mut core::ffi::c_void)>,
@@ -80,14 +80,14 @@ pub(crate) fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
     unsafe {
         #[cfg(windows)]
         {
-            extern "system" {
+            unsafe extern "system" {
                 fn TlsGetValue(dwTlsIndex: u32) -> *mut core::ffi::c_void;
             }
             TlsGetValue(key)
         }
         #[cfg(not(windows))]
         {
-            extern "C" {
+            unsafe extern "C" {
                 fn pthread_getspecific(key: u32) -> *mut core::ffi::c_void;
             }
             pthread_getspecific(key)
@@ -105,7 +105,7 @@ pub(crate) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
     unsafe {
         #[cfg(windows)]
         {
-            extern "system" {
+            unsafe extern "system" {
                 fn TlsSetValue(dwTlsIndex: u32, lpTlsValue: *mut core::ffi::c_void) -> i32;
             }
             if TlsSetValue(key, value) == 0 {
@@ -114,7 +114,7 @@ pub(crate) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
         }
         #[cfg(not(windows))]
         {
-            extern "C" {
+            unsafe extern "C" {
                 fn pthread_setspecific(key: u32, value: *const core::ffi::c_void) -> i32;
             }
             if pthread_setspecific(key, value) != 0 {
@@ -134,32 +134,34 @@ pub(crate) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
 #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
 #[inline(always)]
 pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
-    if index < 64 {
-        let val: *mut core::ffi::c_void;
-        // SAFETY: `index < 64` is a `TlsAlloc`-allocated key in the
-        // TEB's 64-slot inline TLS array at TEB+0x1480.
-        core::arch::asm!(
-            "mov {}, gs:[0x1480 + {} * 8]",
-            out(reg) val,
-            in(reg) index as usize,
-            options(nostack, preserves_flags, readonly)
-        );
-        val
-    } else {
-        let teb: *mut u8;
-        // SAFETY: `gs:[0x30]` reads the TEB `Self` pointer; the
-        // follow-up expansion-slot pointer at TEB+0x1780 is
-        // null-checked before any dereference.
-        core::arch::asm!(
-            "mov {}, gs:[0x30]",
-            out(reg) teb,
-            options(nostack, preserves_flags, readonly)
-        );
-        let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
-        if expansion_slots.is_null() {
-            core::ptr::null_mut()
+    unsafe {
+        if index < 64 {
+            let val: *mut core::ffi::c_void;
+            // SAFETY: `index < 64` is a `TlsAlloc`-allocated key in the
+            // TEB's 64-slot inline TLS array at TEB+0x1480.
+            core::arch::asm!(
+                "mov {}, gs:[0x1480 + {} * 8]",
+                out(reg) val,
+                in(reg) index as usize,
+                options(nostack, preserves_flags, readonly)
+            );
+            val
         } else {
-            *expansion_slots.add(index as usize - 64)
+            let teb: *mut u8;
+            // SAFETY: `gs:[0x30]` reads the TEB `Self` pointer; the
+            // follow-up expansion-slot pointer at TEB+0x1780 is
+            // null-checked before any dereference.
+            core::arch::asm!(
+                "mov {}, gs:[0x30]",
+                out(reg) teb,
+                options(nostack, preserves_flags, readonly)
+            );
+            let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
+            if expansion_slots.is_null() {
+                core::ptr::null_mut()
+            } else {
+                *expansion_slots.add(index as usize - 64)
+            }
         }
     }
 }
@@ -171,30 +173,32 @@ pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
 #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
 #[inline(always)]
 pub(crate) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
-    if index < 64 {
-        // SAFETY: `index < 64` is a `TlsAlloc`-allocated slot in the
-        // TEB's 64-slot inline TLS array.
-        core::arch::asm!(
-            "mov gs:[0x1480 + {} * 8], {}",
-            in(reg) index as usize,
-            in(reg) value,
-            options(nostack, preserves_flags)
-        );
-    } else {
-        let teb: *mut u8;
-        // SAFETY: `gs:[0x30]` reads the TEB `Self` pointer; the
-        // follow-up expansion-slot pointer is null-checked before
-        // any dereference or write.
-        core::arch::asm!(
-            "mov {}, gs:[0x30]",
-            out(reg) teb,
-            options(nostack, preserves_flags, readonly)
-        );
-        let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
-        if !expansion_slots.is_null() {
-            *expansion_slots.add(index as usize - 64) = value;
+    unsafe {
+        if index < 64 {
+            // SAFETY: `index < 64` is a `TlsAlloc`-allocated slot in the
+            // TEB's 64-slot inline TLS array.
+            core::arch::asm!(
+                "mov gs:[0x1480 + {} * 8], {}",
+                in(reg) index as usize,
+                in(reg) value,
+                options(nostack, preserves_flags)
+            );
         } else {
-            set_os_tls_value(index, value);
+            let teb: *mut u8;
+            // SAFETY: `gs:[0x30]` reads the TEB `Self` pointer; the
+            // follow-up expansion-slot pointer is null-checked before
+            // any dereference or write.
+            core::arch::asm!(
+                "mov {}, gs:[0x30]",
+                out(reg) teb,
+                options(nostack, preserves_flags, readonly)
+            );
+            let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
+            if !expansion_slots.is_null() {
+                *expansion_slots.add(index as usize - 64) = value;
+            } else {
+                set_os_tls_value(index, value);
+            }
         }
     }
 }

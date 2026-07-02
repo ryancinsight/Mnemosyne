@@ -16,8 +16,8 @@
 //! dispatched with no vtable or heap allocation. Benchmark threshold
 //! gates are the empirical evidence for non-regression.
 
-use crate::recorders::{record_map, record_unmap, record_unmap_failure};
 use crate::DefaultBackend;
+use crate::recorders::{record_map, record_unmap, record_unmap_failure};
 use mnemosyne_core::MemoryBackend;
 
 /// High-level OS page mapping backend helper. Owns the wrapper struct

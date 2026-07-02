@@ -4,8 +4,8 @@ use core::alloc::Layout;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
-use mnemosyne_local::internal::HasSegmentPool;
 use mnemosyne_local::LocalAllocatorSelector;
+use mnemosyne_local::internal::HasSegmentPool;
 
 /// A scoped, lifetime-branded memory heap.
 ///

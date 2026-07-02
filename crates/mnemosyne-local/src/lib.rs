@@ -36,9 +36,9 @@ pub use options::{
     ensure_options_initialized, mark_options_initialized, reset_options_for_testing,
 };
 pub use realloc::thread_realloc;
-#[cfg(nightly_tls_active)]
-pub use tls_slot::{arm_thread_exit, ThreadExitReclaim};
 pub use tls_slot::{LocalAllocatorSelector, LocalAllocatorSlot};
+#[cfg(nightly_tls_active)]
+pub use tls_slot::{ThreadExitReclaim, arm_thread_exit};
 pub use usable_size::{thread_allocator_stats, usable_size};
 
 // Re-export internal details used by the macros/internal paths
@@ -51,8 +51,8 @@ pub use validation::{initialize_allocated_bytes, poison_freed_bytes};
 
 #[doc(hidden)]
 pub mod internal {
-    pub use crate::ensure_options_initialized;
     pub use crate::ThreadAllocator;
+    pub use crate::ensure_options_initialized;
     pub use crate::{
         do_local_free_internal, initialize_allocated_bytes, poison_freed_bytes,
         small_realloc_fits_existing_class, thread_free_layout,
@@ -62,7 +62,7 @@ pub mod internal {
     pub use mnemosyne_arena::HasSegmentPool;
     pub use mnemosyne_arena::{allocate_large_or_huge, deallocate_large_or_huge};
     pub use mnemosyne_core::constants::{
-        MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT, SEGMENT_SIZE,
+        MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGE_SHIFT, PAGES_PER_SEGMENT, SEGMENT_SIZE,
     };
     pub use mnemosyne_core::size_class::size_to_class_nonzero;
     pub use mnemosyne_core::types::{Block, Page, Segment};

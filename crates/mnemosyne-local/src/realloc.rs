@@ -1,8 +1,8 @@
 use crate::alloc::small_path_class;
 use crate::usable_size;
 use crate::{
-    do_local_free_internal, initialize_allocated_bytes, poison_freed_bytes, thread_alloc_layout,
-    thread_free, LocalAllocatorSelector, ThreadAllocator,
+    LocalAllocatorSelector, ThreadAllocator, do_local_free_internal, initialize_allocated_bytes,
+    poison_freed_bytes, thread_alloc_layout, thread_free,
 };
 use core::alloc::Layout;
 use core::ptr::NonNull;
@@ -10,7 +10,7 @@ use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::constants::{MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE};
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::round_up_size;
-use mnemosyne_core::types::{locate_segment, Block};
+use mnemosyne_core::types::{Block, locate_segment};
 
 #[inline(always)]
 pub fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> bool {

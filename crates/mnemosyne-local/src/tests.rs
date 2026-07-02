@@ -2,7 +2,7 @@ use super::*;
 use core::ptr::NonNull;
 use mnemosyne_backend::MemoryBackendWrapper;
 use mnemosyne_core::constants::{
-    MAX_ALLOC_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT, PAGE_SIZE, SEGMENT_SIZE,
+    MAX_ALLOC_SIZE, PAGE_SHIFT, PAGE_SIZE, PAGES_PER_SEGMENT, SEGMENT_SIZE,
 };
 use mnemosyne_core::policy::StandardPolicy;
 use mnemosyne_core::types::{Block, Segment};
@@ -57,8 +57,8 @@ fn usable_size_never_under_reports_across_every_size_class() {
     // requested_size` for at least one representative request in every
     // small size class, plus the inter-class boundary bytes that the
     // size-class mapper rounds.
-    use mnemosyne_core::size_class::class_to_size;
     use mnemosyne_core::NUM_SIZE_CLASSES;
+    use mnemosyne_core::size_class::class_to_size;
 
     for class in 0..NUM_SIZE_CLASSES {
         let class_max = class_to_size(class);

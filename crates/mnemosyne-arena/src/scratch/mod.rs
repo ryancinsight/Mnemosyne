@@ -15,5 +15,5 @@ mod tests;
 
 pub use aligned_vec::AlignedVec;
 pub use bank::ScratchBank;
-pub use element::{default_align, ScratchElement, DEFAULT_SCRATCH_ALIGN};
-pub use pool::{ScratchPool, MAX_POOL_SLOTS};
+pub use element::{DEFAULT_SCRATCH_ALIGN, ScratchElement, default_align};
+pub use pool::{MAX_POOL_SLOTS, ScratchPool};

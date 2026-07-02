@@ -1,4 +1,4 @@
-use crate::config::{gate_row, RegressionThreshold, VarianceThreshold};
+use crate::config::{RegressionThreshold, VarianceThreshold, gate_row};
 
 /// Resolves the regression `mean_ratio` ceiling for a benchmark row.
 ///

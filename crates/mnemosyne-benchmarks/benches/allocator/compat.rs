@@ -10,10 +10,10 @@
 #[cfg(jemalloc_available)]
 pub mod bench_jemalloc {
     #[cfg(not(windows))]
-    pub use tikv_jemallocator::{usable_size, Jemalloc};
+    pub use tikv_jemallocator::{Jemalloc, usable_size};
 
     #[cfg(windows)]
-    pub use sys::{usable_size, SystemJemalloc as Jemalloc};
+    pub use sys::{SystemJemalloc as Jemalloc, usable_size};
 
     #[cfg(windows)]
     mod sys {
@@ -25,7 +25,7 @@ pub mod bench_jemalloc {
         // itself, which is more reliable than build-script `rustc-link-lib`
         // propagation across the separate bench crate.
         #[link(name = "jemalloc_s", kind = "static")]
-        extern "C" {
+        unsafe extern "C" {
             fn je_mallocx(size: usize, flags: i32) -> *mut u8;
             fn je_rallocx(ptr: *mut u8, size: usize, flags: i32) -> *mut u8;
             fn je_sdallocx(ptr: *mut u8, size: usize, flags: i32);
@@ -59,22 +59,26 @@ pub mod bench_jemalloc {
         // and alignment exactly.
         unsafe impl GlobalAlloc for SystemJemalloc {
             unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-                je_mallocx(layout.size(), flags(layout))
+                unsafe { je_mallocx(layout.size(), flags(layout)) }
             }
 
             unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-                je_mallocx(layout.size(), flags(layout) | MALLOCX_ZERO)
+                unsafe { je_mallocx(layout.size(), flags(layout) | MALLOCX_ZERO) }
             }
 
             unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-                je_sdallocx(ptr, layout.size(), flags(layout));
+                unsafe {
+                    je_sdallocx(ptr, layout.size(), flags(layout));
+                }
             }
 
             unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-                // Safety: new_size is nonzero and align is the original
-                // power-of-two alignment, a valid layout.
-                let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
-                je_rallocx(ptr, new_size, flags(new_layout))
+                unsafe {
+                    // Safety: new_size is nonzero and align is the original
+                    // power-of-two alignment, a valid layout.
+                    let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
+                    je_rallocx(ptr, new_size, flags(new_layout))
+                }
             }
         }
 
@@ -84,13 +88,13 @@ pub mod bench_jemalloc {
         ///
         /// `ptr` must have been returned by this allocator and still be live.
         pub unsafe fn usable_size<T>(ptr: *const T) -> usize {
-            je_malloc_usable_size(ptr as *const u8)
+            unsafe { je_malloc_usable_size(ptr as *const u8) }
         }
     }
 }
 
 // MinGW linker compatibility stubs for snmalloc
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static mut __imp_VirtualAlloc2FromApp: unsafe extern "system" fn(
     *mut core::ffi::c_void,
     *mut core::ffi::c_void,
@@ -123,7 +127,7 @@ unsafe extern "system" fn fallback_virtual_alloc_2_from_app(
     static REAL_FUNC: std::sync::OnceLock<Option<FuncType>> = std::sync::OnceLock::new();
 
     let func_opt = REAL_FUNC.get_or_init(|| {
-        extern "system" {
+        unsafe extern "system" {
             fn GetModuleHandleA(lpModuleName: *const u8) -> *mut core::ffi::c_void;
             fn GetProcAddress(
                 hModule: *mut core::ffi::c_void,
@@ -172,7 +176,7 @@ unsafe extern "system" fn fallback_virtual_alloc_2_from_app(
             )
         }
     } else {
-        extern "system" {
+        unsafe extern "system" {
             fn VirtualAlloc(
                 lpAddress: *mut core::ffi::c_void,
                 dwSize: usize,

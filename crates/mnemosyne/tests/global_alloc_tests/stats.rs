@@ -88,10 +88,12 @@ fn test_memory_stats_retention_bound() {
         stats.current_thread_live_allocations,
         SIZES.len()
     );
-    assert!(stats
-        .size_class_occupancy
-        .iter()
-        .any(|occupancy| occupancy.active_pages > 0));
+    assert!(
+        stats
+            .size_class_occupancy
+            .iter()
+            .any(|occupancy| occupancy.active_pages > 0)
+    );
 }
 
 #[test]

@@ -3,8 +3,8 @@ extern crate std;
 use super::*;
 use crate::segment::pool::BackendPools;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use mnemosyne_core::constants::SEGMENT_SIZE;
 use mnemosyne_core::MemoryBackend;
+use mnemosyne_core::constants::SEGMENT_SIZE;
 
 struct FailingHugeReleaseBackend;
 
@@ -111,7 +111,7 @@ fn huge_allocation_rejects_non_power_of_two_alignment() {
 #[test]
 fn huge_allocation_consumes_tight_mapping_size() {
     let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
-    use mnemosyne_backend::{backend_memory_stats, MemoryBackendWrapper};
+    use mnemosyne_backend::{MemoryBackendWrapper, backend_memory_stats};
     unsafe {
         crate::segment::purge_segment_pool::<MemoryBackendWrapper>();
     }
@@ -287,7 +287,7 @@ fn huge_allocation_decommits_tail_slack() {
 #[test]
 fn test_huge_allocation_caching_and_purging() {
     let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
-    use mnemosyne_backend::{backend_memory_stats, MemoryBackendWrapper};
+    use mnemosyne_backend::{MemoryBackendWrapper, backend_memory_stats};
 
     // Clear any existing cached blocks in the pool
     unsafe {

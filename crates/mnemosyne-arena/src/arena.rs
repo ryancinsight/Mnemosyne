@@ -1,7 +1,7 @@
 //! Global arena operations coordinating large and huge allocations.
 
 use crate::segment::alloc::decommit_mapping_slack;
-use crate::segment::{checked_align_up, deallocate_segment, HasSegmentPool};
+use crate::segment::{HasSegmentPool, checked_align_up, deallocate_segment};
 use mnemosyne_core::constants::{MAX_ALLOC_SIZE, PAGE_SIZE, SEGMENT_ALIGN};
 use mnemosyne_core::types::Segment;
 use mnemosyne_core::validation::is_valid_alloc_request;

@@ -1,7 +1,7 @@
-use crate::local_alloc::page::{push_page_front, unlink_page_from_list, with_page_list_token};
 use crate::local_alloc::ThreadAllocator;
+use crate::local_alloc::page::{push_page_front, unlink_page_from_list, with_page_list_token};
 use core::ptr::NonNull;
-use mnemosyne_arena::{deallocate_segment, HasSegmentPool};
+use mnemosyne_arena::{HasSegmentPool, deallocate_segment};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::types::{Page, Segment, SegmentOwner};

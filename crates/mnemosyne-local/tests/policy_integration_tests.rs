@@ -231,7 +231,7 @@ fn test_randomized_allocation_policy() {
 #[test]
 fn test_in_place_realloc_growth_under_policies() {
     use core::alloc::Layout;
-    use mnemosyne_core::policy::{private::Sealed, AllocPolicy};
+    use mnemosyne_core::policy::{AllocPolicy, private::Sealed};
 
     const ALIGN: usize = 8;
     // 20 bytes rounded to size class 1 (32 bytes).

@@ -2,12 +2,12 @@ use crate::local_alloc::page::{
     move_page_between_lists_branded, push_page_front, unlink_page_from_list, with_page_list_token,
 };
 use crate::per_cpu;
-use crate::{poison_freed_bytes, LocalAllocatorSelector, ThreadAllocator};
+use crate::{LocalAllocatorSelector, ThreadAllocator, poison_freed_bytes};
 use core::ptr::NonNull;
-use mnemosyne_arena::{deallocate_large_or_huge, HasSegmentPool};
+use mnemosyne_arena::{HasSegmentPool, deallocate_large_or_huge};
 use mnemosyne_core::constants::PAGE_SIZE;
 use mnemosyne_core::policy::AllocPolicy;
-use mnemosyne_core::types::{locate_segment, Block, Page, Segment};
+use mnemosyne_core::types::{Block, Page, Segment, locate_segment};
 
 /// Frees a memory block.
 ///
@@ -134,7 +134,7 @@ unsafe fn thread_free_classified<
         // SAFETY: `block` is a user pointer previously returned by the
         // allocator; non-nullness is the allocator invariant. Equality
         // with `page.free` is the double-free guard.
-        if Some(NonNull::new_unchecked(block)) == page.free {
+        if Some(unsafe { NonNull::new_unchecked(block) }) == page.free {
             std::process::abort();
         }
         // SAFETY: the surrounding `is_owner && !owner_allocator.is_null()`
@@ -323,7 +323,7 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     // returned by a prior allocation in `page`/`segment`; non-nullness is the
     // allocator invariant, so `new_unchecked` is sound. Equality with
     // `page.free` is the double-free guard (the head was just freed).
-    if Some(NonNull::new_unchecked(block)) == page.free {
+    if Some(unsafe { NonNull::new_unchecked(block) }) == page.free {
         std::process::abort();
     }
     let was_full = page.list_state == 2;
@@ -339,7 +339,7 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     }
     // SAFETY: `block` is non-null (allocator invariant, re-confirmed by the
     // double-free guard above); publishing it as the new free-list head.
-    page.free = Some(NonNull::new_unchecked(block));
+    page.free = Some(unsafe { NonNull::new_unchecked(block) });
 
     // SAFETY: `segment`/`page`/`page_index` are the matching segment, page, and
     // its index per the `# Safety` contract; the decrement updates this page's

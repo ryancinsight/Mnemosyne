@@ -200,7 +200,7 @@ fn malloc_usable_size_reports_at_least_request() {
 
 #[inline(never)]
 unsafe fn do_c_shim_leak_alloc() -> *mut c_void {
-    malloc(core::hint::black_box(64))
+    unsafe { malloc(core::hint::black_box(64)) }
 }
 
 #[test]
