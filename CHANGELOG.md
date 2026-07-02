@@ -4,6 +4,41 @@
 
 ### Fixed
 
+- Latent `nightly_tls` build break: `mnemosyne-prof` imported
+  `get_profiler_state` unconditionally although its definition is
+  `#[cfg(not(nightly_tls_active))]` — an E0432 whenever the nightly
+  `#[thread_local]` path activated (masked on Windows/MSYS2 hosts where the
+  stable `rustc` PATH-shadows rustup's nightly, leaving the gate vacuous). The
+  import now carries the matching cfg; verified by forcing `RUSTC` at the real
+  nightly binary (prof and local both compile under `--features nightly_tls`).
+- Interim safeguard for the mixed-encryption-policy chain-corruption hazard
+  (ADR 0001 step 1): `Segment::cookie_for::<P>` — the single encode/decode
+  chokepoint — debug-asserts the policy's `ENABLE_FREE_LIST_ENCRYPTION` matches
+  the segment's recorded mode, so interleaving an encrypted and unencrypted
+  policy on one backend aborts loudly in debug/CI instead of silently
+  corrupting a free list. Release builds compile the check out.
+
+### Changed
+
+- Migrated the workspace to **edition 2024 / resolver 3** with a pinned MSRV of
+  Rust **1.87** (clippy's `incompatible_msrv` proved 1.85 dishonest — const
+  `usize::is_multiple_of`). Edition-forced: `unsafe extern` blocks,
+  `#[unsafe(no_mangle)]` on the C-shim exports, granular
+  `unsafe_op_in_unsafe_fn` blocks on the hot paths, and a style-2024 reformat.
+  Consumers now require a Rust 1.87+ toolchain.
+- The nightly-rustc detection probe (previously copy-pasted across three
+  build scripts) is now the single `mnemosyne-build-util::emit_nightly_tls_cfg`;
+  `mnemosyne-prof`, `mnemosyne-benchmarks`, and `mnemosyne-local` build scripts
+  are thin callers.
+
+### Testing
+
+- `fuzz/c_shim_api` gains an op-sequence mode (input LSB selects mode): a
+  bounded 8-slot table with seeded per-slot write/verify oracles exercises
+  adjacent-block metadata clobber and realloc chains that single-op coverage
+  cannot reach; all live slots freed on `Drop`. 9 value-semantic smoke tests
+  through the no-libFuzzer library path.
+
 - `mnemosyne-local` now builds cleanly on the Atlas consumer test surface after
   the allocator reclaim-counter consolidation: the hot allocation reclaim path
   passes the thread-local `cross_thread_reclaimed` sink, free/reclaim call sites

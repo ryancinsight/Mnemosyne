@@ -78,10 +78,11 @@ remainder, each Definition-of-Ready):
   closed only the cross-thread instance). ADR recommends Option C (key the TLS
   allocator by encryption class: sound and zero-cost for the default policy)
   over dynamic-flag-everywhere (hot-path regression) or a `P==B` const-assert
-  (conflates policy with backend). Blocker: ADR sign-off. Implementation step 1
-  is an interim debug-assert safeguard (zero release cost). Acceptance: an
-  interleaved standard+hardened same-page chain-pop test round-trips without
-  abort.
+  (conflates policy with backend). Blocker: ADR sign-off. **Step 1 (interim
+  debug-assert safeguard at `Segment::cookie_for`) DONE 2026-07-02** — see
+  `## Completed`; the remaining work is the type-level allocator-keying.
+  Acceptance: an interleaved standard+hardened same-page chain-pop test
+  round-trips without abort under a release build.
 - [ ] [major] AR-2: wgpu callback registration is a soundness hole —
   `WGPU_{ALLOCATE,DEALLOCATE}_CALLBACK` are pub `AtomicPtr<c_void>` statics
   that safe code can poison and `WgpuStagingBackend::allocate` transmutes and
@@ -97,24 +98,39 @@ remainder, each Definition-of-Ready):
   for the gated rows (or gate on median with CI overlap), keep quick settings
   for exploratory rows. Blocker: quiet machine for re-baselining. Acceptance:
   gated-row CI half-width < the 5% threshold on the recorded baseline.
-- [ ] [minor] AR-7: edition 2024 / resolver 3 migration (unblocked: the CUDA
-  `static mut`s are gone). Acceptance: workspace builds on the pinned stable
-  with edition 2024 + resolver 3, gate green, no lint suppressions added.
 - [ ] [minor] AR-8: shard the prof `StackInterner` mutex (64-shard by stack
   hash, `Arc` construction outside the lock) — it serializes every sampled
   alloc AND free under the leak detector. Re-measure after the 2026-07-01
   hasher fix before building. Acceptance: leak-detector-on alloc/free
   benchmark shows the interner off the critical path, or the item closes
   with the recorded measurement.
-- [ ] [minor] AR-9: fuzz `c_shim_api` op-sequence mode (bounded slot table,
-  ops decoded from the byte stream) so adjacent-block metadata clobber and
-  realloc chains are explored; single-op coverage cannot reach them.
-- [ ] [patch] AR-13: extract the nightly-rustc detection probe into a shared
-  workspace build-utility (or xtask build-dep) consumed by both
-  `mnemosyne-prof/build.rs` and `mnemosyne-benchmarks/build.rs` (currently
-  duplicated). Acceptance: one authoritative probe; both build scripts consume
-  it; no behavior change.
+
 ## Completed
+
+- 2026-07-02 consolidation cycle 3 (branch fix/audit-2026-07-soundness-perf,
+  five atomic commits; detail in CHANGELOG.md and checklist.md). Closed:
+  - **AR-1 step 1** [arch, interim]: ADR 0001's debug tripwire landed —
+    `Segment::cookie_for::<P>` (the single encode/decode chokepoint) debug-
+    asserts the policy's `ENABLE_FREE_LIST_ENCRYPTION` matches the segment's
+    recorded mode; three latently-unsound integration tests restructured, a
+    `should_panic` pin added, the contract documented on `thread_alloc`.
+    The full type-level fix (allocator keyed by encryption class) remains
+    open under AR-1 pending ADR sign-off.
+  - **AR-7** [minor→major]: edition 2024 / resolver 3 across all 11 crates;
+    `rust-version = 1.87` (clippy MSRV proved 1.85 dishonest —
+    const `is_multiple_of`); 30 `unsafe extern`, 19 `#[unsafe(no_mangle)]`,
+    granular `unsafe_op_in_unsafe_fn` blocks, style-2024 reformat. Breaking:
+    consumers need Rust 1.87+.
+  - **AR-9** [minor]: fuzz `c_shim_api` op-sequence mode (8-slot table,
+    seeded write/verify oracles for adjacent-block clobber + realloc chains,
+    bounded, leak-free on Drop; 9 smoke tests). libFuzzer run remains
+    environment-blocked (g++ C++ runtime); `--lib` path is the evidence tier.
+  - **AR-13** [patch]: one authoritative `mnemosyne-build-util` nightly probe;
+    all THREE build scripts (prof, benchmarks, local) are thin callers. Also
+    fixed a pre-existing latent `nightly_tls` E0432 in `mnemosyne-prof`
+    (unconditional import of a `#[cfg(not(nightly_tls_active))]` item), masked
+    on this host by the PATH-shadowed nightly rustc; verified by forcing
+    `RUSTC` at the real nightly binary.
 
 - 2026-07-02 consolidation cycle 2 (branch fix/audit-2026-07-soundness-perf,
   five atomic refactor commits; detail in CHANGELOG.md and checklist.md).

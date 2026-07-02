@@ -2,6 +2,24 @@
 
 ## Residual risk / open findings
 
+2026-07-02 consolidation cycle 3 — decision log and residual risk:
+- AR-1 step 1 shipped (debug tripwire at `Segment::cookie_for`). Residual risk:
+  the release build still permits mixed-encryption-policy corruption on one
+  backend; only debug/CI aborts. The tripwire is defense-in-depth, NOT the fix —
+  the type-level allocator-keying (ADR 0001 Option C) remains the closure and
+  awaits sign-off. Discovery aid: the tripwire will fire in any test that
+  interleaves encrypted + unencrypted policies on one backend.
+- The `nightly_tls` path was **untested in CI on this host** before this cycle:
+  rustup's nightly `rustc` is PATH-shadowed by the MSYS2 stable toolchain, so
+  the build probe reported "not nightly" and the cfg never activated — a latent
+  E0432 sat undetected. Fixed and verified by forcing `RUSTC`, but CI that
+  relies on `rustup run nightly` here is still vacuous for that gate; a real
+  nightly-channel CI job (or `RUSTC`-override) is needed to keep the
+  `#[thread_local]` path honest. Filed as a residual risk, not yet a backlog
+  item (needs a CI-config owner).
+- Edition 2024 MSRV is 1.87 (const `is_multiple_of`); consumers below that will
+  not build — recorded as the AR-7 breaking-change contract.
+
 2026-07-02 consolidation cycle 2 — decision log and residual risk:
 - AR-1 (mixed free-list-encryption policy corruption) decision recorded in
   [docs/adr/0001-free-list-encryption-mode-binding.md]: adopt Option C (key the

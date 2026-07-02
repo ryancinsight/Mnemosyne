@@ -2,10 +2,26 @@
 
 Target version: 0.2.0
 
-Sprint phase: Closure (2026-07-02 consolidation cycle 2 delivered on top of the
-2026-07-01 audit cycle; next increments are the remaining Definition-of-Ready
-`## Open` items — AR-1 needs ADR 0001 sign-off, AR-2 needs hephaestus
-co-evolution, AR-4/AR-7/AR-8/AR-9/AR-13 are self-contained).
+Sprint phase: Closure (2026-07-02 consolidation cycle 3 delivered on top of
+cycles 1–2; remaining Definition-of-Ready `## Open` items — AR-1 full fix needs
+ADR 0001 sign-off (step-1 tripwire done), AR-2 needs hephaestus co-evolution,
+AR-4 needs a quiet machine, AR-8 self-contained).
+
+## Verified — 2026-07-02 consolidation cycle 3 (two disjoint-scope agents +
+## coordinator integration; branch fix/audit-2026-07-soundness-perf)
+
+Full gate on the combined tree: `cargo fmt --all --check`, workspace clippy
+`-D warnings` clean, `cargo nextest run` 273/273, 10 doctests, fuzz `--lib`
+9/9, and — forcing `RUSTC` at the real nightly binary — `--features
+nightly_tls` compiles for prof and local (previously a latent E0432).
+
+- [x] [arch step 1] AR-1 interim tripwire (commit 6297a8c): `Segment::cookie_for`
+  debug-asserts policy/segment encryption-mode agreement; 3 tests restructured,
+  `should_panic` pin, contract on `thread_alloc`. Full type-level fix still open.
+- [x] [major] AR-7 edition 2024 / resolver 3, MSRV 1.87 (commit e8ab363).
+- [x] [minor] AR-9 fuzz op-sequence mode, 9 smoke tests (commit 25557c1).
+- [x] [patch] AR-13 single `mnemosyne-build-util` probe + latent nightly E0432
+  fix (commit ab9ff29).
 
 ## Verified — 2026-07-02 consolidation cycle 2 (three disjoint-scope agents,
 ## then coordinated integration; branch fix/audit-2026-07-soundness-perf)
