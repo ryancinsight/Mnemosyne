@@ -28,8 +28,9 @@ impl CacheAlignedAtomicPtr {
     #[cfg(not(target_pointer_width = "64"))]
     const TAG_MASK: usize = 0;
 
+    /// Creates a new empty head: the null pointer packed with tag 0.
     #[inline(always)]
-    pub(crate) const fn new(_ptr: *mut Segment) -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             value: AtomicUsize::new(0),
         }

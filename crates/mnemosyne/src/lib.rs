@@ -76,6 +76,12 @@ pub struct MemoryStats {
     pub reset_segments: usize,
     /// Number of `reset_segment_pool` invocations.
     pub reset_calls: usize,
+    /// Number of huge blocks currently retained in the huge-allocation cache
+    /// across all NUMA nodes.
+    pub retained_huge_blocks: usize,
+    /// Total bytes of huge blocks currently retained in the huge-allocation
+    /// cache across all NUMA nodes.
+    pub retained_huge_bytes: usize,
     pub current_thread_live_allocations: usize,
     pub current_thread_owned_segments: usize,
     pub cross_thread_reclaimed_blocks: usize,
@@ -107,6 +113,8 @@ impl Default for MemoryStats {
             purged_bytes: 0,
             reset_segments: 0,
             reset_calls: 0,
+            retained_huge_blocks: 0,
+            retained_huge_bytes: 0,
             current_thread_live_allocations: 0,
             current_thread_owned_segments: 0,
             cross_thread_reclaimed_blocks: 0,
@@ -144,6 +152,8 @@ pub fn memory_stats_generic<B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
         purged_bytes: arena.purged_bytes,
         reset_segments: arena.reset_segments,
         reset_calls: arena.reset_calls,
+        retained_huge_blocks: arena.retained_huge_blocks,
+        retained_huge_bytes: arena.retained_huge_bytes,
         current_thread_live_allocations: local.current_thread_live_allocations,
         current_thread_owned_segments: local.current_thread_owned_segments,
         cross_thread_reclaimed_blocks: local.cross_thread_reclaimed_blocks,

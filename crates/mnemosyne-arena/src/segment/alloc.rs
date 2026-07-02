@@ -40,7 +40,9 @@ pub const SEGMENT_HEADER_GUARD_SIZE: usize = 4096;
 const _: () = assert!(SEGMENT_HEADER_GUARD_SIZE.is_power_of_two());
 const _: () = assert!(SEGMENT_HEADER_GUARD_SIZE <= PAGE_SIZE);
 
-/// Non-generic helper to pop a segment from the global segment pool or orphan pool.
+/// Helper to pop a segment from the global segment pool or orphan pool,
+/// monomorphized per backend `B` (`#[inline(never)]` keeps this cold pool path
+/// out of the hot caller).
 ///
 /// # Safety
 ///
@@ -69,7 +71,8 @@ unsafe fn allocate_segment_from_pools<B: HasSegmentPool>() -> Option<*mut Segmen
     None
 }
 
-/// Non-generic helper to return a segment to the global segment pool.
+/// Helper to return a segment to the global segment pool, monomorphized per
+/// backend `B`.
 ///
 /// # Safety
 ///
@@ -116,6 +119,50 @@ unsafe fn initialize_allocated_segment(
     Some((aligned_ptr, aligned_addr, tail_slack_start, mapping_end))
 }
 
+/// Returns the head (`[raw_ptr, aligned_addr)`) and tail
+/// (`[tail_slack_start, mapping_end)`) alignment-slack subranges of a segment
+/// mapping to the OS via `B::decommit`.
+///
+/// Both slack regions exist only to satisfy `SEGMENT_ALIGN` rounding and never
+/// hold allocator or user data. On Windows `VirtualAlloc` eagerly commits the
+/// whole mapping, so decommitting drops the slack's commit charge (up to
+/// ~`SEGMENT_ALIGN` ≈ 2 MiB of head slack per segment) for the mapping's
+/// lifetime; on Unix the slack is lazily backed, so this is typically a no-op.
+/// Best-effort: a backend without decommit support (`SUPPORTS_DECOMMIT ==
+/// false`) skips entirely, and both subranges stay inside the reservation,
+/// which the base `B::deallocate(raw_ptr, ..)` releases in full.
+///
+/// # Safety
+///
+/// `raw_ptr` must name the base of the live backend mapping that contains both
+/// subranges, with `raw_ptr as usize <= aligned_addr` and
+/// `tail_slack_start <= mapping_end`. Neither subrange may hold allocator or
+/// user data, and the head bounds are page-aligned (`raw_ptr` comes from the
+/// backend allocator and `aligned_addr` is a `SEGMENT_ALIGN` multiple), as
+/// `decommit` requires.
+#[inline]
+pub(crate) unsafe fn decommit_mapping_slack<B: mnemosyne_core::MemoryBackend>(
+    raw_ptr: *mut u8,
+    aligned_addr: usize,
+    tail_slack_start: usize,
+    mapping_end: usize,
+) {
+    if !B::SUPPORTS_DECOMMIT {
+        return;
+    }
+    let head_slack = aligned_addr - raw_ptr as usize;
+    if head_slack > 0 {
+        // SAFETY: per this function's contract, `[raw_ptr, aligned_addr)` is a
+        // page-aligned, data-free subrange of the live mapping.
+        let _ = unsafe { B::decommit(raw_ptr, head_slack) };
+    }
+    if tail_slack_start < mapping_end {
+        // SAFETY: per this function's contract, `[tail_slack_start,
+        // mapping_end)` is a data-free subrange of the live mapping.
+        let _ = unsafe { B::decommit(tail_slack_start as *mut u8, mapping_end - tail_slack_start) };
+    }
+}
+
 /// Allocates an aligned segment of memory, either from the pool or from the OS.
 ///
 /// # Monomorphization and ZST Static Routing
@@ -160,30 +207,6 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
             }
         };
 
-    if B::SUPPORTS_DECOMMIT {
-        // Return the alignment slack preceding the segment header to the OS. The
-        // mapping over-reserves `SEGMENT_MAPPING_SIZE = 2 * SEGMENT_SIZE` so a
-        // `SEGMENT_ALIGN`-aligned base can always be found; the bytes in
-        // `[raw_ptr, aligned_addr)` are never used by the allocator. On Windows
-        // `VirtualAlloc` eagerly commits the whole mapping, so decommitting this
-        // head slack drops up to ~`SEGMENT_ALIGN` (≈ 2 MiB) of commit charge per
-        // segment; on Unix the slack is lazily backed, so this is typically a
-        // no-op. Best-effort: a backend without `decommit` (default `false`)
-        // simply skips. The slack stays inside the reservation and is released by
-        // `deallocate(raw_ptr, SEGMENT_MAPPING_SIZE)`.
-        //
-        // `head_slack` is a multiple of the system page size because both
-        // `raw_ptr` (from `allocate`) and `aligned_addr` (a `SEGMENT_ALIGN`
-        // multiple) are page-aligned.
-        let head_slack = aligned_addr - raw_ptr as usize;
-        if head_slack > 0 {
-            // Safety: `[raw_ptr, aligned_addr)` is a page-aligned subrange of the
-            // live reservation holding no allocator data (it precedes the header)
-            // and remains covered by the base release.
-            let _ = unsafe { B::decommit(raw_ptr, head_slack) };
-        }
-    }
-
     #[cfg(feature = "segment-header-guards")]
     {
         if B::SUPPORTS_MAKE_GUARD {
@@ -224,13 +247,18 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
         }
     }
 
-    if B::SUPPORTS_DECOMMIT && tail_slack_start < mapping_end {
-        let tail_slack_size = mapping_end - tail_slack_start;
-        // Safety: `[tail_slack_start, mapping_end)` is a page-aligned subrange of the
-        // live reservation holding no allocator data (it succeeds the segment pages)
-        // and remains covered by the base release.
-        let _ = unsafe { B::decommit(tail_slack_start as *mut u8, tail_slack_size) };
-    }
+    // The mapping over-reserves `SEGMENT_MAPPING_SIZE = 2 * SEGMENT_SIZE` so a
+    // `SEGMENT_ALIGN`-aligned base can always be found; return the resulting
+    // head and tail slack to the OS (guard pages installed above lie outside
+    // both slack subranges, so ordering relative to the guards is immaterial).
+    //
+    // SAFETY: `[raw_ptr, aligned_addr)` precedes the header and
+    // `[tail_slack_start, mapping_end)` succeeds the segment pages (and tail
+    // guard, when enabled), so neither holds allocator data; both stay inside
+    // the live reservation covered by the base release, and the head bounds
+    // are page-aligned (`raw_ptr` from `allocate`, `aligned_addr` a
+    // `SEGMENT_ALIGN` multiple).
+    unsafe { decommit_mapping_slack::<B>(raw_ptr, aligned_addr, tail_slack_start, mapping_end) };
 
     Some(aligned_ptr)
 }
@@ -310,19 +338,20 @@ pub unsafe fn release_segment_mapping<B: HasSegmentPool>(segment: *mut Segment) 
 /// or accessing purged segment memory.
 pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
     let pool = B::global_segment_pool();
-    // Detach each node's retained chain under a single lock, then run the
-    // OS-release syscalls lock-free on the detached chain. This takes one lock
-    // per node instead of one per segment, so the decay thread no longer
-    // serializes round-by-round with allocators contending the same per-node
-    // lock (mirrors `GlobalHugePool::purge`).
+    // Detach each node's retained chain with `take_all` — a single lock-free
+    // atomic swap of the tagged head — then run the OS-release syscalls on the
+    // privately-owned detached chain. One swap per node instead of one CAS per
+    // segment, so the decay thread never serializes round-by-round with
+    // allocators pushing/popping the same head line (mirrors
+    // `GlobalHugePool::purge`).
     let mut purged = 0usize;
     for node in pool.nodes() {
         let (mut head, _count) = node.take_all();
         while !head.is_null() {
             let segment = head;
-            // SAFETY: `segment` is a node of the chain detached from this pool
-            // under its lock, so it is a valid, exclusively-owned `Segment`;
-            // `next` is read before the mapping is released.
+            // SAFETY: `segment` is a node of the chain `take_all` atomically
+            // detached from this pool, so it is a valid, exclusively-owned
+            // `Segment`; `next` is read before the mapping is released.
             head = unsafe { (*segment).next_free_segment };
             match unsafe { release_segment_mapping::<B>(segment) } {
                 SegmentRelease::Released => purged += 1,
@@ -353,11 +382,11 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
 /// Drops the physical backing of every retained free segment without
 /// removing them from the cache.
 ///
-/// Walks the retained pool by draining it into a fixed-size stack
-/// buffer, asks the backend to reset the physical pages of each
-/// drained segment's mapping, and pushes the segments back onto the
-/// pool so they remain available for reuse. The address ranges stay
-/// owned by the allocator; only the OS-visible RSS is released.
+/// Detaches each node's retained chain in one lock-free `take_all` swap,
+/// asks the backend to reset the physical pages of each detached
+/// segment's mapping, and pushes the segments back onto the pool so
+/// they remain available for reuse. The address ranges stay owned by
+/// the allocator; only the OS-visible RSS is released.
 ///
 /// Used as a lighter-weight RSS-reduction knob than `purge_segment_pool`
 /// for callers that want to keep the segment cache warm but reduce
@@ -376,16 +405,18 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
     }
 
     let pool = B::global_segment_pool();
-    // Detach each node's chain under one lock, reset each segment's user pages,
-    // and re-cache it (segments stay owned by the allocator; only RSS drops).
-    // Batch-detaching avoids one lock acquisition per segment on the drain.
+    // Detach each node's chain in one lock-free `take_all` swap, reset each
+    // segment's user pages, and re-cache it (segments stay owned by the
+    // allocator; only RSS drops). Batch-detaching costs one atomic swap per
+    // node instead of one CAS per segment on the drain.
     let mut reset_count = 0usize;
     for node in pool.nodes() {
         let (mut head, _count) = node.take_all();
         while !head.is_null() {
             let segment = head;
-            // SAFETY: `segment` is a node of the chain detached from this pool
-            // under its lock, so it is a valid, exclusively-owned `Segment`.
+            // SAFETY: `segment` is a node of the chain `take_all` atomically
+            // detached from this pool, so it is a valid, exclusively-owned
+            // `Segment`.
             // `next` is read before the links are cleared. Per this function's
             // contract the segment is unused, so resetting
             // `[segment + PAGE_SIZE, segment + SEGMENT_SIZE)` — its user pages,

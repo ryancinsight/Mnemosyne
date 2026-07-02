@@ -105,10 +105,13 @@ fn huge_pool_concurrent_push_pop_conserves_every_segment() {
 
     // Every worker finishes an iteration having pushed back whatever it popped,
     // so all SEGMENTS are cached again. Drain and assert exact conservation: a
-    // size-1 request fits every cached block and walks all buckets.
+    // SMALL request fits every cached block (both size classes live in bucket
+    // 1) and stays within the pop fit cap, which rejects requests more than
+    // `HUGE_POP_FIT_CAP x` smaller than a bucket's blocks (so a size-1 drain
+    // request would now correctly miss).
     let mut drained: HashSet<*mut Segment> = HashSet::with_capacity(SEGMENTS);
     // SAFETY: draining pops exclusively-owned segments; no other thread runs now.
-    while let Some(seg) = unsafe { pool.pop(1, NODE) } {
+    while let Some(seg) = unsafe { pool.pop(SMALL, NODE) } {
         assert!(
             drained.insert(seg),
             "segment {seg:?} drained twice - duplication or a cycle in the stack"

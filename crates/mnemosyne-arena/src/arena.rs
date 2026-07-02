@@ -1,25 +1,17 @@
 //! Global arena operations coordinating large and huge allocations.
 
+use crate::segment::alloc::decommit_mapping_slack;
 use crate::segment::{checked_align_up, deallocate_segment, HasSegmentPool};
 use mnemosyne_core::constants::{MAX_ALLOC_SIZE, PAGE_SIZE, SEGMENT_ALIGN};
 use mnemosyne_core::types::Segment;
 use mnemosyne_core::validation::is_valid_alloc_request;
 
-/// Allocates a block of memory of the given size and alignment.
+/// Derives the backend request layout for a large/huge allocation: the total
+/// mapping size (`size` plus `SEGMENT_ALIGN` rounding room plus
+/// `max(align, PAGE_SIZE)` prefix room) and the effective alignment.
 ///
-/// If the size is small (<= 8KB), it should be routed through the thread-local
-/// allocator instead of this global arena.
-///
-/// # Safety
-///
-/// This function is unsafe because it allocates raw virtual memory and performs
-/// low-level pointer arithmetic. Callers must guarantee:
-/// - `size` is non-zero.
-/// - `align` is a non-zero power of two.
-/// - `align <= SEGMENT_SIZE` (to ensure the small-free classifier can safely
-///   recover the segment header via segment rounding or the metadata slot).
-/// - The returned pointer must be deallocated using `deallocate_large_or_huge`
-///   with the same memory backend `B`.
+/// Returns `None` when the request is invalid (`is_valid_alloc_request`) or
+/// the padded total would exceed `MAX_ALLOC_SIZE` / overflow.
 #[inline(always)]
 fn derive_large_or_huge_layout(size: usize, align: usize) -> Option<(usize, usize)> {
     if !is_valid_alloc_request(size, align) {
@@ -221,27 +213,16 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(
     };
 
     // Only decommit slack on newly allocated blocks from the OS to save syscalls
-    if !is_cache_hit && B::SUPPORTS_DECOMMIT && decommit_slack {
-        // Return the alignment slack before the aligned header to the OS. As in
-        // `allocate_segment`, `[raw_ptr, aligned_addr)` is never touched; on Windows
-        // it is eagerly committed and would otherwise hold commit charge for the
-        // lifetime of the huge allocation. Best-effort and page-aligned (both bounds
-        // are page-aligned); the slack stays inside the reservation and is released
-        // by the `B::deallocate(raw_ptr, total_alloc_size)` on the free path.
-        let head_slack = aligned_addr - raw_ptr as usize;
-        if head_slack > 0 {
-            // Safety: `[raw_ptr, aligned_addr)` is a page-aligned subrange of the
-            // live mapping holding no allocation data (it precedes the header).
-            let _ = unsafe { B::decommit(raw_ptr, head_slack) };
-        }
-
-        if tail_slack_start < mapping_end {
-            let tail_slack_size = mapping_end - tail_slack_start;
-            // Safety: `[tail_slack_start, mapping_end)` is a page-aligned subrange of the
-            // live reservation holding no allocator or user data (it succeeds the user payload)
-            // and remains covered by the base release.
-            let _ = unsafe { B::decommit(tail_slack_start as *mut u8, tail_slack_size) };
-        }
+    if !is_cache_hit && decommit_slack {
+        // SAFETY: `[raw_ptr, aligned_addr)` precedes the header and
+        // `[tail_slack_start, mapping_end)` succeeds the user payload, so
+        // neither holds allocator or user data; both stay inside the fresh
+        // mapping released by `B::deallocate(raw_ptr, total_alloc_size)` on
+        // the free path, and the head bounds are page-aligned (`raw_ptr` from
+        // `B::allocate`, `aligned_addr` a `SEGMENT_ALIGN` multiple).
+        unsafe {
+            decommit_mapping_slack::<B>(raw_ptr, aligned_addr, tail_slack_start, mapping_end)
+        };
     }
 
     user_ptr
