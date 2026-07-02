@@ -2,9 +2,51 @@
 
 Target version: 0.2.0
 
-Sprint phase: Closure (2026-07-01 audit cycle delivered; next increment is
-either backlog `## Open` item "benchmark gate statistics" or the local/core
-consolidation batch — both Definition-of-Ready).
+Sprint phase: Closure (2026-07-02 consolidation cycle 2 delivered on top of the
+2026-07-01 audit cycle; next increments are the remaining Definition-of-Ready
+`## Open` items — AR-1 needs ADR 0001 sign-off, AR-2 needs hephaestus
+co-evolution, AR-4/AR-7/AR-8/AR-9/AR-13 are self-contained).
+
+## Verified — 2026-07-02 consolidation cycle 2 (three disjoint-scope agents,
+## then coordinated integration; branch fix/audit-2026-07-soundness-perf)
+
+Five atomic refactor commits (core, hardened, arena, local, benchmarks) plus
+ADR 0001 and this PM sync. Final gate on the combined tree: `cargo fmt --all
+--check`, workspace clippy `-D warnings` clean, `cargo nextest run` 264/264,
+10 doctests, `cargo check --workspace` clean.
+
+- [x] [patch] AR-6 local/core SSOT consolidation batch (commits 885b271 core,
+  0605004 local): shared free-commit routine, page-mover collapse, size-class
+  SSOT routing, `current_thread_id`/`abort_on_corruption`/`locate_segment`/
+  `cookie_for` core helpers, page.rs leaf-module split, `recycle_sweeps` wired,
+  `cfg(test)` on test-only API. Behavior-preserving; all existing tests green.
+- [x] [patch] AR-3 per-`ThreadAllocator` cross-thread reclaim counter (0605004):
+  global RMW off the reclaim hot path; exact-count regression test. Benchmark
+  confirmation folds into AR-4.
+- [x] [patch] AR-10 fold Secure/Hardened policies into core::policy; hardened
+  is a thin re-export (commits 885b271, 4821aa9).
+- [x] [minor] AR-11 `HasSegmentPool` → `pools()` + `BackendPools` default
+  accessors; six backend blocks collapse (−77 lines), MockBackend fixtures
+  migrated (commit 9029cb6).
+- [x] [patch] AR-5 benchmark harness dedup + `GATE_ROWS` SSOT table; AR-12
+  `HandoffBuffer` SAFETY comment (commit 6d548ed). Measured regions unchanged.
+- [x] [arch] AR-1 decision recorded as ADR 0001 (Proposed, awaiting sign-off);
+  interim debug-assert safeguard is implementation step 1.
+
+
+- [x] [patch] Repair `mnemosyne-local` allocator reclaim/free/realloc test
+  surface for Atlas consumers. The allocation fast path now passes the
+  thread-local cross-thread reclaim counter into `try_reclaim_and_allocate`,
+  stale dedicated page-list mover call sites now use the canonical branded
+  `move_page_between_lists_branded`, the test backend fixture implements the
+  current `BackendPools`-based `HasSegmentPool` contract, and `realloc`
+  imports the core `locate_segment` SSOT used by the small-realloc path. Evidence
+  tier: compile-time validation plus value-semantic allocator regression tests.
+  Verification: `cargo fmt -p mnemosyne-local --check`; `cargo check -p
+  mnemosyne-local --tests`; `cargo clippy -p mnemosyne-local --all-targets
+  --no-deps -- -D warnings`; `cargo nextest run -p mnemosyne-local` (56/56);
+  downstream `cargo check -p kwavers-solver`, `cargo clippy -p kwavers-solver
+  --lib --no-deps -- -D warnings`, and FWI time-domain nextest (59/59).
 
 ## Verified — 2026-07-01 audit cycle (branch fix/audit-2026-07-soundness-perf)
 

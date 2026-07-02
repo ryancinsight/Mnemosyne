@@ -66,18 +66,22 @@ fixed in the same cycle — see `## Completed`; these are the deferred
 remainder, each Definition-of-Ready):
 
 - [ ] [arch] AR-1: Mixed free-list-encryption policies over one backend are
-  latently unsound at the chain level. Owner-side paths (`pop_block::<P>`,
-  `set_next::<P>`, `initialize_free_list::<P>`) and the cross-thread push
-  (`AtomicFreeList::push::<P>`) select encoding from the CALLER's static
-  policy, while segments carry a dynamic `free_list_encrypted` flag; two
-  policies with different `ENABLE_FREE_LIST_ENCRYPTION` on one
-  `ThreadAllocator` share class pages, so one page's chain can mix encodings.
-  Unexercised today only because the policy tests bump-allocate (never pop a
-  mixed chain). Blocker: design decision — (a) enforce one encryption mode per
-  backend at compile time, or (b) make every encode/decode path honor the
-  segment's dynamic flag. Acceptance: an interleaved standard+hardened
-  same-page chain-pop test compiles-and-passes (b) or fails to compile (a).
-  The 2026-07-01 adoption gate closes only the orphan-adoption instance.
+  latently unsound at the chain level. **Decision recorded in
+  [docs/adr/0001-free-list-encryption-mode-binding.md](docs/adr/0001-free-list-encryption-mode-binding.md)
+  (Proposed — awaiting sign-off before implementation).** Owner-side paths
+  (`pop_block::<P>`, `set_next::<P>`, `AtomicFreeList::push::<P>`) select
+  encoding from the CALLER's static policy while the segment carries a dynamic
+  `free_list_encrypted` flag; two policies with different
+  `ENABLE_FREE_LIST_ENCRYPTION` on one backend share class pages, so one page's
+  chain can mix encodings (reachable via the public `thread_alloc`/`thread_free`
+  free functions, single-thread same-page — the 2026-07-01 orphan-adoption gate
+  closed only the cross-thread instance). ADR recommends Option C (key the TLS
+  allocator by encryption class: sound and zero-cost for the default policy)
+  over dynamic-flag-everywhere (hot-path regression) or a `P==B` const-assert
+  (conflates policy with backend). Blocker: ADR sign-off. Implementation step 1
+  is an interim debug-assert safeguard (zero release cost). Acceptance: an
+  interleaved standard+hardened same-page chain-pop test round-trips without
+  abort.
 - [ ] [major] AR-2: wgpu callback registration is a soundness hole —
   `WGPU_{ALLOCATE,DEALLOCATE}_CALLBACK` are pub `AtomicPtr<c_void>` statics
   that safe code can poison and `WgpuStagingBackend::allocate` transmutes and
@@ -87,48 +91,12 @@ remainder, each Definition-of-Ready):
   `infrastructure/device.rs:177-184` stores the statics directly; migrate
   both in one coordinated unit per the atlas protocol. Acceptance: no pub
   mutable callback statics; hephaestus builds and passes against the bump.
-- [ ] [patch] AR-3: `CROSS_THREAD_RECLAIMED_BLOCKS` is one process-global
-  `fetch_add` on the allocation-side reclaim path (`local_alloc.rs:33`,
-  called from `try_reclaim_and_allocate`) — cache-line ping-pong exactly
-  under producer/consumer loads. Fix: accumulate in a `ThreadAllocator` field
-  and fold on `stats()`/`Drop`; requires threading the allocator (or a return
-  count) through `try_reclaim_and_allocate`. Acceptance: no global RMW on the
-  reclaim path; cross-thread benchmark rows neutral-or-better.
 - [ ] [patch] AR-4: benchmark gate statistics are too weak for the 1.05
   threshold: `sample_size(10)` / 500 ms measurement yields CI widths the
   variance report itself flags at 15-25%. Fix: raise measurement time/samples
   for the gated rows (or gate on median with CI overlap), keep quick settings
   for exploratory rows. Blocker: quiet machine for re-baselining. Acceptance:
   gated-row CI half-width < the 5% threshold on the recorded baseline.
-- [ ] [patch] AR-5: benchmark structure consolidation — per-allocator bench
-  bodies duplicated ~24× across latency/cross_thread/realloc/throughput (one
-  generic `bench_case<A: GlobalAlloc>` keeps monomorphized dispatch),
-  `skip_snmalloc` predicate ×6, gate row names duplicated between
-  `threshold.rs` and `config.rs` (one `(name, thresholds)` table), and the
-  nightly-rustc probe duplicated across two build.rs. Acceptance: one
-  authoritative case runner + one row table; bench output names unchanged.
-- [ ] [patch] AR-6: local/core consolidation batch (mechanical DRY/SSOT, no
-  behavior change): owner-free transition arms duplicated between
-  `thread_free_classified` and `do_local_free_internal` (+ a partial copy in
-  realloc.rs) with `is_only_active` ×3; the two branded page movers are
-  clones (one `const STATE` mover); `small_realloc_fits_existing_class`
-  re-encodes the size-class schedule as literals (route through
-  `round_up_size`); `gs:[0x48]` TEB thread-id asm ×3 (one `mnemosyne_core`
-  fn); segment-teardown block ×3 in reclaim.rs; `Block::get_next/set_next`
-  forward to their `_dynamic` twins; `abort_on_corruption` hoisted beside the
-  four inline abort blocks in sync.rs; segment/cookie recovery expression ×12
-  (`Page::parent_segment` + `locate`); `recycle_sweeps` counter
-  wire-or-delete (constitutionally zero today, flows into the public stats
-  and benchmark CSV); `thread_realloc` computes `usable_size` on branches
-  that ignore it; `ThreadAllocator::alloc` is test-only public unsafe API;
-  `PER_CPU_CACHE` single-implementor guard (latent cross-backend block mixing
-  if a second backend enables `ENABLE_CPU_CACHE`); split `core/types/page.rs`
-  (606) and `local/local_alloc/page.rs` (506) into leaf modules; named
-  accessor pair for the huge-allocation `pages[0].alloc_count`/`block_size`
-  field overload; `kernel_budget::registers_per_block` doc claims saturation
-  but the widening product is exact. Acceptance: workspace gate green,
-  structural-duplication audit clean over the touched families, net-negative
-  diff.
 - [ ] [minor] AR-7: edition 2024 / resolver 3 migration (unblocked: the CUDA
   `static mut`s are gone). Acceptance: workspace builds on the pinned stable
   with edition 2024 + resolver 3, gate green, no lint suppressions added.
@@ -141,19 +109,47 @@ remainder, each Definition-of-Ready):
 - [ ] [minor] AR-9: fuzz `c_shim_api` op-sequence mode (bounded slot table,
   ops decoded from the byte stream) so adjacent-block metadata clobber and
   realloc chains are explored; single-op coverage cannot reach them.
-- [ ] [patch] AR-10: decide the `mnemosyne-hardened` crate boundary — its two
-  ZST policies could fold into `mnemosyne-core::policy` (zero new deps)
-  unless core must stay policy-minimal; record the decision either way.
-- [ ] [minor] AR-11: `segment/pool/mod.rs` carries six copy-pasted `(3
-  statics + 3 accessors)` backend blocks → one const-constructible
-  `BackendPools` struct + `HasSegmentPool::pools()` with default-method
-  getters. Blocker: the trait is consumed across local/decay/heap —
-  coordinate the [minor] trait change with all consumers in one unit.
-- [ ] [patch] AR-12: `benches/allocator/workers.rs` `unsafe impl Sync for
-  HandoffBuffer` lacks its `// SAFETY:` comment (sound via the sync_channel
-  happens-before edge; write it down).
-
+- [ ] [patch] AR-13: extract the nightly-rustc detection probe into a shared
+  workspace build-utility (or xtask build-dep) consumed by both
+  `mnemosyne-prof/build.rs` and `mnemosyne-benchmarks/build.rs` (currently
+  duplicated). Acceptance: one authoritative probe; both build scripts consume
+  it; no behavior change.
 ## Completed
+
+- 2026-07-02 consolidation cycle 2 (branch fix/audit-2026-07-soundness-perf,
+  five atomic refactor commits; detail in CHANGELOG.md and checklist.md).
+  Closed deferred items:
+  - **AR-3** [patch]: cross-thread reclaim count moved to a per-`ThreadAllocator`
+    field folded on `Drop`; the global `fetch_add` is off the reclaim hot path.
+    First acceptance clause (no global RMW on the reclaim path) met and
+    regression-tested for exact count; the "cross-thread benchmark rows
+    neutral-or-better" clause folds into AR-4's re-baseline (a quiet machine),
+    tracked there.
+  - **AR-5** [patch]: benchmark bodies deduplicated to one generic
+    `bench_iter_case`/`bench_batched_case<A>`, one `snmalloc_skips` predicate,
+    one `GATE_ROWS` SSOT threshold table (row names unchanged; measured regions
+    byte-identical). Follow-up: the nightly-rustc probe is still duplicated
+    across `mnemosyne-prof/build.rs` and `mnemosyne-benchmarks/build.rs` — a
+    shared build-util/xtask is the fix (filed as AR-13 below).
+  - **AR-6** [patch]: local/core SSOT batch — shared `commit_in_place_free` +
+    `do_local_free_internal` delegation, `is_sole_active_page`,
+    `move_page_between_lists_branded`, `round_up_size` routing,
+    `current_thread_id`, `detach_and_release_segment`, `get_next/set_next`
+    forwarding, `abort_on_corruption` module, `parent_segment`/`cookie_for`/
+    `locate_segment`, `recycle_sweeps` wired, `thread_realloc` branch flatten,
+    `cfg(test)` `ThreadAllocator::alloc`, `PER_CPU_CACHE` single-implementor
+    invariant documented, `core/types/page.rs` split into leaf modules,
+    `kernel_budget` doc fix. `local/local_alloc/page.rs` left un-split
+    (≤500 after consolidation, cohesive).
+  - **AR-10** [patch]: FOLD `SecurePolicy`/`HardenedPolicy` into
+    `mnemosyne-core::policy` (SSOT; core is dep-free); `mnemosyne-hardened`
+    retained as a thin real re-export because external (gaia, kwavers) and
+    internal manifests reference the crate name.
+  - **AR-11** [minor]: `HasSegmentPool` → one required `pools()` with default
+    accessors; six per-backend blocks collapse to `BackendPools::new()` +
+    one-line impls (−77 lines); `MockBackend` fixtures migrated as the
+    consumer half.
+  - **AR-12** [patch]: `HandoffBuffer` `unsafe impl Sync` SAFETY comment added.
 
 - 2026-07-01 audit cycle (branch fix/audit-2026-07-soundness-perf, eleven
   atomic commits; per-item detail in checklist.md and CHANGELOG.md):

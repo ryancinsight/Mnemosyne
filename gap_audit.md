@@ -2,12 +2,40 @@
 
 ## Residual risk / open findings
 
+2026-07-02 consolidation cycle 2 — decision log and residual risk:
+- AR-1 (mixed free-list-encryption policy corruption) decision recorded in
+  [docs/adr/0001-free-list-encryption-mode-binding.md]: adopt Option C (key the
+  TLS allocator by encryption class — sound and zero-cost for the default
+  policy). Proposed, awaiting sign-off. Residual risk until implemented: the
+  single-thread same-page mixed-policy path remains latently unsound; contract
+  documented on `thread_*` (one encryption mode per backend); interim
+  debug-assert safeguard is implementation step 1.
+- AR-10 decision: FOLD `SecurePolicy`/`HardenedPolicy` into
+  `mnemosyne-core::policy` (SSOT with `StandardPolicy`; core is dependency-free,
+  zero new deps). `mnemosyne-hardened` kept as a thin real re-export because
+  external (gaia, kwavers) and internal Cargo manifests reference the crate
+  name — not a compatibility shim, the genuine new home's forwarding.
+- AR-3 acceptance is split: the "no global RMW on the reclaim path" clause is
+  met and regression-tested; the "cross-thread benchmark rows neutral-or-better"
+  clause depends on AR-4's quiet-machine re-baseline and is tracked there — not
+  an open regression, a pending measurement.
+- The 2026-07-02 batch is behavior-preserving consolidation (verified by the
+  unchanged test suite, 264/264); no new soundness claims beyond the recorded
+  decisions.
+
 2026-07-01 four-agent audit cycle (perf, memory, contention, safety, plus the
 structural monomorphization/const-generic/GAT/Cow/DRY/SSOT lens across all 11
 crates + workspace config). High-severity findings fixed same-cycle (checklist
 2026-07-01 block); deferred items AR-1..AR-12 in backlog.md `## Open`.
 Residual risk and verified-clean results:
 
+- 2026-07-02 Atlas consumer repair: `mnemosyne-local` allocator
+  reclaim/free/realloc test surfaces now build and pass after the
+  `cross_thread_reclaimed` sink, branded page-list mover, `BackendPools`
+  fixture, and core `locate_segment` routing updates. Evidence tier: compile-time
+  validation plus value-semantic allocator regression tests; package clippy
+  and nextest are clean. Residual: AR-3 remains open for the required
+  cross-thread benchmark comparison; no performance improvement is claimed.
 - CUDA runtime paths (init probe, VEH redirect, device alloc/free) are
   verified at compile-time + registry-unit-test tier only — this machine has
   no NVIDIA driver. The VEH Rip-redirect mechanism in particular needs one

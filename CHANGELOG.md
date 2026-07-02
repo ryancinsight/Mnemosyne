@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- `mnemosyne-local` now builds cleanly on the Atlas consumer test surface after
+  the allocator reclaim-counter consolidation: the hot allocation reclaim path
+  passes the thread-local `cross_thread_reclaimed` sink, free/reclaim call sites
+  use the canonical branded list mover, test fixtures implement the current
+  `BackendPools`-based `HasSegmentPool` contract, and `realloc` imports the
+  core `locate_segment` SSOT used by the small-realloc path.
 - Orphan-segment adoption no longer re-keys encrypted free lists: an adopted
   orphan's live chains are encoded with the keys already in its header (read
   concurrently by remote freeing threads), so `push_owned_segment` keys only
@@ -91,6 +97,25 @@
 
 ### Changed
 
+- Consolidation cycle 2 (redundancy-free SSOT pass): one
+  `mnemosyne_core::abort::abort_on_corruption` for all corruption aborts;
+  `Block::get_next/set_next` forward to their `_dynamic` twins;
+  `Page::parent_segment`/`Segment::cookie_for`/`locate_segment` centralize the
+  ~12 segment/cookie recovery copies; one `current_thread_id()` for the
+  `gs:[0x48]` TEB read (was in three crates); `commit_in_place_free` +
+  `do_local_free_internal` delegation collapse the duplicated free-transition
+  arms; one `move_page_between_lists_branded`; `small_realloc_fits_existing_class`
+  routes through `size_class::round_up_size`; `SecurePolicy`/`HardenedPolicy`
+  fold into `mnemosyne-core::policy` (SSOT with `StandardPolicy`, with
+  `mnemosyne-hardened` a thin re-export); `HasSegmentPool` reduces to one
+  required `pools() -> &BackendPools` with default accessors, collapsing six
+  copy-pasted per-backend blocks; `core/types/page.rs` splits into
+  `page/{occupancy,init,reclaim}` leaf modules; benchmark bodies deduplicate to
+  one generic `bench_*_case<A>` with a single `GATE_ROWS` threshold table.
+- Cross-thread reclaim count accumulates in a per-`ThreadAllocator` field
+  folded into the global atomic on `Drop`, removing a process-global
+  `fetch_add` from the allocation-side reclaim path (cache-line ping-pong under
+  producer/consumer loads).
 - Huge-allocation cache behavior: the upward bucket scan stops once a bucket's
   lower bound exceeds `HUGE_POP_FIT_CAP (4) ×` the request, bounding cache-hit
   over-provision to <8× (a 20 KiB-class request can no longer pin a 16 MiB
