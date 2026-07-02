@@ -5,7 +5,7 @@ use mnemosyne_arena::{allocate_segment, HasSegmentPool};
 use mnemosyne_core::constants::PAGES_PER_SEGMENT;
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::{class_to_size, size_to_class};
-use mnemosyne_core::types::Page;
+use mnemosyne_core::types::{Page, Segment};
 
 impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// Allocates a small memory block of the specified size class.
@@ -186,8 +186,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // Prefer never-used pages in the current segment.
         if self.current_segment.is_none() || self.next_page_index >= PAGES_PER_SEGMENT {
-            // Safety: allocate_segment allocates a new segment from the OS/pool.
-            if let Some(seg_ptr) = unsafe { allocate_segment::<B>() } {
+            // Safety: acquires a policy-compatible segment from the OS/pools;
+            // policy-incompatible orphans are returned to the orphan pool.
+            if let Some(seg_ptr) = unsafe { acquire_policy_compatible_segment::<P, B>() } {
                 // Determine if this is an orphaned segment vs a fresh/reinitialized segment.
                 // An orphaned segment has pages[1].block_size > 0.
                 // SAFETY: `seg_ptr` is the non-null segment just returned by
@@ -221,10 +222,21 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                             if page.block_size > 0 {
                                 // Reclaim cross-thread frees to get accurate count.
-                                let reclaimed = page.reclaim_thread_free_if_present_for_segment(
+                                // The orphan's chains are encoded under the
+                                // segment's recorded mode; after the
+                                // policy-compatibility gate in
+                                // `acquire_policy_compatible_segment` it equals
+                                // `P::ENABLE_FREE_LIST_ENCRYPTION`, but the
+                                // dynamic flag is the authoritative source,
+                                // matching every sweep-path reclaim.
+                                let encrypted = (*seg_ptr).free_list_encrypted;
+                                debug_assert_eq!(
+                                    encrypted,
                                     P::ENABLE_FREE_LIST_ENCRYPTION,
-                                    seg_ptr,
-                                    i,
+                                    "adopted an orphan whose free-list mode does not match the policy"
+                                );
+                                let reclaimed = page.reclaim_thread_free_if_present_for_segment(
+                                    encrypted, seg_ptr, i,
                                 );
                                 if reclaimed > 0 {
                                     super::record_cross_thread_reclaimed(reclaimed);
@@ -330,4 +342,67 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         self.fresh_pages += 1;
         page_ptr
     }
+}
+
+/// Pops segments from the pools/OS until one that policy `P` can own arrives,
+/// returning policy-incompatible orphans to the orphan pool.
+///
+/// An orphan's live free chains are encoded under the segment's recorded
+/// `free_list_encrypted` mode with the per-page keys already in its header,
+/// while the owner-side hot paths (`pop_block`, local free) select encryption
+/// statically from `P`. A thread may therefore adopt only an orphan whose
+/// recorded mode matches `P::ENABLE_FREE_LIST_ENCRYPTION`; a mismatched orphan
+/// is deferred on a local intrusive chain and pushed back to the orphan pool
+/// for a matching-policy thread once a usable segment is found. Fresh and
+/// pool-reinitialized segments (`free_list_encrypted == false`, zero live
+/// allocations) are always usable: `push_owned_segment` keys them for `P`
+/// before any chain is encoded.
+///
+/// Termination: each loop iteration either consumes one finite-pool segment
+/// (free pool re-initializes, so `pages[1].block_size == 0` ends the loop;
+/// each deferred orphan shrinks the orphan pool) or reaches the OS path,
+/// which yields a fresh segment or `None`.
+///
+/// # Safety
+///
+/// Same contract as [`allocate_segment`]: the global pools must contain valid,
+/// initialized `Segment`s. The returned segment (if any) is exclusively owned
+/// by the caller.
+#[inline(never)]
+unsafe fn acquire_policy_compatible_segment<P: AllocPolicy, B: HasSegmentPool>(
+) -> Option<*mut Segment> {
+    let mut deferred: *mut Segment = core::ptr::null_mut();
+    let chosen = loop {
+        let Some(seg_ptr) = (unsafe { allocate_segment::<B>() }) else {
+            break None;
+        };
+        // SAFETY: `seg_ptr` is the initialized, exclusively-owned segment just
+        // returned by `allocate_segment`; `pages[1].block_size > 0`
+        // distinguishes a previously-used orphan from a fresh segment, and
+        // `free_list_encrypted` is its recorded chain-encoding mode.
+        let incompatible_orphan = unsafe {
+            (*seg_ptr).pages[1].block_size > 0
+                && (*seg_ptr).free_list_encrypted != P::ENABLE_FREE_LIST_ENCRYPTION
+        };
+        if incompatible_orphan {
+            // SAFETY: the segment is exclusively owned after the pop, so its
+            // `next_free_segment` link is free to thread the deferral chain.
+            unsafe { (*seg_ptr).next_free_segment = deferred };
+            deferred = seg_ptr;
+            continue;
+        }
+        break Some(seg_ptr);
+    };
+    while !deferred.is_null() {
+        // SAFETY: `deferred` walks the exclusively-owned deferral chain built
+        // above; each node is a valid orphan whose link is cleared before the
+        // pool takes ownership back.
+        unsafe {
+            let next = (*deferred).next_free_segment;
+            (*deferred).next_free_segment = core::ptr::null_mut();
+            B::global_orphan_pool().push_unbounded(deferred);
+            deferred = next;
+        }
+    }
+    chosen
 }

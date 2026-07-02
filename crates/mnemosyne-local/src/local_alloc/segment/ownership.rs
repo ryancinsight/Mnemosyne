@@ -172,12 +172,25 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         self.owned_segment_count += 1;
 
         if P::ENABLE_FREE_LIST_ENCRYPTION {
+            // An adopted orphan arrives with `free_list_encrypted == true` and
+            // live free chains already encoded under the keys in its header —
+            // and remote threads may concurrently push to its `thread_free`
+            // lists through those same keys. Re-keying would invalidate every
+            // live encoded link and data-race those readers, so keys are
+            // written only for segments that have never encoded a chain
+            // (fresh or pool-reinitialized: `free_list_encrypted == false`).
+            //
             // SAFETY: `segment` is the just-pushed live segment, owned
-            // exclusively by `self`. `initialize_segment_keys` writes
-            // per-page XOR keys derived from the TLS seed into
-            // `(*segment).keys[i]` for every page of the segment; the
-            // segment mapping is already initialized by the arena.
-            unsafe { self.initialize_segment_keys(segment) };
+            // exclusively by `self`. When `free_list_encrypted` is false it
+            // holds no live allocations and is not yet visible to any remote
+            // freeing thread, satisfying `initialize_segment_keys`'s
+            // no-live-chains / no-concurrent-readers contract. The keys are
+            // per-page XOR cookies derived from the TLS seed; the segment
+            // mapping is already initialized by the arena.
+            let already_keyed = unsafe { (*segment).free_list_encrypted };
+            if !already_keyed {
+                unsafe { self.initialize_segment_keys(segment) };
+            }
         }
     }
 
@@ -185,7 +198,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// # Safety
     ///
-    /// `segment` must point to a valid, writable `Segment`.
+    /// `segment` must point to a valid, writable `Segment` that holds no live
+    /// encoded free-list chains and is not visible to any other thread (no
+    /// remote frees in flight): the key writes are non-atomic and invalidate
+    /// every link encoded with the previous keys, so calling this on a segment
+    /// with live allocations corrupts its free lists and races concurrent
+    /// `AtomicFreeList` key reads.
     #[inline]
     pub unsafe fn initialize_segment_keys(&mut self, segment: *mut Segment) {
         let seed = super::super::get_tls_seed();
