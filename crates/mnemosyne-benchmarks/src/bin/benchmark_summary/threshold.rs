@@ -1,40 +1,53 @@
+use crate::config::{gate_row, RegressionThreshold, VarianceThreshold};
+
+/// Resolves the regression `mean_ratio` ceiling for a benchmark row.
+///
+/// Gated rows carry an explicit ceiling in the [`crate::config::GATE_ROWS`]
+/// SSOT table; every other row falls back to [`RegressionThreshold::DEFAULT`].
 pub fn get_regression_threshold(benchmark: &str) -> f64 {
-    match benchmark {
-        "allocator cycle latency/mnemosyne/small_32" => 1.05,
-        "allocator cycle latency/mnemosyne/medium_1024" => 1.05,
-        "allocator cycle latency/mnemosyne/large_8192" => 1.05,
-        "allocator burst retention/mnemosyne/small_32" => 1.10,
-        "cross-thread free handoff/mnemosyne/small_32" => 1.15,
-        "threaded saturated small allocation cycles/mnemosyne" => 1.25,
-        "segment cache eviction/mnemosyne" => 1.15,
-        _ => 1.15,
-    }
+    gate_row(benchmark)
+        .map(|row| row.regression_threshold)
+        .unwrap_or(RegressionThreshold::DEFAULT)
+        .ratio()
 }
 
+/// Resolves the variance (noise) ceiling for a benchmark row.
+///
+/// Gated rows carry their ceiling in the [`crate::config::GATE_ROWS`] SSOT
+/// table. Rows not in the table (the variance report covers every row, not
+/// only the gated ones) are classified by name prefix: scheduler-sensitive
+/// threaded and cross-thread groups get the wider [`VarianceThreshold::THREADED`]
+/// ceiling, all others the [`VarianceThreshold::DEFAULT`].
 pub fn variance_threshold(benchmark: &str) -> f64 {
+    if let Some(row) = gate_row(benchmark) {
+        return row.variance_threshold.ratio();
+    }
+    variance_class_for(benchmark).ratio()
+}
+
+/// Prefix classifier for the variance ceiling of a non-gated row.
+pub(crate) fn variance_class_for(benchmark: &str) -> VarianceThreshold {
     if benchmark.starts_with("threaded small allocation cycles/")
         || benchmark.starts_with("threaded medium allocation cycles/")
         || benchmark.starts_with("threaded saturated small allocation cycles/")
         || benchmark.starts_with("cross-thread free handoff/")
     {
-        0.25
+        VarianceThreshold::THREADED
     } else {
-        0.15
+        VarianceThreshold::DEFAULT
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::BASELINE_BENCHMARKS;
+    use crate::config::gate_row;
 
     #[test]
     fn saturated_threaded_row_is_the_gated_threaded_baseline() {
+        assert!(gate_row("threaded saturated small allocation cycles/mnemosyne").is_some());
         assert!(
-            BASELINE_BENCHMARKS.contains(&"threaded saturated small allocation cycles/mnemosyne")
-        );
-        assert!(
-            !BASELINE_BENCHMARKS.contains(&"threaded small allocation cycles/mnemosyne"),
+            gate_row("threaded small allocation cycles/mnemosyne").is_none(),
             "scheduler-sensitive historical threaded row must not be threshold-gated"
         );
         assert_eq!(

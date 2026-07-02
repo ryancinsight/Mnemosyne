@@ -23,26 +23,138 @@ pub const ACTIVE_GROUPS: [&str; 12] = [
     "usable size latency/",
 ];
 
-pub const BASELINE_BENCHMARKS: [&str; 12] = [
-    "allocator cycle latency/mnemosyne/small_32",
-    "allocator cycle latency/mnemosyne/medium_1024",
-    "allocator cycle latency/mnemosyne/large_8192",
-    "allocator burst retention/mnemosyne/small_32",
-    "cross-thread free handoff/mnemosyne/small_32",
-    "threaded saturated small allocation cycles/mnemosyne",
-    "segment cache eviction/mnemosyne",
-    // Realloc latency rows gate the four Phase 4 buckets
-    // {within_class, cross_class, 8k→16k, huge_shrink}. The first
-    // two within_class entries and the first two cross_class entries
-    // share bucket labels but distinct size ranges; the named 8k→16k
-    // and huge_shrink buckets are tracked individually because they
-    // sit at size-class boundaries and on the huge-mapping path.
-    "realloc latency/mnemosyne/within_class_24_to_32",
-    "realloc latency/mnemosyne/cross_class_32_to_64",
-    "realloc latency/mnemosyne/within_class_6k_to_8k",
-    "realloc latency/mnemosyne/cross_class_8k_to_16k",
-    "realloc latency/mnemosyne/huge_shrink_4m_to_2m",
+/// A threshold-gated baseline benchmark row.
+///
+/// One [`GateRow`] carries the fully-qualified Criterion row `name`, the
+/// per-row `regression_threshold` (the `mean_ratio` ceiling before a run is
+/// flagged as a regression), and the `variance_threshold` (the noise ceiling
+/// reported for that row). These three values are the single source of truth
+/// read by both threshold enforcement ([`super::threshold`]) and the summary
+/// gate; do not duplicate any of them elsewhere.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GateRow {
+    pub name: &'static str,
+    pub regression_threshold: RegressionThreshold,
+    pub variance_threshold: VarianceThreshold,
+}
+
+/// A regression `mean_ratio` ceiling, stored as thousandths to keep the SSOT
+/// table `Eq`/`Hash`-comparable while representing the two-decimal thresholds
+/// exactly (`1.05` == `1050`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RegressionThreshold(u16);
+
+/// A variance (noise) ceiling, stored as thousandths for the same reason as
+/// [`RegressionThreshold`] (`0.15` == `150`, `0.25` == `250`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VarianceThreshold(u16);
+
+impl RegressionThreshold {
+    /// The default regression ceiling applied to any row not named in
+    /// [`GATE_ROWS`].
+    pub const DEFAULT: Self = Self(1150);
+
+    #[inline]
+    pub const fn ratio(self) -> f64 {
+        self.0 as f64 / 1000.0
+    }
+}
+
+impl VarianceThreshold {
+    /// The variance ceiling for scheduler-sensitive threaded / cross-thread
+    /// rows, whose run-to-run noise is inherently wider.
+    pub const THREADED: Self = Self(250);
+    /// The variance ceiling for all other (latency-class) rows.
+    pub const DEFAULT: Self = Self(150);
+
+    #[inline]
+    pub const fn ratio(self) -> f64 {
+        self.0 as f64 / 1000.0
+    }
+}
+
+/// Single source of truth for the threshold-gated baseline rows and their
+/// per-row regression and variance ceilings.
+///
+/// Realloc latency rows gate the four Phase 4 buckets
+/// {within_class, cross_class, 8k→16k, huge_shrink}. The first two
+/// within_class entries and the first two cross_class entries share bucket
+/// labels but distinct size ranges; the named 8k→16k and huge_shrink buckets
+/// are tracked individually because they sit at size-class boundaries and on
+/// the huge-mapping path.
+pub const GATE_ROWS: [GateRow; 12] = [
+    GateRow {
+        name: "allocator cycle latency/mnemosyne/small_32",
+        regression_threshold: RegressionThreshold(1050),
+        variance_threshold: VarianceThreshold::DEFAULT,
+    },
+    GateRow {
+        name: "allocator cycle latency/mnemosyne/medium_1024",
+        regression_threshold: RegressionThreshold(1050),
+        variance_threshold: VarianceThreshold::DEFAULT,
+    },
+    GateRow {
+        name: "allocator cycle latency/mnemosyne/large_8192",
+        regression_threshold: RegressionThreshold(1050),
+        variance_threshold: VarianceThreshold::DEFAULT,
+    },
+    GateRow {
+        name: "allocator burst retention/mnemosyne/small_32",
+        regression_threshold: RegressionThreshold(1100),
+        variance_threshold: VarianceThreshold::DEFAULT,
+    },
+    GateRow {
+        name: "cross-thread free handoff/mnemosyne/small_32",
+        regression_threshold: RegressionThreshold::DEFAULT,
+        variance_threshold: VarianceThreshold::THREADED,
+    },
+    GateRow {
+        name: "threaded saturated small allocation cycles/mnemosyne",
+        regression_threshold: RegressionThreshold(1250),
+        variance_threshold: VarianceThreshold::THREADED,
+    },
+    GateRow {
+        name: "segment cache eviction/mnemosyne",
+        regression_threshold: RegressionThreshold::DEFAULT,
+        variance_threshold: VarianceThreshold::DEFAULT,
+    },
+    GateRow {
+        name: "realloc latency/mnemosyne/within_class_24_to_32",
+        regression_threshold: RegressionThreshold::DEFAULT,
+        variance_threshold: VarianceThreshold::DEFAULT,
+    },
+    GateRow {
+        name: "realloc latency/mnemosyne/cross_class_32_to_64",
+        regression_threshold: RegressionThreshold::DEFAULT,
+        variance_threshold: VarianceThreshold::DEFAULT,
+    },
+    GateRow {
+        name: "realloc latency/mnemosyne/within_class_6k_to_8k",
+        regression_threshold: RegressionThreshold::DEFAULT,
+        variance_threshold: VarianceThreshold::DEFAULT,
+    },
+    GateRow {
+        name: "realloc latency/mnemosyne/cross_class_8k_to_16k",
+        regression_threshold: RegressionThreshold::DEFAULT,
+        variance_threshold: VarianceThreshold::DEFAULT,
+    },
+    GateRow {
+        name: "realloc latency/mnemosyne/huge_shrink_4m_to_2m",
+        regression_threshold: RegressionThreshold::DEFAULT,
+        variance_threshold: VarianceThreshold::DEFAULT,
+    },
 ];
+
+/// Fully-qualified names of the [`GATE_ROWS`], projected for callers that only
+/// need the row identifiers (baseline excerpt selection and refresh).
+pub fn baseline_benchmarks() -> impl Iterator<Item = &'static str> {
+    GATE_ROWS.iter().map(|row| row.name)
+}
+
+/// Looks up a gate row by its fully-qualified Criterion name.
+pub fn gate_row(benchmark: &str) -> Option<&'static GateRow> {
+    GATE_ROWS.iter().find(|row| row.name == benchmark)
+}
 
 pub fn is_active_benchmark(benchmark: &str) -> bool {
     ACTIVE_GROUPS
@@ -89,18 +201,49 @@ mod tests {
         );
     }
 
-    /// Every row in [`BASELINE_BENCHMARKS`] must match [`is_active_benchmark`]
+    /// Every row in [`GATE_ROWS`] must match [`is_active_benchmark`]
     /// — otherwise the gate would silently exclude it from the comparison
     /// summary. The five Phase 4 realloc rows are the new ones this guard
     /// pins so a typo in the literal (e.g., `cross_class` vs `cross-class`)
     /// is caught at `cargo test` time, not at the Criterion run.
     #[test]
     fn baseline_benchmarks_are_all_active_benchmark_rows() {
-        for row in BASELINE_BENCHMARKS {
+        for row in baseline_benchmarks() {
             assert!(
                 is_active_benchmark(row),
-                "BASELINE_BENCHMARKS row {row:?} is not matched by ACTIVE_GROUPS; \
+                "GATE_ROWS row {row:?} is not matched by ACTIVE_GROUPS; \
                  --enforce-thresholds would silently drop it from the gate"
+            );
+        }
+    }
+
+    /// The variance ceiling recorded in each [`GateRow`] must equal what the
+    /// independent prefix classifier would assign the same row, so the table
+    /// stays a faithful SSOT rather than drifting from the general classifier
+    /// that governs every non-gated row in the variance report.
+    #[test]
+    fn gate_row_variance_matches_prefix_classifier() {
+        for row in GATE_ROWS {
+            assert_eq!(
+                row.variance_threshold,
+                crate::threshold::variance_class_for(row.name),
+                "GateRow {:?} variance ceiling drifted from the prefix classifier",
+                row.name
+            );
+        }
+    }
+
+    /// The regression ceiling recorded in each [`GateRow`] must equal what
+    /// [`super::super::threshold::get_regression_threshold`] resolves for the
+    /// same row.
+    #[test]
+    fn gate_row_regression_matches_threshold_lookup() {
+        for row in GATE_ROWS {
+            assert_eq!(
+                row.regression_threshold.ratio(),
+                crate::threshold::get_regression_threshold(row.name),
+                "GateRow {:?} regression ceiling drifted from the threshold lookup",
+                row.name
             );
         }
     }
@@ -121,8 +264,8 @@ mod tests {
         ];
         for row in PHASE_FOUR_GATE_ROWS {
             assert!(
-                BASELINE_BENCHMARKS.contains(&row),
-                "BASELINE_BENCHMARKS is missing Phase 4 gate row {row:?}"
+                gate_row(row).is_some(),
+                "GATE_ROWS is missing Phase 4 gate row {row:?}"
             );
         }
     }

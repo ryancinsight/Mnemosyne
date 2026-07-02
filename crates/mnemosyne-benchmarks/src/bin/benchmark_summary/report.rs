@@ -1,4 +1,4 @@
-use super::config::BASELINE_BENCHMARKS;
+use super::config::baseline_benchmarks;
 use super::csv::{escape_csv, parse_summary_line};
 use super::threshold::variance_threshold;
 use std::borrow::Cow;
@@ -51,9 +51,7 @@ pub fn read_summary(contents: &str) -> io::Result<Vec<SummaryRow<'_>>> {
 }
 
 pub fn missing_selected_benchmarks_message(rows: &[SummaryRow]) -> Option<String> {
-    let mut missing = BASELINE_BENCHMARKS
-        .iter()
-        .copied()
+    let mut missing = baseline_benchmarks()
         .filter(|benchmark| !rows.iter().any(|row| row.benchmark == *benchmark));
     let first = missing.next()?;
     let mut message = String::from(first);

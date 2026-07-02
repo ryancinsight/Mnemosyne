@@ -14,7 +14,7 @@ mod report;
 mod threshold;
 
 use config::{
-    BASELINE_BENCHMARKS, BASELINE_PATH, COMPARISON_PATH, CRITERION_ROOT, CURRENT_EXCERPT_PATH,
+    baseline_benchmarks, BASELINE_PATH, COMPARISON_PATH, CRITERION_ROOT, CURRENT_EXCERPT_PATH,
     ENFORCE_THRESHOLDS_FLAG, METADATA_PATH, REFRESH_BASELINE_FLAG, SUMMARY_PATH, VARIANCE_PATH,
 };
 use criterion::collect_estimates;
@@ -72,17 +72,15 @@ fn main() -> io::Result<()> {
     let missing_baseline_rows = missing_selected_benchmarks_message(&rows);
     let current_excerpt_count = write_summary_iter(
         CURRENT_EXCERPT_PATH,
-        BASELINE_BENCHMARKS
-            .iter()
-            .filter_map(|benchmark| rows.iter().find(|row| row.benchmark == *benchmark)),
+        baseline_benchmarks()
+            .filter_map(|benchmark| rows.iter().find(|row| row.benchmark == benchmark)),
     )?;
     if flags.refresh_baseline {
         fs::create_dir_all("benchmarks")?;
         write_summary_iter(
             BASELINE_PATH,
-            BASELINE_BENCHMARKS
-                .iter()
-                .filter_map(|benchmark| rows.iter().find(|row| row.benchmark == *benchmark)),
+            baseline_benchmarks()
+                .filter_map(|benchmark| rows.iter().find(|row| row.benchmark == benchmark)),
         )?;
     }
 

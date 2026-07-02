@@ -1,12 +1,13 @@
 use core::alloc::GlobalAlloc;
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput};
+use criterion::{Criterion, Throughput};
 use std::alloc::System;
 
 #[cfg(jemalloc_available)]
 use super::compat::bench_jemalloc;
 use super::constants::{BATCH_ALLOCS, HUGE_LAYOUT, LARGE_LAYOUT, MEDIUM_LAYOUT, SMALL_LAYOUT};
 use super::helpers::{
-    alloc_dealloc, burst_alloc_dealloc, dealloc_only, require_allocated, AllocatedBlock,
+    alloc_dealloc, bench_batched_case, bench_iter_case, burst_alloc_dealloc, dealloc_only,
+    require_allocated, snmalloc_skips, AllocatedBlock,
 };
 
 pub fn bench_allocator_cycles(c: &mut Criterion) {
@@ -18,40 +19,56 @@ pub fn bench_allocator_cycles(c: &mut Criterion) {
         ("huge/2m", HUGE_LAYOUT),
     ] {
         group.throughput(Throughput::Bytes(layout.size() as u64));
-        group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
-            b.iter(|| unsafe { alloc_dealloc(&mnemosyne::Mnemosyne, *layout) })
-        });
-        group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
-            b.iter(|| unsafe { alloc_dealloc(&System, *layout) })
-        });
-        group.bench_with_input(BenchmarkId::new("MiMalloc", name), &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
-            b.iter(|| unsafe { alloc_dealloc(&mimalloc::MiMalloc, *layout) })
-        });
-        group.bench_with_input(BenchmarkId::new("RpMalloc", name), &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
-            b.iter(|| unsafe { alloc_dealloc(&rpmalloc::RpMalloc, *layout) })
-        });
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
-        let skip_snmalloc = false;
-        #[cfg(all(windows, target_arch = "x86_64"))]
-        let skip_snmalloc = name == "huge/2m";
-
-        if !skip_snmalloc {
-            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-                // Safety: `layout` comes from the static valid benchmark layout table.
-                b.iter(|| unsafe { alloc_dealloc(&snmalloc_rs::SnMalloc, *layout) })
-            });
+        // `cycle` is the measured routine; passing it as a generic `fn` item
+        // lets each comparator monomorphize independently (zero dispatch cost).
+        // Safety: `layout` comes from the static valid benchmark layout table.
+        fn cycle<A: GlobalAlloc>(a: &A, layout: &core::alloc::Layout) {
+            unsafe { alloc_dealloc(a, *layout) }
+        }
+        bench_iter_case(
+            &mut group,
+            "Mnemosyne",
+            name,
+            &mnemosyne::Mnemosyne,
+            &layout,
+            cycle,
+        );
+        bench_iter_case(&mut group, "System", name, &System, &layout, cycle);
+        bench_iter_case(
+            &mut group,
+            "MiMalloc",
+            name,
+            &mimalloc::MiMalloc,
+            &layout,
+            cycle,
+        );
+        bench_iter_case(
+            &mut group,
+            "RpMalloc",
+            name,
+            &rpmalloc::RpMalloc,
+            &layout,
+            cycle,
+        );
+        if !snmalloc_skips(name) {
+            bench_iter_case(
+                &mut group,
+                "SnMalloc",
+                name,
+                &snmalloc_rs::SnMalloc,
+                &layout,
+                cycle,
+            );
         }
         #[cfg(jemalloc_available)]
-        {
-            group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
-                // Safety: `layout` comes from the static valid benchmark layout table.
-                b.iter(|| unsafe { alloc_dealloc(&bench_jemalloc::Jemalloc, *layout) })
-            });
-        }
+        bench_iter_case(
+            &mut group,
+            "Jemalloc",
+            name,
+            &bench_jemalloc::Jemalloc,
+            &layout,
+            cycle,
+        );
     }
     group.finish();
 }
@@ -65,62 +82,67 @@ pub fn bench_allocator_alloc(c: &mut Criterion) {
         ("huge/2m", HUGE_LAYOUT),
     ] {
         group.throughput(Throughput::Bytes(layout.size() as u64));
-        group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
-            b.iter_batched(
-                || (),
-                |_| unsafe { AllocatedBlock::new(&mnemosyne::Mnemosyne, *layout, "alloc_only") },
-                BatchSize::SmallInput,
-            )
-        });
-        group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
-            b.iter_batched(
-                || (),
-                |_| unsafe { AllocatedBlock::new(&System, *layout, "alloc_only") },
-                BatchSize::SmallInput,
-            )
-        });
-        group.bench_with_input(BenchmarkId::new("MiMalloc", name), &layout, |b, layout| {
-            b.iter_batched(
-                || (),
-                |_| unsafe { AllocatedBlock::new(&mimalloc::MiMalloc, *layout, "alloc_only") },
-                BatchSize::SmallInput,
-            )
-        });
-        group.bench_with_input(BenchmarkId::new("RpMalloc", name), &layout, |b, layout| {
-            b.iter_batched(
-                || (),
-                |_| unsafe { AllocatedBlock::new(&rpmalloc::RpMalloc, *layout, "alloc_only") },
-                BatchSize::SmallInput,
-            )
-        });
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
-        let skip_snmalloc = false;
-        #[cfg(all(windows, target_arch = "x86_64"))]
-        let skip_snmalloc = name == "huge/2m";
-
-        if !skip_snmalloc {
-            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-                b.iter_batched(
-                    || (),
-                    |_| unsafe {
-                        AllocatedBlock::new(&snmalloc_rs::SnMalloc, *layout, "alloc_only")
-                    },
-                    BatchSize::SmallInput,
-                )
-            });
+        // Setup is the empty `()`; the timed routine allocates one block via
+        // `AllocatedBlock`, whose `Drop` frees it after the measurement.
+        fn setup<A: GlobalAlloc>(_a: &A, _layout: &core::alloc::Layout) {}
+        fn alloc_only<'a, A: GlobalAlloc>(
+            a: &'a A,
+            _state: (),
+            layout: &core::alloc::Layout,
+        ) -> AllocatedBlock<'a, A> {
+            unsafe { AllocatedBlock::new(a, *layout, "alloc_only") }
+        }
+        bench_batched_case(
+            &mut group,
+            "Mnemosyne",
+            name,
+            &mnemosyne::Mnemosyne,
+            &layout,
+            setup,
+            alloc_only,
+        );
+        bench_batched_case(
+            &mut group, "System", name, &System, &layout, setup, alloc_only,
+        );
+        bench_batched_case(
+            &mut group,
+            "MiMalloc",
+            name,
+            &mimalloc::MiMalloc,
+            &layout,
+            setup,
+            alloc_only,
+        );
+        bench_batched_case(
+            &mut group,
+            "RpMalloc",
+            name,
+            &rpmalloc::RpMalloc,
+            &layout,
+            setup,
+            alloc_only,
+        );
+        if !snmalloc_skips(name) {
+            bench_batched_case(
+                &mut group,
+                "SnMalloc",
+                name,
+                &snmalloc_rs::SnMalloc,
+                &layout,
+                setup,
+                alloc_only,
+            );
         }
         #[cfg(jemalloc_available)]
-        {
-            group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
-                b.iter_batched(
-                    || (),
-                    |_| unsafe {
-                        AllocatedBlock::new(&bench_jemalloc::Jemalloc, *layout, "alloc_only")
-                    },
-                    BatchSize::SmallInput,
-                )
-            });
-        }
+        bench_batched_case(
+            &mut group,
+            "Jemalloc",
+            name,
+            &bench_jemalloc::Jemalloc,
+            &layout,
+            setup,
+            alloc_only,
+        );
     }
     group.finish();
 }
@@ -134,64 +156,62 @@ pub fn bench_allocator_dealloc(c: &mut Criterion) {
         ("huge/2m", HUGE_LAYOUT),
     ] {
         group.throughput(Throughput::Bytes(layout.size() as u64));
-        group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
-            b.iter_batched(
-                || unsafe {
-                    require_allocated(mnemosyne::Mnemosyne.alloc(*layout), "dealloc_only")
-                },
-                |ptr| unsafe { dealloc_only(&mnemosyne::Mnemosyne, ptr, *layout) },
-                BatchSize::SmallInput,
+        // Setup allocates one block (untimed); the timed routine frees it.
+        fn setup<A: GlobalAlloc>(a: &A, layout: &core::alloc::Layout) -> *mut u8 {
+            unsafe { require_allocated(a.alloc(*layout), "dealloc_only") }
+        }
+        fn dealloc<A: GlobalAlloc>(a: &A, ptr: *mut u8, layout: &core::alloc::Layout) {
+            unsafe { dealloc_only(a, ptr, *layout) }
+        }
+        bench_batched_case(
+            &mut group,
+            "Mnemosyne",
+            name,
+            &mnemosyne::Mnemosyne,
+            &layout,
+            setup,
+            dealloc,
+        );
+        bench_batched_case(&mut group, "System", name, &System, &layout, setup, dealloc);
+        bench_batched_case(
+            &mut group,
+            "MiMalloc",
+            name,
+            &mimalloc::MiMalloc,
+            &layout,
+            setup,
+            dealloc,
+        );
+        bench_batched_case(
+            &mut group,
+            "RpMalloc",
+            name,
+            &rpmalloc::RpMalloc,
+            &layout,
+            setup,
+            dealloc,
+        );
+        if !snmalloc_skips(name) {
+            bench_batched_case(
+                &mut group,
+                "SnMalloc",
+                name,
+                &snmalloc_rs::SnMalloc,
+                &layout,
+                setup,
+                dealloc,
             );
-        });
-        group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
-            b.iter_batched(
-                || unsafe { require_allocated(System.alloc(*layout), "dealloc_only") },
-                |ptr| unsafe { dealloc_only(&System, ptr, *layout) },
-                BatchSize::SmallInput,
-            )
-        });
-        group.bench_with_input(BenchmarkId::new("MiMalloc", name), &layout, |b, layout| {
-            b.iter_batched(
-                || unsafe { require_allocated(mimalloc::MiMalloc.alloc(*layout), "dealloc_only") },
-                |ptr| unsafe { dealloc_only(&mimalloc::MiMalloc, ptr, *layout) },
-                BatchSize::SmallInput,
-            )
-        });
-        group.bench_with_input(BenchmarkId::new("RpMalloc", name), &layout, |b, layout| {
-            b.iter_batched(
-                || unsafe { require_allocated(rpmalloc::RpMalloc.alloc(*layout), "dealloc_only") },
-                |ptr| unsafe { dealloc_only(&rpmalloc::RpMalloc, ptr, *layout) },
-                BatchSize::SmallInput,
-            )
-        });
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
-        let skip_snmalloc = false;
-        #[cfg(all(windows, target_arch = "x86_64"))]
-        let skip_snmalloc = name == "huge/2m";
-
-        if !skip_snmalloc {
-            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-                b.iter_batched(
-                    || unsafe {
-                        require_allocated(snmalloc_rs::SnMalloc.alloc(*layout), "dealloc_only")
-                    },
-                    |ptr| unsafe { dealloc_only(&snmalloc_rs::SnMalloc, ptr, *layout) },
-                    BatchSize::SmallInput,
-                )
-            });
         }
         #[cfg(jemalloc_available)]
-        {
-            group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
-                b.iter_batched(
-                    || unsafe {
-                        require_allocated(bench_jemalloc::Jemalloc.alloc(*layout), "dealloc_only")
-                    },
-                    |ptr| unsafe { dealloc_only(&bench_jemalloc::Jemalloc, ptr, *layout) },
-                    BatchSize::SmallInput,
-                )
-            });
-        }
+        bench_batched_case(
+            &mut group,
+            "Jemalloc",
+            name,
+            &bench_jemalloc::Jemalloc,
+            &layout,
+            setup,
+            dealloc,
+        );
     }
     group.finish();
 }
@@ -204,33 +224,52 @@ pub fn bench_allocator_bursts(c: &mut Criterion) {
         ("large/8192", LARGE_LAYOUT),
     ] {
         group.throughput(Throughput::Bytes((layout.size() * BATCH_ALLOCS) as u64));
-        group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
-            b.iter(|| unsafe { burst_alloc_dealloc(&mnemosyne::Mnemosyne, *layout) })
-        });
-        group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
-            b.iter(|| unsafe { burst_alloc_dealloc(&System, *layout) })
-        });
-        group.bench_with_input(BenchmarkId::new("MiMalloc", name), &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
-            b.iter(|| unsafe { burst_alloc_dealloc(&mimalloc::MiMalloc, *layout) })
-        });
-        group.bench_with_input(BenchmarkId::new("RpMalloc", name), &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
-            b.iter(|| unsafe { burst_alloc_dealloc(&rpmalloc::RpMalloc, *layout) })
-        });
-        group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
-            b.iter(|| unsafe { burst_alloc_dealloc(&snmalloc_rs::SnMalloc, *layout) })
-        });
-        #[cfg(jemalloc_available)]
-        {
-            group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
-                // Safety: `layout` comes from the static valid benchmark layout table.
-                b.iter(|| unsafe { burst_alloc_dealloc(&bench_jemalloc::Jemalloc, *layout) })
-            });
+        // Safety: `layout` comes from the static valid benchmark layout table.
+        fn burst<A: GlobalAlloc>(a: &A, layout: &core::alloc::Layout) {
+            unsafe { burst_alloc_dealloc(a, *layout) }
         }
+        bench_iter_case(
+            &mut group,
+            "Mnemosyne",
+            name,
+            &mnemosyne::Mnemosyne,
+            &layout,
+            burst,
+        );
+        bench_iter_case(&mut group, "System", name, &System, &layout, burst);
+        bench_iter_case(
+            &mut group,
+            "MiMalloc",
+            name,
+            &mimalloc::MiMalloc,
+            &layout,
+            burst,
+        );
+        bench_iter_case(
+            &mut group,
+            "RpMalloc",
+            name,
+            &rpmalloc::RpMalloc,
+            &layout,
+            burst,
+        );
+        bench_iter_case(
+            &mut group,
+            "SnMalloc",
+            name,
+            &snmalloc_rs::SnMalloc,
+            &layout,
+            burst,
+        );
+        #[cfg(jemalloc_available)]
+        bench_iter_case(
+            &mut group,
+            "Jemalloc",
+            name,
+            &bench_jemalloc::Jemalloc,
+            &layout,
+            burst,
+        );
     }
     group.finish();
 }
