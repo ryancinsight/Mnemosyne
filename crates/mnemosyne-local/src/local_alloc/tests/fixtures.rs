@@ -6,12 +6,8 @@ use mnemosyne_core::MemoryBackend;
 pub(super) struct MockBackend;
 pub(super) static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub(super) static DEALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
-pub(super) static MOCK_SEGMENT_POOL: mnemosyne_arena::GlobalSegmentPool =
-    mnemosyne_arena::GlobalSegmentPool::new();
-pub(super) static MOCK_ORPHAN_POOL: mnemosyne_arena::GlobalSegmentPool =
-    mnemosyne_arena::GlobalSegmentPool::new();
-pub(super) static MOCK_HUGE_POOL: mnemosyne_arena::GlobalHugePool =
-    mnemosyne_arena::GlobalHugePool::new();
+pub(super) static MOCK_POOLS: mnemosyne_arena::segment::pool::BackendPools =
+    mnemosyne_arena::segment::pool::BackendPools::new();
 
 impl MemoryBackend for MockBackend {
     unsafe fn allocate(size: usize) -> *mut u8 {
@@ -31,18 +27,8 @@ impl mnemosyne_arena::segment::pool::private::Sealed for MockBackend {}
 
 impl HasSegmentPool for MockBackend {
     #[inline(always)]
-    fn global_segment_pool() -> &'static mnemosyne_arena::GlobalSegmentPool {
-        &MOCK_SEGMENT_POOL
-    }
-
-    #[inline(always)]
-    fn global_orphan_pool() -> &'static mnemosyne_arena::GlobalSegmentPool {
-        &MOCK_ORPHAN_POOL
-    }
-
-    #[inline(always)]
-    fn global_huge_pool() -> &'static mnemosyne_arena::GlobalHugePool {
-        &MOCK_HUGE_POOL
+    fn pools() -> &'static mnemosyne_arena::segment::pool::BackendPools {
+        &MOCK_POOLS
     }
 }
 

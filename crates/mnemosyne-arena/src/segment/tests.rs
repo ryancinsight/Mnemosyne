@@ -7,7 +7,7 @@ use super::alloc::{
     allocate_segment, deallocate_segment, purge_segment_pool, release_segment_mapping,
     reset_segment_pool, SEGMENT_MAPPING_SIZE, SEGMENT_TAIL_GUARD_SIZE,
 };
-use super::pool::{GlobalHugePool, GlobalSegmentPool, HasSegmentPool};
+use super::pool::{BackendPools, GlobalHugePool, GlobalSegmentPool, HasSegmentPool};
 use super::stats::{arena_memory_stats, SegmentRelease};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::constants::{PAGE_SIZE, SEGMENT_ALIGN, SEGMENT_SIZE};
@@ -20,9 +20,7 @@ use std::alloc::{alloc, dealloc, Layout};
 
 struct FailingReleaseBackend;
 
-static FAILING_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static FAILING_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static FAILING_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static FAILING_POOLS: BackendPools = BackendPools::new();
 static FAILING_DEALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 impl MemoryBackend for FailingReleaseBackend {
@@ -39,16 +37,8 @@ impl MemoryBackend for FailingReleaseBackend {
 impl super::pool::private::Sealed for FailingReleaseBackend {}
 
 impl HasSegmentPool for FailingReleaseBackend {
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &FAILING_POOL
-    }
-
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &FAILING_ORPHAN_POOL
-    }
-
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &FAILING_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &FAILING_POOLS
     }
 }
 
@@ -56,11 +46,7 @@ impl HasSegmentPool for FailingReleaseBackend {
 struct GuardRecordingBackend;
 
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
-static GUARD_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
-static GUARD_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
-static GUARD_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static GUARD_POOLS: BackendPools = BackendPools::new();
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 static GUARD_CALLS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
@@ -109,16 +95,8 @@ impl super::pool::private::Sealed for GuardRecordingBackend {}
 
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 impl HasSegmentPool for GuardRecordingBackend {
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &GUARD_POOL
-    }
-
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &GUARD_ORPHAN_POOL
-    }
-
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &GUARD_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &GUARD_POOLS
     }
 }
 
@@ -365,9 +343,7 @@ fn test_concurrent_aba_safeness() {
 
 struct DecommitRecordingBackend;
 
-static DECOMMIT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static DECOMMIT_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static DECOMMIT_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static DECOMMIT_POOLS: BackendPools = BackendPools::new();
 static DECOMMIT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static DECOMMIT_BYTES: AtomicUsize = AtomicUsize::new(0);
 
@@ -400,23 +376,21 @@ impl MemoryBackend for DecommitRecordingBackend {
 impl super::pool::private::Sealed for DecommitRecordingBackend {}
 
 impl HasSegmentPool for DecommitRecordingBackend {
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &DECOMMIT_POOL
-    }
-
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &DECOMMIT_ORPHAN_POOL
-    }
-
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &DECOMMIT_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &DECOMMIT_POOLS
     }
 }
 
 #[test]
 fn test_segment_tail_slack_decommit() {
-    while DECOMMIT_POOL.pop().is_some() {}
-    while DECOMMIT_ORPHAN_POOL.pop().is_some() {}
+    while DecommitRecordingBackend::global_segment_pool()
+        .pop()
+        .is_some()
+    {}
+    while DecommitRecordingBackend::global_orphan_pool()
+        .pop()
+        .is_some()
+    {}
     DECOMMIT_CALLS.store(0, Ordering::Relaxed);
     DECOMMIT_BYTES.store(0, Ordering::Relaxed);
 
@@ -443,9 +417,7 @@ fn test_segment_tail_slack_decommit() {
 
 struct ResetRecordingBackend;
 
-static RESET_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static RESET_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static RESET_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static RESET_POOLS: BackendPools = BackendPools::new();
 static RESET_CALLS: AtomicUsize = AtomicUsize::new(0);
 static LAST_RESET_PTR: AtomicUsize = AtomicUsize::new(0);
 static LAST_RESET_SIZE: AtomicUsize = AtomicUsize::new(0);
@@ -479,23 +451,15 @@ impl MemoryBackend for ResetRecordingBackend {
 impl super::pool::private::Sealed for ResetRecordingBackend {}
 
 impl HasSegmentPool for ResetRecordingBackend {
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &RESET_POOL
-    }
-
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &RESET_ORPHAN_POOL
-    }
-
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &RESET_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &RESET_POOLS
     }
 }
 
 #[test]
 fn test_reset_segment_pool_propagates_correct_bounds() {
-    while RESET_POOL.pop().is_some() {}
-    while RESET_ORPHAN_POOL.pop().is_some() {}
+    while ResetRecordingBackend::global_segment_pool().pop().is_some() {}
+    while ResetRecordingBackend::global_orphan_pool().pop().is_some() {}
     RESET_CALLS.store(0, Ordering::Relaxed);
     LAST_RESET_PTR.store(0, Ordering::Relaxed);
     LAST_RESET_SIZE.store(0, Ordering::Relaxed);
@@ -529,7 +493,9 @@ fn test_reset_segment_pool_propagates_correct_bounds() {
     );
 
     // Clean up
-    let popped = RESET_POOL.pop().expect("segment must be in the pool");
+    let popped = ResetRecordingBackend::global_segment_pool()
+        .pop()
+        .expect("segment must be in the pool");
     let released = unsafe { release_segment_mapping::<ResetRecordingBackend>(popped) };
     assert_eq!(released, SegmentRelease::Released);
 }

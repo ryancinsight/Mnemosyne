@@ -1,16 +1,14 @@
 extern crate std;
 
 use super::*;
-use crate::segment::{GlobalHugePool, GlobalSegmentPool};
+use crate::segment::pool::BackendPools;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::constants::SEGMENT_SIZE;
 use mnemosyne_core::MemoryBackend;
 
 struct FailingHugeReleaseBackend;
 
-static FAILING_HUGE_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static FAILING_HUGE_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static FAILING_HUGE_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static FAILING_HUGE_POOLS: BackendPools = BackendPools::new();
 static FAILING_HUGE_DEALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
 static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -28,16 +26,8 @@ impl MemoryBackend for FailingHugeReleaseBackend {
 impl crate::segment::pool::private::Sealed for FailingHugeReleaseBackend {}
 
 impl HasSegmentPool for FailingHugeReleaseBackend {
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &FAILING_HUGE_POOL
-    }
-
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &FAILING_HUGE_ORPHAN_POOL
-    }
-
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &FAILING_HUGE_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &FAILING_HUGE_POOLS
     }
 }
 
@@ -223,10 +213,7 @@ fn huge_deallocation_returns_backend_release_status() {
 
 struct DecommitRecordingHugeBackend;
 
-static DECOMMIT_HUGE_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static DECOMMIT_HUGE_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static DECOMMIT_HUGE_HUGE_POOL: crate::segment::GlobalHugePool =
-    crate::segment::GlobalHugePool::new();
+static DECOMMIT_HUGE_POOLS: BackendPools = BackendPools::new();
 static DECOMMIT_HUGE_CALLS: AtomicUsize = AtomicUsize::new(0);
 static DECOMMIT_HUGE_BYTES: AtomicUsize = AtomicUsize::new(0);
 
@@ -259,16 +246,8 @@ impl MemoryBackend for DecommitRecordingHugeBackend {
 impl crate::segment::pool::private::Sealed for DecommitRecordingHugeBackend {}
 
 impl HasSegmentPool for DecommitRecordingHugeBackend {
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &DECOMMIT_HUGE_POOL
-    }
-
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &DECOMMIT_HUGE_ORPHAN_POOL
-    }
-
-    fn global_huge_pool() -> &'static crate::segment::GlobalHugePool {
-        &DECOMMIT_HUGE_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &DECOMMIT_HUGE_POOLS
     }
 }
 
