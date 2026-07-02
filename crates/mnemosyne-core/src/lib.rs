@@ -5,6 +5,7 @@
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
+pub(crate) mod abort;
 pub mod constants;
 pub mod kernel_budget;
 pub mod options;
@@ -16,7 +17,7 @@ pub mod validation;
 
 pub use constants::*;
 pub use kernel_budget::{KernelResourceBudget, OccupancyLimits};
-pub use policy::{AllocPolicy, StandardPolicy};
+pub use policy::{AllocPolicy, HardenedPolicy, SecurePolicy, StandardPolicy};
 pub use size_class::*;
 pub use sync::*;
 pub use types::*;

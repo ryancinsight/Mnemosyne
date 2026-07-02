@@ -38,6 +38,37 @@ impl SegmentOwner {
     }
 }
 
+/// Reads the current OS thread id from the Windows TEB.
+///
+/// On Windows x86-64 the `gs` segment base points at the running thread's TEB
+/// and `gs:[0x48]` is the fixed offset of `ClientId.UniqueThread` (the OS
+/// thread id). This is the single authoritative TEB thread-id read for the
+/// allocator's ownership fast paths, which pair it with
+/// [`SegmentOwner::from_thread_id`]/[`SegmentOwner::matches_thread_id`]. It is
+/// compiled only on the target where the segment-register load is available;
+/// other targets (and Miri) identify ownership by the allocator slot pointer
+/// instead, so no portable fallback is defined here.
+#[cfg(all(windows, target_arch = "x86_64", not(miri)))]
+#[inline(always)]
+pub fn current_thread_id() -> u32 {
+    let val: u32;
+    // SAFETY: On Windows x86_64 the `gs` segment base points at the current
+    // thread's TEB, and `gs:[0x48]` is the fixed offset of
+    // `ClientId.UniqueThread` (the OS thread id). The read is a single aligned
+    // 32-bit load from a thread-local OS structure that is always mapped for a
+    // running thread, touches no caller memory, and has no side effects
+    // (`nostack`, `readonly`, `preserves_flags`), so it is sound on every
+    // running thread.
+    unsafe {
+        core::arch::asm!(
+            "mov {0:e}, gs:[0x48]",
+            out(reg) val,
+            options(nostack, preserves_flags, readonly)
+        );
+    }
+    val
+}
+
 // SAFETY: `SegmentOwner` is a `#[repr(transparent)]` newtype over a plain
 // `usize` ownership token (an allocator pointer's address or a thread id). It is
 // a value, not a live reference — it confers no access to the pointee and is
