@@ -8,12 +8,8 @@ mnemosyne-core = { path = "../mnemosyne-core" }
 backtrace = "0.3"
 
 [features]
-default = ["parallel", "mnemosyne-memory"]
-parallel = []
-mnemosyne-memory = []
 nightly_tls = []
 std_tls = []
-
 
 [dev-dependencies]
 mnemosyne = { path = "../mnemosyne" }
