@@ -144,7 +144,12 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
         }
 
         let block = self.alloc(token, Layout::new::<T>())?;
-        let casted = block.cast::<T>();
+        // SAFETY: `block` is freshly allocated for `Layout::new::<T>()`, so it
+        // is sized and aligned for `T` (cast layout contract), and it is
+        // uninitialized `T` storage that is written with a valid `T`
+        // immediately below — before any path can read or drop it as a `T`
+        // (cast initialization/drop contract).
+        let casted = unsafe { block.cast::<T>() };
         // SAFETY: `block` was just allocated by `self.alloc` for
         // `Layout::new::<T>()`, so `casted.as_ptr()` is non-null, sized and
         // aligned for `T` and points to uninitialized owned storage;

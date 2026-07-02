@@ -15,13 +15,17 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
                 Some(len) => len,
                 None => return Err(val),
             };
-            // SAFETY: `T` is zero-sized, so `self.ptr` (the `NonNull::dangling()`
-            // sentinel, always aligned) is valid for a zero-byte write. The write
-            // consumes `val` by move and records it logically by the `len`
-            // increment above; no storage is read or aliased.
-            unsafe {
-                self.ptr.as_ptr().write(val);
-            }
+            // `push` transfers ownership of `val` into the vector. A ZST has
+            // no storage, so the transfer is recorded purely by the `len`
+            // increment above; `forget` (not drop) realizes it — the value
+            // now logically lives in the vector and is dropped exactly once
+            // by `pop`/`truncate`/`Drop`, which synthesize the element back
+            // via `read` from the dangling sentinel. Dropping `val` here
+            // would run its destructor a second time for the same logical
+            // element. This mirrors `std::vec::Vec`'s ZST push (a zero-byte
+            // `write` is semantically the same forget; `forget` states the
+            // ownership intent directly, without the dangling-pointer write).
+            core::mem::forget(val);
             return Ok(());
         }
 
