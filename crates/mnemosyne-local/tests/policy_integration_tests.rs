@@ -5,6 +5,18 @@
 //! * memory is zero-initialized on allocation (`ZERO_INITIALIZE = true`),
 //! * memory is poisoned on deallocation (`ENABLE_POISONING = true`), and
 //! * cross-class reallocations zero out the expanded portion correctly.
+//!
+//! Encryption-mode discipline (ADR 0001): a backend's thread allocator keys
+//! its segments under the first policy that owns them, and every chain encode/
+//! decode must agree with that recorded mode — so `HardenedPolicy`
+//! (`ENABLE_FREE_LIST_ENCRYPTION = true`) is exercised in its own `#[test]`
+//! processes here, never interleaved with unencrypted policies on the same
+//! backend. The prior interleaved forms passed only while no chain operation
+//! touched a mismatched page (bump-path luck); the debug tripwire in
+//! `Segment::cookie_for` now rejects that pattern loudly
+//! (`mixed_encryption_modes_trip_debug_safeguard` pins it). Unencrypted
+//! policies (`StandardPolicy`, `SecurePolicy`, custom zero/poison policies)
+//! share a mode and may still interleave freely.
 
 use mnemosyne_backend::MemoryBackendWrapper as Backend;
 use mnemosyne_core::StandardPolicy;
@@ -91,8 +103,22 @@ fn test_realloc_under_policies() {
             assert_eq!(*ptr1_re.add(i), 0);
         }
         thread_free::<SecurePolicy, Backend>(ptr1_re);
+    }
+}
 
-        // 2. HardenedPolicy: check byte preservation and expanded zeroing
+/// `HardenedPolicy` realloc byte preservation + expanded zeroing, in its own
+/// process so this backend's segments are keyed under the encrypted mode from
+/// first ownership (one encryption mode per backend; ADR 0001).
+#[test]
+fn test_realloc_under_hardened_policy() {
+    use core::alloc::Layout;
+
+    const ALIGN: usize = 8;
+    let old_layout = Layout::from_size_align(16, ALIGN)
+        .expect("16-byte allocation with 8-byte alignment is a valid Layout");
+    let new_size = 64;
+
+    unsafe {
         let ptr2 = thread_alloc::<HardenedPolicy, Backend>(16, ALIGN);
         assert!(!ptr2.is_null());
         core::ptr::write_bytes(ptr2, 0x88, 16);
@@ -117,14 +143,24 @@ fn test_usable_size_accuracy_across_policies() {
     unsafe {
         let ptr_std = thread_alloc::<StandardPolicy, Backend>(SIZE, ALIGN);
         let ptr_sec = thread_alloc::<SecurePolicy, Backend>(SIZE, ALIGN);
-        let ptr_hrd = thread_alloc::<HardenedPolicy, Backend>(SIZE, ALIGN);
 
         assert!(usable_size(ptr_std) >= SIZE);
         assert!(usable_size(ptr_sec) >= SIZE);
-        assert!(usable_size(ptr_hrd) >= SIZE);
 
         thread_free::<StandardPolicy, Backend>(ptr_std);
         thread_free::<SecurePolicy, Backend>(ptr_sec);
+    }
+}
+
+/// `usable_size` accuracy under the encrypted policy, in its own process (one
+/// encryption mode per backend; ADR 0001).
+#[test]
+fn test_usable_size_accuracy_under_hardened_policy() {
+    const SIZE: usize = 48;
+    const ALIGN: usize = 8;
+    unsafe {
+        let ptr_hrd = thread_alloc::<HardenedPolicy, Backend>(SIZE, ALIGN);
+        assert!(usable_size(ptr_hrd) >= SIZE);
         thread_free::<HardenedPolicy, Backend>(ptr_hrd);
     }
 }
@@ -283,8 +319,21 @@ fn test_in_place_realloc_growth_under_policies() {
             assert_eq!(*ptr3_re.add(i), 0);
         }
         thread_free::<SecurePolicy, Backend>(ptr3_re);
+    }
+}
 
-        // 4. HardenedPolicy: check in-place growth and zeroing + poisoning
+/// `HardenedPolicy` in-place realloc growth + zeroing, in its own process (one
+/// encryption mode per backend; ADR 0001).
+#[test]
+fn test_in_place_realloc_growth_under_hardened_policy() {
+    use core::alloc::Layout;
+
+    const ALIGN: usize = 8;
+    let old_layout = Layout::from_size_align(20, ALIGN)
+        .expect("20-byte allocation with 8-byte alignment is a valid Layout");
+    let new_size = 30;
+
+    unsafe {
         let ptr4 = thread_alloc::<HardenedPolicy, Backend>(20, ALIGN);
         assert!(!ptr4.is_null());
         core::ptr::write_bytes(ptr4, 0xFF, 20);
@@ -305,5 +354,29 @@ fn test_in_place_realloc_growth_under_policies() {
             assert_eq!(*ptr4_re.add(i), 0);
         }
         thread_free::<HardenedPolicy, Backend>(ptr4_re);
+    }
+}
+
+/// Pins the ADR 0001 interim safeguard: interleaving an encrypted policy with
+/// an unencrypted one on the SAME backend writes/decodes wrong-mode links —
+/// the debug tripwire in `Segment::cookie_for` must reject it before the
+/// chain corrupts. The standard allocation keys this backend's segment
+/// unencrypted; the hardened free then commits through `cookie_for::<Hardened>`
+/// against that segment and must hit the mode-mismatch assertion.
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "free-list mode mismatch")]
+fn mixed_encryption_modes_trip_debug_safeguard() {
+    const SIZE: usize = 48;
+    const ALIGN: usize = 8;
+    unsafe {
+        let ptr_std = thread_alloc::<StandardPolicy, Backend>(SIZE, ALIGN);
+        assert!(!ptr_std.is_null());
+        // Same size class, same thread allocator, same (unencrypted) segment:
+        // the bump-path allocation itself does not touch a chain...
+        let ptr_hrd = thread_alloc::<HardenedPolicy, Backend>(SIZE, ALIGN);
+        assert!(!ptr_hrd.is_null());
+        // ...but the encrypted free must fetch a chain cookie and trips.
+        thread_free::<HardenedPolicy, Backend>(ptr_hrd);
     }
 }

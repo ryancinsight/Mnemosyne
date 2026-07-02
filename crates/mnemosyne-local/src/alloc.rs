@@ -11,6 +11,16 @@ use mnemosyne_core::validation::{is_valid_alloc_request, is_valid_layout_alloc_r
 /// # Safety
 ///
 /// This function is unsafe because it handles raw pointers and manual layouts.
+///
+/// One free-list encryption mode per backend (ADR 0001): every policy used
+/// with a given backend `B` in a process must agree on
+/// `P::ENABLE_FREE_LIST_ENCRYPTION`. The thread allocator is keyed by `B`
+/// alone, so its pages are keyed under the first owning policy's mode; a
+/// later chain operation under a disagreeing policy would corrupt the free
+/// list. Debug builds abort on the mismatch (the `Segment::cookie_for`
+/// tripwire); the type-level fix (allocator keyed by encryption class) is
+/// tracked by ADR 0001. This applies equally to `thread_free` and
+/// `thread_realloc`.
 #[inline(always)]
 pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
     size: usize,
