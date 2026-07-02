@@ -19,6 +19,7 @@
 //! path on purpose.
 
 #![no_std]
+#![deny(missing_docs)]
 
 use core::ffi::c_void;
 use mnemosyne_backend::MemoryBackendWrapper;
@@ -321,7 +322,9 @@ pub extern "C" fn mnemosyne_is_leak_detector_enabled() -> i32 {
 
 /// Dumps a report of all active memory allocations (leaks) to the specified file path.
 ///
-/// Returns the number of leaks written on success, or -1 on error.
+/// Returns the number of leaks written on success, or -1 on error. Counts
+/// above `i32::MAX` saturate to `i32::MAX` (a wrapping cast could collide
+/// with the -1 error sentinel).
 ///
 /// # Safety
 ///
@@ -337,7 +340,7 @@ pub unsafe extern "C" fn mnemosyne_dump_leaks(path: *const core::ffi::c_char) ->
         return -1;
     };
     match mnemosyne_prof::dump_leaks(str_slice) {
-        Ok(count) => count as i32,
+        Ok(count) => i32::try_from(count).unwrap_or(i32::MAX),
         Err(_) => -1,
     }
 }
