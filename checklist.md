@@ -2,8 +2,54 @@
 
 Target version: 0.2.0
 
-## Verified
+Sprint phase: Closure (2026-07-01 audit cycle delivered; next increment is
+either backlog `## Open` item "benchmark gate statistics" or the local/core
+consolidation batch — both Definition-of-Ready).
 
+## Verified — 2026-07-01 audit cycle (branch fix/audit-2026-07-soundness-perf)
+
+Four-agent read-only audit fan-out (perf, memory, contention, safety, plus a
+structural monomorphization/GAT/const-generic/Cow/DRY/SSOT lens), findings
+triaged, then per-crate fixes in eleven atomic commits. Final gate: `cargo fmt
+--all --check`, workspace clippy `-D warnings` clean, `cargo nextest run`
+261/261, doctests green, `--no-default-features` spot builds green.
+
+- [x] [patch] fix(local) 5362a7c: orphan adoption preserves segment keys and
+  gates on policy compatibility (`acquire_policy_compatible_segment`);
+  regression tests differentially verified (abort under reverted behavior).
+- [x] [major] fix(heap)! b7afaef: `BrandedCell` pinned invariant in `T`
+  (compile_fail doctest verifies the exact variance rejection);
+  `BrandedBlock::cast` now `unsafe` with a consumer-derived contract; melinoe
+  verified unaffected (payload in invariant `UnsafeCell`).
+- [x] [patch] fix(arena) 85ce85a: pop retry failure ordering → Acquire;
+  huge-pool fit cap (4×), derived bucket count (11), single-splice restore;
+  runtime retained-cap + huge-pool retained blocks/bytes stats.
+- [x] [minor] refactor(backend) 2d6c250: CUDA directory-module split with
+  loader/symbol/driver consolidation; cuInit probe state on atomics; VEH
+  confined to the probe window (no more silent ExitProcess(0)); full-scan
+  unregister closes a permanent device-allocation leak; test-runner
+  detection deleted. Evidence tier: compile-time + registry unit tests; CUDA
+  runtime paths not exercisable here (no NVIDIA driver) — residual risk.
+- [x] [patch] fix(prof) ae4f4b4: order-sensitive interner hashing,
+  disabled-state sample drain, serialized active-flag recompute, and the
+  inverted leak-flag in `on_alloc` (differentially verified).
+- [x] [patch] fix(decay) dbb7514: shutdown lost-wakeup handshake (RMW
+  release/re-check/re-claim); dead `DefaultBackend` sweep removed.
+- [x] [patch] build 8bd04ff: pinned workspace profiles + committed
+  `.config/nextest.toml` (30 s slow / 60 s terminate). chore 87c4743: no-op
+  `parallel`/`mnemosyne-memory` markers removed workspace-wide. refactor
+  (core)!: dead `SpinLock` deleted.
+- [x] [patch] fix(c-shim) b04f868: `mnemosyne_dump_leaks` saturating count.
+
+- [x] [patch] Repair `mnemosyne-arena` tagged-stack construction for Atlas
+  consumers and route huge-pool rejected-chain restoration through the
+  production `push_chain` batch CAS path. `CacheAlignedAtomicPtr::new()` is
+  again the no-argument empty-head constructor required by
+  `TaggedSegmentStack`, and `restore_rejected` now restores a private rejected
+  chain with one `push_chain` call after computing its tail and length.
+  Evidence tier: compile-time validation plus downstream Kwavers FWI
+  integration. Verification: arena fmt/check/clippy; downstream Kwavers FWI
+  nextest (59 passed).
 - [x] [patch] Add `fuzz/c_shim_api` cargo-fuzz coverage for the C ABI boundary.
   `fuzz/src/c_shim_api.rs` owns the resource-bounded hostile input executor and
   `fuzz/fuzz_targets/c_shim_api.rs` is the thin libFuzzer adapter. Evidence

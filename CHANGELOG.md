@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Fixed
+
+- Orphan-segment adoption no longer re-keys encrypted free lists: an adopted
+  orphan's live chains are encoded with the keys already in its header (read
+  concurrently by remote freeing threads), so `push_owned_segment` keys only
+  never-encoded segments, and adoption gates on policy compatibility —
+  a mismatched orphan returns to the pool for a matching-policy thread
+  (`acquire_policy_compatible_segment`). Previously a hardened-policy thread
+  adopting any encrypted orphan corrupted its free lists (abort on the bounds
+  check) and raced concurrent key readers. Regression tests prove the encoded
+  chain decodes end-to-end and the mismatch skip (verified failing under the
+  old behavior).
+- `TaggedSegmentStack::pop` retried with a `Relaxed` CAS-failure ordering while
+  dereferencing the returned head's `next_free_segment` — an unsynchronized
+  read against `push`'s Release publication (data race on weakly-ordered
+  targets). The failure ordering is now `Acquire`.
+- `mnemosyne-prof`: interned stack-slice hashes depended only on the last frame
+  (`write_usize` replaced state instead of mixing), collapsing the intern map
+  to one collision chain under the global mutex; frees while profiling was
+  disabled never evicted resident samples (false leak reports plus a permanent
+  cold-path tax on every free); concurrent hook/flag registrars could strand
+  the aggregate active flag stale; and `on_alloc` passed the leak-detector
+  flag inverted, letting a stale sampling budget hide allocations from leak
+  tracking. All four fixed with value-semantic regression tests.
+- `mnemosyne-decay`: a `configure()` racing the dying purger between its
+  zero-cadence read and `SPAWNED` release could leave a non-zero cadence with
+  no purger thread. The shutdown handshake now releases, re-checks, and
+  re-claims via RMWs meeting in `SPAWNED`'s modification order.
+- CUDA backend: `cuInit` probe state moved from cross-thread `static mut` to
+  atomics; the registry unregister scan no longer early-exits on a stale count
+  snapshot (a concurrent register could hide the target slot, permanently
+  leaking the device allocation); init-race losers yield after a bounded spin;
+  docs state the real null-on-unavailable contract (no host fallback exists).
+- `mnemosyne_dump_leaks` saturates its count at `i32::MAX` instead of a
+  wrapping cast that could collide with the `-1` error sentinel.
+
 ### Added
 
 - `fuzz/c_shim_api`, a cargo-fuzz target for the `mnemosyne-c-shim` ABI over
@@ -28,13 +64,59 @@
 
 - Sourced all brand machinery from the [`melinoe`](https://github.com/ryancinsight/melinoe) crate, making it the single source of truth for the ecosystem's brand identity and capability tokens. `mnemosyne-heap` no longer defines its own `Invariant<'brand>` marker or `AllocatorToken<'brand>`; the heap's `scope`, `BrandedBlock`, `BrandedCell`, `BrandedBox`, and `BrandedVec` now use melinoe's `InvariantLifetime<'brand>` marker and `ThreadLocalToken<'brand>` (minted by melinoe's `thread_local_scope`). Public renames: `AllocatorToken` → `ThreadLocalToken`, `Invariant` → `InvariantLifetime` (re-exported from `mnemosyne` and `mnemosyne-heap`). Both `ThreadLocalToken` (`PhantomData<*const ()>`) and the former `AllocatorToken` (`PhantomData<*mut ()>`) are `!Send + !Sync`, so all thread-confinement and brand-uniqueness proofs are preserved — verified by the unchanged `compile_fail` doctests (token `!Send`, `BrandedBox`/`BrandedVec` `!Send`, brand cannot escape its scope, cross-scope tokens/heaps cannot mix) plus the full heap unit/integration suite.
 - The `melinoe` dependency tracks `main` with no pinned rev (`branch = "main"`, `default-features = false`), so the heap always builds against the latest published brand semantics.
+- `BrandedBlock::cast<U>` is now an `unsafe fn`: it was callable from safe code
+  to transmute-and-drop (`alloc_init(0usize)` → `.cast::<String>()` → `free`
+  runs `String::drop` over integer bytes). `BrandedCell<'brand, T>` is now
+  invariant in `T` (it is `Copy` with token-mediated interior mutability, so
+  covariance allowed a safe dangling-reference exploit; a `compile_fail`
+  doctest pins the rejection).
+- Removed the dead `mnemosyne_core::sync::SpinLock` (no user remained after the
+  huge-pool Treiber-stack conversion; its safe `unlock()` was callable without
+  holding the lock).
+- Removed the no-op `parallel`/`mnemosyne-memory` marker features from every
+  leaf crate (they gated zero `cfg` sites); the top-level
+  `mnemosyne/mnemosyne-memory → branded` forwarding remains. The permanent
+  process-wide CUDA vectored-exception handler that converted in-page errors
+  and nvcuda access violations into a silent `ExitProcess(0)` is replaced by a
+  probe-window-gated handler that records the failure and terminates only the
+  probing worker thread; `stagger_nextest_init` (test-runner detection on the
+  production init path) is deleted.
 
 ### Migration
 
 - Replace references to `mnemosyne::AllocatorToken` / `mnemosyne_heap::AllocatorToken` with `ThreadLocalToken`, and `Invariant` with `InvariantLifetime`. Code that obtains its token from the `branded_scope`/`scope` closure parameter needs no change (the token type is inferred).
+- Wrap `BrandedBlock::cast` call sites in `unsafe` and discharge the documented
+  layout + initialization/drop contract (freshly-allocated uninitialized
+  storage written before use satisfies it, as `Heap::alloc_init` does).
 
 ### Changed
 
+- Huge-allocation cache behavior: the upward bucket scan stops once a bucket's
+  lower bound exceeds `HUGE_POP_FIT_CAP (4) ×` the request, bounding cache-hit
+  over-provision to <8× (a 20 KiB-class request can no longer pin a 16 MiB
+  cached mapping whose RSS stays committed); the bucket count is derived from
+  `MAX_CACHED_HUGE_SIZE` (11, was 16 — buckets 11–15 were unreachable dead
+  statics scanned on every miss); exact-bucket fit misses restore the rejected
+  chain with one splice CAS in original order instead of one CAS per segment.
+- `ArenaMemoryStats` reports the enforced runtime retained-segment cap (not the
+  compile-time limit) and gains `retained_huge_blocks`/`retained_huge_bytes`;
+  `mnemosyne::MemoryStats` and the benchmark memory report forward them.
+- The CUDA backend is a directory module (`backends/cuda/{loader, veh,
+  registry, context, mod}.rs`): one cached library loader (temp-context calls
+  no longer re-dlopen), one symbol resolver, and one monomorphized driver over
+  a ZST `CudaAllocOps` strategy replacing three cloned `MemoryBackend` impls.
+- Workspace profiles are pinned (dev/test `line-tables-only` + overflow
+  checks, release stripped, a dedicated `profiling` profile) and
+  `.config/nextest.toml` commits the 30 s slow / 60 s terminate test budget.
+- `decay_step` no longer sweeps `DefaultBackend` (its pools are populated only
+  by test fixtures; the swept-backend list now documents its closed-set
+  maintenance hazard).
+- Restored the no-argument tagged-stack head constructor used by
+  `TaggedSegmentStack` and routed huge-pool rejected-chain restoration through
+  `TaggedSegmentStack::push_chain`, making the batch CAS path production-live
+  instead of test-only. Evidence tier: compile-time validation plus downstream
+  Kwavers FWI integration; arena fmt/check/clippy pass, and downstream Kwavers
+  FWI nextest passes.
 - Consolidated `BrandedVec` shrink mechanics into a private `shrink_to_len`
   helper shared by `shrink_to_fit` and `into_boxed_slice`. The boxed-slice
   conversion still owns slice construction and ownership transfer; only the

@@ -2,6 +2,47 @@
 
 ## Residual risk / open findings
 
+2026-07-01 four-agent audit cycle (perf, memory, contention, safety, plus the
+structural monomorphization/const-generic/GAT/Cow/DRY/SSOT lens across all 11
+crates + workspace config). High-severity findings fixed same-cycle (checklist
+2026-07-01 block); deferred items AR-1..AR-12 in backlog.md `## Open`.
+Residual risk and verified-clean results:
+
+- CUDA runtime paths (init probe, VEH redirect, device alloc/free) are
+  verified at compile-time + registry-unit-test tier only — this machine has
+  no NVIDIA driver. The VEH Rip-redirect mechanism in particular needs one
+  run on a machine with a faulting/working driver before it is trusted at the
+  empirical tier.
+- Decision log — orphan adoption fix chose "never re-key + compatibility
+  gate" over "drain-and-re-encode with old keys": re-encoding cannot be done
+  safely while remote threads concurrently read keys in
+  `AtomicFreeList::push`; key writes are structurally confined to segments
+  with no live chains and no external visibility. A policy-incompatible orphan
+  costs one deferred pop/push per acquisition for mismatched-policy threads
+  (bounded, cold path; pathological only in sustained mixed-policy processes,
+  which AR-1 addresses at the root).
+- Branded-type variance is now audited: `BrandedCell` fixed (was covariant in
+  T while Copy+writable); `BrandedBlock`/`BrandedBox`/`BrandedVec`/
+  `TieredBlock` covariance verified sound (linear owned, Box/Vec model);
+  melinoe's own cells verified unaffected (payload inline in invariant
+  `UnsafeCell`). A `compile_fail` doctest pins the fix.
+- Verified clean this cycle (do not re-audit): tagged-stack orderings besides
+  the fixed pop-retry edge (push Release/Relaxed, take_all Acquire swap +
+  release-sequence argument); arena allocate/free error paths leak no
+  mappings; backend wrapper record-on-confirmed-outcome telemetry;
+  Unix/Windows madvise/VirtualAlloc constants; AlignedVec/ScratchPool layout
+  + borrow-depth + unwind soundness; per-CPU cache count-neutrality (no UAF);
+  prof shard design (backtrace outside lock, no lock-order cycle); interner
+  boundedness (refcount release + id recycling, capacity retained ≈ peak);
+  c-shim ABI monomorphized call path; benchmark instruments (black_box
+  placement, timed regions, bounded channels) except the AR-4 statistics
+  weakness; disabled-profiler fast path is one Relaxed load + branch.
+- The benchmarks crate's `snmalloc-sys` CMake build failed once mid-cycle in
+  one agent's environment (CXX probe) and succeeded in every other run —
+  environment-flaky, not tracked as a code defect.
+- The 2026-06-27 mixed-policy latent-unsoundness observation is superseded by
+  the structured AR-1 filing.
+
 2026-06-27 deep audit (safety, contention-free performance, memory efficiency),
 read-only fan-out across arena/local/core/heap/backend. Tracked items filed in
 backlog.md `## Open`. Verified-clean results recorded so they are not re-audited:
@@ -36,6 +77,15 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
   tested through its no-libFuzzer library path.
 
 ## Closed
+
+- [patch] `mnemosyne-arena` briefly exposed a constructor contract mismatch in
+  Atlas consumers: `TaggedSegmentStack` called `CacheAlignedAtomicPtr::new()`
+  as an empty tagged head while the local dirty tree had shifted the atomic
+  constructor shape. Restored the no-argument empty-head constructor and routed
+  huge-pool rejected-chain restoration through `TaggedSegmentStack::push_chain`
+  so the batch CAS path is production-live. Evidence tier: compile-time
+  validation plus downstream integration; arena fmt/check/clippy pass, and
+  Kwavers FWI nextest passes 59/59.
 
 - [patch] `mnemosyne-c-shim` had deterministic adversarial tests but no
   continuous fuzz target for arbitrary hostile ABI inputs. Added excluded
