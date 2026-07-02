@@ -4,9 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["parallel", "mnemosyne-memory"]
-parallel = []
-mnemosyne-memory = []
+default = []
 
 [dependencies]
 mnemosyne-core = { path = "../mnemosyne-core" }

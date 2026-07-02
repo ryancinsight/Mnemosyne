@@ -16,8 +16,7 @@ num-complex = { version = "0.4", optional = true }
 eunomia = { git = "https://github.com/ryancinsight/eunomia", default-features = false, optional = true }
 
 [features]
-default = ["parallel", "mnemosyne-memory", "std_tls"]
-parallel = []
+default = ["mnemosyne-memory", "std_tls"]
 mnemosyne-memory = ["branded"]
 branded = ["dep:mnemosyne-heap"]
 nightly_tls = ["mnemosyne-local/nightly_tls", "mnemosyne-prof/nightly_tls"]

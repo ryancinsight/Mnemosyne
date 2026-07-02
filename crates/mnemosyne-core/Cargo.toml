@@ -4,9 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["parallel", "mnemosyne-memory", "std"]
-parallel = []
-mnemosyne-memory = []
+default = ["std"]
 std = []
 
 [dependencies]

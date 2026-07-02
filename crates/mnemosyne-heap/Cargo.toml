@@ -4,9 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["parallel", "mnemosyne-memory"]
-parallel = []
-mnemosyne-memory = []
+default = []
 
 [dependencies]
 # Brand machinery (invariant-lifetime marker + thread-confined capability token)

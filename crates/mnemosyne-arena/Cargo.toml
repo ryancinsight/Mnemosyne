@@ -4,9 +4,7 @@ version = "0.2.0"
 edition = "2021"
 
 [features]
-default = ["parallel", "mnemosyne-memory", "std"]
-parallel = []
-mnemosyne-memory = []
+default = ["std"]
 segment-tail-guards = []
 segment-header-guards = []
 num-complex = ["dep:num-complex"]
