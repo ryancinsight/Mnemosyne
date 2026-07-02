@@ -30,12 +30,15 @@ pub(crate) fn get_tls_seed() -> usize {
     })
 }
 
+/// Process-wide fold point for per-thread cross-thread reclamation counts.
+///
+/// The allocation-side reclaim path (`try_reclaim_and_allocate`, orphan
+/// adoption, and the defrag/reclaim sweeps) accumulates into a per-allocator
+/// `cross_thread_reclaimed` field instead of touching this atomic directly, so
+/// the hot path no longer contends a single global cache line. Each thread
+/// folds its accumulated count into this total lazily — on every `stats()`
+/// snapshot and once more on `Drop` — so the global reader remains exact.
 static CROSS_THREAD_RECLAIMED_BLOCKS: AtomicUsize = AtomicUsize::new(0);
-
-#[inline]
-pub(crate) fn record_cross_thread_reclaimed(count: usize) {
-    CROSS_THREAD_RECLAIMED_BLOCKS.fetch_add(count, Ordering::Relaxed);
-}
 
 /// Thread-local cache for fast-path small allocations.
 pub struct ThreadAllocator<B: HasSegmentPool = DefaultBackend> {
@@ -65,6 +68,15 @@ pub struct ThreadAllocator<B: HasSegmentPool = DefaultBackend> {
     pub orphan_segments_adopted: usize,
     /// Number of owned-segment sweeps made while searching for recyclable pages.
     pub recycle_sweeps: usize,
+    /// Blocks this allocator has reclaimed from cross-thread (`thread_free`)
+    /// lists over its lifetime.
+    ///
+    /// Accumulated locally on the allocation-side reclaim path to avoid
+    /// contending the process-global `CROSS_THREAD_RECLAIMED_BLOCKS` atomic on
+    /// every reclaim. A `stats()` snapshot reports the process-wide total as
+    /// this field plus the global fold point; `Drop` folds this field into that
+    /// global exactly once so a later reader still counts this thread's work.
+    pub cross_thread_reclaimed: usize,
     /// Indicates whether an allocation or deallocation operation is currently active on this thread-local cache.
     pub is_allocating: bool,
     /// Thread-local pseudo-random number generator state for allocation randomization.
@@ -99,6 +111,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             fresh_segments: 0,
             orphan_segments_adopted: 0,
             recycle_sweeps: 0,
+            cross_thread_reclaimed: 0,
             is_allocating: false,
             rng_state: 0x123456789abcdefu64,
             defrag_counter: 0,
@@ -127,9 +140,23 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         x
     }
 
-    /// Returns the process-wide number of blocks reclaimed from cross-thread free lists.
+    /// Returns the number of cross-thread-reclaimed blocks folded from threads
+    /// that have already terminated.
+    ///
+    /// This is the process-global fold point read on its own; it does not
+    /// include the calling thread's own in-flight `cross_thread_reclaimed`
+    /// count (that is added by [`ThreadAllocator::stats`]). It backs the
+    /// stats fallback taken only when the current thread has no live allocator,
+    /// where the thread contributes nothing of its own.
     pub fn cross_thread_reclaimed_blocks() -> usize {
         CROSS_THREAD_RECLAIMED_BLOCKS.load(Ordering::Relaxed)
+    }
+
+    /// Accumulates `count` cross-thread-reclaimed blocks into this allocator's
+    /// local counter, avoiding the process-global atomic on the reclaim path.
+    #[inline(always)]
+    pub(crate) fn record_cross_thread_reclaimed(&mut self, count: usize) {
+        self.cross_thread_reclaimed += count;
     }
 
     /// Returns true when `segment` is the active segment being sliced by this thread.
@@ -219,7 +246,15 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
 impl<B: HasSegmentPool> Drop for ThreadAllocator<B> {
     fn drop(&mut self) {
+        // Fold this thread's lifetime reclaim count into the process-global
+        // total exactly once, before the owned-segment teardown adds any final
+        // reclaims. `reclaim_owned_segments` accumulates into
+        // `cross_thread_reclaimed`, so drain the field after it runs.
         self.reclaim_owned_segments();
+        if self.cross_thread_reclaimed != 0 {
+            CROSS_THREAD_RECLAIMED_BLOCKS.fetch_add(self.cross_thread_reclaimed, Ordering::Relaxed);
+            self.cross_thread_reclaimed = 0;
+        }
     }
 }
 

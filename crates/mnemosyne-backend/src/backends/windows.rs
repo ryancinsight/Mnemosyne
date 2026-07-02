@@ -20,7 +20,7 @@ const PAGE_READWRITE: u32 = 0x04;
 /// mapping reserved.
 const PAGE_NOACCESS: u32 = 0x01;
 
-extern "system" {
+unsafe extern "system" {
     fn VirtualAlloc(
         lpAddress: *const c_void,
         dwSize: usize,

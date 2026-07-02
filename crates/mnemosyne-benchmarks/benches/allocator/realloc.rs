@@ -1,4 +1,5 @@
-use criterion::{BenchmarkId, Criterion, Throughput};
+use core::alloc::{GlobalAlloc, Layout};
+use criterion::{Criterion, Throughput};
 use std::alloc::System;
 
 #[cfg(jemalloc_available)]
@@ -7,7 +8,7 @@ use super::constants::{
     HUGE_REALLOC_SRC_LAYOUT, LARGE_LAYOUT, LARGE_WITHIN_CLASS_LAYOUT, SMALL_LAYOUT,
     SMALL_WITHIN_CLASS_LAYOUT,
 };
-use super::helpers::alloc_realloc_dealloc;
+use super::helpers::{alloc_realloc_dealloc, bench_iter_case, snmalloc_skips};
 
 pub fn bench_realloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("Realloc latency");
@@ -27,70 +28,56 @@ pub fn bench_realloc(c: &mut Criterion) {
         ),
     ] {
         group.throughput(Throughput::Elements(1));
-        group.bench_with_input(
-            BenchmarkId::new("Mnemosyne", name),
-            &(layout, new_size),
-            |b, (layout, new_size)| {
-                // Safety: inputs come from the static valid benchmark layout table.
-                b.iter(|| unsafe {
-                    alloc_realloc_dealloc(&mnemosyne::Mnemosyne, *layout, *new_size)
-                })
-            },
+        // Safety: inputs come from the static valid benchmark layout table.
+        fn realloc<A: GlobalAlloc>(a: &A, input: &(Layout, usize)) {
+            let (layout, new_size) = input;
+            unsafe { alloc_realloc_dealloc(a, *layout, *new_size) }
+        }
+        let input = (layout, new_size);
+        bench_iter_case(
+            &mut group,
+            "Mnemosyne",
+            name,
+            &mnemosyne::Mnemosyne,
+            &input,
+            realloc,
         );
-        group.bench_with_input(
-            BenchmarkId::new("System", name),
-            &(layout, new_size),
-            |b, (layout, new_size)| {
-                // Safety: inputs come from the static valid benchmark layout table.
-                b.iter(|| unsafe { alloc_realloc_dealloc(&System, *layout, *new_size) })
-            },
+        bench_iter_case(&mut group, "System", name, &System, &input, realloc);
+        bench_iter_case(
+            &mut group,
+            "MiMalloc",
+            name,
+            &mimalloc::MiMalloc,
+            &input,
+            realloc,
         );
-        group.bench_with_input(
-            BenchmarkId::new("MiMalloc", name),
-            &(layout, new_size),
-            |b, (layout, new_size)| {
-                // Safety: inputs come from the static valid benchmark layout table.
-                b.iter(|| unsafe { alloc_realloc_dealloc(&mimalloc::MiMalloc, *layout, *new_size) })
-            },
+        bench_iter_case(
+            &mut group,
+            "RpMalloc",
+            name,
+            &rpmalloc::RpMalloc,
+            &input,
+            realloc,
         );
-        group.bench_with_input(
-            BenchmarkId::new("RpMalloc", name),
-            &(layout, new_size),
-            |b, (layout, new_size)| {
-                // Safety: inputs come from the static valid benchmark layout table.
-                b.iter(|| unsafe { alloc_realloc_dealloc(&rpmalloc::RpMalloc, *layout, *new_size) })
-            },
-        );
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
-        let skip_snmalloc = false;
-        #[cfg(all(windows, target_arch = "x86_64"))]
-        let skip_snmalloc = name == "huge_shrink_4m_to_2m";
-
-        if !skip_snmalloc {
-            group.bench_with_input(
-                BenchmarkId::new("SnMalloc", name),
-                &(layout, new_size),
-                |b, (layout, new_size)| {
-                    // Safety: inputs come from the static valid benchmark layout table.
-                    b.iter(|| unsafe {
-                        alloc_realloc_dealloc(&snmalloc_rs::SnMalloc, *layout, *new_size)
-                    })
-                },
+        if !snmalloc_skips(name) {
+            bench_iter_case(
+                &mut group,
+                "SnMalloc",
+                name,
+                &snmalloc_rs::SnMalloc,
+                &input,
+                realloc,
             );
         }
         #[cfg(jemalloc_available)]
-        {
-            group.bench_with_input(
-                BenchmarkId::new("Jemalloc", name),
-                &(layout, new_size),
-                |b, (layout, new_size)| {
-                    // Safety: inputs come from the static valid benchmark layout table.
-                    b.iter(|| unsafe {
-                        alloc_realloc_dealloc(&bench_jemalloc::Jemalloc, *layout, *new_size)
-                    })
-                },
-            );
-        }
+        bench_iter_case(
+            &mut group,
+            "Jemalloc",
+            name,
+            &bench_jemalloc::Jemalloc,
+            &input,
+            realloc,
+        );
     }
     group.finish();
 }

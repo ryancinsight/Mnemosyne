@@ -1,12 +1,12 @@
 [package]
 name = "mnemosyne-benchmarks"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.87"
 build = "build.rs"
 
 [features]
-default = ["parallel", "mnemosyne-memory"]
-parallel = []
+default = ["mnemosyne-memory"]
 mnemosyne-memory = ["mnemosyne/branded"]
 # Opt-in jemalloc comparator on Windows by linking a system-installed
 # `libjemalloc_s.a` (e.g. MSYS2 `mingw-w64-*-jemalloc`). `tikv-jemallocator`
@@ -35,6 +35,9 @@ mnemosyne-decay = { path = "../mnemosyne-decay" }
 
 [target.'cfg(not(windows))'.dependencies]
 tikv-jemallocator = "0.6"
+
+[build-dependencies]
+mnemosyne-build-util = { path = "../mnemosyne-build-util" }
 
 [[bench]]
 name = "allocator_bench"

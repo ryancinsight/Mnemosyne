@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne::{
-    disable_profiling, dump_profile, enable_profiling, register_alloc_hook, register_free_hook,
-    StandardPolicy,
+    StandardPolicy, disable_profiling, dump_profile, enable_profiling, register_alloc_hook,
+    register_free_hook,
 };
 use mnemosyne_backend::MemoryBackendWrapper as Backend;
 use mnemosyne_heap::scope;

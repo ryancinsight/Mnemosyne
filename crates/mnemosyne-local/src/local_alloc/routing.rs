@@ -1,11 +1,13 @@
 use super::page::{pop_page_free_block, try_allocate_page_local, try_reclaim_and_allocate};
 use crate::local_alloc::ThreadAllocator;
 use core::ptr::NonNull;
-use mnemosyne_arena::{allocate_segment, HasSegmentPool};
+use mnemosyne_arena::{HasSegmentPool, allocate_segment};
 use mnemosyne_core::constants::PAGES_PER_SEGMENT;
 use mnemosyne_core::policy::AllocPolicy;
-use mnemosyne_core::size_class::{class_to_size, size_to_class};
-use mnemosyne_core::types::Page;
+use mnemosyne_core::size_class::class_to_size;
+#[cfg(test)]
+use mnemosyne_core::size_class::size_to_class;
+use mnemosyne_core::types::{Page, Segment};
 
 impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// Allocates a small memory block of the specified size class.
@@ -27,7 +29,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // 2. Reclaim batched cross-thread frees only after the local list is empty.
             // Safety: `page` is owned by this allocator and `try_reclaim_and_allocate`
             // upholds the `Page::reclaim_thread_free` contract on its behalf.
-            if let Some(block) = unsafe { try_reclaim_and_allocate::<P>(page) } {
+            if let Some(block) =
+                unsafe { try_reclaim_and_allocate::<P>(page, &mut self.cross_thread_reclaimed) }
+            {
                 return block.as_ptr() as *mut u8;
             }
         }
@@ -43,9 +47,16 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// Returns null if the size is not a small class or if allocation fails.
     ///
+    /// This size-taking entry point exists only for the crate's own tests, which
+    /// drive the allocator by byte size; production callers route through
+    /// `alloc_class` (size-class already resolved) or the crate's public
+    /// `thread_alloc*` entry points, so it is gated out of non-test builds to
+    /// keep the public unsafe surface minimal.
+    ///
     /// # Safety
     ///
     /// This method is unsafe because it works with raw pointers and handles manual memory layouts.
+    #[cfg(test)]
     #[inline(always)]
     pub unsafe fn alloc<P: AllocPolicy>(&mut self, size: usize) -> *mut u8 {
         let class = match size_to_class(size) {
@@ -68,9 +79,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         unsafe { self.record_defrag_operation::<P>() };
         // 1. Move the current active page to full_pages if it is indeed full.
         if let Some(mut active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
-            let active_page = active_ptr.as_mut();
+            // Safety: `active_ptr` came from this allocator's own active list,
+            // so the page is live and exclusively owned by this thread.
+            let active_page = unsafe { active_ptr.as_mut() };
             // Safety: `active_page` is owned by this allocator.
-            if let Some(block) = try_reclaim_and_allocate::<P>(active_page) {
+            if let Some(block) = unsafe {
+                try_reclaim_and_allocate::<P>(active_page, &mut self.cross_thread_reclaimed)
+            } {
                 return block.as_ptr() as *mut u8;
             }
             // The page is truly full! Move it to full_pages.
@@ -82,11 +97,15 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // 1b. Check if the new head of active_pages can satisfy the allocation.
         if let Some(mut active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
-            let active_page = active_ptr.as_mut();
+            // Safety: `active_ptr` came from this allocator's own active list,
+            // so the page is live and exclusively owned by this thread.
+            let active_page = unsafe { active_ptr.as_mut() };
             if let Some(block) = unsafe { try_allocate_page_local::<P>(active_page) } {
                 return block.as_ptr() as *mut u8;
             }
-            if let Some(block) = unsafe { try_reclaim_and_allocate::<P>(active_page) } {
+            if let Some(block) = unsafe {
+                try_reclaim_and_allocate::<P>(active_page, &mut self.cross_thread_reclaimed)
+            } {
                 return block.as_ptr() as *mut u8;
             }
         }
@@ -100,10 +119,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 break;
             }
             checked += 1;
-            let page = page_ptr.as_mut();
+            // Safety: `page_ptr` was walked from this allocator's own
+            // `full_pages[class]` list, so the page is live and exclusively
+            // owned by this thread.
+            let page = unsafe { page_ptr.as_mut() };
             // Safety: `page` is owned by this allocator. Since it is in full_pages,
             // we know it has no local free blocks. We only need to check for cross-thread frees to reclaim.
-            let block_opt = unsafe { try_reclaim_and_allocate::<P>(page) };
+            let block_opt =
+                unsafe { try_reclaim_and_allocate::<P>(page, &mut self.cross_thread_reclaimed) };
             if let Some(block) = block_opt {
                 if page.alloc_count < page.max_blocks() {
                     // Page is no longer full! Move it back to active list.
@@ -124,7 +147,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // SAFETY: `class` is the caller-validated size-class index, satisfying
         // `get_new_page`'s implicit bounds expectation; it returns either null
         // (handled below) or a page freshly installed into `active_pages`.
-        let new_page_ptr = self.get_new_page::<P>(class);
+        let new_page_ptr = unsafe { self.get_new_page::<P>(class) };
         if new_page_ptr.is_null() {
             return core::ptr::null_mut();
         }
@@ -133,12 +156,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // SAFETY: `new_page_ptr` is the non-null pointer just returned by
         // `get_new_page`, pointing to a freshly initialized `Page` inside a
         // segment owned exclusively by this thread, so the `&mut` is unaliased.
-        let page = &mut *new_page_ptr;
+        let page = unsafe { &mut *new_page_ptr };
         // Safety: `get_new_page` guarantees a freshly initialized page whose
         // `initialize_free_list` populated `free` with at least one block.
-        let block = pop_page_free_block::<P>(page);
+        let block = unsafe { pop_page_free_block::<P>(page) };
 
-        page.increment_alloc_count();
+        // Safety: `page` is the freshly allocated page above with one block
+        // just popped, so the count increment matches an actual allocation.
+        unsafe { page.increment_alloc_count() };
 
         // If it becomes full immediately, move to full list
         if page.alloc_count == page.max_blocks() {
@@ -186,8 +211,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // Prefer never-used pages in the current segment.
         if self.current_segment.is_none() || self.next_page_index >= PAGES_PER_SEGMENT {
-            // Safety: allocate_segment allocates a new segment from the OS/pool.
-            if let Some(seg_ptr) = unsafe { allocate_segment::<B>() } {
+            // Safety: acquires a policy-compatible segment from the OS/pools;
+            // policy-incompatible orphans are returned to the orphan pool.
+            if let Some(seg_ptr) = unsafe { acquire_policy_compatible_segment::<P, B>() } {
                 // Determine if this is an orphaned segment vs a fresh/reinitialized segment.
                 // An orphaned segment has pages[1].block_size > 0.
                 // SAFETY: `seg_ptr` is the non-null segment just returned by
@@ -221,13 +247,24 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                             if page.block_size > 0 {
                                 // Reclaim cross-thread frees to get accurate count.
-                                let reclaimed = page.reclaim_thread_free_if_present_for_segment(
+                                // The orphan's chains are encoded under the
+                                // segment's recorded mode; after the
+                                // policy-compatibility gate in
+                                // `acquire_policy_compatible_segment` it equals
+                                // `P::ENABLE_FREE_LIST_ENCRYPTION`, but the
+                                // dynamic flag is the authoritative source,
+                                // matching every sweep-path reclaim.
+                                let encrypted = (*seg_ptr).free_list_encrypted;
+                                debug_assert_eq!(
+                                    encrypted,
                                     P::ENABLE_FREE_LIST_ENCRYPTION,
-                                    seg_ptr,
-                                    i,
+                                    "adopted an orphan whose free-list mode does not match the policy"
+                                );
+                                let reclaimed = page.reclaim_thread_free_if_present_for_segment(
+                                    encrypted, seg_ptr, i,
                                 );
                                 if reclaimed > 0 {
-                                    super::record_cross_thread_reclaimed(reclaimed);
+                                    self.record_cross_thread_reclaimed(reclaimed);
                                 }
 
                                 if page.alloc_count > 0 {
@@ -330,4 +367,67 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         self.fresh_pages += 1;
         page_ptr
     }
+}
+
+/// Pops segments from the pools/OS until one that policy `P` can own arrives,
+/// returning policy-incompatible orphans to the orphan pool.
+///
+/// An orphan's live free chains are encoded under the segment's recorded
+/// `free_list_encrypted` mode with the per-page keys already in its header,
+/// while the owner-side hot paths (`pop_block`, local free) select encryption
+/// statically from `P`. A thread may therefore adopt only an orphan whose
+/// recorded mode matches `P::ENABLE_FREE_LIST_ENCRYPTION`; a mismatched orphan
+/// is deferred on a local intrusive chain and pushed back to the orphan pool
+/// for a matching-policy thread once a usable segment is found. Fresh and
+/// pool-reinitialized segments (`free_list_encrypted == false`, zero live
+/// allocations) are always usable: `push_owned_segment` keys them for `P`
+/// before any chain is encoded.
+///
+/// Termination: each loop iteration either consumes one finite-pool segment
+/// (free pool re-initializes, so `pages[1].block_size == 0` ends the loop;
+/// each deferred orphan shrinks the orphan pool) or reaches the OS path,
+/// which yields a fresh segment or `None`.
+///
+/// # Safety
+///
+/// Same contract as [`allocate_segment`]: the global pools must contain valid,
+/// initialized `Segment`s. The returned segment (if any) is exclusively owned
+/// by the caller.
+#[inline(never)]
+unsafe fn acquire_policy_compatible_segment<P: AllocPolicy, B: HasSegmentPool>()
+-> Option<*mut Segment> {
+    let mut deferred: *mut Segment = core::ptr::null_mut();
+    let chosen = loop {
+        let Some(seg_ptr) = (unsafe { allocate_segment::<B>() }) else {
+            break None;
+        };
+        // SAFETY: `seg_ptr` is the initialized, exclusively-owned segment just
+        // returned by `allocate_segment`; `pages[1].block_size > 0`
+        // distinguishes a previously-used orphan from a fresh segment, and
+        // `free_list_encrypted` is its recorded chain-encoding mode.
+        let incompatible_orphan = unsafe {
+            (*seg_ptr).pages[1].block_size > 0
+                && (*seg_ptr).free_list_encrypted != P::ENABLE_FREE_LIST_ENCRYPTION
+        };
+        if incompatible_orphan {
+            // SAFETY: the segment is exclusively owned after the pop, so its
+            // `next_free_segment` link is free to thread the deferral chain.
+            unsafe { (*seg_ptr).next_free_segment = deferred };
+            deferred = seg_ptr;
+            continue;
+        }
+        break Some(seg_ptr);
+    };
+    while !deferred.is_null() {
+        // SAFETY: `deferred` walks the exclusively-owned deferral chain built
+        // above; each node is a valid orphan whose link is cleared before the
+        // pool takes ownership back.
+        unsafe {
+            let next = (*deferred).next_free_segment;
+            (*deferred).next_free_segment = core::ptr::null_mut();
+            B::global_orphan_pool().push_unbounded(deferred);
+            deferred = next;
+        }
+    }
+    chosen
 }

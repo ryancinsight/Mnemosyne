@@ -153,8 +153,12 @@ fn test_branded_heap_generic_and_cast() {
             .alloc(&token, layout)
             .expect("branded allocation failed");
 
-        // Cast to i32 block
-        let casted: BrandedBlock<'_, i32> = block.cast::<i32>();
+        // SAFETY: `block` is a freshly allocated 32-byte block with alignment
+        // 8, so it is sized and aligned for `i32`; the `write` below
+        // initializes a valid `i32` before `free` drops it as one (`i32` has
+        // no drop glue, and the raw free path derives the deallocation from
+        // the pointer's owning page, not from `T`).
+        let casted: BrandedBlock<'_, i32> = unsafe { block.cast::<i32>() };
         let ptr = casted.as_ptr();
         assert!(!ptr.is_null());
         unsafe {

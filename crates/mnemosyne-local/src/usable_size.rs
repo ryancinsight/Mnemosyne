@@ -1,7 +1,6 @@
 use crate::{LocalAllocatorSelector, ThreadAllocator, ThreadAllocatorStats};
 use mnemosyne_arena::HasSegmentPool;
-use mnemosyne_core::constants::{PAGES_PER_SEGMENT, PAGE_SHIFT, SEGMENT_SIZE};
-use mnemosyne_core::types::Segment;
+use mnemosyne_core::types::{Segment, locate_segment};
 
 /// Returns the actual usable byte count of the allocation at `ptr`.
 ///
@@ -31,10 +30,9 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
         return 0;
     }
 
-    let ptr_val = ptr as usize;
-    let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
-    let segment = segment_addr as *mut Segment;
-    let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+    // SAFETY: `ptr` is a non-null allocator-owned pointer per the `# Safety`
+    // contract, satisfying `locate_segment`'s precondition.
+    let (segment, page_index) = unsafe { locate_segment(ptr) };
 
     // Safety: for small allocations, page_index is in [1, PAGES_PER_SEGMENT)
     // and the target page records the size-class block size. If page_index is
@@ -46,20 +44,45 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
         return size;
     }
 
-    // Safety: large/huge allocations store the segment pointer in the metadata
-    // slot immediately preceding the user pointer.
+    // Large/huge allocation: recover the size from the metadata-slot segment.
+    // SAFETY: `page.block_size == 0` (or `page_index == 0`) identifies a
+    // large/huge allocation, which stores its segment pointer in the metadata
+    // slot immediately preceding the user pointer — exactly
+    // `huge_allocation_size`'s precondition.
+    unsafe { huge_allocation_size(ptr) }
+}
+
+/// Returns the usable byte size of a large/huge allocation from its metadata
+/// slot: the recorded `pages[0].alloc_count` when set, else the mapping suffix
+/// from `ptr`.
+///
+/// This is the single authoritative huge-allocation size recovery, shared by
+/// [`usable_size`] and the free-profiling path so the metadata-slot layout and
+/// its fallback live in one place.
+///
+/// # Safety
+///
+/// `ptr` must be a non-null user pointer from a Mnemosyne *large/huge*
+/// allocation, so the pointer slot immediately preceding it holds a valid
+/// segment header (`(ptr as *mut *mut Segment).sub(1)`).
+#[inline]
+pub(crate) unsafe fn huge_allocation_size(ptr: *mut u8) -> usize {
+    // SAFETY: per the contract, the slot one pointer before `ptr` holds the
+    // originating segment header written at `allocate_large_or_huge` time.
     let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
     let size = unsafe { (*segment).pages[0].alloc_count };
     if size > 0 {
         size
     } else {
+        // SAFETY: a zero recorded size means a non-segment-aligned huge mapping;
+        // `huge_mapping_suffix_from` returns the distance to the mapping end.
         unsafe { (*segment).huge_mapping_suffix_from(ptr) }
     }
 }
 
 /// Returns a statistics snapshot for the current thread allocator.
-pub fn thread_allocator_stats<B: HasSegmentPool + LocalAllocatorSelector<B>>(
-) -> ThreadAllocatorStats {
+pub fn thread_allocator_stats<B: HasSegmentPool + LocalAllocatorSelector<B>>()
+-> ThreadAllocatorStats {
     B::with_allocator(|alloc| alloc.stats()).unwrap_or_else(|| ThreadAllocatorStats {
         cross_thread_reclaimed_blocks: ThreadAllocator::<B>::cross_thread_reclaimed_blocks(),
         ..ThreadAllocatorStats::default()

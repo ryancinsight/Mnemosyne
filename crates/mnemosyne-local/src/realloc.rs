@@ -1,17 +1,16 @@
 use crate::alloc::small_path_class;
 use crate::usable_size;
 use crate::{
-    do_local_free_internal, initialize_allocated_bytes, poison_freed_bytes, thread_alloc_layout,
-    thread_free, LocalAllocatorSelector, ThreadAllocator,
+    LocalAllocatorSelector, ThreadAllocator, do_local_free_internal, initialize_allocated_bytes,
+    poison_freed_bytes, thread_alloc_layout, thread_free,
 };
 use core::alloc::Layout;
 use core::ptr::NonNull;
 use mnemosyne_arena::HasSegmentPool;
-use mnemosyne_core::constants::{
-    MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT, SEGMENT_SIZE,
-};
+use mnemosyne_core::constants::{MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE};
 use mnemosyne_core::policy::AllocPolicy;
-use mnemosyne_core::types::{Block, Segment};
+use mnemosyne_core::size_class::round_up_size;
+use mnemosyne_core::types::{Block, locate_segment};
 
 #[inline(always)]
 pub fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> bool {
@@ -19,17 +18,18 @@ pub fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> boo
         return false;
     }
 
+    // The old allocation occupies the block for size class
+    // `size_to_class(old_adjusted_size)`, whose stride is `round_up_size` of
+    // that size. `new_size` fits in place iff it does not exceed that block
+    // stride. `round_up_size` is the core size-class SSOT (the const-fn stride
+    // schedule), so route through it instead of re-encoding the 128/512/2048
+    // breakpoints and their round-up masks here. A size past
+    // `MAX_SMALL_ALLOC_SIZE` yields `None`, which correctly reports "does not
+    // fit a small class in place".
     let old_adjusted_size = core::cmp::max(layout.size(), layout.align());
-    if old_adjusted_size <= 128 {
-        new_size <= (old_adjusted_size + 15) & !15
-    } else if old_adjusted_size <= 512 {
-        new_size <= (old_adjusted_size + 31) & !31
-    } else if old_adjusted_size <= 2048 {
-        new_size <= (old_adjusted_size + 127) & !127
-    } else if old_adjusted_size <= MAX_SMALL_ALLOC_SIZE {
-        new_size <= (old_adjusted_size + 511) & !511
-    } else {
-        false
+    match round_up_size(old_adjusted_size) {
+        Some(block_stride) => new_size <= block_stride,
+        None => false,
     }
 }
 
@@ -60,18 +60,20 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                         can_reuse = true;
                     }
                 } else {
-                    // SAFETY: `ptr` is non-null and, per the realloc `# Safety`
-                    // contract, was returned by a Mnemosyne allocation, which is
-                    // exactly `usable_size`'s precondition.
-                    let current_usable = unsafe { usable_size(ptr) };
+                    // Large/huge shrink. When the request stays above half the
+                    // old size, reuse in place regardless of the exact mapping.
+                    // The page-rounded comparison against the current usable size
+                    // is the only branch that consumes `usable_size` (a
+                    // segment-header dereference), so it is computed only there.
                     let new_adjusted = core::cmp::max(new_size, layout.align());
-                    if new_adjusted <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
-                        if new_size >= layout.size() / 2 {
-                            can_reuse = true;
-                        }
-                    } else if new_size >= layout.size() / 2 {
+                    if new_size >= layout.size() / 2 {
                         can_reuse = true;
-                    } else {
+                    } else if new_adjusted > MAX_SMALL_ALLOC_SIZE || layout.align() > MIN_BLOCK_SIZE
+                    {
+                        // SAFETY: `ptr` is non-null and, per the realloc `# Safety`
+                        // contract, was returned by a Mnemosyne allocation, which
+                        // is exactly `usable_size`'s precondition.
+                        let current_usable = unsafe { usable_size(ptr) };
                         let page_size = mnemosyne_core::constants::PAGE_SIZE;
                         let new_page_rounded = (new_adjusted + page_size - 1) & !(page_size - 1);
                         if new_page_rounded >= current_usable {
@@ -138,14 +140,14 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     // correctly (small or huge) for the alignment.
     let new_class = small_path_class(new_size, layout.align());
 
-    let ptr_val = ptr as usize;
-    let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
-    let segment = segment_addr as *mut Segment;
-    let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+    // SAFETY: `ptr` is non-null and allocator-owned per the `# Safety`
+    // contract, satisfying `locate_segment`'s precondition; it recovers the live
+    // segment header and the bounded page index.
+    let (segment, page_index) = unsafe { locate_segment(ptr) };
 
-    // SAFETY: `ptr` (non-null, allocator-owned per the `# Safety` contract)
-    // masked down by `SEGMENT_SIZE` recovers its live segment header; the
-    // `(PAGES_PER_SEGMENT - 1)` mask bounds `page_index` within `pages`.
+    // SAFETY: `segment`/`page_index` come from `locate_segment` on an
+    // allocator-owned `ptr`, so the segment header is live and the index is in
+    // bounds of its `pages` array.
     let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
     let is_old_small = page_index > 0 && page.block_size > 0;
 
@@ -199,12 +201,9 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                                 let page_free = page_ref.free;
                                 let page_alloc_count = page_ref.alloc_count;
                                 // SAFETY: `segment` owns `page`; `page_index` is
-                                // that page's index into the `keys` array.
-                                let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-                                    (*segment).keys[page_index]
-                                } else {
-                                    0
-                                };
+                                // that page's index into the `keys` array,
+                                // satisfying `cookie_for`'s contract.
+                                let cookie = (*segment).cookie_for::<P>(page_index);
                                 if page_ref.alloc_count == 0 {
                                     std::process::abort();
                                 }
@@ -218,12 +217,18 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                                 if page_free.is_some()
                                     && (page_alloc_count != 1 || alloc.is_current_segment(segment))
                                 {
-                                    // SAFETY: in-place free — `block` links to the
-                                    // prior `page_free` head and becomes the new
-                                    // head; all writes stay inside this owned page.
-                                    (*block).set_next::<P>(page_free, cookie);
-                                    page_ref.free = Some(NonNull::new_unchecked(block));
-                                    page_ref.alloc_count = page_alloc_count - 1;
+                                    // SAFETY: in-place free — `block` is the guarded
+                                    // old block, `page_free`/`cookie` are `page_ref`'s
+                                    // current head and cookie, and `page_alloc_count`
+                                    // is its live count (`>= 1`), so the shared commit
+                                    // stays inside this owned page.
+                                    crate::free::commit_in_place_free::<P>(
+                                        block,
+                                        page_ref,
+                                        page_free,
+                                        cookie,
+                                        page_alloc_count,
+                                    );
                                 } else {
                                     // SAFETY: `block` belongs to `page_ref` in
                                     // `segment` at `page_index`, and `alloc` owns

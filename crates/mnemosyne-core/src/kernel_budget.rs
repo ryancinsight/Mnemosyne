@@ -98,7 +98,11 @@ impl KernelResourceBudget {
     }
 
     /// Registers one block consumes: `registers_per_thread · threads_per_block`.
-    /// Saturates rather than wrapping on pathological inputs.
+    ///
+    /// The product is computed in `u64` after widening both `u32` factors, so it
+    /// is exact for every input: the maximum product `(2^32 - 1)^2 = 2^64 -
+    /// 2^33 + 1` is strictly less than `u64::MAX`, so the multiplication never
+    /// overflows and no saturation or wrapping is possible.
     #[must_use]
     #[inline]
     pub const fn registers_per_block(self) -> u64 {

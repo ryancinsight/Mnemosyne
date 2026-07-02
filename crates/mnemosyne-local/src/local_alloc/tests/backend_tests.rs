@@ -1,5 +1,5 @@
 use super::super::*;
-use super::fixtures::{MockBackend, ALLOC_COUNT, DEALLOC_COUNT, MOCK_ORPHAN_POOL};
+use super::fixtures::{ALLOC_COUNT, DEALLOC_COUNT, MockBackend};
 use core::sync::atomic::Ordering;
 use mnemosyne_core::policy::StandardPolicy;
 
@@ -50,7 +50,7 @@ fn test_custom_backend_injection() {
 /// thread exit, so reclamation depends entirely on the exit sentinel
 /// (`ThreadExitReclaim`) armed on first allocation. The spawned thread
 /// allocates through the TLS path and exits without freeing; the live
-/// segment must therefore be orphaned into `MOCK_ORPHAN_POOL`. If the
+/// segment must therefore be orphaned into `MockBackend`'s orphan pool. If the
 /// sentinel failed to fire the segment would leak and the pool would stay
 /// empty, failing the value-semantic assertion below.
 #[cfg(nightly_tls_active)]
@@ -61,7 +61,9 @@ fn thread_exit_sentinel_reclaims_owned_segments_on_fast_tls_path() {
         .expect("local allocator test lock was poisoned");
 
     // Drain any residue so the post-join count reflects only this thread.
-    while let Some(seg) = MOCK_ORPHAN_POOL.pop() {
+    while let Some(seg) =
+        <MockBackend as mnemosyne_arena::HasSegmentPool>::global_orphan_pool().pop()
+    {
         // Safety: pooled segments are valid mappings owned by the pool.
         unsafe { mnemosyne_arena::deallocate_segment::<MockBackend>(seg) };
     }
@@ -81,7 +83,9 @@ fn thread_exit_sentinel_reclaims_owned_segments_on_fast_tls_path() {
 
     // The exit sentinel must have orphaned the still-live owning segment.
     let mut reclaimed = 0usize;
-    while let Some(seg) = MOCK_ORPHAN_POOL.pop() {
+    while let Some(seg) =
+        <MockBackend as mnemosyne_arena::HasSegmentPool>::global_orphan_pool().pop()
+    {
         reclaimed += 1;
         // Safety: pooled segments are valid mappings; release the mapping
         // (including the never-freed block) to avoid leaking the test's
@@ -102,7 +106,9 @@ fn thread_exit_reclaims_owned_segments_on_selected_tls_path() {
         .expect("local allocator test lock was poisoned");
 
     // Drain any residue so the post-join count reflects only this thread.
-    while let Some(seg) = MOCK_ORPHAN_POOL.pop() {
+    while let Some(seg) =
+        <MockBackend as mnemosyne_arena::HasSegmentPool>::global_orphan_pool().pop()
+    {
         // Safety: pooled segments are valid mappings owned by the pool.
         unsafe { mnemosyne_arena::deallocate_segment::<MockBackend>(seg) };
     }
@@ -122,7 +128,9 @@ fn thread_exit_reclaims_owned_segments_on_selected_tls_path() {
 
     // The exit sentinel or slot drop must have orphaned the still-live owning segment.
     let mut reclaimed = 0usize;
-    while let Some(seg) = MOCK_ORPHAN_POOL.pop() {
+    while let Some(seg) =
+        <MockBackend as mnemosyne_arena::HasSegmentPool>::global_orphan_pool().pop()
+    {
         reclaimed += 1;
         // Safety: pooled segments are valid mappings; release the mapping
         // (including the never-freed block) to avoid leaking the test's

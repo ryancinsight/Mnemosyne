@@ -1,12 +1,12 @@
+use crate::Heap;
 use crate::brand::{BrandedBlock, ThreadLocalToken};
 use crate::branded_box::BrandedBox;
-use crate::Heap;
 use core::alloc::Layout;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
-use mnemosyne_local::internal::HasSegmentPool;
 use mnemosyne_local::LocalAllocatorSelector;
+use mnemosyne_local::internal::HasSegmentPool;
 
 pub mod ops;
 pub mod traits;

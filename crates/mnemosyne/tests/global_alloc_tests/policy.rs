@@ -88,12 +88,14 @@ fn test_cuda_unified_backend() {
         use mnemosyne_backend::{WGPU_ALLOCATE_CALLBACK, WGPU_DEALLOCATE_CALLBACK};
 
         unsafe extern "C" fn mock_alloc(size: usize) -> *mut u8 {
-            std::alloc::alloc(Layout::from_size_align_unchecked(size, 8))
+            unsafe { std::alloc::alloc(Layout::from_size_align_unchecked(size, 8)) }
         }
 
         unsafe extern "C" fn mock_dealloc(ptr: *mut u8, size: usize) -> bool {
-            std::alloc::dealloc(ptr, Layout::from_size_align_unchecked(size, 8));
-            true
+            unsafe {
+                std::alloc::dealloc(ptr, Layout::from_size_align_unchecked(size, 8));
+                true
+            }
         }
 
         WGPU_ALLOCATE_CALLBACK.store(mock_alloc as *mut c_void, Ordering::Release);

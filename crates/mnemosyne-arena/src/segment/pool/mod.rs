@@ -15,152 +15,130 @@ pub mod private {
     pub trait Sealed {}
 }
 
-/// Trait associating a memory backend with its global pools.
-pub trait HasSegmentPool: mnemosyne_core::MemoryBackend + private::Sealed {
-    /// Returns the global segment pool for this backend.
-    fn global_segment_pool() -> &'static GlobalSegmentPool;
-
-    /// Returns the global orphan pool for this backend.
-    fn global_orphan_pool() -> &'static GlobalSegmentPool;
-
-    /// Returns the global huge allocation pool for this backend.
-    fn global_huge_pool() -> &'static GlobalHugePool;
+/// The trio of global pools owned by a single memory backend.
+///
+/// One `const`-constructible bundle replaces the per-backend triplet of
+/// separate statics: each backend owns exactly one `static BackendPools`,
+/// and [`HasSegmentPool`] exposes its three components through default
+/// accessor methods.
+pub struct BackendPools {
+    segment: GlobalSegmentPool,
+    orphan: GlobalSegmentPool,
+    huge: GlobalHugePool,
 }
 
-static DEFAULT_BACKEND_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static DEFAULT_BACKEND_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static DEFAULT_BACKEND_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+impl BackendPools {
+    /// Creates a bundle of three empty pools.
+    ///
+    /// Const-constructible so each backend can declare its pools as a single
+    /// `static`, preserving the distinct-per-backend isolation that separate
+    /// statics previously provided.
+    pub const fn new() -> Self {
+        Self {
+            segment: GlobalSegmentPool::new(),
+            orphan: GlobalSegmentPool::new(),
+            huge: GlobalHugePool::new(),
+        }
+    }
+}
+
+impl Default for BackendPools {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Trait associating a memory backend with its global pools.
+///
+/// Implementors provide a single [`HasSegmentPool::pools`] accessor returning
+/// their owned [`BackendPools`]; the individual pool accessors are supplied as
+/// default methods delegating to it.
+pub trait HasSegmentPool: mnemosyne_core::MemoryBackend + private::Sealed {
+    /// Returns this backend's pool bundle.
+    fn pools() -> &'static BackendPools;
+
+    /// Returns the global segment pool for this backend.
+    #[inline(always)]
+    fn global_segment_pool() -> &'static GlobalSegmentPool {
+        &Self::pools().segment
+    }
+
+    /// Returns the global orphan pool for this backend.
+    #[inline(always)]
+    fn global_orphan_pool() -> &'static GlobalSegmentPool {
+        &Self::pools().orphan
+    }
+
+    /// Returns the global huge allocation pool for this backend.
+    #[inline(always)]
+    fn global_huge_pool() -> &'static GlobalHugePool {
+        &Self::pools().huge
+    }
+}
+
+static DEFAULT_BACKEND_POOLS: BackendPools = BackendPools::new();
 
 impl private::Sealed for mnemosyne_backend::DefaultBackend {}
 
 impl HasSegmentPool for mnemosyne_backend::DefaultBackend {
     #[inline(always)]
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &DEFAULT_BACKEND_SEGMENT_POOL
-    }
-
-    #[inline(always)]
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &DEFAULT_BACKEND_ORPHAN_POOL
-    }
-
-    #[inline(always)]
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &DEFAULT_BACKEND_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &DEFAULT_BACKEND_POOLS
     }
 }
 
-static WRAPPER_BACKEND_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static WRAPPER_BACKEND_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static WRAPPER_BACKEND_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static WRAPPER_BACKEND_POOLS: BackendPools = BackendPools::new();
 
 impl private::Sealed for mnemosyne_backend::MemoryBackendWrapper {}
 
 impl HasSegmentPool for mnemosyne_backend::MemoryBackendWrapper {
     #[inline(always)]
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &WRAPPER_BACKEND_SEGMENT_POOL
-    }
-
-    #[inline(always)]
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &WRAPPER_BACKEND_ORPHAN_POOL
-    }
-
-    #[inline(always)]
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &WRAPPER_BACKEND_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &WRAPPER_BACKEND_POOLS
     }
 }
 
-static CUDA_BACKEND_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static CUDA_BACKEND_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static CUDA_BACKEND_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static CUDA_BACKEND_POOLS: BackendPools = BackendPools::new();
 
 impl private::Sealed for mnemosyne_backend::CudaUnifiedBackend {}
 
 impl HasSegmentPool for mnemosyne_backend::CudaUnifiedBackend {
     #[inline(always)]
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &CUDA_BACKEND_SEGMENT_POOL
-    }
-
-    #[inline(always)]
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &CUDA_BACKEND_ORPHAN_POOL
-    }
-
-    #[inline(always)]
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &CUDA_BACKEND_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &CUDA_BACKEND_POOLS
     }
 }
 
-static CUDA_DEVICE_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static CUDA_DEVICE_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static CUDA_DEVICE_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static CUDA_DEVICE_POOLS: BackendPools = BackendPools::new();
 
 impl private::Sealed for mnemosyne_backend::CudaDeviceBackend {}
 
 impl HasSegmentPool for mnemosyne_backend::CudaDeviceBackend {
     #[inline(always)]
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &CUDA_DEVICE_SEGMENT_POOL
-    }
-
-    #[inline(always)]
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &CUDA_DEVICE_ORPHAN_POOL
-    }
-
-    #[inline(always)]
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &CUDA_DEVICE_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &CUDA_DEVICE_POOLS
     }
 }
 
-static CUDA_HOST_PINNED_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static CUDA_HOST_PINNED_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static CUDA_HOST_PINNED_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static CUDA_HOST_PINNED_POOLS: BackendPools = BackendPools::new();
 
 impl private::Sealed for mnemosyne_backend::CudaHostPinnedBackend {}
 
 impl HasSegmentPool for mnemosyne_backend::CudaHostPinnedBackend {
     #[inline(always)]
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &CUDA_HOST_PINNED_SEGMENT_POOL
-    }
-
-    #[inline(always)]
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &CUDA_HOST_PINNED_ORPHAN_POOL
-    }
-
-    #[inline(always)]
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &CUDA_HOST_PINNED_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &CUDA_HOST_PINNED_POOLS
     }
 }
 
-static WGPU_STAGING_SEGMENT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static WGPU_STAGING_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static WGPU_STAGING_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static WGPU_STAGING_POOLS: BackendPools = BackendPools::new();
 
 impl private::Sealed for mnemosyne_backend::WgpuStagingBackend {}
 
 impl HasSegmentPool for mnemosyne_backend::WgpuStagingBackend {
     #[inline(always)]
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &WGPU_STAGING_SEGMENT_POOL
-    }
-
-    #[inline(always)]
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &WGPU_STAGING_ORPHAN_POOL
-    }
-
-    #[inline(always)]
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &WGPU_STAGING_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &WGPU_STAGING_POOLS
     }
 }

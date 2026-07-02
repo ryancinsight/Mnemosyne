@@ -4,7 +4,7 @@ extern crate std;
 use super::aligned_vec::AlignedVec;
 use super::bank::ScratchBank;
 use super::element::DEFAULT_SCRATCH_ALIGN;
-use super::pool::{ScratchPool, MAX_POOL_SLOTS};
+use super::pool::{MAX_POOL_SLOTS, ScratchPool};
 
 #[test]
 fn aligned_vec_capacity_and_alignment() {

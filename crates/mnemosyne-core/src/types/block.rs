@@ -20,21 +20,13 @@ impl Block {
         &self,
         page_cookie: usize,
     ) -> Option<NonNull<Block>> {
-        if P::ENABLE_FREE_LIST_ENCRYPTION {
-            self.next_encoded.map(|encoded| {
-                let cookie = page_cookie | 1;
-                let decoded_ptr = (encoded.as_ptr() as usize ^ cookie) as *mut Block;
-                // SAFETY: `cookie = page_cookie | 1` has its low bit set, and the
-                // encoded value is a real block address XOR-masked with the same
-                // odd cookie. XOR with an odd mask flips the low bit, so the
-                // decoded address differs from the (aligned, hence even) original
-                // by a nonzero amount and cannot be 0 — `new_unchecked`'s
-                // non-null precondition holds.
-                unsafe { NonNull::new_unchecked(decoded_ptr) }
-            })
-        } else {
-            self.next_encoded
-        }
+        // The const `P::ENABLE_FREE_LIST_ENCRYPTION` const-propagates into the
+        // `encrypted` branch of `get_next_dynamic`, so the concrete codegen is
+        // identical to a hand-inlined const form while the XOR-decode body and
+        // its SAFETY argument live in one place.
+        // SAFETY: forwarded unchanged from this method's `# Safety` contract —
+        // the block pointer is valid and aligned.
+        unsafe { self.get_next_dynamic(P::ENABLE_FREE_LIST_ENCRYPTION, page_cookie) }
     }
 
     /// Gets the next block dynamically using a dynamic encrypted flag.
@@ -73,19 +65,12 @@ impl Block {
         next: Option<NonNull<Block>>,
         page_cookie: usize,
     ) {
-        if P::ENABLE_FREE_LIST_ENCRYPTION {
-            self.next_encoded = next.map(|ptr| {
-                let cookie = page_cookie | 1;
-                let encoded_ptr = (ptr.as_ptr() as usize ^ cookie) as *mut Block;
-                // SAFETY: `ptr` is a `NonNull<Block>` (even, aligned, non-null)
-                // and the odd `cookie` flips its low bit, so the XOR-encoded
-                // value cannot be 0 — `new_unchecked`'s non-null precondition
-                // holds.
-                unsafe { NonNull::new_unchecked(encoded_ptr) }
-            });
-        } else {
-            self.next_encoded = next;
-        }
+        // The const `P::ENABLE_FREE_LIST_ENCRYPTION` const-propagates into the
+        // `encrypted` branch of `set_next_dynamic`, keeping the XOR-encode body
+        // and its SAFETY argument in one place at identical codegen.
+        // SAFETY: forwarded unchanged from this method's `# Safety` contract —
+        // the block pointer is valid and aligned.
+        unsafe { self.set_next_dynamic(next, P::ENABLE_FREE_LIST_ENCRYPTION, page_cookie) }
     }
 
     /// Sets the next block dynamically using a dynamic encrypted flag.

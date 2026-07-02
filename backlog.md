@@ -61,7 +61,134 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   sensitive, warm path). Rename `CacheAlignedAtomicPtr` (it is a tagged head,
   not a bare ptr) when this lands.
 
+Filed from the 2026-07-01 four-agent audit cycle (high-severity findings were
+fixed in the same cycle — see `## Completed`; these are the deferred
+remainder, each Definition-of-Ready):
+
+- [ ] [arch] AR-1: Mixed free-list-encryption policies over one backend are
+  latently unsound at the chain level. **Decision recorded in
+  [docs/adr/0001-free-list-encryption-mode-binding.md](docs/adr/0001-free-list-encryption-mode-binding.md)
+  (Proposed — awaiting sign-off before implementation).** Owner-side paths
+  (`pop_block::<P>`, `set_next::<P>`, `AtomicFreeList::push::<P>`) select
+  encoding from the CALLER's static policy while the segment carries a dynamic
+  `free_list_encrypted` flag; two policies with different
+  `ENABLE_FREE_LIST_ENCRYPTION` on one backend share class pages, so one page's
+  chain can mix encodings (reachable via the public `thread_alloc`/`thread_free`
+  free functions, single-thread same-page — the 2026-07-01 orphan-adoption gate
+  closed only the cross-thread instance). ADR recommends Option C (key the TLS
+  allocator by encryption class: sound and zero-cost for the default policy)
+  over dynamic-flag-everywhere (hot-path regression) or a `P==B` const-assert
+  (conflates policy with backend). Blocker: ADR sign-off. **Step 1 (interim
+  debug-assert safeguard at `Segment::cookie_for`) DONE 2026-07-02** — see
+  `## Completed`; the remaining work is the type-level allocator-keying.
+  Acceptance: an interleaved standard+hardened same-page chain-pop test
+  round-trips without abort under a release build.
+- [ ] [major] AR-2: wgpu callback registration is a soundness hole —
+  `WGPU_{ALLOCATE,DEALLOCATE}_CALLBACK` are pub `AtomicPtr<c_void>` statics
+  that safe code can poison and `WgpuStagingBackend::allocate` transmutes and
+  calls. Fix: private statics + typed `register_wgpu_callbacks(unsafe extern
+  "C" fn(usize) -> *mut u8, unsafe extern "C" fn(*mut u8, usize) -> bool)`.
+  Blocker: cross-repo co-evolution — hephaestus-wgpu
+  `infrastructure/device.rs:177-184` stores the statics directly; migrate
+  both in one coordinated unit per the atlas protocol. Acceptance: no pub
+  mutable callback statics; hephaestus builds and passes against the bump.
+- [ ] [patch] AR-4: benchmark gate statistics are too weak for the 1.05
+  threshold: `sample_size(10)` / 500 ms measurement yields CI widths the
+  variance report itself flags at 15-25%. Fix: raise measurement time/samples
+  for the gated rows (or gate on median with CI overlap), keep quick settings
+  for exploratory rows. Blocker: quiet machine for re-baselining. Acceptance:
+  gated-row CI half-width < the 5% threshold on the recorded baseline.
+- [ ] [minor] AR-8: shard the prof `StackInterner` mutex (64-shard by stack
+  hash, `Arc` construction outside the lock) — it serializes every sampled
+  alloc AND free under the leak detector. Re-measure after the 2026-07-01
+  hasher fix before building. Acceptance: leak-detector-on alloc/free
+  benchmark shows the interner off the critical path, or the item closes
+  with the recorded measurement.
+
 ## Completed
+
+- 2026-07-02 consolidation cycle 3 (branch fix/audit-2026-07-soundness-perf,
+  five atomic commits; detail in CHANGELOG.md and checklist.md). Closed:
+  - **AR-1 step 1** [arch, interim]: ADR 0001's debug tripwire landed —
+    `Segment::cookie_for::<P>` (the single encode/decode chokepoint) debug-
+    asserts the policy's `ENABLE_FREE_LIST_ENCRYPTION` matches the segment's
+    recorded mode; three latently-unsound integration tests restructured, a
+    `should_panic` pin added, the contract documented on `thread_alloc`.
+    The full type-level fix (allocator keyed by encryption class) remains
+    open under AR-1 pending ADR sign-off.
+  - **AR-7** [minor→major]: edition 2024 / resolver 3 across all 11 crates;
+    `rust-version = 1.87` (clippy MSRV proved 1.85 dishonest —
+    const `is_multiple_of`); 30 `unsafe extern`, 19 `#[unsafe(no_mangle)]`,
+    granular `unsafe_op_in_unsafe_fn` blocks, style-2024 reformat. Breaking:
+    consumers need Rust 1.87+.
+  - **AR-9** [minor]: fuzz `c_shim_api` op-sequence mode (8-slot table,
+    seeded write/verify oracles for adjacent-block clobber + realloc chains,
+    bounded, leak-free on Drop; 9 smoke tests). libFuzzer run remains
+    environment-blocked (g++ C++ runtime); `--lib` path is the evidence tier.
+  - **AR-13** [patch]: one authoritative `mnemosyne-build-util` nightly probe;
+    all THREE build scripts (prof, benchmarks, local) are thin callers. Also
+    fixed a pre-existing latent `nightly_tls` E0432 in `mnemosyne-prof`
+    (unconditional import of a `#[cfg(not(nightly_tls_active))]` item), masked
+    on this host by the PATH-shadowed nightly rustc; verified by forcing
+    `RUSTC` at the real nightly binary.
+
+- 2026-07-02 consolidation cycle 2 (branch fix/audit-2026-07-soundness-perf,
+  five atomic refactor commits; detail in CHANGELOG.md and checklist.md).
+  Closed deferred items:
+  - **AR-3** [patch]: cross-thread reclaim count moved to a per-`ThreadAllocator`
+    field folded on `Drop`; the global `fetch_add` is off the reclaim hot path.
+    First acceptance clause (no global RMW on the reclaim path) met and
+    regression-tested for exact count; the "cross-thread benchmark rows
+    neutral-or-better" clause folds into AR-4's re-baseline (a quiet machine),
+    tracked there.
+  - **AR-5** [patch]: benchmark bodies deduplicated to one generic
+    `bench_iter_case`/`bench_batched_case<A>`, one `snmalloc_skips` predicate,
+    one `GATE_ROWS` SSOT threshold table (row names unchanged; measured regions
+    byte-identical). Follow-up: the nightly-rustc probe is still duplicated
+    across `mnemosyne-prof/build.rs` and `mnemosyne-benchmarks/build.rs` — a
+    shared build-util/xtask is the fix (filed as AR-13 below).
+  - **AR-6** [patch]: local/core SSOT batch — shared `commit_in_place_free` +
+    `do_local_free_internal` delegation, `is_sole_active_page`,
+    `move_page_between_lists_branded`, `round_up_size` routing,
+    `current_thread_id`, `detach_and_release_segment`, `get_next/set_next`
+    forwarding, `abort_on_corruption` module, `parent_segment`/`cookie_for`/
+    `locate_segment`, `recycle_sweeps` wired, `thread_realloc` branch flatten,
+    `cfg(test)` `ThreadAllocator::alloc`, `PER_CPU_CACHE` single-implementor
+    invariant documented, `core/types/page.rs` split into leaf modules,
+    `kernel_budget` doc fix. `local/local_alloc/page.rs` left un-split
+    (≤500 after consolidation, cohesive).
+  - **AR-10** [patch]: FOLD `SecurePolicy`/`HardenedPolicy` into
+    `mnemosyne-core::policy` (SSOT; core is dep-free); `mnemosyne-hardened`
+    retained as a thin real re-export because external (gaia, kwavers) and
+    internal manifests reference the crate name.
+  - **AR-11** [minor]: `HasSegmentPool` → one required `pools()` with default
+    accessors; six per-backend blocks collapse to `BackendPools::new()` +
+    one-line impls (−77 lines); `MockBackend` fixtures migrated as the
+    consumer half.
+  - **AR-12** [patch]: `HandoffBuffer` `unsafe impl Sync` SAFETY comment added.
+
+- 2026-07-01 audit cycle (branch fix/audit-2026-07-soundness-perf, eleven
+  atomic commits; per-item detail in checklist.md and CHANGELOG.md):
+  [patch] orphan-adoption key preservation + policy-compatibility gate with
+  differentially-verified regression tests; [major] `BrandedCell` invariance
+  + `unsafe BrandedBlock::cast` (both were safe-code UB); [patch]
+  `TaggedSegmentStack::pop` Acquire failure ordering; [minor] huge-pool fit
+  cap / derived bucket count / splice restore + huge-pool stats; [minor] CUDA
+  module split with init-race atomics, probe-window VEH (silent
+  ExitProcess(0) masking removed), full-scan unregister (device-allocation
+  leak), test-runner detection deleted; [patch] prof hasher mixing, disabled-
+  state sample drain, active-flag serialization, inverted leak flag; [patch]
+  decay shutdown lost-wakeup handshake + dead DefaultBackend sweep; [patch]
+  c-shim dump_leaks saturation; workspace profiles + committed nextest
+  budget; no-op marker features and dead `SpinLock` removed.
+
+- [patch] Repair `mnemosyne-arena` tagged-stack construction for Atlas
+  consumers and make huge-pool rejected-chain restoration use the production
+  `TaggedSegmentStack::push_chain` batch CAS path. `CacheAlignedAtomicPtr::new`
+  is again the no-argument empty-head constructor, and `restore_rejected`
+  computes tail/length once before pushing the private chain back as one batch.
+  Verification: arena fmt/check/clippy plus downstream Kwavers FWI nextest
+  59/59.
 
 - [patch] Add `fuzz/c_shim_api` cargo-fuzz coverage for the
   `mnemosyne-c-shim` ABI. The target accepts arbitrary `(op, size, nmemb,

@@ -12,16 +12,25 @@ static SPAWNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool:
 /// Lazily spawns a background worker thread on options initialization if
 /// `MNEMOSYNE_PURGE_CADENCE_MS` is non-zero.
 pub fn init_decay_engine() {
-    if !SPAWNED.load(Ordering::Acquire) {
-        let cadence = PURGE_CADENCE_MS.load(Ordering::Acquire);
-        if cadence > 0 && !SPAWNED.swap(true, Ordering::AcqRel) {
-            thread::Builder::new()
-                .name("mnemosyne-decay".to_string())
-                .spawn(move || {
-                    decay_thread_loop(cadence);
-                })
-                .expect("Failed to spawn mnemosyne-decay thread");
-        }
+    let cadence = PURGE_CADENCE_MS.load(Ordering::Acquire);
+    // The claim is an unconditional `AcqRel` read-modify-write (no plain-load
+    // fast path): every spawn attempt and the purger's shutdown handshake in
+    // `decay_thread_loop` then meet as RMWs in `SPAWNED`'s single
+    // modification order, and the acquire/release pairing between them is
+    // what carries a caller's preceding `PURGE_CADENCE_MS` store into the
+    // dying thread's re-check. A plain `load` fast path here could observe a
+    // stale `true` from a purger that is concurrently shutting down, skip the
+    // spawn *without* creating that edge, and leave the cadence store
+    // invisible to the dying thread — the lost-wakeup race the handshake
+    // exists to close. `init_decay_engine` is a cold configuration path, so
+    // the RMW cost is irrelevant.
+    if cadence > 0 && !SPAWNED.swap(true, Ordering::AcqRel) {
+        thread::Builder::new()
+            .name("mnemosyne-decay".to_string())
+            .spawn(move || {
+                decay_thread_loop(cadence);
+            })
+            .expect("Failed to spawn mnemosyne-decay thread");
     }
 }
 
@@ -32,10 +41,48 @@ fn decay_thread_loop(mut cadence: usize) {
         decay_step();
 
         cadence = PURGE_CADENCE_MS.load(Ordering::Acquire);
-        if cadence == 0 {
-            SPAWNED.store(false, Ordering::Release);
-            break;
+        if cadence != 0 {
+            continue;
         }
+
+        // Shutdown handshake. A naive `SPAWNED.store(false) + break` loses a
+        // wakeup: a concurrent `configure()` can store a non-zero cadence and
+        // call `init_decay_engine` *between* the zero read above and the
+        // release of `SPAWNED` — its swap observes `SPAWNED == true`, skips
+        // the spawn, and this thread then exits, leaving `SPAWNED == false`
+        // with a non-zero cadence and no purger running.
+        //
+        // The handshake closes every interleaving. Release ownership with an
+        // `AcqRel` RMW, then re-check the cadence and try to re-claim:
+        // - If a concurrent `init_decay_engine` swap preceded this `swap` in
+        //   `SPAWNED`'s modification order, it read `true` and skipped the
+        //   spawn; this acquire RMW reads the `true` that swap wrote, so the
+        //   caller's earlier cadence store happens-before the re-load below —
+        //   the non-zero cadence is observed, the CAS finds the `false` this
+        //   thread just wrote, succeeds, and the loop continues. No purger is
+        //   lost.
+        // - If this `swap` preceded the concurrent one, that swap reads
+        //   `false` and spawns a fresh purger; the CAS below then finds
+        //   `true` and fails, so this thread exits. Exactly one purger runs.
+        // - With no concurrent caller the re-load sees the same zero and the
+        //   CAS is never attempted; a later `init_decay_engine` reads the
+        //   released `false` and spawns normally.
+        let was_spawned = SPAWNED.swap(false, Ordering::AcqRel);
+        debug_assert!(
+            was_spawned,
+            "decay purger exiting without holding the SPAWNED claim"
+        );
+        cadence = PURGE_CADENCE_MS.load(Ordering::Acquire);
+        if cadence != 0
+            && SPAWNED
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            // Re-claimed: the cadence became non-zero during shutdown and no
+            // replacement thread was spawned; keep purging.
+            continue;
+        }
+        break;
     }
 }
 
@@ -45,7 +92,29 @@ fn decay_thread_loop(mut cadence: usize) {
 /// frees in idle segments and releasing them back to the OS if empty. Also
 /// purges the global segment pool to drop retained free mappings.
 pub fn decay_step() {
-    decay_step_for_backend::<mnemosyne_backend::DefaultBackend>();
+    // Closed-set maintenance hazard: this list must name every backend whose
+    // segment/orphan pools production code can populate. Pool population
+    // happens only through a thread allocator, which requires a
+    // `LocalAllocatorSelector` impl (`mnemosyne-local/src/lib.rs`), so the
+    // swept set is exactly the five production selector backends. A new
+    // backend gaining a selector impl MUST be added here, or its orphaned
+    // segments and retained mappings are never reclaimed.
+    //
+    // Per-backend rationale:
+    // - `MemoryBackendWrapper`: routing backend of the global allocator
+    //   (`Mnemosyne`, `MnemosyneAllocator` default) and the branded
+    //   `Heap`/`TieredHeap` host tier — the primary populated pool set.
+    // - `CudaUnifiedBackend`/`CudaDeviceBackend`/`CudaHostPinnedBackend`:
+    //   device, unified, and pinned pools reachable through
+    //   `MnemosyneAllocator<P, B>` and `TieredHeap`'s typed sub-heaps.
+    // - `WgpuStagingBackend`: staging-buffer pool reachable through
+    //   `MnemosyneAllocator<P, B>`.
+    //
+    // `DefaultBackend` is intentionally absent: it implements
+    // `HasSegmentPool`, but its `LocalAllocatorSelector` impl exists only in
+    // `mnemosyne-local`'s test fixtures, so no production thread allocator
+    // ever routes through it and its pools stay empty in any process that
+    // runs this thread — sweeping it was dead work.
     decay_step_for_backend::<mnemosyne_backend::MemoryBackendWrapper>();
     decay_step_for_backend::<mnemosyne_backend::CudaUnifiedBackend>();
     decay_step_for_backend::<mnemosyne_backend::CudaDeviceBackend>();

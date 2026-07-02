@@ -33,7 +33,7 @@ impl TaggedSegmentStack {
     /// Creates a new empty stack.
     pub(crate) const fn new() -> Self {
         Self {
-            head: CacheAlignedAtomicPtr::new(core::ptr::null_mut()),
+            head: CacheAlignedAtomicPtr::new(),
             count: CacheAlignedAtomicUsize::new(0),
         }
     }
@@ -76,6 +76,51 @@ impl TaggedSegmentStack {
         self.count.value.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Pushes a pre-linked chain of `len` segments in a single tagged CAS and
+    /// adds `len` to the count.
+    ///
+    /// The chain becomes the top of the stack in its existing `head → tail`
+    /// link order: after the splice, `pop` returns `head` first, then the
+    /// chain's successors in order, then whatever was on the stack before
+    /// (including nodes pushed concurrently during the CAS loop, which end up
+    /// below `tail`). Cost is one CAS regardless of `len`, versus `len`
+    /// retriable CAS operations for element-wise re-pushing.
+    ///
+    /// # Safety
+    ///
+    /// `head` and `tail` must be non-null, exclusively-owned `Segment`s linked
+    /// through `next_free_segment` such that `tail` is reached from `head` in
+    /// exactly `len - 1` hops (`len >= 1`); no other thread may reach any chain
+    /// node. Ownership of every chain node transfers to the stack.
+    #[inline]
+    pub(crate) unsafe fn push_chain(&self, head: *mut Segment, tail: *mut Segment, len: usize) {
+        debug_assert!(!head.is_null() && !tail.is_null() && len >= 1);
+        let mut current = self.head.load(Ordering::Relaxed);
+        loop {
+            let current_ptr = CacheAlignedAtomicPtr::ptr(current);
+            // SAFETY: by contract the caller owns the whole chain exclusively
+            // until the publishing CAS succeeds, so linking `tail` to the
+            // observed stack head is unobservable to other threads until then.
+            unsafe {
+                (*tail).next_free_segment = current_ptr;
+            }
+            let next = CacheAlignedAtomicPtr::tagged_successor(head, current);
+            match self.head.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Release,
+                // Relaxed failure is sound for the same reason as `push`: the
+                // failure value is only re-linked into the exclusively-owned
+                // chain tail, never dereferenced.
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
+        self.count.value.fetch_add(len, Ordering::Relaxed);
+    }
+
     /// Pops the head segment, returning null when empty, decrementing the count
     /// and clearing the popped segment's `next_free_segment`.
     ///
@@ -93,16 +138,25 @@ impl TaggedSegmentStack {
                 return core::ptr::null_mut();
             }
             // SAFETY: `current_ptr` was published by `push` (which wrote
-            // `next_free_segment` before its Release CAS); the Acquire load/CAS
-            // observes that link. A concurrent push/pop changes the head tag, so
-            // our CAS fails and retries rather than acting on a stale successor.
+            // `next_free_segment` before its Release CAS). Every load that can
+            // produce the `current` we dereference here is Acquire — the initial
+            // head load AND the CAS failure ordering below — so each synchronizes
+            // with the pushing thread's Release CAS before the link is read. A
+            // concurrent push/pop changes the head tag, so our CAS fails and
+            // retries rather than acting on a stale successor.
             let next_ptr = unsafe { (*current_ptr).next_free_segment };
             let next = CacheAlignedAtomicPtr::tagged_successor(next_ptr, current);
             match self.head.compare_exchange_weak(
                 current,
                 next,
                 Ordering::Acquire,
-                Ordering::Relaxed,
+                // Acquire (not Relaxed): the failure value `actual` is
+                // dereferenced on the next iteration, so this load must also
+                // synchronize with the publishing push's Release CAS. `push`
+                // keeps a Relaxed failure ordering because its failure value is
+                // only stored into an exclusively-owned segment, never
+                // dereferenced.
+                Ordering::Acquire,
             ) {
                 Ok(_) => {
                     self.count.value.fetch_sub(1, Ordering::Relaxed);
@@ -167,6 +221,52 @@ mod tests {
         assert_eq!(stack.pop(), core::ptr::null_mut());
 
         for p in [a, b, c] {
+            unsafe {
+                let _ = Box::from_raw(p);
+            }
+        }
+    }
+
+    #[test]
+    fn push_chain_splices_in_order_and_interleaves_with_push_pop() {
+        let stack = TaggedSegmentStack::new();
+        let below = boxed(0x0500);
+        unsafe { stack.push(below) };
+
+        // Build a private chain a -> b -> c and splice it in one CAS.
+        let a = boxed(0x1000);
+        let b = boxed(0x2000);
+        let c = boxed(0x3000);
+        unsafe {
+            (*a).next_free_segment = b;
+            (*b).next_free_segment = c;
+            stack.push_chain(a, c, 3);
+        }
+        assert_eq!(stack.len(), 4);
+        // Link integrity: chain order preserved, tail linked to the prior head.
+        unsafe {
+            assert_eq!((*a).next_free_segment, b);
+            assert_eq!((*b).next_free_segment, c);
+            assert_eq!((*c).next_free_segment, below);
+        }
+
+        // Interleave a plain push: it lands above the spliced chain.
+        let d = boxed(0x4000);
+        unsafe { stack.push(d) };
+        assert_eq!(stack.len(), 5);
+
+        // Pop order: d, then the chain head -> tail, then the pre-existing node.
+        for expected in [d, a, b, c, below] {
+            let popped = stack.pop();
+            assert_eq!(popped, expected);
+            unsafe {
+                assert_eq!((*popped).next_free_segment, core::ptr::null_mut());
+            }
+        }
+        assert_eq!(stack.len(), 0);
+        assert_eq!(stack.pop(), core::ptr::null_mut());
+
+        for p in [a, b, c, d, below] {
             unsafe {
                 let _ = Box::from_raw(p);
             }

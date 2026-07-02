@@ -38,7 +38,10 @@ fn test_runtime_options_override_default_retention() {
     mnemosyne_local::reset_options_for_testing();
 
     // 1. Force the option to 0 via env var
-    std::env::set_var("MNEMOSYNE_MAX_RETAINED_SEGMENTS", "0");
+    // SAFETY: nextest runs each test in its own process and `TEST_LOCK`
+    // serializes the env-mutating tests within this binary, so no other
+    // thread reads or writes the environment concurrently.
+    unsafe { std::env::set_var("MNEMOSYNE_MAX_RETAINED_SEGMENTS", "0") };
 
     let pool = <MemoryBackendWrapper as HasSegmentPool>::global_segment_pool();
     unsafe {
@@ -62,7 +65,9 @@ fn test_runtime_options_override_default_retention() {
 
     // Reset options again to defaults
     mnemosyne_local::reset_options_for_testing();
-    std::env::remove_var("MNEMOSYNE_MAX_RETAINED_SEGMENTS");
+    // SAFETY: same single-threaded-environment argument as `set_var` above
+    // (per-test process under nextest plus `TEST_LOCK` serialization).
+    unsafe { std::env::remove_var("MNEMOSYNE_MAX_RETAINED_SEGMENTS") };
 }
 
 #[test]

@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "crates/mnemosyne-core",
     "crates/mnemosyne-backend",
@@ -12,6 +12,30 @@ members = [
     "crates/mnemosyne",
     "crates/mnemosyne-c-shim",
     "crates/mnemosyne-benchmarks",
+    "crates/mnemosyne-build-util",
 ]
 exclude = ["fuzz"]
 
+# Dev/test keep line tables only: full DWARF dominates target/ size for an
+# allocator workspace while backtraces need only line info. Overflow checks are
+# pinned on (not left to profile defaults) because integer wraparound in size
+# arithmetic is a memory-safety hazard here.
+[profile.dev]
+debug = "line-tables-only"
+overflow-checks = true
+
+[profile.test]
+debug = "line-tables-only"
+overflow-checks = true
+
+# Release ships without debug info or symbols; profiling work uses the
+# dedicated `profiling` profile below instead of re-fattening release.
+[profile.release]
+debug = false
+strip = "symbols"
+
+# Full debug info on optimized code, for flamegraphs and perf attribution.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"

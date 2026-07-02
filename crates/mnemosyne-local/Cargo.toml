@@ -1,12 +1,11 @@
 [package]
 name = "mnemosyne-local"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.87"
 
 [features]
-default = ["parallel", "mnemosyne-memory", "std_tls"]
-parallel = []
-mnemosyne-memory = []
+default = ["std_tls"]
 # Replaces the portable `std::thread_local!` cache accessor with an ELF/PE
 # `#[thread_local]` static, which lowers to a single segment-register-relative
 # load (the mechanism mimalloc uses for `mi_heap_default`). This eliminates the
@@ -30,6 +29,8 @@ segment-header-guards = ["mnemosyne-arena/segment-header-guards"]
 # Relaxed atomic increment per deallocation commit.
 dealloc-probe = []
 
+[build-dependencies]
+mnemosyne-build-util = { path = "../mnemosyne-build-util" }
 
 [dependencies]
 mnemosyne-core = { path = "../mnemosyne-core" }

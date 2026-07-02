@@ -2,11 +2,10 @@
 name = "mnemosyne-hardened"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.87"
 
 [features]
-default = ["parallel", "mnemosyne-memory"]
-parallel = []
-mnemosyne-memory = []
+default = []
 
 [dependencies]
 mnemosyne-core = { path = "../mnemosyne-core" }

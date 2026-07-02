@@ -1,17 +1,17 @@
-use crate::raw_heap::RawHeap;
 use crate::Heap;
+use crate::raw_heap::RawHeap;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
-use mnemosyne_local::internal::HasSegmentPool;
 use mnemosyne_local::LocalAllocatorSelector;
+use mnemosyne_local::internal::HasSegmentPool;
 
 use melinoe::sync::thread_local_scope;
 
 // Brand vocabulary re-exported from melinoe so the heap's branded containers and
 // their consumers share one authoritative token + marker definition.
-pub use melinoe::sync::ThreadLocalToken;
 pub use melinoe::InvariantLifetime;
+pub use melinoe::sync::ThreadLocalToken;
 
 /// A wrapper representing a heap block branded with a compile-time unique lifetime.
 pub struct BrandedBlock<'brand, T: ?Sized> {
@@ -28,9 +28,34 @@ impl<'brand, T: ?Sized> BrandedBlock<'brand, T> {
 }
 
 impl<'brand, T> BrandedBlock<'brand, T> {
-    /// Safely casts this branded block to managed memory of a different type.
+    /// Casts this branded block to managed memory of a different type,
+    /// preserving the brand.
+    ///
+    /// # Safety
+    ///
+    /// The returned `BrandedBlock<'brand, U>` is trusted by safe APIs that
+    /// interpret the pointee as a `U`: [`crate::Heap::free`] runs
+    /// `core::ptr::drop_in_place::<U>` on it and derives its deallocation
+    /// path from `size_of_val` of the `U`, [`crate::Heap::realloc`] reads
+    /// the pointee's layout the same way, and
+    /// [`BrandedCell::from_block`] hands out `&U`/`&mut U`. The caller must
+    /// therefore guarantee:
+    ///
+    /// - **Layout**: the block's allocation is at least `size_of::<U>()`
+    ///   bytes and aligned to `align_of::<U>()` (e.g. it was allocated for a
+    ///   layout that covers `U`), and
+    /// - **Initialization/drop discipline**: either the memory holds a valid
+    ///   `U` before any path reads or drops it as one, or the block is
+    ///   treated as uninitialized `U` storage — written with a valid `U`
+    ///   before such a path (as [`crate::Heap::alloc_init`] does), or
+    ///   released exclusively through the non-dropping
+    ///   [`crate::Heap::free_uninit`].
+    ///
+    /// Violating either (for example casting an initialized `usize` block to
+    /// `String` and freeing it) is a transmute-and-drop and undefined
+    /// behavior.
     #[inline(always)]
-    pub fn cast<U>(self) -> BrandedBlock<'brand, U> {
+    pub unsafe fn cast<U>(self) -> BrandedBlock<'brand, U> {
         BrandedBlock {
             ptr: self.ptr.cast(),
             _marker: self._marker,
@@ -86,9 +111,64 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedBlock<'brand, T> {
 ///
 /// Permits shared read access and exclusive write access mediated by the
 /// melinoe [`ThreadLocalToken`].
+///
+/// # Variance
+///
+/// `BrandedCell<'brand, T>` is **invariant in `T`** (and in `'brand`). This
+/// is a soundness requirement, not a convenience: the cell is `Copy` and
+/// writable through [`borrow_mut`](Self::borrow_mut), so a covariant cell
+/// would allow a safe lifetime-shortening coercion of one copy (e.g.
+/// `BrandedCell<'brand, &'static str>` → `BrandedCell<'brand, &'a str>`),
+/// a write of a short-lived `&'a str` through the coerced copy, and a read
+/// of the *original* copy as `&'static str` — a dangling reference with no
+/// `unsafe` at the call site. This is exactly why [`GhostCell`] wraps its
+/// payload in the invariant [`core::cell::UnsafeCell`]; here the payload
+/// lives behind a (covariant) [`NonNull`], so invariance is pinned
+/// explicitly by the `PhantomData<*mut T>` field.
+///
+/// [`GhostCell`]: https://plv.mpi-sws.org/rustbelt/ghostcell/
+///
+/// # Examples
+///
+/// Token-mediated shared reads and exclusive writes across `Copy` handles:
+///
+/// ```
+/// use mnemosyne_core::StandardPolicy;
+/// use mnemosyne_backend::MemoryBackendWrapper;
+/// use mnemosyne_heap::{scope, BrandedCell};
+///
+/// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+///     let block = heap.alloc_init(&token, 41).expect("cell allocation failed");
+///     // SAFETY: `alloc_init` returned a block holding an initialized value.
+///     let cell = unsafe { BrandedCell::from_block(block) };
+///     let copy = cell; // `Copy`: multiple shared handles to one value
+///     *cell.borrow_mut(&mut token) += 1;
+///     assert_eq!(*copy.borrow(&token), 42);
+///     // SAFETY: `cell`/`copy` are the only handles and neither is used again.
+///     heap.free(&mut token, unsafe { cell.into_block() });
+/// });
+/// ```
+///
+/// The covariant coercion described above fails to compile — the invariance
+/// marker rejects shortening the lifetime inside `T`:
+///
+/// ```compile_fail
+/// use mnemosyne_heap::BrandedCell;
+///
+/// fn shorten<'brand, 'a>(
+///     cell: BrandedCell<'brand, &'static str>,
+/// ) -> BrandedCell<'brand, &'a str> {
+///     cell // ERROR: `BrandedCell` is invariant in `T`
+/// }
+/// ```
 pub struct BrandedCell<'brand, T: ?Sized> {
     pub(crate) ptr: NonNull<T>,
     pub(crate) _marker: InvariantLifetime<'brand>,
+    /// Pins the cell invariant in `T`. `NonNull<T>` alone is covariant in
+    /// `T`; `*mut T` is invariant in `T` and valid for `T: ?Sized`. The
+    /// auto-trait posture is unchanged: `NonNull<T>` already suppresses
+    /// `Send`/`Sync`, and `PhantomData<*mut T>` is `Copy`.
+    _invariance: PhantomData<*mut T>,
 }
 
 impl<'brand, T: ?Sized> Clone for BrandedCell<'brand, T> {
@@ -110,6 +190,7 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
         Self {
             ptr: block.ptr,
             _marker: block._marker,
+            _invariance: PhantomData,
         }
     }
 

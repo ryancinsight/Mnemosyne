@@ -1,10 +1,10 @@
 use core::alloc::GlobalAlloc;
-use criterion::{black_box, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box};
 
 #[cfg(jemalloc_available)]
 use super::compat::bench_jemalloc;
 use super::constants::{HUGE_LAYOUT, LARGE_LAYOUT, MEDIUM_LAYOUT, SMALL_LAYOUT};
-use super::helpers::{alloc_usable_dealloc, benchmark_failure, require_allocated};
+use super::helpers::{alloc_usable_dealloc, benchmark_failure, require_allocated, snmalloc_skips};
 
 pub fn bench_usable_size(c: &mut Criterion) {
     let mut group = c.benchmark_group("Usable size latency");
@@ -33,12 +33,7 @@ pub fn bench_usable_size(c: &mut Criterion) {
                 })
             })
         });
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
-        let skip_snmalloc = false;
-        #[cfg(all(windows, target_arch = "x86_64"))]
-        let skip_snmalloc = name == "huge/2m";
-
-        if !skip_snmalloc {
+        if !snmalloc_skips(name) {
             group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
                 // Safety: `layout` comes from the static valid benchmark layout table.
                 b.iter(|| unsafe {
@@ -102,12 +97,7 @@ pub fn bench_usable_size_query(c: &mut Criterion) {
         // Safety: pointer was allocated by MiMalloc for `layout` above.
         unsafe { mimalloc::MiMalloc.dealloc(mimalloc_ptr, layout) };
 
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
-        let skip_snmalloc = false;
-        #[cfg(all(windows, target_arch = "x86_64"))]
-        let skip_snmalloc = name == "huge/2m";
-
-        if !skip_snmalloc {
+        if !snmalloc_skips(name) {
             // Safety: `layout` comes from the static valid benchmark layout table.
             let snmalloc_ptr = unsafe {
                 require_allocated(snmalloc_rs::SnMalloc.alloc(layout), "usable_size_query")

@@ -2,7 +2,7 @@ use super::super::*;
 use super::fixtures::MockBackend;
 use core::ptr::NonNull;
 use mnemosyne_arena::{allocate_segment, deallocate_segment};
-use mnemosyne_core::constants::{PAGES_PER_SEGMENT, PAGE_SHIFT};
+use mnemosyne_core::constants::{PAGE_SHIFT, PAGES_PER_SEGMENT};
 use mnemosyne_core::policy::StandardPolicy;
 use mnemosyne_core::size_class::{class_to_size, size_to_class};
 use mnemosyne_core::types::Block;

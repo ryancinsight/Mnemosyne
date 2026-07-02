@@ -67,42 +67,22 @@ impl AtomicFreeList {
         // exposed-provenance model.
         let block_addr = block_ptr.expose_provenance();
         if (block_addr & !Self::PTR_MASK) != 0 {
-            #[cfg(any(feature = "std", test))]
-            {
-                std::process::abort();
-            }
-            #[cfg(not(any(feature = "std", test)))]
-            {
-                panic!("Block address does not fit in 48 bits");
-            }
+            crate::abort::abort_on_corruption("Block address does not fit in 48 bits");
         }
 
-        let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-            let segment_addr = block_addr & !(crate::constants::SEGMENT_SIZE - 1);
-            let page_index =
-                (block_addr & (crate::constants::SEGMENT_SIZE - 1)) >> crate::constants::PAGE_SHIFT;
-            // SAFETY: `block` is a live allocation, so `segment_addr` (its
-            // address masked down to `SEGMENT_SIZE`) is the base of the valid,
-            // initialized parent segment header, and `page_index` is the block's
-            // page offset within that segment, which is `< PAGES_PER_SEGMENT` —
-            // so reading the per-page encryption key from `keys` is a valid read.
-            unsafe { (*(segment_addr as *const crate::types::Segment)).keys[page_index] }
-        } else {
-            0
+        // SAFETY: `block` is a live allocation, so `locate_segment` on its
+        // pointer recovers the valid parent segment header and its in-range page
+        // index, satisfying `cookie_for`'s contract.
+        let cookie = unsafe {
+            let (segment, page_index) = crate::types::locate_segment(block_ptr.cast::<u8>());
+            (*segment.cast_const()).cookie_for::<P>(page_index)
         };
 
         let mut current = self.head.load(Ordering::Relaxed);
         loop {
             let current_addr = current & Self::PTR_MASK;
             if block_addr == current_addr {
-                #[cfg(any(feature = "std", test))]
-                {
-                    std::process::abort();
-                }
-                #[cfg(not(any(feature = "std", test)))]
-                {
-                    panic!("Double free detected in AtomicFreeList");
-                }
+                crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
             }
             let current_ptr = core::ptr::with_exposed_provenance_mut::<Block>(current_addr);
             let next_count = ((current >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
@@ -177,14 +157,7 @@ impl AtomicFreeList {
         let mut current = self.head.load(Ordering::Relaxed);
         loop {
             if block_ptr == current {
-                #[cfg(any(feature = "std", test))]
-                {
-                    std::process::abort();
-                }
-                #[cfg(not(any(feature = "std", test)))]
-                {
-                    panic!("Double free detected in AtomicFreeList");
-                }
+                crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
             }
             // Safety: block_ptr is guaranteed to be valid, writeable, aligned memory,
             // exclusive to the thread calling push.
@@ -215,14 +188,7 @@ impl AtomicFreeList {
             while let Some(node) = current {
                 count += 1;
                 if count > crate::constants::PAGE_SIZE {
-                    #[cfg(any(feature = "std", test))]
-                    {
-                        std::process::abort();
-                    }
-                    #[cfg(not(any(feature = "std", test)))]
-                    {
-                        panic!("Cycle detected in AtomicFreeList");
-                    }
+                    crate::abort::abort_on_corruption("Cycle detected in AtomicFreeList");
                 }
                 // SAFETY: `node` is `head` or a successor reached through this
                 // list, i.e. a block previously published to this `AtomicFreeList`
@@ -246,52 +212,5 @@ impl Default for AtomicFreeList {
     #[inline]
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// A lightweight, allocation-free spinlock.
-pub struct SpinLock {
-    locked: core::sync::atomic::AtomicBool,
-}
-
-impl Default for SpinLock {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SpinLock {
-    /// Creates a new empty `SpinLock`.
-    pub const fn new() -> Self {
-        Self {
-            locked: core::sync::atomic::AtomicBool::new(false),
-        }
-    }
-
-    /// Acquires the lock, spinning if necessary.
-    #[inline(always)]
-    pub fn lock(&self) {
-        while self
-            .locked
-            .compare_exchange_weak(
-                false,
-                true,
-                core::sync::atomic::Ordering::Acquire,
-                core::sync::atomic::Ordering::Relaxed,
-            )
-            .is_err()
-        {
-            while self.locked.load(core::sync::atomic::Ordering::Relaxed) {
-                core::hint::spin_loop();
-            }
-        }
-    }
-
-    /// Releases the lock.
-    #[inline(always)]
-    pub fn unlock(&self) {
-        self.locked
-            .store(false, core::sync::atomic::Ordering::Release);
     }
 }

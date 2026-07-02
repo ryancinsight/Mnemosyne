@@ -1,6 +1,6 @@
 use crate::per_cpu;
-use crate::{initialize_allocated_bytes, LocalAllocatorSelector, ThreadAllocator};
-use mnemosyne_arena::{allocate_large_or_huge, HasSegmentPool};
+use crate::{LocalAllocatorSelector, ThreadAllocator, initialize_allocated_bytes};
+use mnemosyne_arena::{HasSegmentPool, allocate_large_or_huge};
 use mnemosyne_core::constants::MIN_BLOCK_SIZE;
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::{class_to_size, size_to_class_nonzero};
@@ -11,6 +11,16 @@ use mnemosyne_core::validation::{is_valid_alloc_request, is_valid_layout_alloc_r
 /// # Safety
 ///
 /// This function is unsafe because it handles raw pointers and manual layouts.
+///
+/// One free-list encryption mode per backend (ADR 0001): every policy used
+/// with a given backend `B` in a process must agree on
+/// `P::ENABLE_FREE_LIST_ENCRYPTION`. The thread allocator is keyed by `B`
+/// alone, so its pages are keyed under the first owning policy's mode; a
+/// later chain operation under a disagreeing policy would corrupt the free
+/// list. Debug builds abort on the mismatch (the `Segment::cookie_for`
+/// tripwire); the type-level fix (allocator keyed by encryption class) is
+/// tracked by ADR 0001. This applies equally to `thread_free` and
+/// `thread_realloc`.
 #[inline(always)]
 pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
     size: usize,
@@ -131,9 +141,12 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                 }
                 // SAFETY: same valid `page`; reclaim path adopts cross-thread
                 // frees back into this page's local free list before allocating.
-                if let Some(block) =
-                    unsafe { crate::local_alloc::page::try_reclaim_and_allocate::<P>(page) }
-                {
+                if let Some(block) = unsafe {
+                    crate::local_alloc::page::try_reclaim_and_allocate::<P>(
+                        page,
+                        &mut alloc.cross_thread_reclaimed,
+                    )
+                } {
                     let ptr = block.as_ptr() as *mut u8;
                     // SAFETY: as above, `ptr` is a fresh block of at least
                     // `adjusted_size` bytes owned by the caller.

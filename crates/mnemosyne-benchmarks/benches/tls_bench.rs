@@ -2,12 +2,12 @@
 #![allow(clippy::missing_const_for_thread_local)]
 
 use core::sync::atomic::AtomicU32;
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use mnemosyne_backend::MemoryBackendWrapper;
+use mnemosyne_local::LocalAllocatorSlot;
 use mnemosyne_local::tls::{
     AsmTls, CachedCellTls, NativeOsTls, StandardTls, TlsProvider, TlsSlotAccess,
 };
-use mnemosyne_local::LocalAllocatorSlot;
 
 std::thread_local! {
     static DUMMY_SLOT: LocalAllocatorSlot<MemoryBackendWrapper> = const { LocalAllocatorSlot::new() };

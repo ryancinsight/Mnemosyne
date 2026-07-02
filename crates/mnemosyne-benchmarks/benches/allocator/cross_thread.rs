@@ -1,13 +1,13 @@
-use criterion::{black_box, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box};
 use std::alloc::System;
 
 #[cfg(jemalloc_available)]
 use super::compat::bench_jemalloc;
 use super::constants::{
     CROSS_THREAD_ALLOCS, HUGE_LAYOUT, LARGE_LAYOUT, MEDIUM_LAYOUT, SATURATED_THREAD_ALLOCS,
-    SMALL_LAYOUT, THREADS, THREAD_ALLOCS,
+    SMALL_LAYOUT, THREAD_ALLOCS, THREADS,
 };
-use super::helpers::benchmark_failure;
+use super::helpers::{benchmark_failure, snmalloc_skips};
 use super::workers::{HandoffWorker, ThreadCycleWorkers};
 
 pub fn bench_cross_thread_free(c: &mut Criterion) {
@@ -56,12 +56,7 @@ pub fn bench_cross_thread_free(c: &mut Criterion) {
         });
         drop(rpmalloc_worker);
 
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
-        let skip_snmalloc = false;
-        #[cfg(all(windows, target_arch = "x86_64"))]
-        let skip_snmalloc = name == "huge/2m";
-
-        if !skip_snmalloc {
+        if !snmalloc_skips(name) {
             let snmalloc_worker = HandoffWorker::new(&SNMALLOC);
             group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
                 b.iter(|| snmalloc_worker.alloc_then_handoff(*layout, count))

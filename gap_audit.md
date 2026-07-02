@@ -2,6 +2,93 @@
 
 ## Residual risk / open findings
 
+2026-07-02 consolidation cycle 3 — decision log and residual risk:
+- AR-1 step 1 shipped (debug tripwire at `Segment::cookie_for`). Residual risk:
+  the release build still permits mixed-encryption-policy corruption on one
+  backend; only debug/CI aborts. The tripwire is defense-in-depth, NOT the fix —
+  the type-level allocator-keying (ADR 0001 Option C) remains the closure and
+  awaits sign-off. Discovery aid: the tripwire will fire in any test that
+  interleaves encrypted + unencrypted policies on one backend.
+- The `nightly_tls` path was **untested in CI on this host** before this cycle:
+  rustup's nightly `rustc` is PATH-shadowed by the MSYS2 stable toolchain, so
+  the build probe reported "not nightly" and the cfg never activated — a latent
+  E0432 sat undetected. Fixed and verified by forcing `RUSTC`, but CI that
+  relies on `rustup run nightly` here is still vacuous for that gate; a real
+  nightly-channel CI job (or `RUSTC`-override) is needed to keep the
+  `#[thread_local]` path honest. Filed as a residual risk, not yet a backlog
+  item (needs a CI-config owner).
+- Edition 2024 MSRV is 1.87 (const `is_multiple_of`); consumers below that will
+  not build — recorded as the AR-7 breaking-change contract.
+
+2026-07-02 consolidation cycle 2 — decision log and residual risk:
+- AR-1 (mixed free-list-encryption policy corruption) decision recorded in
+  [docs/adr/0001-free-list-encryption-mode-binding.md]: adopt Option C (key the
+  TLS allocator by encryption class — sound and zero-cost for the default
+  policy). Proposed, awaiting sign-off. Residual risk until implemented: the
+  single-thread same-page mixed-policy path remains latently unsound; contract
+  documented on `thread_*` (one encryption mode per backend); interim
+  debug-assert safeguard is implementation step 1.
+- AR-10 decision: FOLD `SecurePolicy`/`HardenedPolicy` into
+  `mnemosyne-core::policy` (SSOT with `StandardPolicy`; core is dependency-free,
+  zero new deps). `mnemosyne-hardened` kept as a thin real re-export because
+  external (gaia, kwavers) and internal Cargo manifests reference the crate
+  name — not a compatibility shim, the genuine new home's forwarding.
+- AR-3 acceptance is split: the "no global RMW on the reclaim path" clause is
+  met and regression-tested; the "cross-thread benchmark rows neutral-or-better"
+  clause depends on AR-4's quiet-machine re-baseline and is tracked there — not
+  an open regression, a pending measurement.
+- The 2026-07-02 batch is behavior-preserving consolidation (verified by the
+  unchanged test suite, 264/264); no new soundness claims beyond the recorded
+  decisions.
+
+2026-07-01 four-agent audit cycle (perf, memory, contention, safety, plus the
+structural monomorphization/const-generic/GAT/Cow/DRY/SSOT lens across all 11
+crates + workspace config). High-severity findings fixed same-cycle (checklist
+2026-07-01 block); deferred items AR-1..AR-12 in backlog.md `## Open`.
+Residual risk and verified-clean results:
+
+- 2026-07-02 Atlas consumer repair: `mnemosyne-local` allocator
+  reclaim/free/realloc test surfaces now build and pass after the
+  `cross_thread_reclaimed` sink, branded page-list mover, `BackendPools`
+  fixture, and core `locate_segment` routing updates. Evidence tier: compile-time
+  validation plus value-semantic allocator regression tests; package clippy
+  and nextest are clean. Residual: AR-3 remains open for the required
+  cross-thread benchmark comparison; no performance improvement is claimed.
+- CUDA runtime paths (init probe, VEH redirect, device alloc/free) are
+  verified at compile-time + registry-unit-test tier only — this machine has
+  no NVIDIA driver. The VEH Rip-redirect mechanism in particular needs one
+  run on a machine with a faulting/working driver before it is trusted at the
+  empirical tier.
+- Decision log — orphan adoption fix chose "never re-key + compatibility
+  gate" over "drain-and-re-encode with old keys": re-encoding cannot be done
+  safely while remote threads concurrently read keys in
+  `AtomicFreeList::push`; key writes are structurally confined to segments
+  with no live chains and no external visibility. A policy-incompatible orphan
+  costs one deferred pop/push per acquisition for mismatched-policy threads
+  (bounded, cold path; pathological only in sustained mixed-policy processes,
+  which AR-1 addresses at the root).
+- Branded-type variance is now audited: `BrandedCell` fixed (was covariant in
+  T while Copy+writable); `BrandedBlock`/`BrandedBox`/`BrandedVec`/
+  `TieredBlock` covariance verified sound (linear owned, Box/Vec model);
+  melinoe's own cells verified unaffected (payload inline in invariant
+  `UnsafeCell`). A `compile_fail` doctest pins the fix.
+- Verified clean this cycle (do not re-audit): tagged-stack orderings besides
+  the fixed pop-retry edge (push Release/Relaxed, take_all Acquire swap +
+  release-sequence argument); arena allocate/free error paths leak no
+  mappings; backend wrapper record-on-confirmed-outcome telemetry;
+  Unix/Windows madvise/VirtualAlloc constants; AlignedVec/ScratchPool layout
+  + borrow-depth + unwind soundness; per-CPU cache count-neutrality (no UAF);
+  prof shard design (backtrace outside lock, no lock-order cycle); interner
+  boundedness (refcount release + id recycling, capacity retained ≈ peak);
+  c-shim ABI monomorphized call path; benchmark instruments (black_box
+  placement, timed regions, bounded channels) except the AR-4 statistics
+  weakness; disabled-profiler fast path is one Relaxed load + branch.
+- The benchmarks crate's `snmalloc-sys` CMake build failed once mid-cycle in
+  one agent's environment (CXX probe) and succeeded in every other run —
+  environment-flaky, not tracked as a code defect.
+- The 2026-06-27 mixed-policy latent-unsoundness observation is superseded by
+  the structured AR-1 filing.
+
 2026-06-27 deep audit (safety, contention-free performance, memory efficiency),
 read-only fan-out across arena/local/core/heap/backend. Tracked items filed in
 backlog.md `## Open`. Verified-clean results recorded so they are not re-audited:
@@ -36,6 +123,15 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
   tested through its no-libFuzzer library path.
 
 ## Closed
+
+- [patch] `mnemosyne-arena` briefly exposed a constructor contract mismatch in
+  Atlas consumers: `TaggedSegmentStack` called `CacheAlignedAtomicPtr::new()`
+  as an empty tagged head while the local dirty tree had shifted the atomic
+  constructor shape. Restored the no-argument empty-head constructor and routed
+  huge-pool rejected-chain restoration through `TaggedSegmentStack::push_chain`
+  so the batch CAS path is production-live. Evidence tier: compile-time
+  validation plus downstream integration; arena fmt/check/clippy pass, and
+  Kwavers FWI nextest passes 59/59.
 
 - [patch] `mnemosyne-c-shim` had deterministic adversarial tests but no
   continuous fuzz target for arbitrary hostile ABI inputs. Added excluded

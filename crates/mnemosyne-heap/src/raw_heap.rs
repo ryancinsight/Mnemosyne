@@ -2,10 +2,10 @@ use core::alloc::Layout;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::internal::{
-    allocate_large_or_huge, deallocate_large_or_huge, do_local_free_internal,
-    ensure_options_initialized, initialize_allocated_bytes, is_valid_layout_alloc_request,
-    poison_freed_bytes, size_to_class_nonzero, Block, HasSegmentPool, Segment, ThreadAllocator,
-    MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGES_PER_SEGMENT, PAGE_SHIFT, SEGMENT_SIZE,
+    Block, HasSegmentPool, MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGE_SHIFT, PAGES_PER_SEGMENT,
+    SEGMENT_SIZE, Segment, ThreadAllocator, allocate_large_or_huge, deallocate_large_or_huge,
+    do_local_free_internal, ensure_options_initialized, initialize_allocated_bytes,
+    is_valid_layout_alloc_request, poison_freed_bytes, size_to_class_nonzero,
 };
 
 pub(crate) struct RawHeap<P: AllocPolicy, B: HasSegmentPool> {
@@ -74,6 +74,31 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         unsafe { (&*self.allocator.get()).stats() }
     }
 
+    /// Allocates through the large/huge path and applies the policy's
+    /// byte-initialization to the fresh block — the single shared tail for
+    /// the three `alloc_inner` branches that bypass the small-class fast
+    /// path (over-aligned, over-sized, and re-entrant requests).
+    ///
+    /// # Safety
+    ///
+    /// `size`/`align` must form a valid allocation request already vetted by
+    /// `is_valid_layout_alloc_request` (with `size` possibly adjusted upward
+    /// to `max(size, align)`, which preserves validity for the large/huge
+    /// path).
+    #[inline]
+    unsafe fn alloc_large_or_huge_init(size: usize, align: usize) -> *mut u8 {
+        // SAFETY: by this function's contract `size`/`align` are a vetted
+        // large/huge allocation request.
+        let ptr = unsafe { allocate_large_or_huge::<B>(size, align, true) };
+        if !ptr.is_null() {
+            // SAFETY: `ptr` is the non-null `size`-byte block just returned
+            // by `allocate_large_or_huge`; initializing exactly `size` bytes
+            // stays within it.
+            unsafe { initialize_allocated_bytes::<P>(ptr, size) };
+        }
+        ptr
+    }
+
     /// # Safety
     ///
     /// No other borrow of the `UnsafeCell<ThreadAllocator>` may be live
@@ -93,14 +118,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             // SAFETY: `size`/`align` passed `is_valid_layout_alloc_request`
             // above, so they are a valid allocation request for the
             // large/huge path (over-aligned small allocations route here).
-            let ptr = unsafe { allocate_large_or_huge::<B>(size, align, true) };
-            if !ptr.is_null() {
-                // SAFETY: `ptr` is the non-null `size`-byte block just
-                // returned by `allocate_large_or_huge`; initializing exactly
-                // `size` bytes stays within it.
-                unsafe { initialize_allocated_bytes::<P>(ptr, size) };
-            }
-            return ptr;
+            return unsafe { Self::alloc_large_or_huge_init(size, align) };
         }
 
         let adjusted_size = core::cmp::max(size, align);
@@ -111,14 +129,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
                 // largest small size class (`size_to_class_nonzero` returned
                 // `None`), so it is a valid large/huge request; `align` was
                 // validated above.
-                let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, true) };
-                if !ptr.is_null() {
-                    // SAFETY: `ptr` is the non-null `adjusted_size`-byte block
-                    // just returned; initializing `adjusted_size` bytes stays
-                    // within it.
-                    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-                }
-                return ptr;
+                return unsafe { Self::alloc_large_or_huge_init(adjusted_size, align) };
             }
         };
 
@@ -130,13 +141,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             // SAFETY: re-entrant alloc (the allocator is mid-operation);
             // serve from the large/huge path with the validated
             // `adjusted_size`/`align`, avoiding re-borrowing the small path.
-            let ptr = unsafe { allocate_large_or_huge::<B>(adjusted_size, align, true) };
-            if !ptr.is_null() {
-                // SAFETY: `ptr` is the non-null `adjusted_size`-byte block
-                // just returned; initialization stays within it.
-                unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-            }
-            return ptr;
+            return unsafe { Self::alloc_large_or_huge_init(adjusted_size, align) };
         }
 
         alloc.is_allocating = true;
@@ -346,15 +351,19 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
                 return new_size >= layout.size() / 2;
             }
 
-            // SAFETY: `ptr` is a live block of this heap per the `# Safety`
-            // contract; `usable_size` reads the originating segment/page
-            // metadata to recover the block's true capacity.
-            let current_usable = unsafe { mnemosyne_local::usable_size(ptr) };
             let new_adjusted = core::cmp::max(new_size, layout.align());
             if new_adjusted <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE {
                 return new_size >= layout.size() / 2;
             }
 
+            // The segment-header read happens only on the branch that
+            // consumes it: the small-class shrink decisions above never use
+            // the block's usable size, so hoisting this load ahead of them
+            // would put a dead metadata read on the hot realloc path.
+            // SAFETY: `ptr` is a live block of this heap per the `# Safety`
+            // contract; `usable_size` reads the originating segment/page
+            // metadata to recover the block's true capacity.
+            let current_usable = unsafe { mnemosyne_local::usable_size(ptr) };
             let page_size = mnemosyne_core::constants::PAGE_SIZE;
             let new_page_rounded = (new_adjusted + page_size - 1) & !(page_size - 1);
             return new_page_rounded >= current_usable;

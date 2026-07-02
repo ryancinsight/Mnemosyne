@@ -1,12 +1,12 @@
 use core::alloc::{GlobalAlloc, Layout};
 use criterion::black_box;
 use std::cell::UnsafeCell;
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread;
 
 use super::constants::{
-    CROSS_THREAD_ALLOCS, CROSS_THREAD_QUEUE_BOUND, THREADS, THREAD_ALLOCS, THREAD_WORK_QUEUE_BOUND,
+    CROSS_THREAD_ALLOCS, CROSS_THREAD_QUEUE_BOUND, THREAD_ALLOCS, THREAD_WORK_QUEUE_BOUND, THREADS,
 };
 use super::helpers::{alloc_dealloc, benchmark_failure, require_allocated};
 
@@ -19,6 +19,12 @@ pub struct HandoffBuffer {
     slots: UnsafeCell<[usize; CROSS_THREAD_ALLOCS]>,
 }
 
+// Safety: the `slots` cell is never accessed concurrently. The producer writes
+// exactly `batch.count` slots, then `send`s the batch over the `sync_channel`;
+// the worker only `read`s after `recv` returns that batch, and the producer
+// blocks on `done.recv()` before writing again. The channel send/recv pair
+// establishes a happens-before edge in each direction, so producer writes and
+// worker reads are strictly ordered and never overlap despite the shared `&`.
 unsafe impl Sync for HandoffBuffer {}
 
 impl HandoffBuffer {

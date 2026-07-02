@@ -1,7 +1,8 @@
 [package]
 name = "mnemosyne-c-shim"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.87"
 
 [lib]
 # `lib` keeps the crate usable from Rust tests and downstream Rust code;
@@ -16,7 +17,4 @@ mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-prof = { path = "../mnemosyne-prof" }
 
 [features]
-default = ["parallel", "mnemosyne-memory"]
-parallel = []
-mnemosyne-memory = []
 nightly_tls = ["mnemosyne-prof/nightly_tls"]

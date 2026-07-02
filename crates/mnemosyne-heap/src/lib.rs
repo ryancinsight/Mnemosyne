@@ -14,10 +14,10 @@ pub mod tiered_heap;
 #[cfg(test)]
 mod tests;
 
-pub use brand::{scope, BrandedBlock, BrandedCell, InvariantLifetime, ThreadLocalToken};
+pub use brand::{BrandedBlock, BrandedCell, InvariantLifetime, ThreadLocalToken, scope};
 pub use branded_box::BrandedBox;
 pub use branded_vec::BrandedVec;
 pub use heap::Heap;
 pub use tier::{MemoryTier, PlacementHint};
 pub use tiered_backend::TieredBackend;
-pub use tiered_heap::{scope_tiered, TieredBlock, TieredHeap};
+pub use tiered_heap::{TieredBlock, TieredHeap, scope_tiered};

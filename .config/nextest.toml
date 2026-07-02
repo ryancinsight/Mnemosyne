@@ -1,0 +1,7 @@
+# Test-time budget: a test crossing 30s is flagged slow (a performance defect
+# in the code under test — profile and optimize the implementation, never
+# raise this limit); a second 30s period terminates it as a hang/deadlock to
+# root-cause. `cargo nextest run` is the only sanctioned test runner precisely
+# because it applies this instrument.
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 2 }

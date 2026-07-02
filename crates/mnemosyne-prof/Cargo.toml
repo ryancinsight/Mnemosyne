@@ -1,19 +1,19 @@
 [package]
 name = "mnemosyne-prof"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.87"
 
 [dependencies]
 mnemosyne-core = { path = "../mnemosyne-core" }
 backtrace = "0.3"
 
+[build-dependencies]
+mnemosyne-build-util = { path = "../mnemosyne-build-util" }
+
 [features]
-default = ["parallel", "mnemosyne-memory"]
-parallel = []
-mnemosyne-memory = []
 nightly_tls = []
 std_tls = []
-
 
 [dev-dependencies]
 mnemosyne = { path = "../mnemosyne" }

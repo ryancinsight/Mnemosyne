@@ -64,6 +64,27 @@ unsafe impl Send for Segment {}
 // reference observes no data race.
 unsafe impl Sync for Segment {}
 
+/// Recovers the parent segment header and page index for a user pointer.
+///
+/// Every small allocation lives inside a `SEGMENT_ALIGN`-aligned segment, so
+/// masking `ptr` down to `SEGMENT_SIZE` yields the segment header, and the
+/// mid-address `PAGE_SHIFT` bits (masked by `PAGES_PER_SEGMENT - 1`) yield the
+/// page index. This is the single authoritative pointer→(segment, page_index)
+/// classifier shared by the free, realloc, and usable-size fast paths.
+///
+/// # Safety
+///
+/// `ptr` must be a non-null pointer returned by a Mnemosyne small/huge
+/// allocation, so the recovered segment header is live and the page index is a
+/// valid index into its `pages` array.
+#[inline(always)]
+pub unsafe fn locate_segment(ptr: *mut u8) -> (*mut Segment, usize) {
+    let ptr_val = ptr as usize;
+    let segment = (ptr_val & !(crate::constants::SEGMENT_SIZE - 1)) as *mut Segment;
+    let page_index = (ptr_val >> crate::constants::PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+    (segment, page_index)
+}
+
 impl Segment {
     /// Initializes a segment header at a given aligned address.
     ///
@@ -146,6 +167,58 @@ impl Segment {
         (raw_ptr_addr + huge_size) - user_ptr as usize
     }
 
+    /// Returns the free-list encryption cookie for page `page_index` under a
+    /// runtime encryption flag: the per-page key when `encrypted`, else `0`.
+    ///
+    /// This is the single authoritative cookie accessor; the free, realloc,
+    /// pop, reclaim, and initialization paths route their `if encrypted {
+    /// keys[i] } else { 0 }` selection through it (or the `P`-generic
+    /// [`Segment::cookie_for`]) instead of indexing `keys` inline.
+    ///
+    /// # Safety
+    ///
+    /// `self` must be this page's parent segment header and `page_index` must be
+    /// a valid index into `keys` (`< PAGES_PER_SEGMENT`).
+    #[inline(always)]
+    pub unsafe fn cookie_for_dynamic(&self, encrypted: bool, page_index: usize) -> usize {
+        if encrypted {
+            debug_assert!(page_index < PAGES_PER_SEGMENT);
+            // SAFETY: the caller's contract guarantees `self` is the valid parent
+            // header and `page_index` is in range, so the key read is valid.
+            unsafe { *self.keys.get_unchecked(page_index) }
+        } else {
+            0
+        }
+    }
+
+    /// Returns the free-list encryption cookie for page `page_index` under the
+    /// compile-time policy `P`: the per-page key when `P` encrypts, else `0`.
+    ///
+    /// The const `P::ENABLE_FREE_LIST_ENCRYPTION` const-propagates into
+    /// [`Segment::cookie_for_dynamic`], so the branch resolves at compile time.
+    ///
+    /// Debug builds additionally enforce the one-encryption-mode-per-backend
+    /// contract (ADR 0001 interim safeguard): every static-policy encode and
+    /// decode routes through this chokepoint, so a policy whose
+    /// `ENABLE_FREE_LIST_ENCRYPTION` disagrees with this segment's recorded
+    /// `free_list_encrypted` mode — the mixed-policy chain-corruption
+    /// precondition — aborts loudly here instead of writing or decoding a
+    /// wrong-mode link. Release builds compile the check out.
+    ///
+    /// # Safety
+    ///
+    /// Same contract as [`Segment::cookie_for_dynamic`].
+    #[inline(always)]
+    pub unsafe fn cookie_for<P: crate::policy::AllocPolicy>(&self, page_index: usize) -> usize {
+        debug_assert_eq!(
+            self.free_list_encrypted,
+            P::ENABLE_FREE_LIST_ENCRYPTION,
+            "free-list mode mismatch: policy vs segment (one encryption mode per backend; ADR 0001)"
+        );
+        // SAFETY: forwarded unchanged from this method's `# Safety` contract.
+        unsafe { self.cookie_for_dynamic(P::ENABLE_FREE_LIST_ENCRYPTION, page_index) }
+    }
+
     /// Returns true if this segment is owned by the allocator represented by the given raw slot pointer.
     ///
     /// # Safety
@@ -160,25 +233,7 @@ impl Segment {
         #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
         {
             let _ = get_slot_ptr;
-            let tid = {
-                let val: u32;
-                // SAFETY: On Windows x86_64 the `gs` segment base points at the
-                // current thread's TEB, and `gs:[0x48]` is the fixed offset of
-                // `ClientId.UniqueThread` (the OS thread id). The read is a
-                // single aligned 32-bit load from thread-local OS structure that
-                // is always mapped for a running thread, touches no caller
-                // memory, and has no side effects (`nostack`, `readonly`,
-                // `preserves_flags`), so it is sound on every running thread.
-                unsafe {
-                    core::arch::asm!(
-                        "mov {0:e}, gs:[0x48]",
-                        out(reg) val,
-                        options(nostack, preserves_flags, readonly)
-                    );
-                }
-                val
-            };
-            owner.matches_thread_id(tid)
+            owner.matches_thread_id(crate::types::current_thread_id())
         }
         #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
         {

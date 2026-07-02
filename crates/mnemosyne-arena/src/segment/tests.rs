@@ -4,25 +4,23 @@ extern crate std;
 
 #[allow(unused_imports)]
 use super::alloc::{
-    allocate_segment, deallocate_segment, purge_segment_pool, release_segment_mapping,
-    reset_segment_pool, SEGMENT_MAPPING_SIZE, SEGMENT_TAIL_GUARD_SIZE,
+    SEGMENT_MAPPING_SIZE, SEGMENT_TAIL_GUARD_SIZE, allocate_segment, deallocate_segment,
+    purge_segment_pool, release_segment_mapping, reset_segment_pool,
 };
-use super::pool::{GlobalHugePool, GlobalSegmentPool, HasSegmentPool};
-use super::stats::{arena_memory_stats, SegmentRelease};
+use super::pool::{BackendPools, GlobalHugePool, GlobalSegmentPool, HasSegmentPool};
+use super::stats::{SegmentRelease, arena_memory_stats};
 use core::sync::atomic::{AtomicUsize, Ordering};
+use mnemosyne_core::MemoryBackend;
 use mnemosyne_core::constants::{PAGE_SIZE, SEGMENT_ALIGN, SEGMENT_SIZE};
 use mnemosyne_core::types::Segment;
-use mnemosyne_core::MemoryBackend;
 use std::boxed::Box;
 
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 
 struct FailingReleaseBackend;
 
-static FAILING_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static FAILING_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static FAILING_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static FAILING_POOLS: BackendPools = BackendPools::new();
 static FAILING_DEALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 impl MemoryBackend for FailingReleaseBackend {
@@ -39,16 +37,8 @@ impl MemoryBackend for FailingReleaseBackend {
 impl super::pool::private::Sealed for FailingReleaseBackend {}
 
 impl HasSegmentPool for FailingReleaseBackend {
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &FAILING_POOL
-    }
-
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &FAILING_ORPHAN_POOL
-    }
-
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &FAILING_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &FAILING_POOLS
     }
 }
 
@@ -56,11 +46,7 @@ impl HasSegmentPool for FailingReleaseBackend {
 struct GuardRecordingBackend;
 
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
-static GUARD_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
-static GUARD_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
-static GUARD_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static GUARD_POOLS: BackendPools = BackendPools::new();
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 static GUARD_CALLS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
@@ -109,16 +95,8 @@ impl super::pool::private::Sealed for GuardRecordingBackend {}
 
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 impl HasSegmentPool for GuardRecordingBackend {
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &GUARD_POOL
-    }
-
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &GUARD_ORPHAN_POOL
-    }
-
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &GUARD_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &GUARD_POOLS
     }
 }
 
@@ -199,7 +177,7 @@ fn node_segment_pool_take_all_detaches_whole_chain_in_one_lock() {
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 #[test]
 fn fresh_segment_install_increments_guard_telemetry_and_round_trips() {
-    use mnemosyne_backend::{backend_memory_stats, MemoryBackendWrapper};
+    use mnemosyne_backend::{MemoryBackendWrapper, backend_memory_stats};
 
     // Purge to force the OS allocation path.
     unsafe {
@@ -365,9 +343,7 @@ fn test_concurrent_aba_safeness() {
 
 struct DecommitRecordingBackend;
 
-static DECOMMIT_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static DECOMMIT_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static DECOMMIT_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static DECOMMIT_POOLS: BackendPools = BackendPools::new();
 static DECOMMIT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static DECOMMIT_BYTES: AtomicUsize = AtomicUsize::new(0);
 
@@ -400,23 +376,21 @@ impl MemoryBackend for DecommitRecordingBackend {
 impl super::pool::private::Sealed for DecommitRecordingBackend {}
 
 impl HasSegmentPool for DecommitRecordingBackend {
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &DECOMMIT_POOL
-    }
-
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &DECOMMIT_ORPHAN_POOL
-    }
-
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &DECOMMIT_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &DECOMMIT_POOLS
     }
 }
 
 #[test]
 fn test_segment_tail_slack_decommit() {
-    while DECOMMIT_POOL.pop().is_some() {}
-    while DECOMMIT_ORPHAN_POOL.pop().is_some() {}
+    while DecommitRecordingBackend::global_segment_pool()
+        .pop()
+        .is_some()
+    {}
+    while DecommitRecordingBackend::global_orphan_pool()
+        .pop()
+        .is_some()
+    {}
     DECOMMIT_CALLS.store(0, Ordering::Relaxed);
     DECOMMIT_BYTES.store(0, Ordering::Relaxed);
 
@@ -443,9 +417,7 @@ fn test_segment_tail_slack_decommit() {
 
 struct ResetRecordingBackend;
 
-static RESET_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static RESET_ORPHAN_POOL: GlobalSegmentPool = GlobalSegmentPool::new();
-static RESET_HUGE_POOL: GlobalHugePool = GlobalHugePool::new();
+static RESET_POOLS: BackendPools = BackendPools::new();
 static RESET_CALLS: AtomicUsize = AtomicUsize::new(0);
 static LAST_RESET_PTR: AtomicUsize = AtomicUsize::new(0);
 static LAST_RESET_SIZE: AtomicUsize = AtomicUsize::new(0);
@@ -479,23 +451,15 @@ impl MemoryBackend for ResetRecordingBackend {
 impl super::pool::private::Sealed for ResetRecordingBackend {}
 
 impl HasSegmentPool for ResetRecordingBackend {
-    fn global_segment_pool() -> &'static GlobalSegmentPool {
-        &RESET_POOL
-    }
-
-    fn global_orphan_pool() -> &'static GlobalSegmentPool {
-        &RESET_ORPHAN_POOL
-    }
-
-    fn global_huge_pool() -> &'static GlobalHugePool {
-        &RESET_HUGE_POOL
+    fn pools() -> &'static BackendPools {
+        &RESET_POOLS
     }
 }
 
 #[test]
 fn test_reset_segment_pool_propagates_correct_bounds() {
-    while RESET_POOL.pop().is_some() {}
-    while RESET_ORPHAN_POOL.pop().is_some() {}
+    while ResetRecordingBackend::global_segment_pool().pop().is_some() {}
+    while ResetRecordingBackend::global_orphan_pool().pop().is_some() {}
     RESET_CALLS.store(0, Ordering::Relaxed);
     LAST_RESET_PTR.store(0, Ordering::Relaxed);
     LAST_RESET_SIZE.store(0, Ordering::Relaxed);
@@ -529,7 +493,9 @@ fn test_reset_segment_pool_propagates_correct_bounds() {
     );
 
     // Clean up
-    let popped = RESET_POOL.pop().expect("segment must be in the pool");
+    let popped = ResetRecordingBackend::global_segment_pool()
+        .pop()
+        .expect("segment must be in the pool");
     let released = unsafe { release_segment_mapping::<ResetRecordingBackend>(popped) };
     assert_eq!(released, SegmentRelease::Released);
 }
@@ -551,14 +517,30 @@ fn test_huge_pool_log2_bucketing() {
     assert_eq!(huge_bucket_index(1048576), 6); // 1 MiB
     assert_eq!(huge_bucket_index(1048577), 7);
     assert_eq!(huge_bucket_index(16 * 1024 * 1024), 10); // 16 MiB
-    assert_eq!(huge_bucket_index(16 * 1024 * 1024 + 1), 11);
-    assert_eq!(huge_bucket_index(512 * 1024 * 1024), 15); // Large sizes saturate to max bucket
+    // Sizes beyond MAX_CACHED_HUGE_SIZE saturate to the last live bucket
+    // (they are never pushed; only over-sized pop requests reach here).
+    assert_eq!(huge_bucket_index(16 * 1024 * 1024 + 1), 10);
+    assert_eq!(huge_bucket_index(512 * 1024 * 1024), 10);
+}
+
+#[test]
+fn test_huge_pool_bucket_count_derived_from_max_cached_size() {
+    use super::pool::huge_pool::{HUGE_SIZE_BUCKETS, huge_bucket_index};
+
+    // SSOT pin: the bucket fan-out is exactly index(MAX_CACHED_HUGE_SIZE) + 1,
+    // so no bucket is unreachable dead state under `try_push`'s size gate.
+    assert_eq!(
+        HUGE_SIZE_BUCKETS,
+        huge_bucket_index(GlobalHugePool::MAX_CACHED_HUGE_SIZE) + 1
+    );
+    // 16 KiB (bucket 0) through 16 MiB (bucket 10) in log2 steps.
+    assert_eq!(HUGE_SIZE_BUCKETS, 11);
 }
 
 #[test]
 fn test_huge_bucket_block_cap_bounds_retained_bytes() {
-    use super::pool::huge_pool::bucket_block_cap;
     use super::pool::GlobalHugePool;
+    use super::pool::huge_pool::{HUGE_SIZE_BUCKETS, bucket_block_cap};
 
     const BUDGET: usize = GlobalHugePool::MAX_CACHED_HUGE_BYTES_PER_BUCKET;
 
@@ -567,69 +549,215 @@ fn test_huge_bucket_block_cap_bounds_retained_bytes() {
     assert_eq!(bucket_block_cap(0), GlobalHugePool::MAX_CACHED_HUGE_BLOCKS);
     // 1 MiB blocks (bucket 6): 256 MiB / 1 MiB = 256.
     assert_eq!(bucket_block_cap(6), 256);
-    // 16 MiB blocks (bucket 10): 256 MiB / 16 MiB = 16.
-    assert_eq!(bucket_block_cap(10), 16);
-    // Saturated large bucket retains at least one block.
-    assert_eq!(bucket_block_cap(15), 1);
+    // 16 MiB blocks (last live bucket, 10): 256 MiB / 16 MiB = 16.
+    assert_eq!(bucket_block_cap(HUGE_SIZE_BUCKETS - 1), 16);
 
-    // Invariant: every bucket's retained bytes (cap × max block size) stay within
-    // the per-bucket budget, and never exceed the flat count cap.
-    for idx in 0..16usize {
+    // Invariant: every live bucket's retained bytes (cap × max block size)
+    // stay within the per-bucket budget, and never exceed the flat count cap.
+    for idx in 0..HUGE_SIZE_BUCKETS {
         let cap = bucket_block_cap(idx);
         assert!((1..=GlobalHugePool::MAX_CACHED_HUGE_BLOCKS).contains(&cap));
         let max_block = 1usize << (idx + 14);
         assert!(
-            cap == 1 || cap * max_block <= BUDGET,
+            cap * max_block <= BUDGET,
             "bucket {idx}: cap {cap} x {max_block} exceeds budget {BUDGET}"
         );
     }
 }
 
+/// Boxes a minimal `Segment` carrying only the page-0 `block_size` metadata
+/// the huge-pool implementation reads.
+///
+/// The zeroed remainder is never exposed to allocator code that relies on the
+/// full production `Segment::initialize` invariant.
+fn boxed_huge_segment(raw: usize, block_size: usize) -> *mut Segment {
+    let segment = Box::into_raw(Box::new(Segment {
+        raw_alloc_ptr: raw as *mut u8,
+        next_free_segment: core::ptr::null_mut(),
+        // SAFETY: zeroed metadata is immediately overwritten where read (the
+        // page-0 `block_size` below) and otherwise never interpreted.
+        ..unsafe { core::mem::zeroed() }
+    }));
+    // SAFETY: `segment` is the live Box allocation just created above, so
+    // mutating its page-0 size metadata through the raw pointer is exclusive.
+    unsafe {
+        (*segment).pages[0].block_size = block_size;
+    }
+    segment
+}
+
 #[test]
 fn test_huge_pool_exact_bucket_restores_rejected_head() {
-    fn boxed_huge_segment(raw: usize, block_size: usize) -> *mut Segment {
-        let segment = Box::into_raw(Box::new(Segment {
-            raw_alloc_ptr: raw as *mut u8,
-            next_free_segment: core::ptr::null_mut(),
-            // SAFETY: this test immediately initializes the only field read by
-            // the huge-pool implementation (`pages[0].block_size`) and never
-            // exposes the zeroed metadata to allocator code that relies on the
-            // full production `Segment::initialize` invariant.
-            ..unsafe { core::mem::zeroed() }
-        }));
-        // SAFETY: `segment` is the live Box allocation just created above, so
-        // mutating its page-0 size metadata through the raw pointer is exclusive.
-        unsafe {
-            (*segment).pages[0].block_size = block_size;
-        }
-        segment
-    }
-
     let pool = GlobalHugePool::new();
+    // All four blocks land in bucket 1 ((16 KiB, 32 KiB]). Pushing the fitting
+    // block first buries it at the bottom of the LIFO stack under three
+    // undersized rejects (top-down order after the pushes: c, b, a, fitting).
     let fitting = boxed_huge_segment(0x20000, 24 * 1024);
-    let too_small = boxed_huge_segment(0x30000, 18 * 1024);
+    let small_a = boxed_huge_segment(0x30000, 17 * 1024);
+    let small_b = boxed_huge_segment(0x40000, 18 * 1024);
+    let small_c = boxed_huge_segment(0x50000, 19 * 1024);
 
     unsafe {
         assert!(pool.try_push(fitting, 0), "fitting segment must be cached");
-        assert!(
-            pool.try_push(too_small, 0),
-            "undersized same-bucket segment must be cached"
-        );
+        for small in [small_a, small_b, small_c] {
+            assert!(
+                pool.try_push(small, 0),
+                "undersized same-bucket segment must be cached"
+            );
+        }
     }
+    assert_eq!(pool.retained_blocks(), 4);
+    assert_eq!(pool.retained_bytes(), (24 + 17 + 18 + 19) * 1024);
 
     let popped = unsafe { pool.pop(20 * 1024, 0) }
-        .expect("same-size bucket must scan past an undersized head");
+        .expect("same-size bucket must scan past undersized heads");
     assert_eq!(popped, fitting);
     unsafe {
         assert_eq!((*popped).next_free_segment, core::ptr::null_mut());
     }
 
-    let restored =
-        unsafe { pool.pop(16 * 1024, 0) }.expect("rejected head must be restored to the bucket");
-    assert_eq!(restored, too_small);
+    // Count and byte conservation: exactly the three rejects remain cached.
+    assert_eq!(pool.retained_blocks(), 3);
+    assert_eq!(pool.retained_bytes(), (17 + 18 + 19) * 1024);
+
+    // The rejected chain is spliced back in walk order, preserving the
+    // original LIFO order (c, b, a): a request every reject satisfies must
+    // pop them head-first in that exact order, proving each rejected segment
+    // is still retrievable with intact size metadata and cleared links.
+    for (expected, expected_size) in [
+        (small_c, 19 * 1024),
+        (small_b, 18 * 1024),
+        (small_a, 17 * 1024),
+    ] {
+        let restored = unsafe { pool.pop(16 * 1024 + 1, 0) }
+            .expect("rejected segment must be restored to the bucket");
+        assert_eq!(restored, expected);
+        unsafe {
+            assert_eq!((*restored).pages[0].block_size, expected_size);
+            assert_eq!((*restored).next_free_segment, core::ptr::null_mut());
+        }
+    }
+    assert_eq!(pool.retained_blocks(), 0);
+    assert_eq!(pool.retained_bytes(), 0);
+    assert!(
+        unsafe { pool.pop(16 * 1024, 0) }.is_none(),
+        "no segment may remain after all rejects were drained"
+    );
+
+    for segment in [fitting, small_a, small_b, small_c] {
+        unsafe {
+            let _ = Box::from_raw(segment);
+        }
+    }
+}
+
+#[test]
+fn test_huge_pool_pop_skips_over_provisioned_buckets() {
+    use super::pool::huge_pool::HUGE_POP_FIT_CAP;
+
+    let pool = GlobalHugePool::new();
+    // Ground the test's size choices in the cap: bucket 10's exclusive lower
+    // bound (8 MiB) is beyond HUGE_POP_FIT_CAP x 20 KiB (inadmissible), while
+    // bucket 2's (32 KiB) is within it (admissible).
+    const {
+        assert!(8 * 1024 * 1024 >= HUGE_POP_FIT_CAP * 20 * 1024);
+        assert!(32 * 1024 < HUGE_POP_FIT_CAP * 20 * 1024);
+    }
+
+    // A cached 16 MiB block (bucket 10) must NOT satisfy a ~20 KiB-class
+    // request (bucket 1): bucket 10's smallest possible block (8 MiB + 1)
+    // exceeds HUGE_POP_FIT_CAP (4) x 20 KiB, so the scan stops long before it
+    // and the pop misses instead of over-provisioning ~800x.
+    let oversized = boxed_huge_segment(0x60000, 16 * 1024 * 1024);
     unsafe {
-        assert_eq!((*restored).next_free_segment, core::ptr::null_mut());
-        let _ = Box::from_raw(popped);
-        let _ = Box::from_raw(restored);
+        assert!(pool.try_push(oversized, 0), "16 MiB block must be cached");
+    }
+    assert!(
+        unsafe { pool.pop(20 * 1024, 0) }.is_none(),
+        "a block beyond the fit cap must miss, not over-provision"
+    );
+    // The miss leaves the oversized block cached.
+    assert_eq!(pool.retained_blocks(), 1);
+    assert_eq!(pool.retained_bytes(), 16 * 1024 * 1024);
+
+    // A higher bucket within the cap still hits: a 64 KiB block (bucket 2)
+    // serves a 20 KiB request because bucket 2's lower bound (32 KiB) is
+    // below 4 x 20 KiB = 80 KiB.
+    let medium = boxed_huge_segment(0x70000, 64 * 1024);
+    unsafe {
+        assert!(pool.try_push(medium, 0), "64 KiB block must be cached");
+    }
+    let popped = unsafe { pool.pop(20 * 1024, 0) }
+        .expect("a higher bucket within the fit cap must still serve the request");
+    assert_eq!(popped, medium);
+    assert_eq!(pool.retained_blocks(), 1);
+    assert_eq!(pool.retained_bytes(), 16 * 1024 * 1024);
+
+    // The oversized block itself is retrievable by a request it fits within
+    // the cap (16 MiB request, exact bucket).
+    let reclaimed = unsafe { pool.pop(16 * 1024 * 1024, 0) }
+        .expect("exact-bucket request must retrieve the 16 MiB block");
+    assert_eq!(reclaimed, oversized);
+    assert_eq!(pool.retained_blocks(), 0);
+    assert_eq!(pool.retained_bytes(), 0);
+
+    for segment in [oversized, medium] {
+        unsafe {
+            let _ = Box::from_raw(segment);
+        }
+    }
+}
+
+#[test]
+fn test_arena_stats_report_runtime_retained_cap() {
+    use mnemosyne_core::options::{MnemosyneOptions, set_options};
+
+    // Lower the runtime cap below the compile-time limit: the stat must track
+    // the enforced runtime value (what `try_push_retained` reads), not the
+    // compile-time `MAX_RETAINED_SEGMENTS_LIMIT`.
+    set_options(MnemosyneOptions {
+        max_retained_segments: 7,
+        ..Default::default()
+    });
+    let stats = arena_memory_stats::<FailingReleaseBackend>();
+    assert_eq!(stats.max_retained_free_segments, 7);
+
+    // Restore the default; the stat must follow (the default option equals
+    // the compile-time limit).
+    set_options(MnemosyneOptions::default());
+    let stats = arena_memory_stats::<FailingReleaseBackend>();
+    assert_eq!(
+        stats.max_retained_free_segments,
+        mnemosyne_core::constants::MAX_RETAINED_SEGMENTS_LIMIT
+    );
+}
+
+#[test]
+fn test_arena_stats_track_huge_pool_blocks_and_bytes() {
+    let before = arena_memory_stats::<FailingReleaseBackend>();
+
+    let block = boxed_huge_segment(0x90000, 24 * 1024);
+    unsafe {
+        assert!(
+            FailingReleaseBackend::global_huge_pool().try_push(block, 0),
+            "huge block must be cached"
+        );
+    }
+    let during = arena_memory_stats::<FailingReleaseBackend>();
+    assert_eq!(during.retained_huge_blocks, before.retained_huge_blocks + 1);
+    assert_eq!(
+        during.retained_huge_bytes,
+        before.retained_huge_bytes + 24 * 1024
+    );
+
+    let popped = unsafe { FailingReleaseBackend::global_huge_pool().pop(24 * 1024, 0) }
+        .expect("cached huge block must be retrievable");
+    assert_eq!(popped, block);
+    let after = arena_memory_stats::<FailingReleaseBackend>();
+    assert_eq!(after.retained_huge_blocks, before.retained_huge_blocks);
+    assert_eq!(after.retained_huge_bytes, before.retained_huge_bytes);
+
+    unsafe {
+        let _ = Box::from_raw(block);
     }
 }

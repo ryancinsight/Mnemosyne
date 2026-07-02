@@ -442,6 +442,7 @@ dependencies = [
  "mnemosyne",
  "mnemosyne-arena",
  "mnemosyne-backend",
+ "mnemosyne-build-util",
  "mnemosyne-core",
  "mnemosyne-decay",
  "mnemosyne-hardened",
@@ -452,6 +453,10 @@ dependencies = [
  "snmalloc-rs",
  "tikv-jemallocator",
 ]
+
+[[package]]
+name = "mnemosyne-build-util"
+version = "0.1.0"
 
 [[package]]
 name = "mnemosyne-c-shim"
@@ -505,6 +510,7 @@ dependencies = [
  "melinoe",
  "mnemosyne-arena",
  "mnemosyne-backend",
+ "mnemosyne-build-util",
  "mnemosyne-core",
  "mnemosyne-decay",
  "mnemosyne-hardened",
@@ -520,6 +526,7 @@ dependencies = [
  "backtrace",
  "mnemosyne",
  "mnemosyne-backend",
+ "mnemosyne-build-util",
  "mnemosyne-core",
  "mnemosyne-heap",
  "mnemosyne-local",

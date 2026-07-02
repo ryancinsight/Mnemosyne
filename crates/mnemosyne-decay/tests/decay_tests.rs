@@ -1,8 +1,8 @@
 use core::sync::atomic::Ordering;
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_backend::MemoryBackendWrapper as Backend;
-use mnemosyne_core::options::PURGE_CADENCE_MS;
 use mnemosyne_core::StandardPolicy as Policy;
+use mnemosyne_core::options::PURGE_CADENCE_MS;
 use mnemosyne_local::{reset_options_for_testing, thread_alloc, thread_free};
 use std::thread;
 use std::time::Duration;

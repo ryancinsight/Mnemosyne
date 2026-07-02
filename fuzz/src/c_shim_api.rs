@@ -1,7 +1,22 @@
+//! C-shim ABI fuzz executor with two modes selected by the first input byte:
+//!
+//! - **Single-op mode** (first byte even): the remaining bytes decode one
+//!   `(op, size, nmemb, alignment)` case and drive one shim call with edge
+//!   and contract oracles.
+//! - **Op-sequence mode** (first byte odd): the remaining bytes decode a
+//!   bounded sequence of operations against a slot table of live
+//!   allocations (see [`crate::op_sequence`]), reaching realloc chains and
+//!   adjacent-block clobber that single ops cannot.
+//!
+//! An empty input is a no-op. Both modes are panic-free by design on
+//! arbitrary input: every assertion is a shim-contract oracle, never a
+//! decode failure.
+
 use core::ffi::c_void;
 use mnemosyne_core::constants::{MAX_ALLOC_SIZE, SEGMENT_SIZE};
 
-const MAX_FUZZ_ALLOC: usize = 64 * 1024;
+/// Per-operation size cap shared by both executor modes.
+pub(crate) const MAX_FUZZ_ALLOC: usize = 64 * 1024;
 const MALLOC_ALIGN: usize = 16;
 
 #[derive(Clone, Copy)]
@@ -30,7 +45,22 @@ impl ShimCase {
     }
 }
 
+/// Entry point for the fuzz target: dispatches on the mode byte (LSB of the
+/// first byte — even = single-op, odd = op-sequence) and runs the selected
+/// executor over the remaining payload.
 pub fn run(data: &[u8]) {
+    let Some((&mode, payload)) = data.split_first() else {
+        return;
+    };
+    if mode & 1 == 0 {
+        run_single(payload);
+    } else {
+        crate::op_sequence::run_sequence(payload);
+    }
+}
+
+/// Single-op mode: decodes one `(op, size, nmemb, alignment)` case.
+fn run_single(data: &[u8]) {
     let Some(case) = ShimCase::parse(data) else {
         return;
     };
@@ -87,7 +117,7 @@ fn fuzz_realloc(raw_old_size: usize, raw_new_size: usize) {
 
     let initialized = old_size.min(64);
     for index in 0..initialized {
-        unsafe { ptr.add(index).write(pattern(index)) };
+        unsafe { ptr.add(index).write(pattern(SINGLE_OP_SEED, index)) };
     }
 
     let resized = unsafe { mnemosyne_c_shim::realloc(ptr.cast::<c_void>(), new_size) } as *mut u8;
@@ -104,7 +134,7 @@ fn fuzz_realloc(raw_old_size: usize, raw_new_size: usize) {
     for index in 0..preserved {
         assert_eq!(
             unsafe { resized.add(index).read() },
-            pattern(index),
+            pattern(SINGLE_OP_SEED, index),
             "realloc did not preserve initialized byte {index}"
         );
     }
@@ -194,7 +224,10 @@ fn fuzz_usable_size(raw_size: usize) {
     unsafe { mnemosyne_c_shim::free(ptr) };
 }
 
-fn shaped_size(raw: usize) -> usize {
+/// Maps a raw operand onto boundary-heavy allocation sizes (zero, alignment
+/// edges, segment edges, `MAX_ALLOC_SIZE` edges, `usize::MAX`, or a bounded
+/// literal). Shared by both executor modes.
+pub(crate) fn shaped_size(raw: usize) -> usize {
     match raw & 0x0f {
         0 => 0,
         1 => 1,
@@ -259,7 +292,9 @@ fn shaped_aligned_size(raw_size: usize, alignment: usize) -> usize {
     }
 }
 
-fn malloc_request(size: usize) -> usize {
+/// The payload the shim actually reserves for a request: `malloc(0)` yields
+/// a minimal (1-byte-usable) allocation. Shared by both executor modes.
+pub(crate) fn malloc_request(size: usize) -> usize {
     if size == 0 {
         1
     } else {
@@ -297,8 +332,13 @@ fn assert_zero_prefix(ptr: *mut c_void, len: usize) {
     }
 }
 
-fn pattern(index: usize) -> u8 {
-    (index as u8).wrapping_mul(17).wrapping_add(0x31)
+/// Fixed pattern seed used by the single-op realloc oracle.
+const SINGLE_OP_SEED: u8 = 0x31;
+
+/// Position-dependent byte pattern; distinct seeds distinguish neighboring
+/// allocations in the clobber oracle. Shared by both executor modes.
+pub(crate) fn pattern(seed: u8, index: usize) -> u8 {
+    (index as u8).wrapping_mul(17).wrapping_add(seed)
 }
 
 fn usize_from_le(bytes: &[u8]) -> usize {
@@ -315,18 +355,28 @@ mod tests {
 
     #[test]
     fn executor_accepts_short_inputs_without_work() {
-        run(&[0; 24]);
+        run(&[]);
+        run(&[0]); // single-op mode, empty payload
+        run(&[1]); // op-sequence mode, empty payload
+        run(&[0; 25]); // single-op payload one byte short of a full case
     }
 
     #[test]
     fn executor_drives_each_abi_operation_family() {
         for op in 0..6 {
-            let mut data = [0_u8; 25];
-            data[0] = op;
-            data[1..9].copy_from_slice(&17_usize.to_le_bytes());
-            data[9..17].copy_from_slice(&3_usize.to_le_bytes());
-            data[17..25].copy_from_slice(&64_usize.to_le_bytes());
+            let mut data = [0_u8; 26];
+            data[0] = 0; // even mode byte: single-op executor
+            data[1] = op;
+            data[2..10].copy_from_slice(&17_usize.to_le_bytes());
+            data[10..18].copy_from_slice(&3_usize.to_le_bytes());
+            data[18..26].copy_from_slice(&64_usize.to_le_bytes());
             run(&data);
         }
+    }
+
+    #[test]
+    fn odd_mode_byte_routes_to_the_op_sequence_executor() {
+        // malloc slot 0 (raw 0x001f -> 31 bytes), write, verify, free.
+        run(&[1, 0x00, 0x1f, 0x00, 0x05, 0xAB, 0x06, 0x04]);
     }
 }

@@ -54,7 +54,7 @@ const MADV_FREE: c_int = 5;
 #[cfg(target_os = "linux")]
 const MADV_HUGEPAGE: c_int = 14;
 
-extern "C" {
+unsafe extern "C" {
     fn mmap(
         addr: *mut c_void,
         length: usize,

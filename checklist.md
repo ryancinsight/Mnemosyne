@@ -2,8 +2,112 @@
 
 Target version: 0.2.0
 
-## Verified
+Sprint phase: Closure (2026-07-02 consolidation cycle 3 delivered on top of
+cycles 1–2; remaining Definition-of-Ready `## Open` items — AR-1 full fix needs
+ADR 0001 sign-off (step-1 tripwire done), AR-2 needs hephaestus co-evolution,
+AR-4 needs a quiet machine, AR-8 self-contained).
 
+## Verified — 2026-07-02 consolidation cycle 3 (two disjoint-scope agents +
+## coordinator integration; branch fix/audit-2026-07-soundness-perf)
+
+Full gate on the combined tree: `cargo fmt --all --check`, workspace clippy
+`-D warnings` clean, `cargo nextest run` 273/273, 10 doctests, fuzz `--lib`
+9/9, and — forcing `RUSTC` at the real nightly binary — `--features
+nightly_tls` compiles for prof and local (previously a latent E0432).
+
+- [x] [arch step 1] AR-1 interim tripwire (commit 6297a8c): `Segment::cookie_for`
+  debug-asserts policy/segment encryption-mode agreement; 3 tests restructured,
+  `should_panic` pin, contract on `thread_alloc`. Full type-level fix still open.
+- [x] [major] AR-7 edition 2024 / resolver 3, MSRV 1.87 (commit e8ab363).
+- [x] [minor] AR-9 fuzz op-sequence mode, 9 smoke tests (commit 25557c1).
+- [x] [patch] AR-13 single `mnemosyne-build-util` probe + latent nightly E0432
+  fix (commit ab9ff29).
+
+## Verified — 2026-07-02 consolidation cycle 2 (three disjoint-scope agents,
+## then coordinated integration; branch fix/audit-2026-07-soundness-perf)
+
+Five atomic refactor commits (core, hardened, arena, local, benchmarks) plus
+ADR 0001 and this PM sync. Final gate on the combined tree: `cargo fmt --all
+--check`, workspace clippy `-D warnings` clean, `cargo nextest run` 264/264,
+10 doctests, `cargo check --workspace` clean.
+
+- [x] [patch] AR-6 local/core SSOT consolidation batch (commits 885b271 core,
+  0605004 local): shared free-commit routine, page-mover collapse, size-class
+  SSOT routing, `current_thread_id`/`abort_on_corruption`/`locate_segment`/
+  `cookie_for` core helpers, page.rs leaf-module split, `recycle_sweeps` wired,
+  `cfg(test)` on test-only API. Behavior-preserving; all existing tests green.
+- [x] [patch] AR-3 per-`ThreadAllocator` cross-thread reclaim counter (0605004):
+  global RMW off the reclaim hot path; exact-count regression test. Benchmark
+  confirmation folds into AR-4.
+- [x] [patch] AR-10 fold Secure/Hardened policies into core::policy; hardened
+  is a thin re-export (commits 885b271, 4821aa9).
+- [x] [minor] AR-11 `HasSegmentPool` → `pools()` + `BackendPools` default
+  accessors; six backend blocks collapse (−77 lines), MockBackend fixtures
+  migrated (commit 9029cb6).
+- [x] [patch] AR-5 benchmark harness dedup + `GATE_ROWS` SSOT table; AR-12
+  `HandoffBuffer` SAFETY comment (commit 6d548ed). Measured regions unchanged.
+- [x] [arch] AR-1 decision recorded as ADR 0001 (Proposed, awaiting sign-off);
+  interim debug-assert safeguard is implementation step 1.
+
+
+- [x] [patch] Repair `mnemosyne-local` allocator reclaim/free/realloc test
+  surface for Atlas consumers. The allocation fast path now passes the
+  thread-local cross-thread reclaim counter into `try_reclaim_and_allocate`,
+  stale dedicated page-list mover call sites now use the canonical branded
+  `move_page_between_lists_branded`, the test backend fixture implements the
+  current `BackendPools`-based `HasSegmentPool` contract, and `realloc`
+  imports the core `locate_segment` SSOT used by the small-realloc path. Evidence
+  tier: compile-time validation plus value-semantic allocator regression tests.
+  Verification: `cargo fmt -p mnemosyne-local --check`; `cargo check -p
+  mnemosyne-local --tests`; `cargo clippy -p mnemosyne-local --all-targets
+  --no-deps -- -D warnings`; `cargo nextest run -p mnemosyne-local` (56/56);
+  downstream `cargo check -p kwavers-solver`, `cargo clippy -p kwavers-solver
+  --lib --no-deps -- -D warnings`, and FWI time-domain nextest (59/59).
+
+## Verified — 2026-07-01 audit cycle (branch fix/audit-2026-07-soundness-perf)
+
+Four-agent read-only audit fan-out (perf, memory, contention, safety, plus a
+structural monomorphization/GAT/const-generic/Cow/DRY/SSOT lens), findings
+triaged, then per-crate fixes in eleven atomic commits. Final gate: `cargo fmt
+--all --check`, workspace clippy `-D warnings` clean, `cargo nextest run`
+261/261, doctests green, `--no-default-features` spot builds green.
+
+- [x] [patch] fix(local) 5362a7c: orphan adoption preserves segment keys and
+  gates on policy compatibility (`acquire_policy_compatible_segment`);
+  regression tests differentially verified (abort under reverted behavior).
+- [x] [major] fix(heap)! b7afaef: `BrandedCell` pinned invariant in `T`
+  (compile_fail doctest verifies the exact variance rejection);
+  `BrandedBlock::cast` now `unsafe` with a consumer-derived contract; melinoe
+  verified unaffected (payload in invariant `UnsafeCell`).
+- [x] [patch] fix(arena) 85ce85a: pop retry failure ordering → Acquire;
+  huge-pool fit cap (4×), derived bucket count (11), single-splice restore;
+  runtime retained-cap + huge-pool retained blocks/bytes stats.
+- [x] [minor] refactor(backend) 2d6c250: CUDA directory-module split with
+  loader/symbol/driver consolidation; cuInit probe state on atomics; VEH
+  confined to the probe window (no more silent ExitProcess(0)); full-scan
+  unregister closes a permanent device-allocation leak; test-runner
+  detection deleted. Evidence tier: compile-time + registry unit tests; CUDA
+  runtime paths not exercisable here (no NVIDIA driver) — residual risk.
+- [x] [patch] fix(prof) ae4f4b4: order-sensitive interner hashing,
+  disabled-state sample drain, serialized active-flag recompute, and the
+  inverted leak-flag in `on_alloc` (differentially verified).
+- [x] [patch] fix(decay) dbb7514: shutdown lost-wakeup handshake (RMW
+  release/re-check/re-claim); dead `DefaultBackend` sweep removed.
+- [x] [patch] build 8bd04ff: pinned workspace profiles + committed
+  `.config/nextest.toml` (30 s slow / 60 s terminate). chore 87c4743: no-op
+  `parallel`/`mnemosyne-memory` markers removed workspace-wide. refactor
+  (core)!: dead `SpinLock` deleted.
+- [x] [patch] fix(c-shim) b04f868: `mnemosyne_dump_leaks` saturating count.
+
+- [x] [patch] Repair `mnemosyne-arena` tagged-stack construction for Atlas
+  consumers and route huge-pool rejected-chain restoration through the
+  production `push_chain` batch CAS path. `CacheAlignedAtomicPtr::new()` is
+  again the no-argument empty-head constructor required by
+  `TaggedSegmentStack`, and `restore_rejected` now restores a private rejected
+  chain with one `push_chain` call after computing its tail and length.
+  Evidence tier: compile-time validation plus downstream Kwavers FWI
+  integration. Verification: arena fmt/check/clippy; downstream Kwavers FWI
+  nextest (59 passed).
 - [x] [patch] Add `fuzz/c_shim_api` cargo-fuzz coverage for the C ABI boundary.
   `fuzz/src/c_shim_api.rs` owns the resource-bounded hostile input executor and
   `fuzz/fuzz_targets/c_shim_api.rs` is the thin libFuzzer adapter. Evidence

@@ -2,15 +2,15 @@ use core::alloc::{GlobalAlloc, Layout};
 use std::thread;
 
 use mnemosyne::{
+    Mnemosyne, MnemosyneAllocator, SecurePolicy, StandardPolicy, WgpuStagingBackend,
     disable_leak_detector, dump_leaks, enable_leak_detector, is_leak_detector_enabled,
-    memory_stats, purge, reset, usable_size, Mnemosyne, MnemosyneAllocator, SecurePolicy,
-    StandardPolicy, WgpuStagingBackend,
+    memory_stats, purge, reset, usable_size,
 };
 
 #[cfg(not(windows))]
 use mnemosyne::{
-    is_cuda_available, memory_stats_generic, CudaDeviceBackend, CudaHostPinnedBackend,
-    CudaUnifiedBackend,
+    CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend, is_cuda_available,
+    memory_stats_generic,
 };
 
 #[global_allocator]

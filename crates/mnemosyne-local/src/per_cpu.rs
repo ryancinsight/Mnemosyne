@@ -63,6 +63,25 @@ impl PerCpuCache {
 }
 
 /// The global per-CPU cache instance.
+///
+/// # Backend-keying invariant (latent hazard)
+///
+/// This is a single process-global array, **not** keyed by memory backend. The
+/// slots store raw block addresses, so a block freed here under one backend and
+/// re-handed out under another would cross backend ownership. `try_alloc_cpu` /
+/// `try_free_cpu` only touch it when `B::ENABLE_CPU_CACHE` is `true`, and today
+/// no backend sets that constant to `true` (the `MemoryBackend` trait default
+/// is `false`, and neither the Unix nor Windows `DefaultBackend` overrides it),
+/// so exactly one backend — none, currently — can ever populate the cache and
+/// no mixing is possible.
+///
+/// The correctness of the shared static therefore rests on the invariant that
+/// **at most one backend enables the CPU cache per process**. Keying the cache
+/// per backend (an associated-type or generic buffer on `ComputeBackend`) is the
+/// robust fix but is a `[minor]`-class change (new trait surface); until then this
+/// invariant is documented rather than type-enforced. Any future backend that
+/// sets `ENABLE_CPU_CACHE = true` alongside another such backend must first
+/// introduce that per-backend keying.
 pub static PER_CPU_CACHE: PerCpuCache = PerCpuCache::new();
 
 static DISABLE_CPU_CACHE: AtomicBool = AtomicBool::new(false);
@@ -105,6 +124,14 @@ pub fn refresh_current_cpu_id() -> usize {
 }
 
 /// Tries to allocate a block from the per-CPU cache.
+///
+/// The `try_alloc_cpu` / `try_free_cpu` pair share the outer shape
+/// (cpu-id fetch, two-round CPU-refresh retry) but their inner steps are
+/// direction-specific and deliberately not factored: alloc scans for the first
+/// non-empty slot and CASes it to empty under `Acquire`, while free scans for a
+/// double-free plus the first empty slot and CASes it to the pointer under
+/// `Release`. Extracting a shared skeleton would obscure the differing scan
+/// predicate, memory ordering, and abort condition on this hot path.
 #[inline(always)]
 pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
     if P::ENABLE_FREE_LIST_ENCRYPTION {

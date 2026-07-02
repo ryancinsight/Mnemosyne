@@ -35,13 +35,13 @@ pub mod mapping;
 pub mod recorders;
 pub mod reset;
 
+pub use backends::DefaultBackend;
 pub use backends::cuda::{
-    is_cuda_available, CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend,
+    CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend, is_cuda_available,
 };
 pub use backends::wgpu::WgpuStagingBackend;
-pub use backends::DefaultBackend;
 pub use mapping::MemoryBackendWrapper;
-pub use recorders::{backend_memory_stats, BackendMemoryStats};
+pub use recorders::{BackendMemoryStats, backend_memory_stats};
 
 use core::ffi::c_void;
 use core::sync::atomic::AtomicPtr;
