@@ -15,11 +15,16 @@ mod sampler;
 mod tests;
 mod tls;
 
-pub use sampler::{dump_leaks, dump_profile, Sample, StackId};
+pub use sampler::{Sample, StackId, dump_leaks, dump_profile};
 
-pub(crate) use tls::{
-    enter_hook, exit_hook, get_profiler_state, sample_debit, should_skip_alloc_fast_path,
-};
+pub(crate) use tls::{enter_hook, exit_hook, sample_debit, should_skip_alloc_fast_path};
+// `get_profiler_state` exists only on the non-nightly TLS backend (the nightly
+// `#[thread_local]` path reads `THREAD_STATE` directly), so its import must
+// carry the same cfg as its definition — importing it unconditionally is an
+// E0432 whenever `nightly_tls_active` fires. Its sole use site
+// (`sampler.rs`) is already `#[cfg(not(nightly_tls_active))]`.
+#[cfg(not(nightly_tls_active))]
+pub(crate) use tls::get_profiler_state;
 #[cfg(nightly_tls_active)]
 pub(crate) use tls::{get_bytes_until_sample, set_bytes_until_sample};
 

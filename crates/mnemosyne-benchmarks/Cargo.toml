@@ -1,7 +1,8 @@
 [package]
 name = "mnemosyne-benchmarks"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.87"
 build = "build.rs"
 
 [features]
@@ -34,6 +35,9 @@ mnemosyne-decay = { path = "../mnemosyne-decay" }
 
 [target.'cfg(not(windows))'.dependencies]
 tikv-jemallocator = "0.6"
+
+[build-dependencies]
+mnemosyne-build-util = { path = "../mnemosyne-build-util" }
 
 [[bench]]
 name = "allocator_bench"
