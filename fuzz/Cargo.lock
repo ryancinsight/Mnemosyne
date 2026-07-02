@@ -143,6 +143,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "mnemosyne-build-util"
+version = "0.1.0"
+
+[[package]]
 name = "mnemosyne-c-shim"
 version = "0.1.0"
 dependencies = [
@@ -181,6 +185,7 @@ dependencies = [
  "melinoe",
  "mnemosyne-arena",
  "mnemosyne-backend",
+ "mnemosyne-build-util",
  "mnemosyne-core",
  "mnemosyne-decay",
  "mnemosyne-prof",
@@ -192,6 +197,7 @@ name = "mnemosyne-prof"
 version = "0.1.0"
 dependencies = [
  "backtrace",
+ "mnemosyne-build-util",
  "mnemosyne-core",
 ]
 
