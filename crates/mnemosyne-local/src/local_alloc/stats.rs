@@ -57,7 +57,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     pub fn stats(&self) -> ThreadAllocatorStats {
         let mut snapshot = ThreadAllocatorStats {
             current_thread_owned_segments: self.owned_segment_count,
-            cross_thread_reclaimed_blocks: CROSS_THREAD_RECLAIMED_BLOCKS.load(Ordering::Relaxed),
+            // Process-wide total: the global fold point (contributions from
+            // already-terminated threads) plus this live thread's own
+            // not-yet-folded count. This reproduces the pre-split observable
+            // for the calling thread exactly.
+            cross_thread_reclaimed_blocks: CROSS_THREAD_RECLAIMED_BLOCKS.load(Ordering::Relaxed)
+                + self.cross_thread_reclaimed,
             page_refills: self.page_refills,
             recycled_pages: self.recycled_pages,
             fresh_pages: self.fresh_pages,

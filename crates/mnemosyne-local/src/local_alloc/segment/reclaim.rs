@@ -45,7 +45,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     let reclaimed =
                         page.reclaim_thread_free_if_present_for_segment(dynamic_encrypted, curr, i);
                     if reclaimed > 0 {
-                        crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
+                        self.record_cross_thread_reclaimed(reclaimed);
                     }
                     total_allocations += page.alloc_count;
                 }
@@ -112,7 +112,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         i,
                     );
                     if reclaimed > 0 {
-                        crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
+                        self.record_cross_thread_reclaimed(reclaimed);
                     }
                     if pg.alloc_count > 0 {
                         return false;
@@ -131,15 +131,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         }
 
         // SAFETY: `segment` is now fully detached (no page-list or owned-list
-        // membership), so clearing its owner fields and returning it via
-        // `deallocate_segment` hands a segment with no live references back to
-        // the pool exactly once.
-        unsafe {
-            (*segment).owner = SegmentOwner::NONE;
-            (*segment).owner_allocator = core::ptr::null_mut();
-            (*segment).next_owned_segment = core::ptr::null_mut();
-            deallocate_segment::<B>(segment);
-        }
+        // membership; `unlink_owned_segment` already cleared both link fields),
+        // so clearing its owner identity and returning it hands a segment with no
+        // live references back to the pool exactly once.
+        unsafe { detach_and_release_segment::<B>(segment) };
         true
     }
 
@@ -191,16 +186,18 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                 i,
                             );
                             if reclaimed > 0 {
-                                crate::local_alloc::record_cross_thread_reclaimed(reclaimed);
+                                self.record_cross_thread_reclaimed(reclaimed);
                             }
                             total_allocations += pg.alloc_count;
 
                             if pg.alloc_count == 0 && (pg.list_state == 1 || pg.list_state == 2) {
                                 let class = pg.size_class as usize;
-                                let is_only_active = self.active_pages[class].is_some_and(|head| {
-                                    core::ptr::eq(head.as_ptr(), pg)
-                                        && (*head.as_ptr()).next_page.is_none()
-                                });
+                                // SAFETY: `active_pages[class]` is this thread's
+                                // own active-list head and `pg` is a live,
+                                // owner-exclusive page of this segment, so the
+                                // predicate's head read is valid.
+                                let is_only_active =
+                                    crate::free::is_sole_active_page(self.active_pages[class], pg);
                                 if !is_only_active {
                                     let pg_ptr = NonNull::new_unchecked(pg as *mut Page);
                                     let branded_page = token.page(pg_ptr);
@@ -234,16 +231,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 // SAFETY: the sweep above observed zero live allocations across
                 // every occupied page of `segment`, so detaching its pages and
                 // unlinking it from the owned chain leaves no live references;
-                // clearing the owner fields and `deallocate_segment` then return
-                // the fully detached segment to the pool exactly once. The next
-                // node was captured into `curr` before this teardown.
+                // `detach_and_release_segment` then clears the owner identity and
+                // returns the fully detached segment to the pool exactly once.
+                // The next node was captured into `curr` before this teardown.
                 unsafe {
                     unlink_segment_pages(self, segment);
                     self.unlink_owned_segment(segment);
-                    (*segment).owner = SegmentOwner::NONE;
-                    (*segment).owner_allocator = core::ptr::null_mut();
-                    (*segment).next_owned_segment = core::ptr::null_mut();
-                    deallocate_segment::<B>(segment);
+                    detach_and_release_segment::<B>(segment);
                 }
             }
         }
@@ -283,5 +277,33 @@ unsafe fn unlink_segment_pages<B: HasSegmentPool>(
             // empty-page list, the list this unlink operates on.
             unsafe { alloc.unlink_empty_page(pg as *mut Page) };
         }
+    }
+}
+
+/// Clears a fully-detached segment's owner identity and returns it to the pool.
+///
+/// This is the shared teardown tail for `try_reclaim_segment` and
+/// `periodic_defragmentation_sweep`: both call it only after
+/// `unlink_owned_segment` has already spliced `segment` out of the owned chain
+/// (clearing *both* `prev_owned_segment` and `next_owned_segment`) and
+/// `unlink_segment_pages` has detached its pages, so the links need no
+/// re-clearing here — the previous per-site code redundantly re-nulled
+/// `next_owned_segment` while leaving `prev_owned_segment` untouched, an
+/// asymmetry this consolidation removes.
+///
+/// # Safety
+///
+/// `segment` must be a live segment already unlinked from every owned-segment
+/// and page list, so that clearing its owner identity and handing it to
+/// `deallocate_segment` returns a segment with no live references exactly once.
+#[inline]
+unsafe fn detach_and_release_segment<B: HasSegmentPool>(segment: *mut Segment) {
+    // SAFETY: `segment` is the fully-detached live segment per the contract;
+    // writing its owner identity and releasing it is a valid, exclusive final
+    // access before ownership returns to the pool.
+    unsafe {
+        (*segment).owner = SegmentOwner::NONE;
+        (*segment).owner_allocator = core::ptr::null_mut();
+        deallocate_segment::<B>(segment);
     }
 }

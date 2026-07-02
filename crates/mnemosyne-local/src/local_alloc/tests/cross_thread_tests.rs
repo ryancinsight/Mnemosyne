@@ -584,3 +584,78 @@ fn cross_thread_free_pushes_block_to_page_thread_free_queue() {
         reclaimed, before_alloc_count,
     );
 }
+
+/// AR-3: the per-thread `cross_thread_reclaimed` counter records the exact
+/// number of blocks drained from a page's cross-thread free list on the
+/// allocation-side reclaim path, and a `stats()` snapshot reports that count
+/// (folded with the process-global total) with the same exactness.
+#[test]
+fn allocation_side_reclaim_counts_cross_thread_blocks_exactly() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("local allocator test lock was poisoned");
+    use std::thread;
+
+    unsafe {
+        mnemosyne_arena::purge_segment_pool::<DefaultBackend>();
+        mnemosyne_arena::purge_segment_pool::<mnemosyne_backend::MemoryBackendWrapper>();
+    }
+
+    let mut owner = ThreadAllocator::<DefaultBackend>::new();
+
+    // Fill one page of the class completely so the owner's next allocation must
+    // fall through the local-free / bump paths and drain the cross-thread queue.
+    let first = unsafe { owner.alloc::<StandardPolicy>(32) };
+    assert!(!first.is_null(), "owner anchor allocation failed");
+    let (segment, page_index) = unsafe { mnemosyne_core::types::locate_segment(first) };
+    let max_blocks = unsafe { (*segment).pages[page_index].max_blocks() };
+    assert!(max_blocks >= 2, "size class must hold at least two blocks");
+
+    let mut blocks = std::vec::Vec::with_capacity(max_blocks);
+    blocks.push(first as usize);
+    for _ in 1..max_blocks {
+        let p = unsafe { owner.alloc::<StandardPolicy>(32) };
+        assert!(!p.is_null(), "owner fill allocation failed");
+        blocks.push(p as usize);
+    }
+
+    // Baseline: no reclaims have occurred on this allocator yet.
+    assert_eq!(
+        owner.cross_thread_reclaimed, 0,
+        "fresh allocator must have reclaimed no cross-thread blocks"
+    );
+    let stats_before = owner.stats().cross_thread_reclaimed_blocks;
+
+    // A non-owning thread frees every block back through the page's atomic
+    // cross-thread queue (the owner is thread-affine, so these route to
+    // `page.thread_free.push`, not the in-place fast path).
+    let freed = blocks.clone();
+    thread::spawn(move || unsafe {
+        for addr in freed {
+            crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(addr as *mut u8);
+        }
+    })
+    .join()
+    .expect("cross-thread free worker panicked");
+
+    // The page now holds `max_blocks` remote frees and is full. The owner's next
+    // allocation drives the cold reclaim path, which drains the whole queue in
+    // one `pop_all`, accumulating the exact count into `cross_thread_reclaimed`.
+    let reclaimed_ptr = unsafe { owner.alloc::<StandardPolicy>(32) };
+    assert!(
+        !reclaimed_ptr.is_null(),
+        "owner allocation after remote frees failed"
+    );
+
+    assert_eq!(
+        owner.cross_thread_reclaimed, max_blocks,
+        "per-thread reclaim counter must equal the number of cross-thread frees"
+    );
+    // The stats snapshot folds the global total with this thread's live count,
+    // so the reported value must rise by exactly `max_blocks`.
+    assert_eq!(
+        owner.stats().cross_thread_reclaimed_blocks,
+        stats_before + max_blocks,
+        "stats() must report the exact cross-thread reclaimed delta"
+    );
+}

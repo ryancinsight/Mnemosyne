@@ -131,9 +131,12 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                 }
                 // SAFETY: same valid `page`; reclaim path adopts cross-thread
                 // frees back into this page's local free list before allocating.
-                if let Some(block) =
-                    unsafe { crate::local_alloc::page::try_reclaim_and_allocate::<P>(page) }
-                {
+                if let Some(block) = unsafe {
+                    crate::local_alloc::page::try_reclaim_and_allocate::<P>(
+                        page,
+                        &mut alloc.cross_thread_reclaimed,
+                    )
+                } {
                     let ptr = block.as_ptr() as *mut u8;
                     // SAFETY: as above, `ptr` is a fresh block of at least
                     // `adjusted_size` bytes owned by the caller.

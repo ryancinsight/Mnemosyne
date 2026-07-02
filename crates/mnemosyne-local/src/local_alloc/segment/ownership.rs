@@ -135,19 +135,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     pub(crate) unsafe fn push_owned_segment<P: AllocPolicy>(&mut self, segment: *mut Segment) {
         #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
         {
-            let tid = {
-                let val: u32;
-                unsafe {
-                    // SAFETY: `gs:[0x48]` reads TEB ClientId.UniqueThread;
-                    // seeds `SegmentOwner::from_thread_id` only.
-                    core::arch::asm!(
-                        "mov {0:e}, gs:[0x48]",
-                        out(reg) val,
-                        options(nostack, preserves_flags, readonly)
-                    );
-                }
-                val
-            };
+            let tid = mnemosyne_core::types::current_thread_id();
             // SAFETY: `segment` is the live caller-passed segment;
             // `self` is the owning allocator. The writes are not
             // aliased by any concurrent thread-and-permission accessor.

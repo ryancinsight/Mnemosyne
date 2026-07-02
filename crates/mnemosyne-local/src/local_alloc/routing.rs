@@ -4,7 +4,9 @@ use core::ptr::NonNull;
 use mnemosyne_arena::{allocate_segment, HasSegmentPool};
 use mnemosyne_core::constants::PAGES_PER_SEGMENT;
 use mnemosyne_core::policy::AllocPolicy;
-use mnemosyne_core::size_class::{class_to_size, size_to_class};
+use mnemosyne_core::size_class::class_to_size;
+#[cfg(test)]
+use mnemosyne_core::size_class::size_to_class;
 use mnemosyne_core::types::{Page, Segment};
 
 impl<B: HasSegmentPool> ThreadAllocator<B> {
@@ -27,7 +29,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // 2. Reclaim batched cross-thread frees only after the local list is empty.
             // Safety: `page` is owned by this allocator and `try_reclaim_and_allocate`
             // upholds the `Page::reclaim_thread_free` contract on its behalf.
-            if let Some(block) = unsafe { try_reclaim_and_allocate::<P>(page) } {
+            if let Some(block) =
+                unsafe { try_reclaim_and_allocate::<P>(page, &mut self.cross_thread_reclaimed) }
+            {
                 return block.as_ptr() as *mut u8;
             }
         }
@@ -43,9 +47,16 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// Returns null if the size is not a small class or if allocation fails.
     ///
+    /// This size-taking entry point exists only for the crate's own tests, which
+    /// drive the allocator by byte size; production callers route through
+    /// `alloc_class` (size-class already resolved) or the crate's public
+    /// `thread_alloc*` entry points, so it is gated out of non-test builds to
+    /// keep the public unsafe surface minimal.
+    ///
     /// # Safety
     ///
     /// This method is unsafe because it works with raw pointers and handles manual memory layouts.
+    #[cfg(test)]
     #[inline(always)]
     pub unsafe fn alloc<P: AllocPolicy>(&mut self, size: usize) -> *mut u8 {
         let class = match size_to_class(size) {
@@ -70,7 +81,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         if let Some(mut active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
             let active_page = active_ptr.as_mut();
             // Safety: `active_page` is owned by this allocator.
-            if let Some(block) = try_reclaim_and_allocate::<P>(active_page) {
+            if let Some(block) =
+                try_reclaim_and_allocate::<P>(active_page, &mut self.cross_thread_reclaimed)
+            {
                 return block.as_ptr() as *mut u8;
             }
             // The page is truly full! Move it to full_pages.
@@ -86,7 +99,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             if let Some(block) = unsafe { try_allocate_page_local::<P>(active_page) } {
                 return block.as_ptr() as *mut u8;
             }
-            if let Some(block) = unsafe { try_reclaim_and_allocate::<P>(active_page) } {
+            if let Some(block) = unsafe {
+                try_reclaim_and_allocate::<P>(active_page, &mut self.cross_thread_reclaimed)
+            } {
                 return block.as_ptr() as *mut u8;
             }
         }
@@ -103,7 +118,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             let page = page_ptr.as_mut();
             // Safety: `page` is owned by this allocator. Since it is in full_pages,
             // we know it has no local free blocks. We only need to check for cross-thread frees to reclaim.
-            let block_opt = unsafe { try_reclaim_and_allocate::<P>(page) };
+            let block_opt =
+                unsafe { try_reclaim_and_allocate::<P>(page, &mut self.cross_thread_reclaimed) };
             if let Some(block) = block_opt {
                 if page.alloc_count < page.max_blocks() {
                     // Page is no longer full! Move it back to active list.
@@ -239,7 +255,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                     encrypted, seg_ptr, i,
                                 );
                                 if reclaimed > 0 {
-                                    super::record_cross_thread_reclaimed(reclaimed);
+                                    self.record_cross_thread_reclaimed(reclaimed);
                                 }
 
                                 if page.alloc_count > 0 {
