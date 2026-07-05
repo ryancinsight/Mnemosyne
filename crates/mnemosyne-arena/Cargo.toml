@@ -8,13 +8,11 @@ rust-version = "1.87"
 default = ["std"]
 segment-tail-guards = []
 segment-header-guards = []
-num-complex = ["dep:num-complex"]
 eunomia = ["dep:eunomia"]
 std = ["mnemosyne-core/std"]
 
 [dependencies]
 mnemosyne-core = { path = "../mnemosyne-core" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
-num-complex = { version = "0.4", optional = true }
-eunomia = { git = "https://github.com/ryancinsight/eunomia", default-features = false, optional = true }
+eunomia = { path = "../../../eunomia/crates/eunomia", default-features = false, optional = true }
 themis = { git = "https://github.com/ryancinsight/themis", version = "0.9", default-features = false, features = ["std"] }

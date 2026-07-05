@@ -28,6 +28,20 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
   semantics, const-evaluability test. Remaining: shared-memory arena
   budgeting (the literal-allocation part) pairs with Stage D1 device pools.
 
+## Closed
+
+- [x] [patch] Eunomia scratch local-source contract. `mnemosyne` and
+  `mnemosyne-arena` resolve optional Eunomia support from the sibling Atlas
+  checkout and removed the obsolete internal `num-complex` scratch feature after
+  auditing the local Atlas consumer surface. Consumers should enable
+  `mnemosyne/eunomia` and use `eunomia::Complex`; no remaining local
+  `mnemosyne/num-complex` consumer was found. Evidence tier: compile-time
+  validation plus value-semantic feature coverage. Current Atlas-checkout gates:
+  `cargo check -p mnemosyne-arena --features eunomia`; `cargo nextest run -p
+  mnemosyne-arena --features eunomia`; `cargo check -p mnemosyne --features
+  eunomia`; `cargo nextest run -p mnemosyne --features eunomia`; package clippy,
+  doctests, rustdoc, and no-default build checks for both packages.
+
 ## Open
 
 Filed from the 2026-06-27 deep contention/memory audit (read-only fan-out over

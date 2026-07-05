@@ -73,7 +73,11 @@ Its design incorporates core lessons from modern allocator research (specificall
 *   C `free`/`realloc`/`malloc_usable_size` are pointer-only — no `Layout` is threaded through — which Mnemosyne supports natively because the page/segment owner is recovered by address rounding. The shim's `realloc` copies `min(usable_size, new_size)` to honor C semantics (where the caller may have written the entire usable region), deliberately distinct from the Rust `GlobalAlloc::realloc` path's `layout.size()` bound.
 *   A matching C declaration header ships at [`crates/mnemosyne-c-shim/include/mnemosyne.h`](file:///d:/Mnemosyne/crates/mnemosyne-c-shim/include/mnemosyne.h) for C/C++ consumers, documenting the per-function null/zero/overflow/alignment contracts.
 
-### 15. By-Concern Backend Module Layout (`mnemosyne-backend`)
+### 15. Scratch Pool Element Contract
+*   `mnemosyne-arena::scratch::ScratchPool<T>` and the top-level `mnemosyne::scratch` re-export support `f32`, `f64`, and `u8` unconditionally.
+*   Complex scratch lanes use the Atlas numeric SSOT: enable the `eunomia` feature and use `eunomia::Complex<f32>` or `eunomia::Complex<f64>`. Mnemosyne no longer exposes an internal `num-complex` compatibility feature; local Atlas consumers were audited and no remaining `mnemosyne/num-complex` user was found.
+
+### 16. By-Concern Backend Module Layout (`mnemosyne-backend`)
 *   `mnemosyne-backend` is organized by backend responsibility:
     *   [`mapping`](crates/mnemosyne-backend/src/mapping.rs) owns the `MemoryBackendWrapper` struct shape and the single central `impl MemoryBackend for MemoryBackendWrapper` block. Rust's trait coherence rule keeps the `impl` in one file, and the `allocate` / `deallocate` bodies live inline here. `make_guard`, `page_reset`, and `decommit` entries delegate to the per-concern helpers in `guard` and `reset` via `#[inline(always)]` static-dispatch calls.
     *   [`guard`](crates/mnemosyne-backend/src/guard.rs) owns `do_make_guard` — the per-method body the `make_guard` entry in `mapping`'s impl block delegates into. The `wrapper_make_guard_records_confirmed_install_and_keeps_mapping_reserved` and `wrapper_make_guard_rejects_null_and_zero` tests anchor the guard concern end-to-end.
@@ -259,7 +263,8 @@ fn main() {
 ### Running Tests
 Execute the workspace unit and integration tests:
 ```bash
-cargo test --workspace
+cargo nextest run --workspace
+cargo test --doc --workspace
 ```
 
 ### Running the Memory Report

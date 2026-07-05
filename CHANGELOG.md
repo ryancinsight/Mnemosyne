@@ -20,6 +20,10 @@
 
 ### Changed
 
+- Optional Eunomia scratch support now resolves Eunomia from the sibling Atlas
+  checkout, so local Atlas consumers can enable `mnemosyne/eunomia` without a
+  network fetch and still use Mnemosyne's sealed scratch element impls for
+  `eunomia::Complex`.
 - Migrated the workspace to **edition 2024 / resolver 3** with a pinned MSRV of
   Rust **1.87** (clippy's `incompatible_msrv` proved 1.85 dishonest — const
   `usize::is_multiple_of`). Edition-forced: `unsafe extern` blocks,
@@ -31,8 +35,20 @@
   `mnemosyne-prof`, `mnemosyne-benchmarks`, and `mnemosyne-local` build scripts
   are thin callers.
 
+### Removed
+
+- Removed the internal `num-complex` scratch compatibility feature from
+  `mnemosyne` and `mnemosyne-arena`. The retained complex scratch contract is
+  `eunomia::Complex` behind the `eunomia` feature; a local Atlas consumer scan
+  found no remaining `mnemosyne/num-complex` user.
+
 ### Testing
 
+- Added `mnemosyne-arena --features eunomia` scratch-pool coverage that verifies
+  exact length, alignment, zero initialization, and value-preserving reuse for
+  `eunomia::Complex` lanes.
+- Added `mnemosyne --features eunomia` integration coverage for the public
+  `mnemosyne::scratch` re-export over `eunomia::Complex`.
 - `fuzz/c_shim_api` gains an op-sequence mode (input LSB selects mode): a
   bounded 8-slot table with seeded per-slot write/verify oracles exercises
   adjacent-block metadata clobber and realloc chains that single-op coverage

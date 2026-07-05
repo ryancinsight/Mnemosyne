@@ -125,6 +125,32 @@ fn scratch_pool_returns_value() {
     assert_eq!(sum, (0..100).map(|i| i as f64).sum::<f64>());
 }
 
+#[cfg(feature = "eunomia")]
+#[test]
+fn eunomia_scratch_pool_preserves_values() {
+    let single = ScratchPool::<eunomia::Complex<f32>>::new();
+    single.with_scratch(2, |scratch| {
+        assert_eq!(scratch.len(), 2);
+        assert_eq!(scratch[0], eunomia::Complex::new(0.0, 0.0));
+        scratch[0] = eunomia::Complex::new(1.25, -2.5);
+        scratch[1] = eunomia::Complex::new(3.5, 4.75);
+    });
+    single.with_scratch(2, |scratch| {
+        assert_eq!(scratch[0], eunomia::Complex::new(1.25, -2.5));
+        assert_eq!(scratch[1], eunomia::Complex::new(3.5, 4.75));
+    });
+
+    let double = ScratchPool::<eunomia::Complex<f64>>::new();
+    double.with_scratch(1, |scratch| {
+        assert_eq!(scratch.as_ptr() as usize % DEFAULT_SCRATCH_ALIGN, 0);
+        assert_eq!(scratch[0], eunomia::Complex::new(0.0, 0.0));
+        scratch[0] = eunomia::Complex::new(-8.0, 13.0);
+    });
+    double.with_scratch(1, |scratch| {
+        assert_eq!(scratch[0], eunomia::Complex::new(-8.0, 13.0));
+    });
+}
+
 #[test]
 fn with_slot_capacity_preallocates() {
     let pool = ScratchPool::<f32>::with_slot_capacity(512);

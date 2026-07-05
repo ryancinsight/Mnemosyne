@@ -7,6 +7,31 @@ cycles 1–2; remaining Definition-of-Ready `## Open` items — AR-1 full fix ne
 ADR 0001 sign-off (step-1 tripwire done), AR-2 needs hephaestus co-evolution,
 AR-4 needs a quiet machine, AR-8 self-contained).
 
+## Verified — 2026-07-05 Eunomia scratch dependency audit
+
+- [x] [patch] Removed the internal `num-complex` scratch compatibility feature
+  from `mnemosyne` and `mnemosyne-arena` after a repo and local Atlas consumer
+  scan found no remaining `mnemosyne/num-complex` user. The retained complex
+  scratch path is `eunomia::Complex` behind `mnemosyne/eunomia`, with focused
+  value-semantic scratch-pool coverage for exact length, alignment, zero
+  initialization, and reuse preservation. Evidence tier: compile-time
+  validation plus value-semantic tests. Verification: `cargo check -p
+  mnemosyne-arena --features eunomia`; `cargo nextest run -p mnemosyne-arena
+  --features eunomia`; `cargo clippy -p mnemosyne-arena --all-targets
+  --features eunomia -- -D warnings`; `cargo test --doc -p mnemosyne-arena
+  --features eunomia`; `cargo doc -p mnemosyne-arena --features eunomia
+  --no-deps`; `cargo check -p mnemosyne --features eunomia`; `cargo nextest run
+  -p mnemosyne --features eunomia`; `cargo clippy -p mnemosyne --all-targets
+  --features eunomia -- -D warnings`; `cargo test --doc -p mnemosyne --features
+  eunomia`; `cargo doc -p mnemosyne --features eunomia --no-deps`; `cargo check
+  -p mnemosyne-arena --no-default-features`; `cargo check -p mnemosyne
+  --no-default-features`. `cargo tree -p mnemosyne --edges features --features
+  eunomia` confirmed the sibling `D:\atlas\repos\eunomia\crates\eunomia`
+  dependency and forwarded `mnemosyne-arena/eunomia`; `cargo tree -p mnemosyne
+  --edges features --no-default-features` confirmed Eunomia is absent unless the
+  feature is enabled. Added `mnemosyne` public re-export coverage in
+  `crates/mnemosyne/tests/scratch_reexport.rs`.
+
 ## Verified — 2026-07-02 consolidation cycle 3 (two disjoint-scope agents +
 ## coordinator integration; branch fix/audit-2026-07-soundness-perf)
 

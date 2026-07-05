@@ -250,7 +250,6 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 [[package]]
 name = "eunomia"
 version = "0.1.0"
-source = "git+https://github.com/ryancinsight/eunomia#9b36a7532df64f5f9f4431836243366188ab3273"
 dependencies = [
  "bytemuck",
  "half",
@@ -412,7 +411,6 @@ dependencies = [
  "mnemosyne-heap",
  "mnemosyne-local",
  "mnemosyne-prof",
- "num-complex",
 ]
 
 [[package]]
@@ -422,7 +420,6 @@ dependencies = [
  "eunomia",
  "mnemosyne-backend",
  "mnemosyne-core",
- "num-complex",
  "themis",
 ]
 
@@ -530,15 +527,6 @@ dependencies = [
  "mnemosyne-core",
  "mnemosyne-heap",
  "mnemosyne-local",
-]
-
-[[package]]
-name = "num-complex"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
-dependencies = [
- "num-traits",
 ]
 
 [[package]]

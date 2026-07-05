@@ -97,7 +97,8 @@ impl<T: ScratchElement> AlignedVec<T> {
         // SAFETY: capacity was grown to `>= min_len` above, so the range
         // `[self.len, min_len)` lies fully inside the allocation. All-zero is a
         // valid bit pattern for every `ScratchElement` type (`f32`/`f64`/`u8`/
-        // `Complex`), so zeroing produces valid initialized `T` values.
+        // `eunomia::Complex`), so zeroing produces valid initialized `T`
+        // values.
         unsafe {
             let dst = self.ptr.add(self.len);
             core::ptr::write_bytes(dst, 0, min_len - self.len);
