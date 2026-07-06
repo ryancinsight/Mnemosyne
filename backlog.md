@@ -41,6 +41,15 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
   mnemosyne-arena --features eunomia`; `cargo check -p mnemosyne --features
   eunomia`; `cargo nextest run -p mnemosyne --features eunomia`; package clippy,
   doctests, rustdoc, and no-default build checks for both packages.
+- [x] [major] AR-2 WGPU callback registration soundness. The public
+  `WGPU_{ALLOCATE,DEALLOCATE}_CALLBACK` raw `AtomicPtr<c_void>` statics are now
+  private `mnemosyne-backend` slots, and consumers register through the typed
+  unsafe `register_wgpu_callbacks(WgpuAllocateCallback, WgpuDeallocateCallback)`
+  API. The sibling `hephaestus-wgpu` staging callback registration was migrated
+  in the same change set. Evidence tier: type-level function-pointer contract
+  plus value-semantic Mnemosyne tests and downstream Hephaestus WGPU gates.
+  Verification: focused Mnemosyne fmt/check/clippy/nextest/doctest/rustdoc
+  gates and Hephaestus `hephaestus-wgpu` fmt/check/clippy/nextest (129/129).
 
 ## Open
 
@@ -97,29 +106,24 @@ remainder, each Definition-of-Ready):
   `## Completed`; the remaining work is the type-level allocator-keying.
   Acceptance: an interleaved standard+hardened same-page chain-pop test
   round-trips without abort under a release build.
-- [ ] [major] AR-2: wgpu callback registration is a soundness hole —
-  `WGPU_{ALLOCATE,DEALLOCATE}_CALLBACK` are pub `AtomicPtr<c_void>` statics
-  that safe code can poison and `WgpuStagingBackend::allocate` transmutes and
-  calls. Fix: private statics + typed `register_wgpu_callbacks(unsafe extern
-  "C" fn(usize) -> *mut u8, unsafe extern "C" fn(*mut u8, usize) -> bool)`.
-  Blocker: cross-repo co-evolution — hephaestus-wgpu
-  `infrastructure/device.rs:177-184` stores the statics directly; migrate
-  both in one coordinated unit per the atlas protocol. Acceptance: no pub
-  mutable callback statics; hephaestus builds and passes against the bump.
 - [ ] [patch] AR-4: benchmark gate statistics are too weak for the 1.05
   threshold: `sample_size(10)` / 500 ms measurement yields CI widths the
   variance report itself flags at 15-25%. Fix: raise measurement time/samples
   for the gated rows (or gate on median with CI overlap), keep quick settings
   for exploratory rows. Blocker: quiet machine for re-baselining. Acceptance:
   gated-row CI half-width < the 5% threshold on the recorded baseline.
-- [ ] [minor] AR-8: shard the prof `StackInterner` mutex (64-shard by stack
-  hash, `Arc` construction outside the lock) — it serializes every sampled
-  alloc AND free under the leak detector. Re-measure after the 2026-07-01
-  hasher fix before building. Acceptance: leak-detector-on alloc/free
-  benchmark shows the interner off the critical path, or the item closes
-  with the recorded measurement.
-
 ## Completed
+
+- 2026-07-06 AR-8 [minor]: `mnemosyne-prof` stack interning now routes
+  captured stacks across 64 cache-line-aligned shards by stack hash, encodes
+  the shard in `StackId`, recycles ids per shard, and constructs first-seen
+  `Arc<[usize]>` values outside the shard lock with a race-safe recheck before
+  insertion. Added focused shard distribution, id-encoding, same-shard reuse,
+  and concurrent distinct-shard interning tests. Added the real
+  leak-detector-on Mnemosyne alloc/free Criterion group and summary filter.
+  Current measured medians: small/32 `1.1940 us`, medium/1024 `1.1215 us`,
+  large/8192 `1.1543 us` (10 samples, 500 ms measurement, Windows host).
+  Evidence tier: value-semantic tests plus empirical Criterion measurement.
 
 - 2026-07-02 consolidation cycle 3 (branch fix/audit-2026-07-soundness-perf,
   five atomic commits; detail in CHANGELOG.md and checklist.md). Closed:

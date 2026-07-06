@@ -73,6 +73,46 @@ pub fn bench_allocator_cycles(c: &mut Criterion) {
     group.finish();
 }
 
+struct LeakDetectorGuard;
+
+impl LeakDetectorGuard {
+    fn enabled() -> Self {
+        mnemosyne_prof::reset_profiler_for_testing();
+        mnemosyne_prof::enable_leak_detector();
+        Self
+    }
+}
+
+impl Drop for LeakDetectorGuard {
+    fn drop(&mut self) {
+        mnemosyne_prof::reset_profiler_for_testing();
+    }
+}
+
+pub fn bench_leak_detector_allocator_cycles(c: &mut Criterion) {
+    let _guard = LeakDetectorGuard::enabled();
+    let mut group = c.benchmark_group("Leak detector allocator cycle latency");
+    for (name, layout) in [
+        ("small/32", SMALL_LAYOUT),
+        ("medium/1024", MEDIUM_LAYOUT),
+        ("large/8192", LARGE_LAYOUT),
+    ] {
+        group.throughput(Throughput::Bytes(layout.size() as u64));
+        fn cycle<A: GlobalAlloc>(a: &A, layout: &core::alloc::Layout) {
+            unsafe { alloc_dealloc(a, *layout) }
+        }
+        bench_iter_case(
+            &mut group,
+            "Mnemosyne",
+            name,
+            &mnemosyne::Mnemosyne,
+            &layout,
+            cycle,
+        );
+    }
+    group.finish();
+}
+
 pub fn bench_allocator_alloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("Allocator allocation latency");
     for (name, layout) in [

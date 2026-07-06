@@ -13,6 +13,7 @@ pub use cross_thread::{
 };
 pub use latency::{
     bench_allocator_alloc, bench_allocator_bursts, bench_allocator_cycles, bench_allocator_dealloc,
+    bench_leak_detector_allocator_cycles,
 };
 pub use realloc::bench_realloc;
 pub use segment::bench_segment_cache_eviction;

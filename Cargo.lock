@@ -445,6 +445,7 @@ dependencies = [
  "mnemosyne-hardened",
  "mnemosyne-heap",
  "mnemosyne-local",
+ "mnemosyne-prof",
  "rpmalloc",
  "serde_json",
  "snmalloc-rs",

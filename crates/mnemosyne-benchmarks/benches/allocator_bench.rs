@@ -6,9 +6,9 @@ mod allocator;
 
 use allocator::{
     bench_allocator_alloc, bench_allocator_bursts, bench_allocator_cycles, bench_allocator_dealloc,
-    bench_cross_thread_free, bench_multithreaded_alloc, bench_realloc,
-    bench_saturated_multithreaded_alloc, bench_segment_cache_eviction, bench_usable_size,
-    bench_usable_size_query,
+    bench_cross_thread_free, bench_leak_detector_allocator_cycles, bench_multithreaded_alloc,
+    bench_realloc, bench_saturated_multithreaded_alloc, bench_segment_cache_eviction,
+    bench_usable_size, bench_usable_size_query,
 };
 
 criterion_group! {
@@ -19,6 +19,7 @@ criterion_group! {
         .measurement_time(Duration::from_millis(500));
     targets =
         bench_allocator_cycles,
+        bench_leak_detector_allocator_cycles,
         bench_allocator_alloc,
         bench_allocator_dealloc,
         bench_allocator_bursts,

@@ -32,6 +32,7 @@ mnemosyne-hardened = { path = "../mnemosyne-hardened" }
 mnemosyne-local = { path = "../mnemosyne-local" }
 mnemosyne-heap = { path = "../mnemosyne-heap" }
 mnemosyne-decay = { path = "../mnemosyne-decay" }
+mnemosyne-prof = { path = "../mnemosyne-prof" }
 
 [target.'cfg(not(windows))'.dependencies]
 tikv-jemallocator = "0.6"

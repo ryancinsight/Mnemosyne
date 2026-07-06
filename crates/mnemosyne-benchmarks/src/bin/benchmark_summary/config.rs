@@ -8,12 +8,13 @@ pub const BASELINE_PATH: &str = "benchmarks/allocator_baseline_excerpt.csv";
 pub const REFRESH_BASELINE_FLAG: &str = "--refresh-baseline";
 pub const ENFORCE_THRESHOLDS_FLAG: &str = "--enforce-thresholds";
 
-pub const ACTIVE_GROUPS: [&str; 12] = [
+pub const ACTIVE_GROUPS: [&str; 13] = [
     "allocator allocation latency/",
     "allocator deallocation latency/",
     "allocator burst retention/",
     "allocator cycle latency/",
     "cross-thread free handoff/",
+    "leak detector allocator cycle latency/",
     "realloc latency/",
     "segment cache eviction/",
     "threaded medium allocation cycles/",
@@ -168,12 +169,13 @@ mod tests {
 
     #[test]
     fn active_filter_keeps_every_allocator_benchmark_group() {
-        const EXPECTED_GROUPS: [&str; 12] = [
+        const EXPECTED_GROUPS: [&str; 13] = [
             "allocator allocation latency/",
             "allocator deallocation latency/",
             "allocator burst retention/",
             "allocator cycle latency/",
             "cross-thread free handoff/",
+            "leak detector allocator cycle latency/",
             "realloc latency/",
             "segment cache eviction/",
             "threaded medium allocation cycles/",

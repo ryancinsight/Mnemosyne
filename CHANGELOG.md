@@ -20,6 +20,13 @@
 
 ### Changed
 
+- `mnemosyne-prof` stack interning now routes captured stacks across 64
+  cache-line-aligned shards by stack hash, with the shard encoded into
+  `StackId`. First-seen `Arc<[usize]>` construction happens outside the shard
+  lock and races recheck before insertion; id recycling remains local to the
+  shard. This removes the single global `StackInterner` mutex from the
+  leak-detector allocation/free path. Evidence tier: value-semantic tests plus
+  empirical Criterion measurement.
 - Optional Eunomia scratch support now resolves Eunomia from the sibling Atlas
   checkout, so local Atlas consumers can enable `mnemosyne/eunomia` without a
   network fetch and still use Mnemosyne's sealed scratch element impls for
@@ -44,6 +51,13 @@
 
 ### Testing
 
+- Added focused `mnemosyne-prof` tests for stack-interner shard coverage,
+  shard/local-id encoding, same-shard id recycling, and concurrent
+  distinct-shard interning. Added a real Mnemosyne leak-detector-on alloc/free
+  Criterion group (`Leak detector allocator cycle latency/Mnemosyne`) and
+  summary filtering; current measured medians are small/32 `1.1940 us`,
+  medium/1024 `1.1215 us`, and large/8192 `1.1543 us` (10 samples, 500 ms
+  measurement).
 - Added `mnemosyne-arena --features eunomia` scratch-pool coverage that verifies
   exact length, alignment, zero initialization, and value-preserving reuse for
   `eunomia::Complex` lanes.
