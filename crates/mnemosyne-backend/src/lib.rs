@@ -39,21 +39,14 @@ pub use backends::DefaultBackend;
 pub use backends::cuda::{
     CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend, is_cuda_available,
 };
-pub use backends::wgpu::WgpuStagingBackend;
+pub use backends::wgpu::{
+    WgpuAllocateCallback, WgpuDeallocateCallback, WgpuStagingBackend, register_wgpu_callbacks,
+};
 pub use mapping::MemoryBackendWrapper;
 pub use recorders::{BackendMemoryStats, backend_memory_stats};
 
 use core::ffi::c_void;
 use core::sync::atomic::AtomicPtr;
 
-/// Global static callback for hooking a third-party allocator's
-/// allocate path (typically wgpu's staging allocation hook) into
-/// Mnemosyne. [`crate::backends::wgpu::WgpuStagingBackend`] reads
-/// this pointer on every `allocate`; consumers (e.g.
-/// `hephaestus-wgpu`) register their own function pointer at startup.
-pub static WGPU_ALLOCATE_CALLBACK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
-
-/// Global static callback for hooking a third-party allocator's
-/// deallocate path into Mnemosyne. Mirror of
-/// [`WGPU_ALLOCATE_CALLBACK`] for the release side.
-pub static WGPU_DEALLOCATE_CALLBACK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+static WGPU_ALLOCATE_CALLBACK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+static WGPU_DEALLOCATE_CALLBACK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());

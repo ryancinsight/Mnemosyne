@@ -83,9 +83,7 @@ fn test_cuda_unified_backend() {
     }
     // Test WgpuStagingBackend
     {
-        use core::ffi::c_void;
-        use core::sync::atomic::Ordering;
-        use mnemosyne_backend::{WGPU_ALLOCATE_CALLBACK, WGPU_DEALLOCATE_CALLBACK};
+        use mnemosyne_backend::register_wgpu_callbacks;
 
         unsafe extern "C" fn mock_alloc(size: usize) -> *mut u8 {
             unsafe { std::alloc::alloc(Layout::from_size_align_unchecked(size, 8)) }
@@ -98,8 +96,7 @@ fn test_cuda_unified_backend() {
             }
         }
 
-        WGPU_ALLOCATE_CALLBACK.store(mock_alloc as *mut c_void, Ordering::Release);
-        WGPU_DEALLOCATE_CALLBACK.store(mock_dealloc as *mut c_void, Ordering::Release);
+        unsafe { register_wgpu_callbacks(mock_alloc, mock_dealloc) };
 
         let allocator = MnemosyneAllocator::<StandardPolicy, WgpuStagingBackend>::new();
         let layout = Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
@@ -111,9 +108,6 @@ fn test_cuda_unified_backend() {
             assert_eq!(ptr.read(), 99);
             allocator.dealloc(ptr, layout);
         }
-
-        WGPU_ALLOCATE_CALLBACK.store(core::ptr::null_mut(), Ordering::Release);
-        WGPU_DEALLOCATE_CALLBACK.store(core::ptr::null_mut(), Ordering::Release);
     }
 
     #[cfg(not(windows))]

@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- WGPU staging callback registration no longer exposes public mutable raw
+  `AtomicPtr<c_void>` slots. `mnemosyne-backend` keeps the slots private and
+  exposes typed unsafe `register_wgpu_callbacks` over
+  `WgpuAllocateCallback`/`WgpuDeallocateCallback`; `WgpuStagingBackend` loads
+  only callbacks written through that typed path. The sibling
+  `hephaestus-wgpu` staging callback registration is migrated in the same
+  change set.
 - Latent `nightly_tls` build break: `mnemosyne-prof` imported
   `get_profiler_state` unconditionally although its definition is
   `#[cfg(not(nightly_tls_active))]` — an E0432 whenever the nightly
@@ -51,6 +58,10 @@
 
 ### Testing
 
+- Added `mnemosyne-backend` value-semantic WGPU callback round-trip coverage
+  and migrated the existing global-allocator WGPU policy test to the typed
+  registration API. Verified the sibling `hephaestus-wgpu` consumer with
+  check, clippy, and nextest (129/129).
 - Added focused `mnemosyne-prof` tests for stack-interner shard coverage,
   shard/local-id encoding, same-shard id recycling, and concurrent
   distinct-shard interning. Added a real Mnemosyne leak-detector-on alloc/free
@@ -133,6 +144,10 @@
 
 ### Breaking
 
+- Removed public access to `mnemosyne_backend::WGPU_ALLOCATE_CALLBACK` and
+  `mnemosyne_backend::WGPU_DEALLOCATE_CALLBACK`. Register WGPU staging hooks
+  through `unsafe { mnemosyne_backend::register_wgpu_callbacks(allocate,
+  deallocate) }`, or through the top-level `mnemosyne` re-export.
 - Sourced all brand machinery from the [`melinoe`](https://github.com/ryancinsight/melinoe) crate, making it the single source of truth for the ecosystem's brand identity and capability tokens. `mnemosyne-heap` no longer defines its own `Invariant<'brand>` marker or `AllocatorToken<'brand>`; the heap's `scope`, `BrandedBlock`, `BrandedCell`, `BrandedBox`, and `BrandedVec` now use melinoe's `InvariantLifetime<'brand>` marker and `ThreadLocalToken<'brand>` (minted by melinoe's `thread_local_scope`). Public renames: `AllocatorToken` → `ThreadLocalToken`, `Invariant` → `InvariantLifetime` (re-exported from `mnemosyne` and `mnemosyne-heap`). Both `ThreadLocalToken` (`PhantomData<*const ()>`) and the former `AllocatorToken` (`PhantomData<*mut ()>`) are `!Send + !Sync`, so all thread-confinement and brand-uniqueness proofs are preserved — verified by the unchanged `compile_fail` doctests (token `!Send`, `BrandedBox`/`BrandedVec` `!Send`, brand cannot escape its scope, cross-scope tokens/heaps cannot mix) plus the full heap unit/integration suite.
 - The `melinoe` dependency tracks `main` with no pinned rev (`branch = "main"`, `default-features = false`), so the heap always builds against the latest published brand semantics.
 - `BrandedBlock::cast<U>` is now an `unsafe fn`: it was callable from safe code
@@ -155,6 +170,11 @@
 
 ### Migration
 
+- Replace direct stores to `WGPU_ALLOCATE_CALLBACK` and
+  `WGPU_DEALLOCATE_CALLBACK` with one call to
+  `register_wgpu_callbacks(allocate, deallocate)`, and keep the call inside an
+  unsafe block that documents the callback lifetime, pairing, and no-unwind
+  contract.
 - Replace references to `mnemosyne::AllocatorToken` / `mnemosyne_heap::AllocatorToken` with `ThreadLocalToken`, and `Invariant` with `InvariantLifetime`. Code that obtains its token from the `branded_scope`/`scope` closure parameter needs no change (the token type is inferred).
 - Wrap `BrandedBlock::cast` call sites in `unsafe` and discharge the documented
   layout + initialization/drop contract (freshly-allocated uninitialized
