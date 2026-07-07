@@ -372,8 +372,8 @@ dependencies = [
 
 [[package]]
 name = "melinoe"
-version = "0.7.0"
-source = "git+https://github.com/ryancinsight/melinoe.git#da599b983f7700bec5b5a96aae70c3bf892e8791"
+version = "0.8.0"
+source = "git+https://github.com/ryancinsight/melinoe.git#ba9194613169827a6db55e7458b8e0320cd515e1"
 
 [[package]]
 name = "memchr"
@@ -795,8 +795,8 @@ dependencies = [
 
 [[package]]
 name = "themis"
-version = "0.9.8"
-source = "git+https://github.com/ryancinsight/themis#886ba8ec867af1b56f9ab66ccc5e7742bae23a12"
+version = "0.9.17"
+source = "git+https://github.com/ryancinsight/themis#a51b327accbd8c417d6b661c40ecefb6098ddb1a"
 dependencies = [
  "melinoe",
 ]
