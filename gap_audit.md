@@ -2,6 +2,29 @@
 
 ## Residual risk / open findings
 
+2026-07-05 Eunomia scratch dependency audit:
+- Decision log: remove the internal `num-complex` scratch feature rather than
+  keep a compatibility path. The only Mnemosyne-owned references were optional
+  feature wiring and sealed `ScratchElement` impls; the local Atlas consumer
+  scan found `mnemosyne::scratch::ScratchPool<eunomia::Complex64>` users and no
+  `mnemosyne/num-complex` feature user. Remaining blocker: none found locally;
+  any out-of-tree consumer still depending on `mnemosyne/num-complex` must
+  migrate to `mnemosyne/eunomia`. Current Atlas-checkout verification confirms
+  `mnemosyne/eunomia` resolves the sibling `D:\atlas\repos\eunomia` source and
+  forwards `mnemosyne-arena/eunomia`; the no-default-features tree keeps
+  Eunomia absent.
+
+2026-07-06 AR-2 WGPU callback soundness follow-through:
+- Closed the public WGPU callback static soundness hole. The selected design is
+  private raw storage plus typed unsafe registration, rather than public
+  `AtomicPtr<c_void>` slots or a safe registration function. The unsafe
+  boundary is required because the type signature proves callback ABI shape,
+  but the caller still owns the mapped-pointer lifetime, allocation/deallocation
+  pairing, and no-unwind contract. Residual risk: none found in the local Atlas
+  consumer surface; `hephaestus-wgpu` was migrated and verified against the new
+  API. Evidence tier: type-level function-pointer contract plus value-semantic
+  Mnemosyne tests and downstream Hephaestus WGPU tests.
+
 2026-07-02 consolidation cycle 3 — decision log and residual risk:
 - AR-1 step 1 shipped (debug tripwire at `Segment::cookie_for`). Residual risk:
   the release build still permits mixed-encryption-policy corruption on one

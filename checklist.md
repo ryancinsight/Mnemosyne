@@ -3,9 +3,80 @@
 Target version: 0.2.0
 
 Sprint phase: Closure (2026-07-02 consolidation cycle 3 delivered on top of
-cycles 1–2; remaining Definition-of-Ready `## Open` items — AR-1 full fix needs
-ADR 0001 sign-off (step-1 tripwire done), AR-2 needs hephaestus co-evolution,
-AR-4 needs a quiet machine, AR-8 self-contained).
+cycles 1–2; AR-2 callback soundness and AR-8 profiler contention closed
+2026-07-06; remaining Definition-of-Ready `## Open` items — AR-1 full fix needs
+ADR 0001 sign-off (step-1 tripwire done), AR-4 needs a quiet machine).
+
+## Verified — 2026-07-06 AR-2 WGPU callback soundness follow-through
+
+- [x] [major] Replaced the public
+  `WGPU_{ALLOCATE,DEALLOCATE}_CALLBACK` raw `AtomicPtr<c_void>` statics with
+  private backend slots plus the typed unsafe
+  `register_wgpu_callbacks(WgpuAllocateCallback, WgpuDeallocateCallback)` API.
+  `WgpuStagingBackend` now loads only values written through that typed
+  registration path, `mnemosyne` re-exports the typed callback contract, and the
+  sibling `D:\atlas\repos\hephaestus\crates\hephaestus-wgpu` device
+  initialization call site registers its mapped-buffer callbacks through the new
+  API. Evidence tier: type-level signature enforcement, value-semantic
+  backend/global-allocator tests, and downstream Atlas consumer verification.
+  Verification: `rustup run nightly cargo fmt -p mnemosyne-backend -p mnemosyne
+  --check`; `rustup run nightly cargo check -p mnemosyne-backend -p mnemosyne
+  --tests`; `rustup run nightly cargo clippy -p mnemosyne-backend -p mnemosyne
+  --all-targets -- -D warnings`; `rustup run nightly cargo nextest run -p
+  mnemosyne-backend -p mnemosyne` (39/39); `rustup run nightly cargo test --doc
+  -p mnemosyne-backend -p mnemosyne`; `rustup run nightly cargo doc -p
+  mnemosyne-backend -p mnemosyne --no-deps`; Hephaestus consumer gates `rustup
+  run nightly cargo fmt -p hephaestus-wgpu --check`, `rustup run nightly cargo
+  check -p hephaestus-wgpu --tests`, `rustup run nightly cargo clippy -p
+  hephaestus-wgpu --all-targets -- -D warnings`, and `rustup run nightly cargo
+  nextest run -p hephaestus-wgpu` (129/129).
+
+## Verified — 2026-07-06 AR-8 profiler StackInterner sharding
+
+- [x] [minor] `mnemosyne-prof` `StackInterner` contention reduction: stack
+  samples route to 64 cache-line-aligned interner shards by stack hash; `StackId`
+  encodes shard + local id; id reuse is per shard; first-seen `Arc<[usize]>`
+  construction runs outside the shard lock with a recheck before insertion.
+  Focused tests cover hash coverage for all shards, shard/local-id encoding,
+  same-shard id recycling, concurrent distinct-shard interning, and existing
+  profiler/leak-detector behavior. Added `mnemosyne-benchmarks` leak-detector
+  allocator-cycle Criterion rows and summary filtering. Evidence tier:
+  value-semantic tests plus empirical Criterion measurement.
+
+  Verification: `rustup run nightly cargo nextest run -p mnemosyne-prof`
+  (15/15); `rustup run nightly cargo nextest run -p mnemosyne-benchmarks`
+  (20/20); `rustup run nightly cargo clippy -p mnemosyne-prof --all-targets --
+  -D warnings`; `rustup run nightly cargo clippy -p mnemosyne-benchmarks
+  --all-targets -- -D warnings`; `rustfmt --edition 2024 --check` on the
+  touched Rust files; `rustup run nightly cargo bench -p mnemosyne-benchmarks
+  --bench allocator_bench -- "Leak detector allocator cycle latency/Mnemosyne"`.
+  Criterion medians: small/32 `1.1940 us`, medium/1024 `1.1215 us`,
+  large/8192 `1.1543 us`.
+
+## Verified — 2026-07-05 Eunomia scratch dependency audit
+
+- [x] [patch] Removed the internal `num-complex` scratch compatibility feature
+  from `mnemosyne` and `mnemosyne-arena` after a repo and local Atlas consumer
+  scan found no remaining `mnemosyne/num-complex` user. The retained complex
+  scratch path is `eunomia::Complex` behind `mnemosyne/eunomia`, with focused
+  value-semantic scratch-pool coverage for exact length, alignment, zero
+  initialization, and reuse preservation. Evidence tier: compile-time
+  validation plus value-semantic tests. Verification: `cargo check -p
+  mnemosyne-arena --features eunomia`; `cargo nextest run -p mnemosyne-arena
+  --features eunomia`; `cargo clippy -p mnemosyne-arena --all-targets
+  --features eunomia -- -D warnings`; `cargo test --doc -p mnemosyne-arena
+  --features eunomia`; `cargo doc -p mnemosyne-arena --features eunomia
+  --no-deps`; `cargo check -p mnemosyne --features eunomia`; `cargo nextest run
+  -p mnemosyne --features eunomia`; `cargo clippy -p mnemosyne --all-targets
+  --features eunomia -- -D warnings`; `cargo test --doc -p mnemosyne --features
+  eunomia`; `cargo doc -p mnemosyne --features eunomia --no-deps`; `cargo check
+  -p mnemosyne-arena --no-default-features`; `cargo check -p mnemosyne
+  --no-default-features`. `cargo tree -p mnemosyne --edges features --features
+  eunomia` confirmed the sibling `D:\atlas\repos\eunomia\crates\eunomia`
+  dependency and forwarded `mnemosyne-arena/eunomia`; `cargo tree -p mnemosyne
+  --edges features --no-default-features` confirmed Eunomia is absent unless the
+  feature is enabled. Added `mnemosyne` public re-export coverage in
+  `crates/mnemosyne/tests/scratch_reexport.rs`.
 
 ## Verified — 2026-07-02 consolidation cycle 3 (two disjoint-scope agents +
 ## coordinator integration; branch fix/audit-2026-07-soundness-perf)

@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- WGPU staging callback registration no longer exposes public mutable raw
+  `AtomicPtr<c_void>` slots. `mnemosyne-backend` keeps the slots private and
+  exposes typed unsafe `register_wgpu_callbacks` over
+  `WgpuAllocateCallback`/`WgpuDeallocateCallback`; `WgpuStagingBackend` loads
+  only callbacks written through that typed path. The sibling
+  `hephaestus-wgpu` staging callback registration is migrated in the same
+  change set.
 - Latent `nightly_tls` build break: `mnemosyne-prof` imported
   `get_profiler_state` unconditionally although its definition is
   `#[cfg(not(nightly_tls_active))]` — an E0432 whenever the nightly
@@ -20,6 +27,17 @@
 
 ### Changed
 
+- `mnemosyne-prof` stack interning now routes captured stacks across 64
+  cache-line-aligned shards by stack hash, with the shard encoded into
+  `StackId`. First-seen `Arc<[usize]>` construction happens outside the shard
+  lock and races recheck before insertion; id recycling remains local to the
+  shard. This removes the single global `StackInterner` mutex from the
+  leak-detector allocation/free path. Evidence tier: value-semantic tests plus
+  empirical Criterion measurement.
+- Optional Eunomia scratch support now resolves Eunomia from the sibling Atlas
+  checkout, so local Atlas consumers can enable `mnemosyne/eunomia` without a
+  network fetch and still use Mnemosyne's sealed scratch element impls for
+  `eunomia::Complex`.
 - Migrated the workspace to **edition 2024 / resolver 3** with a pinned MSRV of
   Rust **1.87** (clippy's `incompatible_msrv` proved 1.85 dishonest — const
   `usize::is_multiple_of`). Edition-forced: `unsafe extern` blocks,
@@ -31,8 +49,31 @@
   `mnemosyne-prof`, `mnemosyne-benchmarks`, and `mnemosyne-local` build scripts
   are thin callers.
 
+### Removed
+
+- Removed the internal `num-complex` scratch compatibility feature from
+  `mnemosyne` and `mnemosyne-arena`. The retained complex scratch contract is
+  `eunomia::Complex` behind the `eunomia` feature; a local Atlas consumer scan
+  found no remaining `mnemosyne/num-complex` user.
+
 ### Testing
 
+- Added `mnemosyne-backend` value-semantic WGPU callback round-trip coverage
+  and migrated the existing global-allocator WGPU policy test to the typed
+  registration API. Verified the sibling `hephaestus-wgpu` consumer with
+  check, clippy, and nextest (129/129).
+- Added focused `mnemosyne-prof` tests for stack-interner shard coverage,
+  shard/local-id encoding, same-shard id recycling, and concurrent
+  distinct-shard interning. Added a real Mnemosyne leak-detector-on alloc/free
+  Criterion group (`Leak detector allocator cycle latency/Mnemosyne`) and
+  summary filtering; current measured medians are small/32 `1.1940 us`,
+  medium/1024 `1.1215 us`, and large/8192 `1.1543 us` (10 samples, 500 ms
+  measurement).
+- Added `mnemosyne-arena --features eunomia` scratch-pool coverage that verifies
+  exact length, alignment, zero initialization, and value-preserving reuse for
+  `eunomia::Complex` lanes.
+- Added `mnemosyne --features eunomia` integration coverage for the public
+  `mnemosyne::scratch` re-export over `eunomia::Complex`.
 - `fuzz/c_shim_api` gains an op-sequence mode (input LSB selects mode): a
   bounded 8-slot table with seeded per-slot write/verify oracles exercises
   adjacent-block metadata clobber and realloc chains that single-op coverage
@@ -103,6 +144,10 @@
 
 ### Breaking
 
+- Removed public access to `mnemosyne_backend::WGPU_ALLOCATE_CALLBACK` and
+  `mnemosyne_backend::WGPU_DEALLOCATE_CALLBACK`. Register WGPU staging hooks
+  through `unsafe { mnemosyne_backend::register_wgpu_callbacks(allocate,
+  deallocate) }`, or through the top-level `mnemosyne` re-export.
 - Sourced all brand machinery from the [`melinoe`](https://github.com/ryancinsight/melinoe) crate, making it the single source of truth for the ecosystem's brand identity and capability tokens. `mnemosyne-heap` no longer defines its own `Invariant<'brand>` marker or `AllocatorToken<'brand>`; the heap's `scope`, `BrandedBlock`, `BrandedCell`, `BrandedBox`, and `BrandedVec` now use melinoe's `InvariantLifetime<'brand>` marker and `ThreadLocalToken<'brand>` (minted by melinoe's `thread_local_scope`). Public renames: `AllocatorToken` → `ThreadLocalToken`, `Invariant` → `InvariantLifetime` (re-exported from `mnemosyne` and `mnemosyne-heap`). Both `ThreadLocalToken` (`PhantomData<*const ()>`) and the former `AllocatorToken` (`PhantomData<*mut ()>`) are `!Send + !Sync`, so all thread-confinement and brand-uniqueness proofs are preserved — verified by the unchanged `compile_fail` doctests (token `!Send`, `BrandedBox`/`BrandedVec` `!Send`, brand cannot escape its scope, cross-scope tokens/heaps cannot mix) plus the full heap unit/integration suite.
 - The `melinoe` dependency tracks `main` with no pinned rev (`branch = "main"`, `default-features = false`), so the heap always builds against the latest published brand semantics.
 - `BrandedBlock::cast<U>` is now an `unsafe fn`: it was callable from safe code
@@ -125,6 +170,11 @@
 
 ### Migration
 
+- Replace direct stores to `WGPU_ALLOCATE_CALLBACK` and
+  `WGPU_DEALLOCATE_CALLBACK` with one call to
+  `register_wgpu_callbacks(allocate, deallocate)`, and keep the call inside an
+  unsafe block that documents the callback lifetime, pairing, and no-unwind
+  contract.
 - Replace references to `mnemosyne::AllocatorToken` / `mnemosyne_heap::AllocatorToken` with `ThreadLocalToken`, and `Invariant` with `InvariantLifetime`. Code that obtains its token from the `branded_scope`/`scope` closure parameter needs no change (the token type is inferred).
 - Wrap `BrandedBlock::cast` call sites in `unsafe` and discharge the documented
   layout + initialization/drop contract (freshly-allocated uninitialized
