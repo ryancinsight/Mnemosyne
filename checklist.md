@@ -7,6 +7,18 @@ cycles 1–2; AR-2 callback soundness and AR-8 profiler contention closed
 2026-07-06; remaining Definition-of-Ready `## Open` items — AR-1 full fix needs
 ADR 0001 sign-off (step-1 tripwire done), AR-4 needs a quiet machine).
 
+## Verified — 2026-07-07 Atlas provider graph refresh
+
+- [x] [patch] Updated `mnemosyne-local` to require the current sibling Atlas
+  `melinoe` `0.8.0` generation and refreshed `Cargo.lock` so Themis resolves to
+  `0.9.17` at `a51b327accbd8c417d6b661c40ecefb6098ddb1a` with Melinoe
+  `0.8.0` at `ba919461`. This removes the stale `melinoe ^0.7.0` resolver
+  conflict hit by the downstream Kwavers provider gate. Evidence tier:
+  compile-time provider integration. Verification: `rustup run nightly cargo
+  check -p mnemosyne-local` passed; downstream `rustup run nightly cargo check
+  -p kwavers-solver --lib` and `rustup run nightly cargo clippy -p
+  kwavers-solver --lib --no-deps -- -D warnings` passed.
+
 ## Verified — 2026-07-06 AR-2 WGPU callback soundness follow-through
 
 - [x] [major] Replaced the public

@@ -27,6 +27,10 @@
 
 ### Changed
 
+- `mnemosyne-local` now requires sibling Atlas `melinoe` `0.8.0`, and the
+  lockfile resolves Themis to `0.9.17` so local Atlas consumers share the same
+  Melinoe provider generation. This closes the Cargo metadata conflict observed
+  when Kwavers resolved `mnemosyne-local` together with current Themis/Melinoe.
 - `mnemosyne-prof` stack interning now routes captured stacks across 64
   cache-line-aligned shards by stack hash, with the shard encoded into
   `StackId`. First-seen `Arc<[usize]>` construction happens outside the shard

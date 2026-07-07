@@ -2,6 +2,15 @@
 
 ## Residual risk / open findings
 
+2026-07-07 Atlas provider graph refresh:
+- Closed a stale local dependency graph mismatch: `mnemosyne-local` still
+  required `melinoe ^0.7.0` while current sibling Atlas Themis resolves against
+  Melinoe `0.8.0`. The direct requirement now matches Melinoe `0.8.0`, and
+  `Cargo.lock` resolves Themis to `0.9.17` at
+  `a51b327accbd8c417d6b661c40ecefb6098ddb1a`. Residual risk: none found in the
+  focused provider gate; broader Mnemosyne all-target gates were not rerun in
+  this Kwavers-driven dependency repair.
+
 2026-07-05 Eunomia scratch dependency audit:
 - Decision log: remove the internal `num-complex` scratch feature rather than
   keep a compatibility path. The only Mnemosyne-owned references were optional

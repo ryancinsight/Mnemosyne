@@ -30,6 +30,14 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Closed
 
+- [x] [patch] Atlas provider graph refresh. `mnemosyne-local` now requires
+  sibling Atlas `melinoe` `0.8.0`, and `Cargo.lock` resolves Themis to
+  `0.9.17` so downstream Atlas consumers do not see a `melinoe ^0.7.0` versus
+  `0.8.0` resolver conflict. Evidence tier: compile-time provider integration.
+  Current gates: `rustup run nightly cargo check -p mnemosyne-local`;
+  downstream `rustup run nightly cargo check -p kwavers-solver --lib`;
+  downstream `rustup run nightly cargo clippy -p kwavers-solver --lib
+  --no-deps -- -D warnings`.
 - [x] [patch] Eunomia scratch local-source contract. `mnemosyne` and
   `mnemosyne-arena` resolve optional Eunomia support from the sibling Atlas
   checkout and removed the obsolete internal `num-complex` scratch feature after
