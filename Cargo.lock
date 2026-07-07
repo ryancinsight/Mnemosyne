@@ -250,6 +250,7 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 [[package]]
 name = "eunomia"
 version = "0.1.0"
+source = "git+https://github.com/ryancinsight/eunomia#57d778930ecd25e77416c49ee10c9b6670f0ea70"
 dependencies = [
  "bytemuck",
  "half",

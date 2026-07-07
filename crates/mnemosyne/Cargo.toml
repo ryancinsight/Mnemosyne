@@ -13,7 +13,7 @@ mnemosyne-core = { path = "../mnemosyne-core" }
 mnemosyne-hardened = { path = "../mnemosyne-hardened" }
 mnemosyne-decay = { path = "../mnemosyne-decay" }
 mnemosyne-prof = { path = "../mnemosyne-prof" }
-eunomia = { path = "../../../eunomia/crates/eunomia", default-features = false, optional = true }
+eunomia = { git = "https://github.com/ryancinsight/eunomia", default-features = false, optional = true }
 
 [features]
 default = ["mnemosyne-memory", "std_tls"]
