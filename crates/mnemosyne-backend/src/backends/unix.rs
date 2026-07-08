@@ -86,7 +86,12 @@ unsafe extern "C" {
 /// `length` must be the exact mapped length.
 #[inline]
 unsafe fn hint_hugepage(ptr: *mut u8, length: usize) {
-    #[cfg(target_os = "linux")]
+    // Miri only emulates MADV_NORMAL/RANDOM/SEQUENTIAL/WILLNEED, not
+    // MADV_HUGEPAGE ("unsupported operation"). This hint is best-effort and
+    // already discards its result on real Linux, so skipping the actual
+    // syscall under Miri changes no observable behavior — real runs are
+    // unaffected since `cfg(miri)` never holds outside `cargo miri`.
+    #[cfg(all(target_os = "linux", not(miri)))]
     {
         if length >= SEGMENT_SIZE {
             if mnemosyne_core::options::ENABLE_HUGEPAGE_HINT
@@ -98,7 +103,7 @@ unsafe fn hint_hugepage(ptr: *mut u8, length: usize) {
             }
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(all(target_os = "linux", not(miri))))]
     {
         // Reference the arguments so the function signature stays stable
         // across Unix targets without a dead-argument warning.
