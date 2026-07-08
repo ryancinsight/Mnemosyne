@@ -2,6 +2,42 @@
 
 ## Residual risk / open findings
 
+2026-07-08 Miri: real aliasing violation in the alloc/free page-metadata path
+(HIGH PRIORITY, unverified fix):
+- `cargo miri test` against `hermes-simd-core` (the first time this
+  allocator has run under Miri at all — mnemosyne has no CI of its own yet)
+  found Undefined Behavior in the `Mnemosyne` global allocator's
+  alloc/dealloc path, reached via `AlignedVec::with_capacity` ->
+  `mnemosyne_local::alloc::thread_alloc_checked` (`crates/mnemosyne-local/src/alloc.rs:130`,
+  `NonNull::<mnemosyne_core::types::page::Page>::as_mut`) and
+  `mnemosyne_local::free::thread_free_classified`
+  (`crates/mnemosyne-local/src/free.rs:151`, reading `page.list_state`).
+- Evidence: flagged under BOTH Stacked Borrows (Miri's default aliasing
+  model) and Tree Borrows (`-Zmiri-tree-borrows`, a less-strict alternative
+  model specifically built to permit self-referential header+payload
+  allocation patterns that commonly false-positive under Stacked Borrows).
+  Agreement across both models rules out a model-specific false positive —
+  this reads as a genuine violation, not a Miri quirk.
+- Tree Borrows' diagnostic is the more actionable one: a `Page`-metadata
+  pointer tag created during one `alloc()` call (`vec/mod.rs:96` in the
+  hermes-simd-core caller) is read again during a *later* `alloc()` call
+  after an intervening `dealloc()` call performed a write through an
+  aliasing pointer to the same backing memory (`vec/mod.rs:542`), which
+  disabled the earlier tag ("later transitioned to Disabled due to a
+  foreign write access"). Working hypothesis: a `Page`/segment metadata
+  pointer is held (cached) across an alloc/free boundary somewhere in the
+  `mnemosyne-local` routing/free-list path without being freshly
+  re-derived from the segment header on each access — needs a focused
+  audit of `thread_alloc_checked`/`thread_free_classified` and their
+  shared `Page`-pointer provenance, not a guess-fix.
+- Not yet root-caused or fixed here (out of scope for the triggering
+  change — a NUMA/topology delegation refactor in hermes with no relation
+  to this code path). Tracked as the top-priority next `mnemosyne-local`
+  item: reproduce with `cargo miri test -p hermes-simd-core --lib
+  vec::tests::test_aligned_vec_alignment_casting` (via the hermes repo,
+  `[patch]` pointed at this checkout) and `MIRIFLAGS=-Zmiri-backtrace=full`
+  for the complete pointer-provenance trace.
+
 2026-07-07 Atlas provider graph refresh:
 - Closed a stale local dependency graph mismatch: `mnemosyne-local` still
   required `melinoe ^0.7.0` while current sibling Atlas Themis resolves against
