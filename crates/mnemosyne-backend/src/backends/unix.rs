@@ -66,7 +66,10 @@ unsafe extern "C" {
 
     fn munmap(addr: *mut c_void, length: usize) -> c_int;
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+    #[cfg(all(
+        any(target_os = "linux", target_os = "macos", target_os = "freebsd"),
+        not(miri)
+    ))]
     fn madvise(addr: *mut c_void, length: usize, advice: c_int) -> c_int;
 
     fn mprotect(addr: *mut c_void, length: usize, prot: c_int) -> c_int;
