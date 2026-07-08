@@ -32,7 +32,7 @@ const MAP_FAILED: *mut c_void = -1isize as *mut c_void;
 /// range while keeping the mapping itself valid. Subsequent reads return
 /// zeroed pages produced by the standard demand-fault path. Defined as
 /// `4` on Linux.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(miri)))]
 const MADV_DONTNEED: c_int = 4;
 
 /// macOS / BSD `MADV_FREE` advice constant.
@@ -41,7 +41,7 @@ const MADV_DONTNEED: c_int = 4;
 /// its current contents; the kernel may reclaim the physical pages
 /// lazily and a subsequent read may return either the prior contents or
 /// zeros. Defined as `5` on the BSDs and macOS.
-#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+#[cfg(all(any(target_os = "macos", target_os = "freebsd"), not(miri)))]
 const MADV_FREE: c_int = 5;
 
 /// Linux `MADV_HUGEPAGE` advice constant.
@@ -182,7 +182,13 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
         if ptr.is_null() || size == 0 {
             return false;
         }
-        #[cfg(target_os = "linux")]
+        // Miri only emulates MADV_NORMAL/RANDOM/SEQUENTIAL/WILLNEED, not
+        // MADV_DONTNEED/MADV_FREE ("unsupported operation"). Route Miri
+        // through the same `false` fallback already used for genuinely
+        // unsupported Unix targets below — callers already treat `false` as
+        // "the OS-level optimization is unavailable here", which is exactly
+        // Miri's situation for this syscall.
+        #[cfg(all(target_os = "linux", not(miri)))]
         {
             // Safety: caller guarantees `ptr` is page-aligned inside an
             // active mapping and `size` is a non-zero multiple of the
@@ -190,7 +196,7 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
             let res = unsafe { madvise(ptr as *mut c_void, size, MADV_DONTNEED) };
             return res == 0;
         }
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        #[cfg(all(any(target_os = "macos", target_os = "freebsd"), not(miri)))]
         {
             // Safety: same contract as the Linux branch; macOS/FreeBSD
             // MADV_FREE has identical "do not invalidate the mapping"
@@ -198,7 +204,10 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
             let res = unsafe { madvise(ptr as *mut c_void, size, MADV_FREE) };
             return res == 0;
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+        #[cfg(any(
+            miri,
+            not(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))
+        ))]
         {
             let _ = ptr;
             let _ = size;
@@ -239,19 +248,24 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
         if ptr.is_null() || size == 0 {
             return false;
         }
-        #[cfg(target_os = "linux")]
+        // See `page_reset`: Miri doesn't emulate MADV_DONTNEED/MADV_FREE,
+        // so it takes the same "unsupported target" `false` fallback.
+        #[cfg(all(target_os = "linux", not(miri)))]
         {
             // Safety: see `page_reset`; madvise never invalidates the mapping.
             let res = unsafe { madvise(ptr as *mut c_void, size, MADV_DONTNEED) };
             return res == 0;
         }
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        #[cfg(all(any(target_os = "macos", target_os = "freebsd"), not(miri)))]
         {
             // Safety: see `page_reset`.
             let res = unsafe { madvise(ptr as *mut c_void, size, MADV_FREE) };
             return res == 0;
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+        #[cfg(any(
+            miri,
+            not(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))
+        ))]
         {
             let _ = ptr;
             let _ = size;
