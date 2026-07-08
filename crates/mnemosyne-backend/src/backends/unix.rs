@@ -1,7 +1,7 @@
 //! Unix mmap/munmap memory backend.
 
 use core::ffi::{c_int, c_void};
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(miri)))]
 use mnemosyne_core::constants::SEGMENT_SIZE;
 
 const PROT_NONE: c_int = 0;
@@ -51,7 +51,7 @@ const MADV_FREE: c_int = 5;
 /// (matching `SEGMENT_SIZE` and `SEGMENT_ALIGN`) the kernel can typically
 /// back the mapping with a single 2 MiB huge page, halving TLB pressure
 /// for hot segment metadata access. Defined as `14` on Linux since 2.6.38.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(miri)))]
 const MADV_HUGEPAGE: c_int = 14;
 
 unsafe extern "C" {
