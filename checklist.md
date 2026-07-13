@@ -16,6 +16,7 @@ workspace rustdoc completes warning-clean.
   SSOT at revision `6140468c79279ec8f112641ea7422cef4688c7f6`.
 - [x] Verify warning-denied workspace Clippy and canonical workspace nextest
   (289/289 tests pass in 3.3 seconds).
+- [x] Consolidate Eunomia and Melinoe onto exact workspace-owned Git revisions.
 
 ## Verified — WGPU immutable callback pair [major]
 

@@ -1,5 +1,8 @@
 # Backlog
 
+- [x] [patch] Pin Eunomia and Melinoe once in the workspace SSOT for
+  standalone-Git reproducibility.
+
 ## Atlas in-house replacement roadmap — mnemosyne slice [arch]
 
 mnemosyne is the allocation SSOT. The GPU program (coeus/apollo using wgpu + cuda-oxide)

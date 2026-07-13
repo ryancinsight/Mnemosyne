@@ -14,7 +14,7 @@ mnemosyne-core = { path = "../mnemosyne-core" }
 mnemosyne-hardened = { path = "../mnemosyne-hardened" }
 mnemosyne-decay = { path = "../mnemosyne-decay" }
 mnemosyne-prof = { path = "../mnemosyne-prof" }
-eunomia = { git = "https://github.com/ryancinsight/eunomia", default-features = false, optional = true }
+eunomia = { workspace = true, optional = true }
 
 [features]
 default = ["mnemosyne-memory", "std_tls"]

@@ -2,6 +2,9 @@
 
 ## Residual risk / open findings
 
+- Resolved provider drift: Eunomia and Melinoe Git requirements are exact and
+  workspace-owned; member manifests no longer select moving source heads.
+
 2026-07-13 allocator audit and Miri closure:
 - Closed the stack-interner last-release lock extension: removal still mutates
   one shard under its mutex, while final `Arc` destruction and allocator work

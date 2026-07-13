@@ -14,7 +14,7 @@ default = []
 # resolves the default branch's tip on `cargo update`, so the heap always builds
 # against the latest published brand semantics. `default-features = false` keeps
 # this `#![no_std]` crate free of std/alloc.
-melinoe = { git = "https://github.com/ryancinsight/melinoe.git", default-features = false }
+melinoe = { workspace = true }
 mnemosyne-core = { path = "../mnemosyne-core" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-arena = { path = "../mnemosyne-arena" }

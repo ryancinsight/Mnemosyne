@@ -14,6 +14,8 @@
 
 - Consolidate the three Themis declarations into one workspace-owned exact
   provider revision, preventing duplicate source identities in integrators.
+- Pin Eunomia and Melinoe in the workspace dependency SSOT so standalone Git
+  consumers resolve one reproducible provider graph.
 - `mnemosyne-local` now requires Melinoe 0.9.0, preserving one provider version
   after Melinoe encoded parallel-executor validation as a capability newtype.
   Mnemosyne does not consume the changed registration API.
