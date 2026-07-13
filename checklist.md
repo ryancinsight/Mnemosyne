@@ -2,10 +2,20 @@
 
 Target version: 0.2.0
 
-Sprint phase: Closure (2026-07-02 consolidation cycle 3 delivered on top of
-cycles 1–2; AR-2 callback soundness and AR-8 profiler contention closed
-2026-07-06; remaining Definition-of-Ready `## Open` items — AR-1 full fix needs
-ADR 0001 sign-off (step-1 tripwire done), AR-4 needs a quiet machine).
+Sprint phase: Closure (2026-07-13 Miri page-metadata provenance correction in
+progress; allocator performance work remains sequenced behind correctness).
+
+## In progress — 2026-07-13 Miri page provenance
+
+- [ ] [patch] Reproduce the Hermes `AlignedVec` alloc/free aliasing failure under
+  Miri Stacked Borrows and Tree Borrows.
+- [ ] [patch] Root-cause the invalid page-metadata provenance and encode the
+  ownership invariant in the narrowest zero-cost allocator seam.
+- [ ] [patch] Add a value-semantic regression that fails on the invalid access
+  pattern and passes under Miri.
+- [ ] [patch] Run focused nextest, clippy, Miri, and allocator threshold gates.
+- [ ] [patch] Synchronize `backlog.md`, `gap_audit.md`, and `CHANGELOG.md`; commit
+  and push the verified increment.
 
 ## Verified — 2026-07-07 Atlas provider graph refresh
 
