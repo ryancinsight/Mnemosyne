@@ -17,10 +17,11 @@ workspace rustdoc completes warning-clean.
 - [x] Implement the typed pair, atomic registry, conflict error, and race tests.
 - [x] Migrate Hephaestus `WgpuDevice::new` and all local callers to typed failure.
 - [x] Run Mnemosyne and Hephaestus focused/full package gates. Mnemosyne clippy,
-  42/42 nextest, doctests, rustdoc, and backend semver analysis pass;
+  42/42 nextest, two focused Miri tests, doctests, rustdoc, and backend semver
+  analysis pass;
   Hephaestus clippy, 131/131 nextest, doctests, and rustdoc pass.
-- [x] Synchronize both repositories' PM artifacts and migration notes; commit
-  and push each repository.
+- [x] Synchronize both repositories' PM artifacts and migration notes for
+  atomic upstream and consumer commits.
 
 ## Verified — 2026-07-13 interner final release
 
