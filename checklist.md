@@ -6,6 +6,10 @@ Sprint phase: Closure (2026-07-13 page provenance, arena conversion ownership,
 and interner final-release contention verified; WGPU callback pair registration
 is the next safety increment).
 
+Combined branch gate: workspace clippy is warning-clean; workspace nextest
+passes 288/288; workspace doctests pass (10 passed, one intentionally ignored);
+workspace rustdoc completes warning-clean.
+
 ## Verified — 2026-07-13 interner final release
 
 - [x] [patch] Remove the final stack entry and content-keyed map key under the
