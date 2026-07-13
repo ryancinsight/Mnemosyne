@@ -11,6 +11,42 @@ fn test_basic_allocation() {
 }
 
 #[test]
+fn alloc_free_alloc_refreshes_page_metadata_provenance() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("global allocator test lock was poisoned");
+    let layout = Layout::from_size_align(64, 32).expect("64-byte, 32-aligned layout is valid");
+
+    unsafe {
+        let retained = ALLOCATOR.alloc(layout);
+        let released = ALLOCATOR.alloc(layout);
+        assert!(!retained.is_null() && !released.is_null());
+        retained.write_bytes(0xA5, layout.size());
+        released.write_bytes(0x5A, layout.size());
+
+        ALLOCATOR.dealloc(released, layout);
+        let reused = ALLOCATOR.alloc(layout);
+        assert!(!reused.is_null());
+        let retained_bytes_unchanged = core::slice::from_raw_parts(retained, layout.size())
+            .iter()
+            .all(|&byte| byte == 0xA5);
+        let reused_released_block = reused == released;
+
+        ALLOCATOR.dealloc(reused, layout);
+        ALLOCATOR.dealloc(retained, layout);
+
+        assert!(
+            retained_bytes_unchanged,
+            "metadata mutation changed a distinct live allocation"
+        );
+        assert!(
+            reused_released_block,
+            "same-class local free must be the next block reused"
+        );
+    }
+}
+
+#[test]
 fn test_multithreaded_allocation() {
     let _guard = TEST_LOCK
         .lock()

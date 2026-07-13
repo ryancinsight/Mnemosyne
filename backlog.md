@@ -30,6 +30,12 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Closed
 
+- [x] [patch] Page-metadata provenance and remote-free aliasing. Cached page
+  addresses are refreshed through explicit exposed provenance before reuse;
+  cross-thread frees mutate only the page-local atomic queue through raw-field
+  access and never create an exclusive borrow of owner-managed metadata.
+  Evidence tier: Miri under Stacked Borrows and Tree Borrows plus 125
+  value-semantic nextest cases.
 - [x] [patch] Atlas provider graph refresh. `mnemosyne-local` now requires
   sibling Atlas `melinoe` `0.8.0`, and `Cargo.lock` resolves Themis to
   `0.9.17` so downstream Atlas consumers do not see a `melinoe ^0.7.0` versus
@@ -60,6 +66,26 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
   gates and Hephaestus `hephaestus-wgpu` fmt/check/clippy/nextest (129/129).
 
 ## Open
+
+Filed from the 2026-07-13 allocator safety, memory, structure, and contention
+audit, in priority order:
+
+- [ ] [patch] Remove the `AlignedVec::into_vec` source-buffer leak in
+  `mnemosyne-arena`; acceptance: conversion preserves every element and a
+  repeated conversion/release test proves retained mappings remain bounded.
+- [ ] [major] Make WGPU callback registration one immutable allocate/deallocate
+  pair or reject re-registration; acceptance: concurrent readers can observe
+  only the absent pair or one complete registered pair. Coordinate the public
+  contract with Hephaestus in the same change.
+- [ ] [patch] Replace `mnemosyne-prof`'s global active-sample RMW and pointer
+  modulo sharding only after Criterion profiles show the occupancy-mask and
+  mixed-hash designs reduce contention without regressing allocator latency.
+- [ ] [patch] Remove or compile out the dormant per-CPU cache's 720,896-byte
+  static table while every production backend has `ENABLE_CPU_CACHE = false`;
+  acceptance: binary-size evidence and unchanged allocator behavior.
+- [ ] [arch] Split the 870-line profiler sampler by capture, slot lifecycle,
+  and aggregation concern, and consolidate duplicated backend type lists at
+  their deepest owning module without changing the hot-path representation.
 
 Filed from the 2026-06-27 deep contention/memory audit (read-only fan-out over
 arena/local/core/heap/backend). Ranked by value; each carries a testable

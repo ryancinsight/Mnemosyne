@@ -123,7 +123,8 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
             // SAFETY: `class` is a valid size-class index from `small_path_class`
             // (bounded by `NUM_SIZE_CLASSES`), so indexing the fixed-size
             // `active_pages` array unchecked is in bounds.
-            if let Some(mut page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
+            if let Some(page_ptr) = unsafe { *alloc.active_pages.get_unchecked(class) } {
+                let mut page_ptr = crate::local_alloc::page::refresh_page_pointer(page_ptr);
                 // SAFETY: `page_ptr` is a live `NonNull<Page>` taken from this
                 // thread's active-page list; `alloc` holds exclusive access, so
                 // no aliasing `&mut` to the page exists.

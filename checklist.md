@@ -2,19 +2,23 @@
 
 Target version: 0.2.0
 
-Sprint phase: Closure (2026-07-13 Miri page-metadata provenance correction in
-progress; allocator performance work remains sequenced behind correctness).
+Sprint phase: Closure (2026-07-13 Miri page-metadata provenance correction
+verified; arena conversion leak is the next correctness increment).
 
 ## In progress — 2026-07-13 Miri page provenance
 
-- [ ] [patch] Reproduce the Hermes `AlignedVec` alloc/free aliasing failure under
+- [x] [patch] Reproduce the Hermes `AlignedVec` alloc/free aliasing failure under
   Miri Stacked Borrows and Tree Borrows.
-- [ ] [patch] Root-cause the invalid page-metadata provenance and encode the
+- [x] [patch] Root-cause the invalid page-metadata provenance and encode the
   ownership invariant in the narrowest zero-cost allocator seam.
-- [ ] [patch] Add a value-semantic regression that fails on the invalid access
+- [x] [patch] Add a value-semantic regression that fails on the invalid access
   pattern and passes under Miri.
-- [ ] [patch] Run focused nextest, clippy, Miri, and allocator threshold gates.
-- [ ] [patch] Synchronize `backlog.md`, `gap_audit.md`, and `CHANGELOG.md`; commit
+- [x] [patch] Run focused nextest, clippy, Miri, and allocator threshold gates.
+  Nextest passed 125/125; clippy is warning-clean; the exact Hermes case passes
+  both Miri models. The partial threshold run rejected three rows against the
+  stored baseline and nine missing rows; matched parent/current Criterion runs
+  place the unchanged and fixed large cycle path at 4.368 ns and 4.364 ns.
+- [x] [patch] Synchronize `backlog.md`, `gap_audit.md`, and `CHANGELOG.md`; commit
   and push the verified increment.
 
 ## Verified — 2026-07-07 Atlas provider graph refresh

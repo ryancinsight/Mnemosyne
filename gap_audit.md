@@ -2,8 +2,44 @@
 
 ## Residual risk / open findings
 
+2026-07-13 allocator audit and Miri closure:
+- Closed the page-metadata aliasing defect under both Miri models. The allocator
+  now refreshes cached metadata addresses using explicit exposed provenance and
+  restricts remote frees to the page-local atomic queue; no cross-thread path
+  forms `&mut Page`. The evidence is bounded-exhaustive interpreter checking of
+  the exact Hermes regression plus value-semantic allocator tests, not a strict
+  provenance proof: segment alignment and tagged-pointer structures still use
+  exposed-provenance reconstruction and Miri reports those sites.
+- Highest remaining correctness finding: `mnemosyne-arena::AlignedVec::into_vec`
+  copies into a standard `Vec` and then forgets the source, leaking its arena
+  buffer. Zero-copy transfer is not layout-compatible with `Vec`'s allocator
+  contract; the correct fix copies once and releases the source mapping.
+- Safety finding: WGPU allocate/deallocate callbacks occupy independent atomic
+  slots even though they form one semantic pair. A one-time immutable pair is
+  the required contract; parallel slot updates can expose mixed generations.
+- Memory finding: the dormant per-CPU cache reserves 720,896 bytes of static
+  storage although every production backend currently disables it. Remove or
+  compile it out; do not enable it without contention and retention evidence.
+- Contention findings requiring measurement before mutation: profiler active
+  sample accounting performs a global atomic RMW, pointer modulo sharding
+  collapses aligned medium/large allocations onto few shards, and the sampler
+  performs nested report locks. These are profiled candidates, not accepted
+  optimizations.
+- Comparator gap audit: system malloc, jemalloc, mimalloc, rpmalloc, and
+  snmalloc remain benchmark/reference comparators only. Mnemosyne already owns
+  its fitting mechanisms—thread-local allocation, page-local remote-free
+  message passing, segment retention/decay, policy ZSTs, and typed backends.
+  Importing comparator-specific APIs or duplicate allocator paths would violate
+  the provider seam; only measured mechanism gaps enter implementation.
+- Performance evidence: a partial current Criterion run measured cycle medians
+  of 4.378 ns small, 4.354 ns medium, 4.364 ns large, and 36.741 ns huge. The
+  stored 3.3 ns-era baseline rejects these values, but a matched parent build
+  measured 4.368 ns large and 36.507 ns huge; small/medium parent samples were
+  scheduler-noisy. No speedup or performance-neutral proof is claimed. Refresh
+  the complete threshold baseline only from a controlled all-row run.
+
 2026-07-08 Miri: real aliasing violation in the alloc/free page-metadata path
-(HIGH PRIORITY, unverified fix):
+(CLOSED 2026-07-13; original evidence retained):
 - `cargo miri test` against `hermes-simd-core` (the first time this
   allocator has run under Miri at all — mnemosyne has no CI of its own yet)
   found Undefined Behavior in the `Mnemosyne` global allocator's

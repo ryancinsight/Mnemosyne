@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Cached small-page metadata pointers are refreshed through explicit exposed
+  provenance before reuse, and cross-thread frees no longer create exclusive
+  references to owner-managed page metadata. The exact Hermes allocation/free
+  regression passes Miri under Stacked Borrows and Tree Borrows.
 - WGPU staging callback registration no longer exposes public mutable raw
   `AtomicPtr<c_void>` slots. `mnemosyne-backend` keeps the slots private and
   exposes typed unsafe `register_wgpu_callbacks` over

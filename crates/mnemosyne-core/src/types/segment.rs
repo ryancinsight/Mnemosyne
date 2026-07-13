@@ -85,6 +85,27 @@ pub unsafe fn locate_segment(ptr: *mut u8) -> (*mut Segment, usize) {
     (segment, page_index)
 }
 
+/// Recovers a page-metadata pointer without borrowing the enclosing mapping.
+///
+/// Mnemosyne stores allocator metadata and user blocks in one OS mapping.
+/// Cached intrusive-list pointers therefore cross user alloc/free calls that
+/// may invalidate reference-derived provenance. Metadata access must re-create
+/// provenance from the live mapping address instead of retaining a tag from an
+/// earlier `&mut Segment::pages` projection.
+///
+/// # Safety
+///
+/// `segment` must identify a live initialized segment and `page_index` must be
+/// less than `PAGES_PER_SEGMENT`.
+#[inline(always)]
+pub unsafe fn locate_page(segment: *mut Segment, page_index: usize) -> *mut Page {
+    debug_assert!(page_index < PAGES_PER_SEGMENT);
+    let page_address = segment.expose_provenance()
+        + core::mem::offset_of!(Segment, pages)
+        + page_index * core::mem::size_of::<Page>();
+    core::ptr::with_exposed_provenance_mut(page_address)
+}
+
 impl Segment {
     /// Initializes a segment header at a given aligned address.
     ///
