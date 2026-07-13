@@ -2,8 +2,19 @@
 
 Target version: 0.2.0
 
-Sprint phase: Closure (2026-07-13 page provenance and arena conversion leaks
-verified; WGPU callback pair registration is the next safety increment).
+Sprint phase: Closure (2026-07-13 page provenance, arena conversion ownership,
+and interner final-release contention verified; WGPU callback pair registration
+is the next safety increment).
+
+## Verified — 2026-07-13 interner final release
+
+- [x] [patch] Remove the final stack entry and content-keyed map key under the
+  owning shard lock, then drop both `Arc` values after releasing the lock.
+- [x] [patch] Verify reference retention, id recycling, and concurrent-shard
+  behavior. Verification: `mnemosyne-prof` nextest 15/15 and clippy clean;
+  focused leak-detector cycle Criterion medians are 1.077 us small, 1.081 us
+  medium, and 1.089 us large. No speedup claim is made without a matched
+  baseline.
 
 ## Verified — 2026-07-13 arena conversion ownership
 

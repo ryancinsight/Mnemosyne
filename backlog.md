@@ -30,6 +30,11 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Closed
 
+- [x] [patch] Stack-interner final-release critical section. The final entry
+  and map-key `Arc` values are removed under the owning shard lock but dropped
+  only after releasing it, preventing allocator/deallocation work from
+  extending or re-entering the lock. Evidence tier: value-semantic and
+  concurrent nextest coverage plus focused Criterion measurement.
 - [x] [patch] `AlignedVec::into_vec` source-buffer release. Conversion keeps
   the required one-copy boundary into the standard `Vec` allocator and now
   drops the distinct aligned source allocation. Evidence tier: value-semantic

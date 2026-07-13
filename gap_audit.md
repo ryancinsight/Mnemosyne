@@ -3,6 +3,10 @@
 ## Residual risk / open findings
 
 2026-07-13 allocator audit and Miri closure:
+- Closed the stack-interner last-release lock extension: removal still mutates
+  one shard under its mutex, while final `Arc` destruction and allocator work
+  occur after the guard is dropped. Focused Criterion records current behavior
+  only; no comparative speedup claim is made.
 - Closed the page-metadata aliasing defect under both Miri models. The allocator
   now refreshes cached metadata addresses using explicit exposed provenance and
   restricts remote frees to the page-local atomic queue; no cross-thread path

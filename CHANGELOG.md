@@ -34,6 +34,9 @@
 
 ### Changed
 
+- Stack-interner reclamation removes the final entry and content key under the
+  owning shard lock, then releases both `Arc` allocations after unlocking so
+  deallocation cannot extend or re-enter the critical section.
 - `mnemosyne-local` now requires sibling Atlas `melinoe` `0.8.0`, and the
   lockfile resolves Themis to `0.9.17` so local Atlas consumers share the same
   Melinoe provider generation. This closes the Cargo metadata conflict observed
