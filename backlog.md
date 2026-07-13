@@ -45,6 +45,9 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
   access and never create an exclusive borrow of owner-managed metadata.
   Evidence tier: Miri under Stacked Borrows and Tree Borrows plus 125
   value-semantic nextest cases.
+- [x] [patch] Refresh `mnemosyne-local` to Melinoe 0.9.0 so the allocator and
+  scheduler graph resolves one validated executor-capability provider version.
+
 - [x] [patch] Atlas provider graph refresh. `mnemosyne-local` now requires
   sibling Atlas `melinoe` `0.8.0`, and `Cargo.lock` resolves Themis to
   `0.9.17` so downstream Atlas consumers do not see a `melinoe ^0.7.0` versus

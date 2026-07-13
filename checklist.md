@@ -57,6 +57,12 @@ workspace rustdoc completes warning-clean.
 - [x] [patch] Synchronize `backlog.md`, `gap_audit.md`, and `CHANGELOG.md`; commit
   and push the verified increment.
 
+## In progress — Melinoe 0.9 provider refresh
+
+- [x] [patch] Update `mnemosyne-local`'s Melinoe contract from 0.8.0 to 0.9.0.
+- [x] Refresh the Melinoe/Themis lock and pass `mnemosyne-local` formatting,
+  Clippy, 66/66 nextest, doctests, and rustdoc before default-branch publication.
+
 ## Verified — 2026-07-07 Atlas provider graph refresh
 
 - [x] [patch] Updated `mnemosyne-local` to require the current sibling Atlas

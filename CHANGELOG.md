@@ -10,6 +10,12 @@
   pass its static reference to `register_wgpu_callbacks`; handle the typed
   conflict result when another pair already owns the process registry.
 
+### Changed
+
+- `mnemosyne-local` now requires Melinoe 0.9.0, preserving one provider version
+  after Melinoe encoded parallel-executor validation as a capability newtype.
+  Mnemosyne does not consume the changed registration API.
+
 ### Fixed
 
 - `mnemosyne-arena::AlignedVec::into_vec` now releases its distinct aligned
