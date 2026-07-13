@@ -10,6 +10,16 @@ Combined branch gate: workspace clippy is warning-clean; workspace nextest
 passes 288/288; workspace doctests pass (10 passed, one intentionally ignored);
 workspace rustdoc completes warning-clean.
 
+## In progress — WGPU immutable callback pair [major]
+
+- [x] Record ADR 0002 with the one-pointer immutable-pair design and reject
+  generation replacement.
+- [ ] Implement the typed pair, atomic registry, conflict error, and race tests.
+- [ ] Migrate Hephaestus `WgpuDevice::new` and all local callers to typed failure.
+- [ ] Run Mnemosyne and Hephaestus focused/full package gates.
+- [ ] Synchronize both repositories' PM artifacts and migration notes; commit
+  and push each repository.
+
 ## Verified — 2026-07-13 interner final release
 
 - [x] [patch] Remove the final stack entry and content-keyed map key under the
