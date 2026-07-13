@@ -10,6 +10,13 @@ Combined branch gate: workspace clippy is warning-clean; workspace nextest
 passes 288/288; workspace doctests pass (10 passed, one intentionally ignored);
 workspace rustdoc completes warning-clean.
 
+## Verified — Themis provider identity [patch]
+
+- [x] Consolidate arena, heap, and local Themis dependencies into the workspace
+  SSOT at revision `6140468c79279ec8f112641ea7422cef4688c7f6`.
+- [x] Verify warning-denied workspace Clippy and canonical workspace nextest
+  (289/289 tests pass in 3.3 seconds).
+
 ## Verified — WGPU immutable callback pair [major]
 
 - [x] Record ADR 0002 with the one-pointer immutable-pair design and reject

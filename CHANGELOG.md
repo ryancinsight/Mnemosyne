@@ -12,6 +12,8 @@
 
 ### Changed
 
+- Consolidate the three Themis declarations into one workspace-owned exact
+  provider revision, preventing duplicate source identities in integrators.
 - `mnemosyne-local` now requires Melinoe 0.9.0, preserving one provider version
   after Melinoe encoded parallel-executor validation as a capability newtype.
   Mnemosyne does not consume the changed registration API.

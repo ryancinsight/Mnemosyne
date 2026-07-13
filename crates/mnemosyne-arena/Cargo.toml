@@ -16,4 +16,4 @@ std = ["mnemosyne-core/std"]
 mnemosyne-core = { path = "../mnemosyne-core" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
 eunomia = { git = "https://github.com/ryancinsight/eunomia", default-features = false, optional = true }
-themis = { git = "https://github.com/ryancinsight/themis", version = "0.9", default-features = false, features = ["std"] }
+themis = { workspace = true }

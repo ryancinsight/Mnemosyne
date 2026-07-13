@@ -16,6 +16,9 @@ members = [
 ]
 exclude = ["fuzz"]
 
+[workspace.dependencies]
+themis = { git = "https://github.com/ryancinsight/themis", rev = "6140468c79279ec8f112641ea7422cef4688c7f6", version = "0.9", default-features = false, features = ["std"] }
+
 # Dev/test keep line tables only: full DWARF dominates target/ size for an
 # allocator workspace while backtraces need only line info. Overflow checks are
 # pinned on (not left to profile defaults) because integer wraparound in size

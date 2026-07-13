@@ -28,7 +28,7 @@ mnemosyne-prof = { path = "../mnemosyne-prof" }
 # the latest law semantics. `default-features = false, features = ["std"]`
 # matches `mnemosyne-local`/`mnemosyne-arena` so a single themis build is
 # shared by all three.
-themis = { git = "https://github.com/ryancinsight/themis", version = "0.9", default-features = false, features = ["std"] }
+themis = { workspace = true }
 
 [dev-dependencies]
 mnemosyne = { path = "../mnemosyne" }

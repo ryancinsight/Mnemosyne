@@ -39,7 +39,7 @@ mnemosyne-backend = { path = "../mnemosyne-backend" }
 mnemosyne-arena = { path = "../mnemosyne-arena" }
 mnemosyne-decay = { path = "../mnemosyne-decay" }
 mnemosyne-prof = { path = "../mnemosyne-prof" }
-themis = { git = "https://github.com/ryancinsight/themis", version = "0.9", default-features = false, features = ["std"] }
+themis = { workspace = true }
 melinoe = { git = "https://github.com/ryancinsight/melinoe.git", version = "0.9.0", default-features = false, features = ["std"] }
 
 [dev-dependencies]
