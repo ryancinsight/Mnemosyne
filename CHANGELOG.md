@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- `mnemosyne-local` now requires Melinoe 0.9.0, preserving one provider version
+  after Melinoe encoded parallel-executor validation as a capability newtype.
+  Mnemosyne does not consume the changed registration API.
+
 ### Fixed
 
 - WGPU staging callback registration no longer exposes public mutable raw
