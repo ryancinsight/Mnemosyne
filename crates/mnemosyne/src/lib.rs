@@ -8,8 +8,8 @@ use mnemosyne_local::{thread_alloc_layout, thread_free_layout, thread_realloc};
 
 pub use mnemosyne_backend::{
     CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend, MemoryBackendWrapper,
-    WgpuAllocateCallback, WgpuDeallocateCallback, WgpuStagingBackend, is_cuda_available,
-    register_wgpu_callbacks,
+    WgpuAllocateCallback, WgpuCallbackRegistrationError, WgpuCallbacks, WgpuDeallocateCallback,
+    WgpuStagingBackend, is_cuda_available, register_wgpu_callbacks,
 };
 pub use mnemosyne_core::{AllocPolicy, StandardPolicy, options::MnemosyneOptions};
 pub use mnemosyne_hardened::{HardenedPolicy, SecurePolicy};

@@ -74,16 +74,18 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
   Verification: focused Mnemosyne fmt/check/clippy/nextest/doctest/rustdoc
   gates and Hephaestus `hephaestus-wgpu` fmt/check/clippy/nextest (129/129).
 
+## Closed
+
+- [x] [major] WGPU callback registration publishes one immutable
+  allocate/deallocate pair and rejects conflicting pairs. Concurrent readers
+  observe only absent or one complete permanent pair. ADR:
+  `docs/adr/0002-immutable-wgpu-callback-pair.md`.
+
 ## Open
 
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
 
-- [ ] [major] **In progress — owner `/root`, scope
-  `mnemosyne-backend::wgpu` + Hephaestus `device.rs`/contract test.** Make WGPU
-  callback registration one immutable allocate/deallocate pair and reject a
-  conflicting pair; acceptance: concurrent readers observe only absent or one
-  complete permanent pair. ADR: `docs/adr/0002-immutable-wgpu-callback-pair.md`.
 - [ ] [patch] Replace `mnemosyne-prof`'s global active-sample RMW and pointer
   modulo sharding only after Criterion profiles show the occupancy-mask and
   mixed-hash designs reduce contention without regressing allocator latency.

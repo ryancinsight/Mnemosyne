@@ -43,4 +43,3 @@ pair remains unchanged. Local registry tests race two internally matching pairs
 and assert that exactly one wins and that allocate/deallocate behavior never
 mixes. Mnemosyne and Hephaestus package gates plus the real HostPinned contract
 tests verify the coordinated boundary.
-

@@ -1,23 +1,25 @@
 # Checklist
 
-Target version: 0.2.0
+Target version: 0.3.0
 
 Sprint phase: Closure (2026-07-13 page provenance, arena conversion ownership,
 and interner final-release contention verified; WGPU callback pair registration
-is the next safety increment).
+and Hephaestus consumer migration verified).
 
 Combined branch gate: workspace clippy is warning-clean; workspace nextest
 passes 288/288; workspace doctests pass (10 passed, one intentionally ignored);
 workspace rustdoc completes warning-clean.
 
-## In progress — WGPU immutable callback pair [major]
+## Verified — WGPU immutable callback pair [major]
 
 - [x] Record ADR 0002 with the one-pointer immutable-pair design and reject
   generation replacement.
-- [ ] Implement the typed pair, atomic registry, conflict error, and race tests.
-- [ ] Migrate Hephaestus `WgpuDevice::new` and all local callers to typed failure.
-- [ ] Run Mnemosyne and Hephaestus focused/full package gates.
-- [ ] Synchronize both repositories' PM artifacts and migration notes; commit
+- [x] Implement the typed pair, atomic registry, conflict error, and race tests.
+- [x] Migrate Hephaestus `WgpuDevice::new` and all local callers to typed failure.
+- [x] Run Mnemosyne and Hephaestus focused/full package gates. Mnemosyne clippy,
+  42/42 nextest, doctests, rustdoc, and backend semver analysis pass;
+  Hephaestus clippy, 131/131 nextest, doctests, and rustdoc pass.
+- [x] Synchronize both repositories' PM artifacts and migration notes; commit
   and push each repository.
 
 ## Verified — 2026-07-13 interner final release

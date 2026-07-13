@@ -18,9 +18,11 @@
   transfer is not layout-compatible with `Vec`'s allocator contract, so the
   retained design copies once and releases the distinct aligned allocation.
   Miri nextest passes with leak checking enabled.
-- Safety finding: WGPU allocate/deallocate callbacks occupy independent atomic
-  slots even though they form one semantic pair. A one-time immutable pair is
-  the required contract; parallel slot updates can expose mixed generations.
+- Closed the WGPU callback-generation defect with one immutable static pair
+  published through one atomic pointer. A 64-iteration two-registrar race test
+  proves exactly one distinct pair wins and every observed allocation is
+  accepted by the matching deallocator. Evidence tier: atomic type structure,
+  Release/Acquire publication, and value-semantic concurrency testing.
 - Memory finding: the dormant per-CPU cache reserves 720,896 bytes of static
   storage although every production backend currently disables it. Remove or
   compile it out; do not enable it without contention and retention evidence.
