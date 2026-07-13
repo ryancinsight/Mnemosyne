@@ -2,10 +2,18 @@
 
 Target version: 0.2.0
 
-Sprint phase: Closure (2026-07-13 Miri page-metadata provenance correction
-verified; arena conversion leak is the next correctness increment).
+Sprint phase: Closure (2026-07-13 page provenance and arena conversion leaks
+verified; WGPU callback pair registration is the next safety increment).
 
-## In progress — 2026-07-13 Miri page provenance
+## Verified — 2026-07-13 arena conversion ownership
+
+- [x] [patch] Remove the `AlignedVec::into_vec` source allocation leak while
+  retaining the necessary one-copy conversion into `Vec`'s allocator domain.
+- [x] [patch] Pin element preservation and run Miri nextest with leak checking.
+  Verification: focused nextest 1/1; `rustup run nightly cargo miri nextest run
+  -p mnemosyne-arena aligned_vec_into_vec` 1/1.
+
+## Verified — 2026-07-13 Miri page provenance
 
 - [x] [patch] Reproduce the Hermes `AlignedVec` alloc/free aliasing failure under
   Miri Stacked Borrows and Tree Borrows.

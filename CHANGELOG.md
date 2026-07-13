@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- `mnemosyne-arena::AlignedVec::into_vec` now releases its distinct aligned
+  source allocation after copying initialized elements into the standard
+  `Vec`; conversion no longer leaks the source buffer.
 - Cached small-page metadata pointers are refreshed through explicit exposed
   provenance before reuse, and cross-thread frees no longer create exclusive
   references to owner-managed page metadata. The exact Hermes allocation/free

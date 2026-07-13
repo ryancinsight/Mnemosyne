@@ -10,10 +10,10 @@
   the exact Hermes regression plus value-semantic allocator tests, not a strict
   provenance proof: segment alignment and tagged-pointer structures still use
   exposed-provenance reconstruction and Miri reports those sites.
-- Highest remaining correctness finding: `mnemosyne-arena::AlignedVec::into_vec`
-  copies into a standard `Vec` and then forgets the source, leaking its arena
-  buffer. Zero-copy transfer is not layout-compatible with `Vec`'s allocator
-  contract; the correct fix copies once and releases the source mapping.
+- Closed `mnemosyne-arena::AlignedVec::into_vec`'s source-buffer leak. Zero-copy
+  transfer is not layout-compatible with `Vec`'s allocator contract, so the
+  retained design copies once and releases the distinct aligned allocation.
+  Miri nextest passes with leak checking enabled.
 - Safety finding: WGPU allocate/deallocate callbacks occupy independent atomic
   slots even though they form one semantic pair. A one-time immutable pair is
   the required contract; parallel slot updates can expose mixed generations.

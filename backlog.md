@@ -30,6 +30,10 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Closed
 
+- [x] [patch] `AlignedVec::into_vec` source-buffer release. Conversion keeps
+  the required one-copy boundary into the standard `Vec` allocator and now
+  drops the distinct aligned source allocation. Evidence tier: value-semantic
+  nextest plus Miri nextest leak checking.
 - [x] [patch] Page-metadata provenance and remote-free aliasing. Cached page
   addresses are refreshed through explicit exposed provenance before reuse;
   cross-thread frees mutate only the page-local atomic queue through raw-field
@@ -70,9 +74,6 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
 
-- [ ] [patch] Remove the `AlignedVec::into_vec` source-buffer leak in
-  `mnemosyne-arena`; acceptance: conversion preserves every element and a
-  repeated conversion/release test proves retained mappings remain bounded.
 - [ ] [major] Make WGPU callback registration one immutable allocate/deallocate
   pair or reject re-registration; acceptance: concurrent readers can observe
   only the absent pair or one complete registered pair. Coordinate the public

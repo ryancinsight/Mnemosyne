@@ -37,9 +37,11 @@ fn aligned_vec_zero_capacity_is_valid() {
 fn aligned_vec_into_vec() {
     let mut v = AlignedVec::<f64>::with_capacity(4);
     v.ensure_len(4);
-    v.as_mut_slice().copy_from_slice(&[1.0, 2.0, 3.0, 4.0]);
+    let expected = [1.0, 2.0, 3.0, 4.0];
+    v.as_mut_slice().copy_from_slice(&expected);
     let vec = v.into_vec();
-    assert_eq!(vec, std::vec![1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(vec.as_slice(), expected);
+    assert_eq!(vec.len(), expected.len());
 }
 
 #[test]
