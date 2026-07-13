@@ -7,6 +7,12 @@ cycles 1–2; AR-2 callback soundness and AR-8 profiler contention closed
 2026-07-06; remaining Definition-of-Ready `## Open` items — AR-1 full fix needs
 ADR 0001 sign-off (step-1 tripwire done), AR-4 needs a quiet machine).
 
+## In progress — Melinoe 0.9 provider refresh
+
+- [x] [patch] Update `mnemosyne-local`'s Melinoe contract from 0.8.0 to 0.9.0.
+- [x] Refresh the Melinoe/Themis lock and pass `mnemosyne-local` formatting,
+  Clippy, 66/66 nextest, doctests, and rustdoc before default-branch publication.
+
 ## Verified — 2026-07-07 Atlas provider graph refresh
 
 - [x] [patch] Updated `mnemosyne-local` to require the current sibling Atlas
