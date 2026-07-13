@@ -30,6 +30,21 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Closed
 
+- [x] [patch] Stack-interner final-release critical section. The final entry
+  and map-key `Arc` values are removed under the owning shard lock but dropped
+  only after releasing it, preventing allocator/deallocation work from
+  extending or re-entering the lock. Evidence tier: value-semantic and
+  concurrent nextest coverage plus focused Criterion measurement.
+- [x] [patch] `AlignedVec::into_vec` source-buffer release. Conversion keeps
+  the required one-copy boundary into the standard `Vec` allocator and now
+  drops the distinct aligned source allocation. Evidence tier: value-semantic
+  nextest plus Miri nextest leak checking.
+- [x] [patch] Page-metadata provenance and remote-free aliasing. Cached page
+  addresses are refreshed through explicit exposed provenance before reuse;
+  cross-thread frees mutate only the page-local atomic queue through raw-field
+  access and never create an exclusive borrow of owner-managed metadata.
+  Evidence tier: Miri under Stacked Borrows and Tree Borrows plus 125
+  value-semantic nextest cases.
 - [x] [patch] Refresh `mnemosyne-local` to Melinoe 0.9.0 so the allocator and
   scheduler graph resolves one validated executor-capability provider version.
 
@@ -62,7 +77,27 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
   Verification: focused Mnemosyne fmt/check/clippy/nextest/doctest/rustdoc
   gates and Hephaestus `hephaestus-wgpu` fmt/check/clippy/nextest (129/129).
 
+## Closed
+
+- [x] [major] WGPU callback registration publishes one immutable
+  allocate/deallocate pair and rejects conflicting pairs. Concurrent readers
+  observe only absent or one complete permanent pair. ADR:
+  `docs/adr/0002-immutable-wgpu-callback-pair.md`.
+
 ## Open
+
+Filed from the 2026-07-13 allocator safety, memory, structure, and contention
+audit, in priority order:
+
+- [ ] [patch] Replace `mnemosyne-prof`'s global active-sample RMW and pointer
+  modulo sharding only after Criterion profiles show the occupancy-mask and
+  mixed-hash designs reduce contention without regressing allocator latency.
+- [ ] [patch] Remove or compile out the dormant per-CPU cache's 720,896-byte
+  static table while every production backend has `ENABLE_CPU_CACHE = false`;
+  acceptance: binary-size evidence and unchanged allocator behavior.
+- [ ] [arch] Split the 870-line profiler sampler by capture, slot lifecycle,
+  and aggregation concern, and consolidate duplicated backend type lists at
+  their deepest owning module without changing the hot-path representation.
 
 Filed from the 2026-06-27 deep contention/memory audit (read-only fan-out over
 arena/local/core/heap/backend). Ranked by value; each carries a testable
@@ -689,8 +724,15 @@ remainder, each Definition-of-Ready):
 
 ## Open
 
+- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-local`,
+  allocator regression tests, and PM artifacts; root-cause and eliminate the
+  Miri-confirmed alloc/free page-metadata aliasing violation recorded in
+  `gap_audit.md`. Acceptance: the Hermes reproducer passes under both Stacked
+  Borrows and Tree Borrows, focused Mnemosyne value-semantic tests pass under
+  nextest, and the fix introduces no allocator-cycle threshold regression.
 - [patch] Investigate the remaining `allocator deallocation latency/large_8192` gap to RpMalloc. Current retained comparison is Mnemosyne `40.909 ns` versus RpMalloc `6.871 ns` (`5.95x`); the residual work is in same-owner small-page full/active page-list transition cost and benchmark-row variance, not large/huge unmapping.
 
 ## Next
 
-- [patch] Reduce the remaining `allocator deallocation latency/large_8192` gap to RpMalloc by isolating owner-validation and page-state transition costs in the same-owner 8 KiB small-page free path without weakening cross-thread free handoff or cycle-latency thresholds.
+- [patch] Complete the Miri page-metadata provenance fix before resuming the
+  RpMalloc deallocation-gap investigation.

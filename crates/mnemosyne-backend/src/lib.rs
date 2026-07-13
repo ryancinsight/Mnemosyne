@@ -40,13 +40,8 @@ pub use backends::cuda::{
     CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend, is_cuda_available,
 };
 pub use backends::wgpu::{
-    WgpuAllocateCallback, WgpuDeallocateCallback, WgpuStagingBackend, register_wgpu_callbacks,
+    WgpuAllocateCallback, WgpuCallbackRegistrationError, WgpuCallbacks, WgpuDeallocateCallback,
+    WgpuStagingBackend, register_wgpu_callbacks,
 };
 pub use mapping::MemoryBackendWrapper;
 pub use recorders::{BackendMemoryStats, backend_memory_stats};
-
-use core::ffi::c_void;
-use core::sync::atomic::AtomicPtr;
-
-static WGPU_ALLOCATE_CALLBACK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
-static WGPU_DEALLOCATE_CALLBACK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());

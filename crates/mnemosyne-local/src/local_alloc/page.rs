@@ -8,6 +8,33 @@ use mnemosyne_core::types::{Block, Page};
 
 type PageListBrand<'id, B> = fn(&'id mut ThreadAllocator<B>) -> &'id mut ThreadAllocator<B>;
 
+/// Reconstitutes a cached page address for the current metadata access.
+///
+/// Page-list links outlive individual allocation calls. Because page metadata
+/// and user blocks share one mapping, retaining reference-derived provenance
+/// across those calls is invalid under Rust's aliasing model. The intrusive
+/// lists therefore carry addresses and refresh exposed provenance at each use.
+#[inline(always)]
+pub(crate) fn refresh_page_pointer(page: NonNull<Page>) -> NonNull<Page> {
+    // SAFETY: a `NonNull<Page>` list entry denotes a live page by every caller
+    // contract; reconstructing the same non-zero address preserves that fact.
+    unsafe {
+        NonNull::new_unchecked(core::ptr::with_exposed_provenance_mut(
+            page.as_ptr().expose_provenance(),
+        ))
+    }
+}
+
+/// Raw-pointer form of [`refresh_page_pointer`].
+///
+/// # Safety
+///
+/// `page` must be non-null and identify a live page.
+#[inline(always)]
+pub(crate) unsafe fn refresh_raw_page_pointer(page: *mut Page) -> *mut Page {
+    core::ptr::with_exposed_provenance_mut(page.expose_provenance())
+}
+
 /// Pops the head block from an initialized page-local free list.
 ///
 /// # Safety
@@ -65,7 +92,7 @@ impl<'id, B: HasSegmentPool> PageListToken<'id, B> {
     #[inline(always)]
     pub(crate) unsafe fn page(&mut self, page_ptr: NonNull<Page>) -> BrandedPage<'id> {
         BrandedPage {
-            ptr: page_ptr,
+            ptr: refresh_page_pointer(page_ptr),
             _brand: PhantomData,
         }
     }
@@ -104,25 +131,28 @@ pub(crate) unsafe fn push_page_front<'id, B: HasSegmentPool>(
     page_ptr: BrandedPage<'id>,
     list_state: u8,
 ) {
-    let mut raw_page = page_ptr.ptr();
-    let page = unsafe { raw_page.as_mut() };
-    page.next_page = *head_slot;
-    page.prev_page = None;
-    if let Some(mut head) = *head_slot {
+    let raw_page = page_ptr.ptr();
+    unsafe {
+        (*raw_page.as_ptr()).next_page = *head_slot;
+        (*raw_page.as_ptr()).prev_page = None;
+    }
+    if let Some(head) = *head_slot {
         // Safety: the caller's token contract covers every page linked from
         // `head_slot`, so the head pointer is valid and exclusively reachable
         // through this list walk.
         unsafe {
-            let _head = token.page(head);
-            head.as_mut().prev_page = Some(raw_page);
+            let head = token.page(head).ptr();
+            (*head.as_ptr()).prev_page = Some(raw_page);
         }
     }
     *head_slot = Some(raw_page);
-    page.list_state = list_state;
-    if page.page_index > 0 {
-        let segment = page.parent_segment();
+    unsafe { (*raw_page.as_ptr()).list_state = list_state };
+    let page_index = unsafe { (*raw_page.as_ptr()).page_index };
+    if page_index > 0 {
+        let (segment, _) =
+            unsafe { mnemosyne_core::types::locate_segment(raw_page.as_ptr().cast()) };
         unsafe {
-            (*segment).page_linked_mask |= 1 << page.page_index;
+            (*segment).page_linked_mask |= 1 << page_index;
         }
     }
 }
@@ -142,40 +172,43 @@ pub(crate) unsafe fn unlink_page_from_list<'id, B: HasSegmentPool>(
     head_slot: &mut Option<NonNull<Page>>,
     page_ptr: BrandedPage<'id>,
 ) {
-    let mut raw_page = page_ptr.ptr();
-    let page = unsafe { raw_page.as_mut() };
-    let next = page.next_page;
-    let prev = page.prev_page;
+    let raw_page = page_ptr.ptr();
+    let next = unsafe { (*raw_page.as_ptr()).next_page };
+    let prev = unsafe { (*raw_page.as_ptr()).prev_page };
 
-    if let Some(mut prev_ptr) = prev {
+    if let Some(prev_ptr) = prev {
         // Safety: the caller's token contract covers adjacent pages in the
         // same intrusive list, so `prev_ptr` is valid and exclusively
         // reachable through this list walk.
         unsafe {
-            let _prev = token.page(prev_ptr);
-            prev_ptr.as_mut().next_page = next;
+            let prev_ptr = token.page(prev_ptr).ptr();
+            (*prev_ptr.as_ptr()).next_page = next;
         }
     } else {
         *head_slot = next;
     }
 
-    if let Some(mut next_ptr) = next {
+    if let Some(next_ptr) = next {
         // Safety: the caller's token contract covers adjacent pages in the
         // same intrusive list, so `next_ptr` is valid and exclusively
         // reachable through this list walk.
         unsafe {
-            let _next = token.page(next_ptr);
-            next_ptr.as_mut().prev_page = prev;
+            let next_ptr = token.page(next_ptr).ptr();
+            (*next_ptr.as_ptr()).prev_page = prev;
         }
     }
 
-    page.next_page = None;
-    page.prev_page = None;
-    page.list_state = 0;
-    if page.page_index > 0 {
-        let segment = page.parent_segment();
+    unsafe {
+        (*raw_page.as_ptr()).next_page = None;
+        (*raw_page.as_ptr()).prev_page = None;
+        (*raw_page.as_ptr()).list_state = 0;
+    }
+    let page_index = unsafe { (*raw_page.as_ptr()).page_index };
+    if page_index > 0 {
+        let (segment, _) =
+            unsafe { mnemosyne_core::types::locate_segment(raw_page.as_ptr().cast()) };
         unsafe {
-            (*segment).page_linked_mask &= !(1 << page.page_index);
+            (*segment).page_linked_mask &= !(1 << page_index);
         }
     }
 }
@@ -204,46 +237,47 @@ pub(crate) unsafe fn move_page_between_lists_branded<'id, B: HasSegmentPool>(
     page_ptr: BrandedPage<'id>,
     new_state: u8,
 ) {
-    let mut raw_page = page_ptr.ptr();
-    let page = unsafe { raw_page.as_mut() };
-    let next = page.next_page;
-    let prev = page.prev_page;
+    let raw_page = page_ptr.ptr();
+    let next = unsafe { (*raw_page.as_ptr()).next_page };
+    let prev = unsafe { (*raw_page.as_ptr()).prev_page };
 
     // Unlink page from the source list.
-    if let Some(mut prev_ptr) = prev {
+    if let Some(prev_ptr) = prev {
         // Safety: the caller's token contract covers every page reachable from
         // either list, so `prev_ptr` is valid and exclusively reachable here.
         unsafe {
-            let _prev = token.page(prev_ptr);
-            prev_ptr.as_mut().next_page = next;
+            let prev_ptr = token.page(prev_ptr).ptr();
+            (*prev_ptr.as_ptr()).next_page = next;
         }
     } else {
         *from_head_slot = next;
     }
 
-    if let Some(mut next_ptr) = next {
+    if let Some(next_ptr) = next {
         // Safety: the caller's token contract covers every page reachable from
         // either list, so `next_ptr` is valid and exclusively reachable here.
         unsafe {
-            let _next = token.page(next_ptr);
-            next_ptr.as_mut().prev_page = prev;
+            let next_ptr = token.page(next_ptr).ptr();
+            (*next_ptr.as_ptr()).prev_page = prev;
         }
     }
 
     // Push page to the front of the destination list.
     let head = *to_head_slot;
-    page.next_page = head;
-    page.prev_page = None;
-    if let Some(mut head_ptr) = head {
+    unsafe {
+        (*raw_page.as_ptr()).next_page = head;
+        (*raw_page.as_ptr()).prev_page = None;
+    }
+    if let Some(head_ptr) = head {
         // Safety: the caller's token contract covers every page reachable from
         // either list, so `head_ptr` is valid and exclusively reachable here.
         unsafe {
-            let _head = token.page(head_ptr);
-            head_ptr.as_mut().prev_page = Some(raw_page);
+            let head_ptr = token.page(head_ptr).ptr();
+            (*head_ptr.as_ptr()).prev_page = Some(raw_page);
         }
     }
     *to_head_slot = Some(raw_page);
-    page.list_state = new_state;
+    unsafe { (*raw_page.as_ptr()).list_state = new_state };
 }
 
 /// Reclaims any pending cross-thread frees on `page` and, if reclamation

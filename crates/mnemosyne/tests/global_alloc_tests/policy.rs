@@ -83,7 +83,7 @@ fn test_cuda_unified_backend() {
     }
     // Test WgpuStagingBackend
     {
-        use mnemosyne_backend::register_wgpu_callbacks;
+        use mnemosyne_backend::{WgpuCallbacks, register_wgpu_callbacks};
 
         unsafe extern "C" fn mock_alloc(size: usize) -> *mut u8 {
             unsafe { std::alloc::alloc(Layout::from_size_align_unchecked(size, 8)) }
@@ -96,7 +96,10 @@ fn test_cuda_unified_backend() {
             }
         }
 
-        unsafe { register_wgpu_callbacks(mock_alloc, mock_dealloc) };
+        // SAFETY: the test callbacks share one System layout contract and do
+        // not unwind across their FFI boundary.
+        static CALLBACKS: WgpuCallbacks = unsafe { WgpuCallbacks::new(mock_alloc, mock_dealloc) };
+        register_wgpu_callbacks(&CALLBACKS).expect("test callback pair must register");
 
         let allocator = MnemosyneAllocator::<StandardPolicy, WgpuStagingBackend>::new();
         let layout = Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");

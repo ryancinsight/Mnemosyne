@@ -118,15 +118,14 @@ impl<T: ScratchElement> AlignedVec<T> {
         // SAFETY: `v` was reserved with capacity `self.len`, so its buffer holds
         // `self.len` elements and is a distinct allocation that cannot overlap
         // `self.ptr`. `[0, self.len)` of `self.ptr` is initialized POD `T`, and
-        // `T: Copy` makes the bytewise copy a valid move. `set_len(self.len)`
-        // matches exactly the number of elements copied. `mem::forget(self)`
-        // below suppresses the source `Drop`, so the moved-out buffer is freed
-        // once (by `v`), never twice.
+        // `T: Copy` makes the bytewise copy valid. `set_len(self.len)` matches
+        // exactly the number of elements copied. The source retains ownership
+        // of its distinct allocation and is released by its normal `Drop`
+        // after this method returns.
         unsafe {
             core::ptr::copy_nonoverlapping(self.ptr, v.as_mut_ptr(), self.len);
             v.set_len(self.len);
         }
-        core::mem::forget(self);
         v
     }
 

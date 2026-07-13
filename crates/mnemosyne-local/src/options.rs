@@ -1,6 +1,14 @@
 static OPTIONS_INIT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-#[cfg(windows)]
+#[cfg(miri)]
+fn get_env_var_stack(_name: &str, _buf: &mut [u8]) -> Option<usize> {
+    // Miri cannot execute the platform environment-variable FFI used below.
+    // Treating configuration as absent preserves the allocator's documented
+    // defaults and lets Miri exercise the production allocation state machine.
+    None
+}
+
+#[cfg(all(windows, not(miri)))]
 fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
     unsafe extern "system" {
         fn GetEnvironmentVariableA(lpName: *const u8, lpBuffer: *mut u8, nSize: u32) -> u32;
@@ -27,7 +35,7 @@ fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(miri)))]
 fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
     unsafe extern "C" {
         fn getenv(name: *const u8) -> *mut u8;

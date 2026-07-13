@@ -1,11 +1,61 @@
 # Checklist
 
-Target version: 0.2.0
+Target version: 0.3.0
 
-Sprint phase: Closure (2026-07-02 consolidation cycle 3 delivered on top of
-cycles 1–2; AR-2 callback soundness and AR-8 profiler contention closed
-2026-07-06; remaining Definition-of-Ready `## Open` items — AR-1 full fix needs
-ADR 0001 sign-off (step-1 tripwire done), AR-4 needs a quiet machine).
+Sprint phase: Closure (2026-07-13 page provenance, arena conversion ownership,
+and interner final-release contention verified; WGPU callback pair registration
+and Hephaestus consumer migration verified).
+
+Combined branch gate: workspace clippy is warning-clean; workspace nextest
+passes 288/288; workspace doctests pass (10 passed, one intentionally ignored);
+workspace rustdoc completes warning-clean.
+
+## Verified — WGPU immutable callback pair [major]
+
+- [x] Record ADR 0002 with the one-pointer immutable-pair design and reject
+  generation replacement.
+- [x] Implement the typed pair, atomic registry, conflict error, and race tests.
+- [x] Migrate Hephaestus `WgpuDevice::new` and all local callers to typed failure.
+- [x] Run Mnemosyne and Hephaestus focused/full package gates. Mnemosyne clippy,
+  42/42 nextest, two focused Miri tests, doctests, rustdoc, and backend semver
+  analysis pass;
+  Hephaestus clippy, 131/131 nextest, doctests, and rustdoc pass.
+- [x] Synchronize both repositories' PM artifacts and migration notes for
+  atomic upstream and consumer commits.
+
+## Verified — 2026-07-13 interner final release
+
+- [x] [patch] Remove the final stack entry and content-keyed map key under the
+  owning shard lock, then drop both `Arc` values after releasing the lock.
+- [x] [patch] Verify reference retention, id recycling, and concurrent-shard
+  behavior. Verification: `mnemosyne-prof` nextest 15/15 and clippy clean;
+  focused leak-detector cycle Criterion medians are 1.077 us small, 1.081 us
+  medium, and 1.089 us large. No speedup claim is made without a matched
+  baseline.
+
+## Verified — 2026-07-13 arena conversion ownership
+
+- [x] [patch] Remove the `AlignedVec::into_vec` source allocation leak while
+  retaining the necessary one-copy conversion into `Vec`'s allocator domain.
+- [x] [patch] Pin element preservation and run Miri nextest with leak checking.
+  Verification: focused nextest 1/1; `rustup run nightly cargo miri nextest run
+  -p mnemosyne-arena aligned_vec_into_vec` 1/1.
+
+## Verified — 2026-07-13 Miri page provenance
+
+- [x] [patch] Reproduce the Hermes `AlignedVec` alloc/free aliasing failure under
+  Miri Stacked Borrows and Tree Borrows.
+- [x] [patch] Root-cause the invalid page-metadata provenance and encode the
+  ownership invariant in the narrowest zero-cost allocator seam.
+- [x] [patch] Add a value-semantic regression that fails on the invalid access
+  pattern and passes under Miri.
+- [x] [patch] Run focused nextest, clippy, Miri, and allocator threshold gates.
+  Nextest passed 125/125; clippy is warning-clean; the exact Hermes case passes
+  both Miri models. The partial threshold run rejected three rows against the
+  stored baseline and nine missing rows; matched parent/current Criterion runs
+  place the unchanged and fixed large cycle path at 4.368 ns and 4.364 ns.
+- [x] [patch] Synchronize `backlog.md`, `gap_audit.md`, and `CHANGELOG.md`; commit
+  and push the verified increment.
 
 ## In progress — Melinoe 0.9 provider refresh
 

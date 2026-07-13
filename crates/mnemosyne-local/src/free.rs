@@ -7,7 +7,7 @@ use core::ptr::NonNull;
 use mnemosyne_arena::{HasSegmentPool, deallocate_large_or_huge};
 use mnemosyne_core::constants::PAGE_SIZE;
 use mnemosyne_core::policy::AllocPolicy;
-use mnemosyne_core::types::{Block, Page, Segment, locate_segment};
+use mnemosyne_core::types::{Block, Page, Segment, locate_page, locate_segment};
 
 /// Frees a memory block.
 ///
@@ -67,15 +67,15 @@ unsafe fn thread_free_classified<
     // bounded page index.
     let (segment, page_index) = unsafe { locate_segment(ptr) };
 
-    // SAFETY: `segment`/`page_index` come from `locate_segment` on an
-    // allocator-owned `ptr`, so the segment header is live and the index is in
-    // bounds of its `pages` array.
-    let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
+    // SAFETY: `segment` and `page_index` were validated by `locate_segment`.
+    // `locate_page` avoids retaining a reference-derived metadata tag across
+    // the alloc/free boundary of the shared metadata-and-payload mapping.
+    let page_ptr = unsafe { locate_page(segment, page_index) };
     if mnemosyne_prof::is_active() {
-        unsafe { record_free_profile(ptr, page, page_index) };
+        unsafe { record_free_profile(ptr, page_ptr, page_index) };
     }
 
-    if !LAYOUT_PROVES_SMALL && page.block_size == 0 {
+    if !LAYOUT_PROVES_SMALL && unsafe { (*page_ptr).block_size } == 0 {
         // SAFETY: huge-allocation metadata layout. `segment` is recovered
         // from the metadata slot one pointer slot directly preceding the
         // user payload (`(ptr as *mut *mut Segment) - 1`); every huge
@@ -100,13 +100,13 @@ unsafe fn thread_free_classified<
     }
 
     debug_assert_eq!(
-        (ptr_val & (PAGE_SIZE - 1)) % page.block_size,
+        (ptr_val & (PAGE_SIZE - 1)) % unsafe { (*page_ptr).block_size },
         0,
         "small free ptr must be aligned to the page's block stride"
     );
 
     if P::ENABLE_POISONING {
-        unsafe { poison_freed_bytes::<P>(ptr, page.block_size) };
+        unsafe { poison_freed_bytes::<P>(ptr, (*page_ptr).block_size) };
     }
 
     let block = ptr as *mut Block;
@@ -128,13 +128,14 @@ unsafe fn thread_free_classified<
     };
 
     if is_owner && !owner_allocator.is_null() {
-        if page.alloc_count == 0 {
+        let page_alloc_count = unsafe { (*page_ptr).alloc_count };
+        if page_alloc_count == 0 {
             std::process::abort();
         }
         // SAFETY: `block` is a user pointer previously returned by the
         // allocator; non-nullness is the allocator invariant. Equality
         // with `page.free` is the double-free guard.
-        if Some(unsafe { NonNull::new_unchecked(block) }) == page.free {
+        if Some(unsafe { NonNull::new_unchecked(block) }) == unsafe { (*page_ptr).free } {
             std::process::abort();
         }
         // SAFETY: the surrounding `is_owner && !owner_allocator.is_null()`
@@ -142,13 +143,12 @@ unsafe fn thread_free_classified<
         // is the owning allocator pointer and no concurrent accessors
         // exist for the current thread.
         let alloc = unsafe { &mut *(owner_allocator as *mut ThreadAllocator<B>) };
-        let page_free = page.free;
-        let page_alloc_count = page.alloc_count;
+        let page_free = unsafe { (*page_ptr).free };
         // SAFETY: `segment`/`page_index` locate this page's parent header and its
         // key slot, satisfying `cookie_for`'s contract.
         let cookie = unsafe { (*segment).cookie_for::<P>(page_index) };
 
-        if page.list_state != 2 {
+        if unsafe { (*page_ptr).list_state } != 2 {
             // Page is active
             if page_alloc_count > 1 || alloc.is_current_segment(segment) {
                 // Free in-place (either remains active, or is current segment).
@@ -156,7 +156,7 @@ unsafe fn thread_free_classified<
                 // corruption guards above, and `page_alloc_count == page.free`'s
                 // owning count; the shared commit stays inside this owned page.
                 unsafe {
-                    commit_in_place_free::<P>(block, page, page_free, cookie, page_alloc_count)
+                    commit_in_place_free::<P>(block, page_ptr, page_free, cookie, page_alloc_count)
                 };
                 #[cfg(feature = "dealloc-probe")]
                 crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::InPlaceSmall);
@@ -172,7 +172,7 @@ unsafe fn thread_free_classified<
                 // free-path inputs (guards above) with `alloc` the owning
                 // allocator — exactly `do_local_free_internal`'s contract.
                 let _became_empty = unsafe {
-                    do_local_free_internal::<P, B>(alloc, block, page, segment, page_index)
+                    do_local_free_internal::<P, B>(alloc, block, page_ptr, segment, page_index)
                 };
                 // SAFETY: `alloc` is the exclusively-borrowed owning allocator
                 // with `is_allocating` raised, the precondition of the cold sweep.
@@ -190,25 +190,27 @@ unsafe fn thread_free_classified<
             // full→active branch of the shared `do_local_free_internal` commit.
             // SAFETY: as above — validated free-path inputs and the owning
             // `alloc`, satisfying `do_local_free_internal`'s contract.
-            let _became_empty =
-                unsafe { do_local_free_internal::<P, B>(alloc, block, page, segment, page_index) };
+            let _became_empty = unsafe {
+                do_local_free_internal::<P, B>(alloc, block, page_ptr, segment, page_index)
+            };
             #[cfg(feature = "dealloc-probe")]
             crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::FullToActive);
             return;
         }
     }
 
-    // SAFETY: `ptr`/`page`/`block` are the function's validated
+    // SAFETY: `ptr`/`page_ptr`/`block` are the function's validated
     // contract inputs from the embodiment of `thread_free`'s `// # Safety`
     // rustdoc; the `#[cold]` helper handles the cross-thread / re-entrant
     // push path.
-    unsafe { thread_free_cold::<P, B>(ptr, page, block) };
+    unsafe { thread_free_cold::<P, B>(ptr, page_ptr, block) };
 }
 
 #[cold]
 #[inline(never)]
-unsafe fn record_free_profile(ptr: *mut u8, page: &Page, page_index: usize) {
-    let size = if page_index == 0 || page.block_size == 0 {
+unsafe fn record_free_profile(ptr: *mut u8, page: *const Page, page_index: usize) {
+    let block_size = unsafe { (*page).block_size };
+    let size = if page_index == 0 || block_size == 0 {
         // Large/huge allocation: recover the size from the shared metadata-slot
         // accessor.
         // SAFETY: `page_index == 0 || block_size == 0` identifies a large/huge
@@ -216,7 +218,7 @@ unsafe fn record_free_profile(ptr: *mut u8, page: &Page, page_index: usize) {
         // `huge_allocation_size`'s precondition.
         unsafe { crate::usable_size::huge_allocation_size(ptr) }
     } else {
-        page.block_size
+        block_size
     };
     mnemosyne_prof::on_free(ptr, size);
 }
@@ -225,10 +227,12 @@ unsafe fn record_free_profile(ptr: *mut u8, page: &Page, page_index: usize) {
 #[inline(never)]
 unsafe fn thread_free_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
     ptr: *mut u8,
-    page: &mut Page,
+    page: *mut Page,
     block: *mut Block,
 ) {
-    if B::ENABLE_CPU_CACHE && per_cpu::try_free_cpu::<P>(ptr, page.size_class as usize) {
+    if B::ENABLE_CPU_CACHE
+        && per_cpu::try_free_cpu::<P>(ptr, unsafe { (*page).size_class } as usize)
+    {
         #[cfg(feature = "dealloc-probe")]
         crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::ColdOrRecursing);
         return;
@@ -238,7 +242,7 @@ unsafe fn thread_free_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
         // SAFETY: `block` came from this allocator under the same
         // backend; non-nullness is the allocator invariant. The page-
         // local atomic free list takes ownership of the pointer.
-        page.thread_free.push::<P>(NonNull::new_unchecked(block));
+        (*page).thread_free.push::<P>(NonNull::new_unchecked(block));
     }
     #[cfg(feature = "dealloc-probe")]
     crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::ColdOrRecursing);
@@ -289,7 +293,7 @@ pub(crate) unsafe fn is_sole_active_page(
 #[inline(always)]
 pub(crate) unsafe fn commit_in_place_free<P: AllocPolicy>(
     block: *mut Block,
-    page: &mut Page,
+    page: *mut Page,
     page_free: Option<NonNull<Block>>,
     cookie: usize,
     page_alloc_count: usize,
@@ -298,8 +302,8 @@ pub(crate) unsafe fn commit_in_place_free<P: AllocPolicy>(
     // contract; the free-list head mutation stays inside that page.
     unsafe {
         (*block).set_next::<P>(page_free, cookie);
-        page.free = Some(NonNull::new_unchecked(block));
-        page.alloc_count = page_alloc_count - 1;
+        (*page).free = Some(NonNull::new_unchecked(block));
+        (*page).alloc_count = page_alloc_count - 1;
     }
 }
 
@@ -312,21 +316,21 @@ pub(crate) unsafe fn commit_in_place_free<P: AllocPolicy>(
 pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     alloc: &mut ThreadAllocator<B>,
     block: *mut Block,
-    page: &mut Page,
+    page: *mut Page,
     segment: *mut Segment,
     page_index: usize,
 ) -> bool {
-    if page.alloc_count == 0 {
+    if unsafe { (*page).alloc_count } == 0 {
         std::process::abort();
     }
     // SAFETY: `block` is a user pointer the `# Safety` contract guarantees was
     // returned by a prior allocation in `page`/`segment`; non-nullness is the
     // allocator invariant, so `new_unchecked` is sound. Equality with
     // `page.free` is the double-free guard (the head was just freed).
-    if Some(unsafe { NonNull::new_unchecked(block) }) == page.free {
+    if Some(unsafe { NonNull::new_unchecked(block) }) == unsafe { (*page).free } {
         std::process::abort();
     }
-    let was_full = page.list_state == 2;
+    let was_full = unsafe { (*page).list_state } == 2;
     // SAFETY: `segment` is the live segment header owning `page` per the
     // `# Safety` contract and `page_index` is this page's index, satisfying
     // `cookie_for`'s contract.
@@ -335,20 +339,26 @@ pub unsafe fn do_local_free_internal<P: AllocPolicy, B: HasSegmentPool>(
     // contract; writing its embedded next pointer reinitializes the free-list
     // link and stays inside the block this caller now owns.
     unsafe {
-        (*block).set_next::<P>(page.free, cookie);
+        (*block).set_next::<P>((*page).free, cookie);
     }
     // SAFETY: `block` is non-null (allocator invariant, re-confirmed by the
     // double-free guard above); publishing it as the new free-list head.
-    page.free = Some(unsafe { NonNull::new_unchecked(block) });
+    unsafe { (*page).free = Some(NonNull::new_unchecked(block)) };
 
     // SAFETY: `segment`/`page`/`page_index` are the matching segment, page, and
     // its index per the `# Safety` contract; the decrement updates this page's
     // and segment's occupancy bookkeeping under the caller's exclusive access.
-    unsafe { page.decrement_alloc_count_for_segment(segment, page_index) };
-    let becomes_empty = page.alloc_count == 0;
+    let becomes_empty = unsafe {
+        let count = (*page).alloc_count - 1;
+        (*page).alloc_count = count;
+        if count == 0 && !(*segment).is_current {
+            (*segment).page_occupied_mask &= !(1 << page_index);
+        }
+        count == 0
+    };
 
-    let class = page.size_class as usize;
-    let page_ptr = unsafe { NonNull::new_unchecked(page as *mut Page) };
+    let class = unsafe { (*page).size_class } as usize;
+    let page_ptr = unsafe { NonNull::new_unchecked(page) };
 
     with_page_list_token::<B, _>(|mut token| {
         let branded_page = unsafe { token.page(page_ptr) };

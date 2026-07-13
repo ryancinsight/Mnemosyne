@@ -137,6 +137,8 @@ struct StackEntry {
     refs: usize,
 }
 
+type RetiredStack = (Arc<[usize]>, Arc<[usize]>);
+
 #[repr(align(64))]
 struct InternerShard {
     mutex: Mutex<Option<StackInternerShard>>,
@@ -227,10 +229,12 @@ fn release_stack(id: StackId) {
         .mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some(interner) = guard.as_mut() else {
-        return;
-    };
-    interner.release(id);
+    let retired = guard.as_mut().and_then(|interner| interner.release(id));
+    drop(guard);
+    // The entry and map key can hold the final two strong references. Their
+    // backing allocation is released after the shard lock, so allocator work
+    // cannot lengthen the interner's critical section or re-enter it.
+    drop(retired);
 }
 
 impl StackInternerShard {
@@ -254,22 +258,26 @@ impl StackInternerShard {
             .map(|entry| Arc::clone(&entry.frames))
     }
 
-    fn release(&mut self, id: StackId) {
-        let Some(entry_slot) = self.entries.get_mut(id.local_index()) else {
-            return;
-        };
-        let Some(entry) = entry_slot.as_mut() else {
-            return;
-        };
-        if entry.refs > 1 {
-            entry.refs -= 1;
-            return;
+    fn release(&mut self, id: StackId) -> Option<RetiredStack> {
+        let entry_slot = self.entries.get_mut(id.local_index())?;
+        if entry_slot.as_ref()?.refs > 1 {
+            entry_slot.as_mut()?.refs -= 1;
+            return None;
         }
 
-        let frames = Arc::clone(&entry.frames);
-        *entry_slot = None;
-        self.forward.remove(frames.as_ref());
+        let entry = entry_slot
+            .take()
+            .expect("invariant: checked live stack entry must remain present");
+        let (key, removed_id) = self
+            .forward
+            .remove_entry(entry.frames.as_ref())
+            .expect("invariant: live stack entry must have a forward-map key");
+        assert_eq!(
+            removed_id, id,
+            "invariant: stack interner forward map points at a different id"
+        );
         self.free_ids.push(id.local_id());
+        Some((entry.frames, key))
     }
 }
 
