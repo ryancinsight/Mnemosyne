@@ -338,7 +338,7 @@ pub unsafe fn release_segment_mapping<B: HasSegmentPool>(segment: *mut Segment) 
 /// or accessing purged segment memory.
 pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
     let pool = B::global_segment_pool();
-    // Detach each node's retained chain with `take_all` — a single lock-free
+    // Detach each node's retained chain with `take_all` — one lifetime-locked
     // atomic swap of the tagged head — then run the OS-release syscalls on the
     // privately-owned detached chain. One swap per node instead of one CAS per
     // segment, so the decay thread never serializes round-by-round with
@@ -382,7 +382,7 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
 /// Drops the physical backing of every retained free segment without
 /// removing them from the cache.
 ///
-/// Detaches each node's retained chain in one lock-free `take_all` swap,
+/// Detaches each node's retained chain in one lifetime-locked `take_all` swap,
 /// asks the backend to reset the physical pages of each detached
 /// segment's mapping, and pushes the segments back onto the pool so
 /// they remain available for reuse. The address ranges stay owned by
@@ -405,7 +405,7 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
     }
 
     let pool = B::global_segment_pool();
-    // Detach each node's chain in one lock-free `take_all` swap, reset each
+    // Detach each node's chain in one lifetime-locked `take_all` swap, reset each
     // segment's user pages, and re-cache it (segments stay owned by the
     // allocator; only RSS drops). Batch-detaching costs one atomic swap per
     // node instead of one CAS per segment on the drain.

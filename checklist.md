@@ -2,6 +2,15 @@
 
 Target version: 0.4.0
 
+## Verified — concurrent pool reclamation [patch]
+
+- [x] Localize the native crash to a stale huge-pool head dereference during a
+  concurrent decay detach.
+- [x] Serialize head observation through link access/detach with RAII release.
+- [x] Add deterministic detach/observer exclusion and contention conservation
+  regressions.
+- [ ] Verify the unchanged RITK Python wheel suite against this provider pin.
+
 Sprint phase: Closure (2026-07-13 WGPU 30 provider contract correction complete;
 RITK crash correction in progress on the 0.2 provider line).
 

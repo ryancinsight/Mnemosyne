@@ -1,5 +1,18 @@
 # Gap Audit
 
+## 2026-07-13 concurrent pool reclamation correction
+
+- [closed] A symbolized RITK production crash reached
+  `TaggedSegmentStack::pop` while reading `current_ptr.next_free_segment`.
+  `mnemosyne-decay` concurrently calls `purge_segment_pool`, whose `take_all`
+  detached and released mappings without excluding a pop that had already
+  observed the old head. The high-bit mutation tag prevents stale CAS success;
+  it does not preserve pointer lifetime. All stack head/link operations now
+  share a cache-line-isolated lifetime lock, and the deterministic
+  `detach_waits_for_active_head_observer` regression pins that detach cannot
+  return while an observer is active. Evidence tier: symbolized native crash,
+  type-structured RAII synchronization, and value-semantic nextest coverage.
+
 ## Residual risk / open findings
 
 - WGPU raw-pointer staging has no Mnemosyne residual: the backend, callback

@@ -1,7 +1,7 @@
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use mnemosyne_core::types::Segment;
 
-/// Cache-line aligned tagged atomic segment pointer used by lock-free pool heads.
+/// Cache-line aligned tagged atomic segment pointer used by segment-pool heads.
 ///
 /// On 64-bit targets this packs the segment address into the low 48 bits and a
 /// wrapping mutation tag into the high bits. The tag changes on every successful
@@ -10,6 +10,73 @@ use mnemosyne_core::types::Segment;
 #[repr(align(64))]
 pub(crate) struct CacheAlignedAtomicPtr {
     value: AtomicUsize,
+}
+
+/// Cache-line-isolated lock protecting intrusive segment-head lifetimes.
+///
+/// A tagged pointer prevents stale compare-exchange success, but it cannot keep
+/// a removed mapping alive while another thread dereferences an observed head.
+/// Pool operations therefore hold this lock from head observation through link
+/// access; detach releases it only after the old head is unreachable.
+#[repr(align(64))]
+pub(crate) struct CacheAlignedSegmentLock {
+    held: AtomicBool,
+}
+
+impl CacheAlignedSegmentLock {
+    /// Pause attempts before yielding the hardware thread. Pool critical
+    /// sections contain only a head/link mutation, so 64 attempts cover the
+    /// expected handoff without monopolizing a preempted core.
+    const SPINS_BEFORE_YIELD: usize = 64;
+
+    #[inline(always)]
+    pub(crate) const fn new() -> Self {
+        Self {
+            held: AtomicBool::new(false),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn lock(&self) -> SegmentLockGuard<'_> {
+        let mut spins = 0usize;
+        loop {
+            if self
+                .held
+                .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                return SegmentLockGuard { lock: self };
+            }
+            while self.held.load(Ordering::Relaxed) {
+                core::hint::spin_loop();
+                spins += 1;
+                if spins == Self::SPINS_BEFORE_YIELD {
+                    // An allocator-internal lock cannot park through an
+                    // allocation-backed primitive without risking recursion.
+                    // Hosted builds yield after the bounded pause window;
+                    // pure no_std targets restart the bounded hardware-pause
+                    // window because no scheduler contract exists there.
+                    #[cfg(any(feature = "std", test))]
+                    std::thread::yield_now();
+                    spins = 0;
+                }
+            }
+        }
+    }
+}
+
+/// RAII release for [`CacheAlignedSegmentLock`].
+pub(crate) struct SegmentLockGuard<'a> {
+    lock: &'a CacheAlignedSegmentLock,
+}
+
+impl Drop for SegmentLockGuard<'_> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        // Release publishes every protected head/link mutation to the next
+        // successful Acquire lock operation.
+        self.lock.held.store(false, Ordering::Release);
+    }
 }
 
 impl CacheAlignedAtomicPtr {
@@ -90,7 +157,7 @@ impl CacheAlignedAtomicPtr {
     }
 }
 
-/// Cache-line aligned atomic counter used by lock-free pool metadata.
+/// Cache-line aligned atomic counter used by segment-pool metadata.
 #[repr(align(64))]
 pub(crate) struct CacheAlignedAtomicUsize {
     pub(crate) value: AtomicUsize,
