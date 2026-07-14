@@ -17,7 +17,7 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.dependencies]
-themis = { git = "https://github.com/ryancinsight/themis", rev = "07bf558804e90d6121f994dde8fdebf11538fba7", version = "0.10", default-features = false, features = ["std"] }
+themis = { git = "https://github.com/ryancinsight/themis", rev = "18807bb5c43f4dc4cb6cedefeee2cc12375056c1", version = "0.10", default-features = false, features = ["std"] }
 eunomia = { git = "https://github.com/ryancinsight/eunomia", rev = "dd94f7b9d223668887302531006628818e2bd45b", default-features = false }
 melinoe = { git = "https://github.com/ryancinsight/melinoe.git", rev = "bb07447f6c71978c6fed47114ba9ecfda965ddc9", default-features = false }
 
