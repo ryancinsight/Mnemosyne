@@ -6,8 +6,18 @@
 use core::sync::atomic::{AtomicBool, AtomicUsize};
 
 /// The maximum number of segments retained in the global segment pool.
-pub static MAX_RETAINED_SEGMENTS: AtomicUsize =
-    AtomicUsize::new(crate::constants::MAX_RETAINED_SEGMENTS_LIMIT);
+pub static MAX_RETAINED_SEGMENTS: AtomicUsize = AtomicUsize::new(default_max_retained_segments());
+
+const fn default_max_retained_segments() -> usize {
+    // Miri reports intentionally retained process-global cache mappings as
+    // leaks. Zero retention keeps Miri's ownership/leak evidence focused on
+    // live allocations while leaving production's bounded cache unchanged.
+    if cfg!(miri) {
+        0
+    } else {
+        crate::constants::MAX_RETAINED_SEGMENTS_LIMIT
+    }
+}
 
 /// Whether the advisory huge page hint (`MADV_HUGEPAGE`) is enabled on Linux.
 pub static ENABLE_HUGEPAGE_HINT: AtomicBool = AtomicBool::new(true);
@@ -27,7 +37,7 @@ impl Default for MnemosyneOptions {
     #[inline]
     fn default() -> Self {
         Self {
-            max_retained_segments: crate::constants::MAX_RETAINED_SEGMENTS_LIMIT,
+            max_retained_segments: default_max_retained_segments(),
             purge_cadence_ms: 0,
             enable_hugepage_hint: true,
         }
