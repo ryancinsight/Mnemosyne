@@ -737,6 +737,8 @@ remainder, each Definition-of-Ready):
 
 ## Open
 
+- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-arena/src/segment/pool/{tagged_stack,cache_aligned}.rs`, focused tests, and PM artifacts on `codex/mnemosyne-0.2-huge-reclamation`; prevent the decay engine from releasing a detached huge segment while a concurrent pop retains its former head pointer. Acceptance: an adversarial value-semantic concurrency regression passes under nextest, focused Clippy is warning-clean, and the unchanged RITK wheel suite no longer faults.
+
 - [patch] status=done owner=codex scope=`crates/mnemosyne-local`,
   allocator regression tests, and PM artifacts; root-cause and eliminate the
   Miri-confirmed alloc/free page-metadata aliasing violation recorded in
