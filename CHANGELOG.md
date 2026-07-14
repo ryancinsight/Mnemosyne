@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Segment and huge-allocation pool heads now serialize pointer observation
+  through successor access or detachment. The decay sweep can release a
+  detached mapping only after every concurrent observer exits; tagged CAS
+  state alone prevented stale updates but did not provide memory reclamation.
+
 - `mnemosyne-arena::AlignedVec::into_vec` now releases its distinct aligned
   source allocation after copying initialized elements into the standard
   `Vec`; conversion no longer leaks the source buffer.

@@ -1,5 +1,9 @@
 # Backlog
 
+- [patch] status=review owner=codex scope=`mnemosyne-arena` Fix concurrent
+  segment-head reclamation exposed by the RITK registration suite. Provider
+  gates pass; consumer wheel verification remains the acceptance boundary.
+
 ## Atlas in-house replacement roadmap — mnemosyne slice [arch]
 
 mnemosyne is the allocation SSOT. The GPU program (coeus/apollo using wgpu + cuda-oxide)

@@ -1,27 +1,33 @@
-//! ABA-immune lock-free intrusive Treiber stack of [`Segment`]s with an
-//! advisory retained count — the single authoritative implementation of the
-//! tagged-pointer CAS loop shared by the huge-allocation cache
+//! Reclamation-safe intrusive stack of [`Segment`]s with an advisory retained
+//! count — the single authoritative implementation of the tagged-pointer head
+//! shared by the huge-allocation cache
 //! ([`super::huge_pool`]) and the segment pool ([`super::list`]).
 //!
 //! Both pools previously hand-drove the identical push / pop / `take_all` CAS
-//! loops over [`CacheAlignedAtomicPtr`]; centralizing them here means the
-//! ordering discipline and the ABA-tag invariant (a stale single-element-pop
-//! CAS fails on the high-bit mutation tag even when the head address has cycled
-//! back) live in exactly one place. The struct holds only atomics, so `Send` /
-//! `Sync` are compiler-derived rather than hand-asserted.
+//! loops over [`CacheAlignedAtomicPtr`]; centralizing them here means the head
+//! lifetime and ordering discipline live in exactly one place. A per-stack
+//! [`CacheAlignedSegmentLock`] covers every head observation and successor-link
+//! dereference. This is required because a mutation tag rejects a stale CAS but
+//! cannot stop a concurrent decay sweep from releasing the observed mapping
+//! before the pointer is dereferenced.
 //!
 //! The head and count keep their own cache lines ([`CacheAlignedAtomicPtr`] /
 //! [`CacheAlignedAtomicUsize`] are each `#[repr(align(64))]`), matching the
 //! prior per-atomic-isolation layout; consolidating into a single line is a
 //! separate, benchmark-gated experiment (see backlog).
 
-use super::cache_aligned::{CacheAlignedAtomicPtr, CacheAlignedAtomicUsize};
+use super::cache_aligned::{
+    CacheAlignedAtomicPtr, CacheAlignedAtomicUsize, CacheAlignedSegmentLock,
+};
 use core::sync::atomic::Ordering;
 use mnemosyne_core::types::Segment;
 
-/// A lock-free, ABA-immune Treiber stack of `Segment`s linked through
-/// `next_free_segment`, with an advisory length counter.
+/// A reclamation-safe stack of `Segment`s linked through `next_free_segment`,
+/// with an advisory length counter.
 pub(crate) struct TaggedSegmentStack {
+    /// Serializes head observation through successor access or detachment, so
+    /// a detached mapping can be released after `take_all` returns.
+    mutation_lock: CacheAlignedSegmentLock,
     /// Tagged head: low 48 bits are the head segment address, high bits a
     /// wrapping mutation tag that defeats ABA on single-element `pop`.
     head: CacheAlignedAtomicPtr,
@@ -33,6 +39,7 @@ impl TaggedSegmentStack {
     /// Creates a new empty stack.
     pub(crate) const fn new() -> Self {
         Self {
+            mutation_lock: CacheAlignedSegmentLock::new(),
             head: CacheAlignedAtomicPtr::new(),
             count: CacheAlignedAtomicUsize::new(0),
         }
@@ -53,6 +60,7 @@ impl TaggedSegmentStack {
     /// ownership transfers to the stack.
     #[inline]
     pub(crate) unsafe fn push(&self, segment: *mut Segment) {
+        let _guard = self.mutation_lock.lock();
         let mut current = self.head.load(Ordering::Relaxed);
         loop {
             let current_ptr = CacheAlignedAtomicPtr::ptr(current);
@@ -95,6 +103,7 @@ impl TaggedSegmentStack {
     #[inline]
     pub(crate) unsafe fn push_chain(&self, head: *mut Segment, tail: *mut Segment, len: usize) {
         debug_assert!(!head.is_null() && !tail.is_null() && len >= 1);
+        let _guard = self.mutation_lock.lock();
         let mut current = self.head.load(Ordering::Relaxed);
         loop {
             let current_ptr = CacheAlignedAtomicPtr::ptr(current);
@@ -124,11 +133,13 @@ impl TaggedSegmentStack {
     /// Pops the head segment, returning null when empty, decrementing the count
     /// and clearing the popped segment's `next_free_segment`.
     ///
-    /// ABA-immune: the head tag increments on every push/pop, so a stale CAS
-    /// fails even when the head address has cycled back to the same value.
+    /// The mutation lock keeps the observed head mapping alive through the
+    /// successor dereference and removal. The tag remains a structural check
+    /// against stale head state but is not treated as a reclamation mechanism.
     #[inline]
     pub(crate) fn pop(&self) -> *mut Segment {
-        if self.len() == 0 {
+        let _guard = self.mutation_lock.lock();
+        if self.count.value.load(Ordering::Relaxed) == 0 {
             return core::ptr::null_mut();
         }
         let mut current = self.head.load(Ordering::Acquire);
@@ -176,6 +187,7 @@ impl TaggedSegmentStack {
     /// null) and the prior count, leaving the stack empty.
     #[inline]
     pub(crate) fn take_all(&self) -> (*mut Segment, usize) {
+        let _guard = self.mutation_lock.lock();
         let head = CacheAlignedAtomicPtr::ptr(self.head.swap_null(Ordering::Acquire));
         let count = self.count.value.swap(0, Ordering::Relaxed);
         (head, count)
@@ -335,7 +347,7 @@ mod tests {
             h.join().expect("worker panicked");
         }
 
-        // ABA-immunity invariant: every original segment is recovered exactly
+        // Conservation invariant: every original segment is recovered exactly
         // once (no loss, no duplicate/cycle) after the contention.
         let mut drained: HashSet<*mut Segment> = HashSet::new();
         let mut p = stack.pop();
@@ -356,6 +368,58 @@ mod tests {
             unsafe {
                 let _ = Box::from_raw(n);
             }
+        }
+    }
+
+    #[test]
+    fn detach_waits_for_active_head_observer() {
+        use std::sync::{Arc, Barrier, mpsc};
+        use std::thread;
+
+        let stack = Arc::new(TaggedSegmentStack::new());
+        let bottom = boxed(0x1000);
+        let top = boxed(0x2000);
+        unsafe {
+            stack.push(bottom);
+            stack.push(top);
+        }
+
+        // Model a pop that has entered the head-observation critical section.
+        // A concurrent decay detach must not return the chain until that
+        // observer releases its guard; only then may its caller unmap nodes.
+        let observer = stack.mutation_lock.lock();
+        let rendezvous = Arc::new(Barrier::new(2));
+        let (result_tx, result_rx) = mpsc::channel();
+        let worker_stack = Arc::clone(&stack);
+        let worker_rendezvous = Arc::clone(&rendezvous);
+        let worker = thread::spawn(move || {
+            worker_rendezvous.wait();
+            let (head, count) = worker_stack.take_all();
+            result_tx
+                .send((head.expose_provenance(), count))
+                .expect("result receiver remains live");
+        });
+
+        rendezvous.wait();
+        assert_eq!(
+            result_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty),
+            "detach returned while a head observer still held the lifetime lock"
+        );
+        assert_eq!(stack.len(), 2);
+        drop(observer);
+
+        let (head_addr, count) = result_rx.recv().expect("detach result is produced");
+        worker.join().expect("detach worker did not panic");
+        let head = core::ptr::with_exposed_provenance_mut::<Segment>(head_addr);
+        assert_eq!(head, top);
+        assert_eq!(count, 2);
+        assert_eq!(stack.len(), 0);
+        unsafe {
+            assert_eq!((*head).next_free_segment, bottom);
+            assert_eq!((*bottom).next_free_segment, core::ptr::null_mut());
+            let _ = Box::from_raw(top);
+            let _ = Box::from_raw(bottom);
         }
     }
 }

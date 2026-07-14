@@ -17,7 +17,7 @@ pub(crate) const HUGE_SIZE_BUCKETS: usize =
 /// A size-bucket for cached huge allocations.
 ///
 /// `Send`/`Sync` are compiler-derived: the bucket holds only the atomics of
-/// the `TaggedSegmentStack`, whose lock-free / ABA-tag discipline is documented
+/// the `TaggedSegmentStack`, whose reclamation and tagged-head discipline is documented
 /// at the primitive.
 pub struct NodeHugeBucket {
     stack: TaggedSegmentStack,
@@ -36,7 +36,7 @@ impl NodeHugeBucket {
         self.stack.len()
     }
 
-    /// Pushes a segment onto this bucket's Treiber stack.
+    /// Pushes a segment onto this bucket's intrusive stack.
     ///
     /// # Safety
     ///
@@ -56,7 +56,7 @@ impl NodeHugeBucket {
         if popped.is_null() { None } else { Some(popped) }
     }
 
-    /// Splices a pre-linked chain of `len` segments onto this bucket's Treiber
+    /// Splices a pre-linked chain of `len` segments onto this bucket's intrusive
     /// stack in a single tagged CAS, preserving the chain's `head → tail` order
     /// at the top of the stack.
     ///
@@ -86,7 +86,7 @@ impl Default for NodeHugeBucket {
     }
 }
 
-/// A lock-free pool of cached huge allocations for a single NUMA node.
+/// A reclamation-safe pool of cached huge allocations for a single NUMA node.
 pub struct NodeHugePool {
     pub(crate) buckets: [NodeHugeBucket; HUGE_SIZE_BUCKETS],
     pub(crate) total_count: CacheAlignedAtomicUsize,
@@ -113,7 +113,7 @@ impl NodeHugePool {
     }
 }
 
-/// A NUMA-aware lock-free global pool of free huge allocations.
+/// A NUMA-aware reclamation-safe global pool of free huge allocations.
 pub struct GlobalHugePool {
     nodes: [NodeHugePool; NUMA_BUCKETS],
 }

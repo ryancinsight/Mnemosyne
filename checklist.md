@@ -1,5 +1,14 @@
 # Checklist
 
+## Verified — concurrent pool reclamation [patch]
+
+- [x] Localize the native crash to a stale huge-pool head dereference during a
+  concurrent decay detach.
+- [x] Serialize head observation through link access/detach with RAII release.
+- [x] Add deterministic detach/observer exclusion and contention conservation
+  regressions.
+- [ ] Verify the unchanged RITK Python wheel suite against this provider pin.
+
 Target version: 0.2.0
 
 Sprint phase: Closure (2026-07-13 page provenance and arena conversion leaks
