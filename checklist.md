@@ -19,15 +19,13 @@ workspace rustdoc completes warning-clean.
 - [ ] Publish Mnemosyne 0.4.0 and migrate Hephaestus to explicit provider-owned
   staging buffers.
 
-## In progress — RITK 0.2 page provenance
+## Rejected — RITK 0.2 page provenance
 
-- [x] [patch] Correlate the RITK native crash with its pre-fix Mnemosyne pin.
-- [ ] [patch] Port the Miri-verified page-provenance correction to the 0.2 line.
-- [ ] [patch] Pass focused allocator nextest and warning-denied Clippy.
-- [ ] [patch] Pin RITK to the verified provider revision and pass the exact
-  registration wheel gate without a native crash.
-- [ ] [patch] Synchronize provider and consumer PM artifacts, then publish the
-  verified commits.
+- [x] [patch] Audit whether the RITK native crash uses a pre-fix Mnemosyne pin.
+- [x] [patch] Falsify the premise: RITK pins `477f957`, directly after the
+  Miri-verified page-provenance correction `5a9f49f` on the 0.2 line.
+- [x] [patch] Remove the redundant port lane; the consumer needs no Mnemosyne
+  revision change for this already-landed correction.
 
 ## Verified — Themis provider identity [patch]
 
@@ -37,7 +35,7 @@ workspace rustdoc completes warning-clean.
   (289/289 tests pass in 3.3 seconds).
 - [x] Consolidate Eunomia and Melinoe onto exact workspace-owned Git revisions.
 
-## Verified — WGPU immutable callback pair [major]
+## Superseded — WGPU immutable callback pair [major]
 
 - [x] Record ADR 0002 with the one-pointer immutable-pair design and reject
   generation replacement.
@@ -102,7 +100,7 @@ workspace rustdoc completes warning-clean.
   -p kwavers-solver --lib` and `rustup run nightly cargo clippy -p
   kwavers-solver --lib --no-deps -- -D warnings` passed.
 
-## Verified — 2026-07-06 AR-2 WGPU callback soundness follow-through
+## Superseded — 2026-07-06 AR-2 WGPU callback soundness follow-through
 
 - [x] [major] Replaced the public
   `WGPU_{ALLOCATE,DEALLOCATE}_CALLBACK` raw `AtomicPtr<c_void>` statics with

@@ -79,7 +79,7 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
   mnemosyne-arena --features eunomia`; `cargo check -p mnemosyne --features
   eunomia`; `cargo nextest run -p mnemosyne --features eunomia`; package clippy,
   doctests, rustdoc, and no-default build checks for both packages.
-- [x] [major] AR-2 WGPU callback registration soundness. The public
+- [x] [major] AR-2 WGPU callback registration soundness (superseded by ADR 0003). The public
   `WGPU_{ALLOCATE,DEALLOCATE}_CALLBACK` raw `AtomicPtr<c_void>` statics are now
   private `mnemosyne-backend` slots, and consumers register through the typed
   unsafe `register_wgpu_callbacks(WgpuAllocateCallback, WgpuDeallocateCallback)`
@@ -94,7 +94,8 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 - [x] [major] WGPU callback registration publishes one immutable
   allocate/deallocate pair and rejects conflicting pairs. Concurrent readers
   observe only absent or one complete permanent pair. ADR:
-  `docs/adr/0002-immutable-wgpu-callback-pair.md`.
+  `docs/adr/0002-immutable-wgpu-callback-pair.md`. ADR 0003 subsequently
+  removes this backend because WGPU 30 invalidates its pointer contract.
 
 ## Open
 
@@ -742,11 +743,13 @@ remainder, each Definition-of-Ready):
   `gap_audit.md`. Acceptance: the Hermes reproducer passes under both Stacked
   Borrows and Tree Borrows, focused Mnemosyne value-semantic tests pass under
   nextest, and the fix introduces no allocator-cycle threshold regression.
-- [patch] status=in-progress owner=codex scope=`D:/atlas/worktrees/mnemosyne-ritk`
+- [patch] status=done owner=codex scope=`D:/atlas/worktrees/mnemosyne-ritk`
   on branch `codex/mnemosyne-0.2-page-provenance`; port the Miri-verified
   page-provenance correction onto the exact 0.2 provider line consumed by RITK.
   Acceptance: focused allocator nextest and Clippy pass, RITK pins the verified
   revision, and its registration wheel completes without a native crash.
+  Rejected after audit: RITK already pins `477f957`, whose parent is the exact
+  Miri-verified correction `5a9f49f`; no consumer pin change is required.
 - [patch] Investigate the remaining `allocator deallocation latency/large_8192` gap to RpMalloc. Current retained comparison is Mnemosyne `40.909 ns` versus RpMalloc `6.871 ns` (`5.95x`); the residual work is in same-owner small-page full/active page-list transition cost and benchmark-row variance, not large/huge unmapping.
 
 ## Next
