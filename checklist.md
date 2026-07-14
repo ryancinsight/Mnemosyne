@@ -1,14 +1,23 @@
 # Checklist
 
-Target version: 0.3.0
+Target version: 0.4.0
 
-Sprint phase: Closure (2026-07-13 page provenance, arena conversion ownership,
-and interner final-release contention verified; WGPU callback pair registration
-and Hephaestus consumer migration verified).
+Sprint phase: Execution (2026-07-13 WGPU 30 provider contract correction in
+progress alongside the disjoint RITK page-provenance lane).
 
 Combined branch gate: workspace clippy is warning-clean; workspace nextest
 passes 288/288; workspace doctests pass (10 passed, one intentionally ignored);
 workspace rustdoc completes warning-clean.
+
+## In progress — WGPU 30 staging ownership [major]
+
+- [x] Record the WGPU 30 incompatibility and deletion decision in ADR 0003.
+- [ ] Delete the raw-pointer WGPU callback registry, backend, facade exports,
+  allocator selectors, and callback-specific tests and documentation.
+- [ ] Pass format, warning-denied workspace Clippy, nextest, doctest, rustdoc,
+  and semver analysis.
+- [ ] Publish Mnemosyne 0.4.0 and migrate Hephaestus to explicit provider-owned
+  staging buffers.
 
 ## In progress — RITK 0.2 page provenance
 

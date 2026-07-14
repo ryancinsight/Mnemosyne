@@ -1,5 +1,14 @@
 # Backlog
 
+- [ ] [major] **WGPU-030, in progress; owner Codex; scope
+  `mnemosyne-backend`, facade re-exports, backend selector impls/tests/docs, and
+  release artifacts; last update 2026-07-13.** Remove the process-global WGPU
+  raw-pointer staging backend. WGPU 30 exposes mutable mapped ranges only
+  through a write-only view, so the `MemoryBackend` pointer contract cannot be
+  implemented without violating the provider's memory model. Acceptance:
+  obsolete callbacks and selectors are deleted, remaining backends pass the
+  workspace gates, and Hephaestus owns explicit WGPU staging lifetimes.
+
 - [x] [patch] Pin Eunomia and Melinoe once in the workspace SSOT for
   standalone-Git reproducibility.
 
