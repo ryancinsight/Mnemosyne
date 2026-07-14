@@ -3,7 +3,7 @@ use crate::segment::pool::list::NodeSegmentPool;
 use crate::segment::pool::numa_bucket::{NUMA_BUCKETS, bucket_from_u32 as numa_bucket, steal_from};
 use mnemosyne_core::types::Segment;
 
-/// A NUMA-aware lock-free global pool of free segments partitioned by socket node.
+/// A NUMA-aware reclamation-safe global pool of free segments partitioned by socket node.
 pub struct GlobalSegmentPool {
     nodes: [NodeSegmentPool; NUMA_BUCKETS],
 }

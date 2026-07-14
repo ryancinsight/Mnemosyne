@@ -96,7 +96,7 @@ pub fn decay_step() {
     // segment/orphan pools production code can populate. Pool population
     // happens only through a thread allocator, which requires a
     // `LocalAllocatorSelector` impl (`mnemosyne-local/src/lib.rs`), so the
-    // swept set is exactly the five production selector backends. A new
+    // swept set is exactly the four production selector backends. A new
     // backend gaining a selector impl MUST be added here, or its orphaned
     // segments and retained mappings are never reclaimed.
     //
@@ -107,9 +107,6 @@ pub fn decay_step() {
     // - `CudaUnifiedBackend`/`CudaDeviceBackend`/`CudaHostPinnedBackend`:
     //   device, unified, and pinned pools reachable through
     //   `MnemosyneAllocator<P, B>` and `TieredHeap`'s typed sub-heaps.
-    // - `WgpuStagingBackend`: staging-buffer pool reachable through
-    //   `MnemosyneAllocator<P, B>`.
-    //
     // `DefaultBackend` is intentionally absent: it implements
     // `HasSegmentPool`, but its `LocalAllocatorSelector` impl exists only in
     // `mnemosyne-local`'s test fixtures, so no production thread allocator
@@ -119,7 +116,6 @@ pub fn decay_step() {
     decay_step_for_backend::<mnemosyne_backend::CudaUnifiedBackend>();
     decay_step_for_backend::<mnemosyne_backend::CudaDeviceBackend>();
     decay_step_for_backend::<mnemosyne_backend::CudaHostPinnedBackend>();
-    decay_step_for_backend::<mnemosyne_backend::WgpuStagingBackend>();
 }
 
 fn decay_step_for_backend<B: HasSegmentPool>() {

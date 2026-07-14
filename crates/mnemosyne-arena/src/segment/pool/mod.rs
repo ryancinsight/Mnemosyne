@@ -131,14 +131,3 @@ impl HasSegmentPool for mnemosyne_backend::CudaHostPinnedBackend {
         &CUDA_HOST_PINNED_POOLS
     }
 }
-
-static WGPU_STAGING_POOLS: BackendPools = BackendPools::new();
-
-impl private::Sealed for mnemosyne_backend::WgpuStagingBackend {}
-
-impl HasSegmentPool for mnemosyne_backend::WgpuStagingBackend {
-    #[inline(always)]
-    fn pools() -> &'static BackendPools {
-        &WGPU_STAGING_POOLS
-    }
-}

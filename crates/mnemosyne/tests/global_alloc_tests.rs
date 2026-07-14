@@ -2,9 +2,8 @@ use core::alloc::{GlobalAlloc, Layout};
 use std::thread;
 
 use mnemosyne::{
-    Mnemosyne, MnemosyneAllocator, SecurePolicy, StandardPolicy, WgpuStagingBackend,
-    disable_leak_detector, dump_leaks, enable_leak_detector, is_leak_detector_enabled,
-    memory_stats, purge, reset, usable_size,
+    Mnemosyne, MnemosyneAllocator, SecurePolicy, StandardPolicy, disable_leak_detector, dump_leaks,
+    enable_leak_detector, is_leak_detector_enabled, memory_stats, purge, reset, usable_size,
 };
 
 #[cfg(not(windows))]

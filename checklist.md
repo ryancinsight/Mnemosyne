@@ -1,14 +1,53 @@
 # Checklist
 
-Target version: 0.3.0
+Target version: 0.4.0
 
-Sprint phase: Closure (2026-07-13 page provenance, arena conversion ownership,
-and interner final-release contention verified; WGPU callback pair registration
-and Hephaestus consumer migration verified).
+## Verified — concurrent pool reclamation [patch]
+
+- [x] Localize the native crash to a stale huge-pool head dereference during a
+  concurrent decay detach.
+- [x] Serialize head observation through link access/detach with RAII release.
+- [x] Add deterministic detach/observer exclusion and contention conservation
+  regressions.
+- [ ] Verify the unchanged RITK Python wheel suite against this provider pin.
+
+Sprint phase: Closure (2026-07-13 WGPU 30 provider contract correction complete;
+RITK crash correction in progress on the 0.2 provider line).
 
 Combined branch gate: workspace clippy is warning-clean; workspace nextest
-passes 288/288; workspace doctests pass (10 passed, one intentionally ignored);
-workspace rustdoc completes warning-clean.
+passes 287/287; workspace doctests pass (10 passed, one intentionally ignored);
+workspace rustdoc completes warning-clean; cargo-semver-checks classifies the
+0.3.0 -> 0.4.0 facade and 0.2.0 -> 0.3.0 backend changes as valid pre-1.0 major
+version increments.
+
+## In progress — concurrent huge-pool reclamation [patch]
+
+- [x] Capture a symbolized production crash at `TaggedSegmentStack::pop` while
+  the decay engine can concurrently detach and release the same stack.
+- [ ] Serialize head-pointer observation through detach so no thread can retain
+  a dereferenceable pointer after reclamation begins.
+- [ ] Add an adversarial concurrent pop/detach regression and pass focused
+  nextest plus warning-denied Clippy on the exact RITK provider line.
+- [ ] Pin RITK to the verified provider revision and pass the unchanged Python
+  wheel suite under its committed nextest-equivalent CI timeout policy.
+
+## In progress — WGPU 30 staging ownership [major]
+
+- [x] Record the WGPU 30 incompatibility and deletion decision in ADR 0003.
+- [x] Delete the raw-pointer WGPU callback registry, backend, facade exports,
+  allocator selectors, and callback-specific tests and documentation.
+- [x] Pass format, warning-denied workspace Clippy, nextest, doctest, rustdoc,
+  and semver analysis.
+- [x] Publish the verified Mnemosyne 0.4.0 provider commit. Hephaestus migration
+  continues under the Atlas WGPU-030 cross-repo item.
+
+## Rejected — RITK 0.2 page provenance
+
+- [x] [patch] Audit whether the RITK native crash uses a pre-fix Mnemosyne pin.
+- [x] [patch] Falsify the premise: RITK pins `477f957`, directly after the
+  Miri-verified page-provenance correction `5a9f49f` on the 0.2 line.
+- [x] [patch] Remove the redundant port lane; the consumer needs no Mnemosyne
+  revision change for this already-landed correction.
 
 ## Verified — Themis provider identity [patch]
 
@@ -18,7 +57,7 @@ workspace rustdoc completes warning-clean.
   (289/289 tests pass in 3.3 seconds).
 - [x] Consolidate Eunomia and Melinoe onto exact workspace-owned Git revisions.
 
-## Verified — WGPU immutable callback pair [major]
+## Superseded — WGPU immutable callback pair [major]
 
 - [x] Record ADR 0002 with the one-pointer immutable-pair design and reject
   generation replacement.
@@ -83,7 +122,7 @@ workspace rustdoc completes warning-clean.
   -p kwavers-solver --lib` and `rustup run nightly cargo clippy -p
   kwavers-solver --lib --no-deps -- -D warnings` passed.
 
-## Verified — 2026-07-06 AR-2 WGPU callback soundness follow-through
+## Superseded — 2026-07-06 AR-2 WGPU callback soundness follow-through
 
 - [x] [major] Replaced the public
   `WGPU_{ALLOCATE,DEALLOCATE}_CALLBACK` raw `AtomicPtr<c_void>` statics with

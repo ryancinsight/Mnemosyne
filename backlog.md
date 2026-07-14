@@ -1,7 +1,20 @@
 # Backlog
 
+- [x] [major] **WGPU-030, done; owner Codex; scope
+  `mnemosyne-backend`, facade re-exports, backend selector impls/tests/docs, and
+  release artifacts; last update 2026-07-13.** Remove the process-global WGPU
+  raw-pointer staging backend. WGPU 30 exposes mutable mapped ranges only
+  through a write-only view, so the `MemoryBackend` pointer contract cannot be
+  implemented without violating the provider's memory model. Acceptance:
+  obsolete callbacks and selectors are deleted and the remaining backends pass
+  the workspace gates. Hephaestus migration is tracked by Atlas WGPU-030.
+
 - [x] [patch] Pin Eunomia and Melinoe once in the workspace SSOT for
   standalone-Git reproducibility.
+
+- [patch] status=review owner=codex scope=`mnemosyne-arena` Fix concurrent
+  segment-head reclamation exposed by the RITK registration suite. Provider
+  gates pass; consumer wheel verification remains the acceptance boundary.
 
 ## Atlas in-house replacement roadmap — mnemosyne slice [arch]
 
@@ -70,7 +83,7 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
   mnemosyne-arena --features eunomia`; `cargo check -p mnemosyne --features
   eunomia`; `cargo nextest run -p mnemosyne --features eunomia`; package clippy,
   doctests, rustdoc, and no-default build checks for both packages.
-- [x] [major] AR-2 WGPU callback registration soundness. The public
+- [x] [major] AR-2 WGPU callback registration soundness (superseded by ADR 0003). The public
   `WGPU_{ALLOCATE,DEALLOCATE}_CALLBACK` raw `AtomicPtr<c_void>` statics are now
   private `mnemosyne-backend` slots, and consumers register through the typed
   unsafe `register_wgpu_callbacks(WgpuAllocateCallback, WgpuDeallocateCallback)`
@@ -85,7 +98,8 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 - [x] [major] WGPU callback registration publishes one immutable
   allocate/deallocate pair and rejects conflicting pairs. Concurrent readers
   observe only absent or one complete permanent pair. ADR:
-  `docs/adr/0002-immutable-wgpu-callback-pair.md`.
+  `docs/adr/0002-immutable-wgpu-callback-pair.md`. ADR 0003 subsequently
+  removes this backend because WGPU 30 invalidates its pointer contract.
 
 ## Open
 
@@ -727,12 +741,21 @@ remainder, each Definition-of-Ready):
 
 ## Open
 
-- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-local`,
+- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-arena/src/segment/pool/{tagged_stack,cache_aligned}.rs`, focused tests, and PM artifacts on `codex/mnemosyne-0.2-huge-reclamation`; prevent the decay engine from releasing a detached huge segment while a concurrent pop retains its former head pointer. Acceptance: an adversarial value-semantic concurrency regression passes under nextest, focused Clippy is warning-clean, and the unchanged RITK wheel suite no longer faults.
+
+- [patch] status=done owner=codex scope=`crates/mnemosyne-local`,
   allocator regression tests, and PM artifacts; root-cause and eliminate the
   Miri-confirmed alloc/free page-metadata aliasing violation recorded in
   `gap_audit.md`. Acceptance: the Hermes reproducer passes under both Stacked
   Borrows and Tree Borrows, focused Mnemosyne value-semantic tests pass under
   nextest, and the fix introduces no allocator-cycle threshold regression.
+- [patch] status=done owner=codex scope=`D:/atlas/worktrees/mnemosyne-ritk`
+  on branch `codex/mnemosyne-0.2-page-provenance`; port the Miri-verified
+  page-provenance correction onto the exact 0.2 provider line consumed by RITK.
+  Acceptance: focused allocator nextest and Clippy pass, RITK pins the verified
+  revision, and its registration wheel completes without a native crash.
+  Rejected after audit: RITK already pins `477f957`, whose parent is the exact
+  Miri-verified correction `5a9f49f`; no consumer pin change is required.
 - [patch] Investigate the remaining `allocator deallocation latency/large_8192` gap to RpMalloc. Current retained comparison is Mnemosyne `40.909 ns` versus RpMalloc `6.871 ns` (`5.95x`); the residual work is in same-owner small-page full/active page-list transition cost and benchmark-row variance, not large/huge unmapping.
 
 ## Next

@@ -1,17 +1,15 @@
-//! Lock-free per-NUMA-node segment pool (Treiber stack).
+//! Reclamation-safe per-NUMA-node segment pool.
 //!
 //! The pool is a singly-linked stack of free [`Segment`] nodes whose head is a
-//! tagged `CacheAlignedAtomicPtr` (address + wrapping mutation tag). Push and
-//! pop are lock-free CAS loops; `take_all` is a single atomic swap. No spinlock
-//! or mutex is acquired on any path. The tag makes single-element `pop`
-//! ABA-immune: a stale CAS fails on the tag even if the head address has cycled
-//! back, so no segment is ever lost under contention.
+//! tagged `CacheAlignedAtomicPtr` (address + wrapping mutation tag). The shared
+//! stack serializes head observation through successor access or detachment so
+//! a decay sweep may release a detached mapping after `take_all` returns.
 //!
 use super::tagged_stack::TaggedSegmentStack;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::types::Segment;
 
-/// A lock-free segment pool for a single NUMA node (Treiber stack).
+/// A reclamation-safe segment pool for a single NUMA node.
 ///
 /// The free-segment stack and its ABA-tag / ordering discipline live in the
 /// `TaggedSegmentStack`; this type layers the per-pool telemetry counters and
@@ -19,7 +17,7 @@ use mnemosyne_core::types::Segment;
 /// holds only atomics).
 #[repr(align(64))]
 pub struct NodeSegmentPool {
-    /// Lock-free, ABA-immune stack of free segments plus its retained count.
+    /// Reclamation-safe stack of free segments plus its retained count.
     stack: TaggedSegmentStack,
     purged: AtomicUsize,
     purge_calls: AtomicUsize,

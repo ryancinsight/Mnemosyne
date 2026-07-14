@@ -1,15 +1,14 @@
-//! Concurrency stress test for the lock-free huge-allocation cache.
+//! Concurrency stress test for the reclamation-safe huge-allocation cache.
 //!
-//! The `NodeHugeBucket` Treiber-stack conversion removed the last lock on any
-//! allocation path. Its subtlest path is the exact-bucket first-fit, which pops
+//! Its subtlest path is the exact-bucket first-fit, which pops
 //! heads until one fits while stashing undersized segments in a private chain
-//! and restoring them - all lock-free. This test hammers that path from
+//! and restoring them. This test hammers that path from
 //! multiple threads and asserts the pool's core invariant: under arbitrary
 //! interleaving, no cached segment is ever lost or duplicated and every popped
 //! block satisfies its size request.
 //!
 //! The repo has no `loom` harness; consistent with the existing
-//! `test_concurrent_aba_safeness`, this is a std-thread + `Barrier` stress test
+//! `concurrent_push_pop_conserves_every_segment`, this is a std-thread + `Barrier` stress test
 //! that exercises real interleavings on the public `GlobalHugePool` API.
 
 use mnemosyne_arena::GlobalHugePool;

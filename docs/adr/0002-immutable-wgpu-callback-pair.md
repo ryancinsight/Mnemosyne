@@ -1,6 +1,6 @@
 # ADR 0002: Immutable WGPU callback pair
 
-Status: accepted for implementation (2026-07-13)
+Status: superseded by ADR 0003 (2026-07-13)
 
 ## Context
 

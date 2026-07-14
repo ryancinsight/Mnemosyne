@@ -406,7 +406,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "eunomia",
  "mnemosyne-arena",
@@ -421,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-arena"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "eunomia",
  "mnemosyne-backend",
@@ -431,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-backend"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "mnemosyne-core",
 ]

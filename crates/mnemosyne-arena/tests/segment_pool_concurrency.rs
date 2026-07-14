@@ -1,10 +1,8 @@
-//! Conservation stress test for the lock-free segment pool (ABA-immunity).
+//! Conservation stress test for the reclamation-safe segment pool.
 //!
-//! `NodeSegmentPool` is a tagged Treiber stack: its head packs a wrapping
-//! mutation tag alongside the address so single-element `pop` cannot fall victim
-//! to ABA (a consumer loading `head=X`, reading `X.next=Y`, then having `X`
-//! popped and re-pushed before its CAS, which would otherwise install a stale
-//! `Y` and orphan the chain). This test hammers concurrent pop/push and asserts
+//! `NodeSegmentPool` protects every head/link observation with its stack's
+//! lifetime lock and retains a wrapping mutation tag in the packed head. This
+//! test hammers concurrent pop/push and asserts
 //! the core invariant: under arbitrary interleaving **no segment is ever lost or
 //! duplicated**. It is the conservation check the pre-existing
 //! `test_concurrent_aba_safeness` lacked (that test only drained whatever it

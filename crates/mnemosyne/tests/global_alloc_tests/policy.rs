@@ -81,38 +81,6 @@ fn test_cuda_unified_backend() {
         // Skip on Windows: the WDDM driver does not support concurrent CPU access
         // to managed memory from parallel test processes executed by nextest.
     }
-    // Test WgpuStagingBackend
-    {
-        use mnemosyne_backend::{WgpuCallbacks, register_wgpu_callbacks};
-
-        unsafe extern "C" fn mock_alloc(size: usize) -> *mut u8 {
-            unsafe { std::alloc::alloc(Layout::from_size_align_unchecked(size, 8)) }
-        }
-
-        unsafe extern "C" fn mock_dealloc(ptr: *mut u8, size: usize) -> bool {
-            unsafe {
-                std::alloc::dealloc(ptr, Layout::from_size_align_unchecked(size, 8));
-                true
-            }
-        }
-
-        // SAFETY: the test callbacks share one System layout contract and do
-        // not unwind across their FFI boundary.
-        static CALLBACKS: WgpuCallbacks = unsafe { WgpuCallbacks::new(mock_alloc, mock_dealloc) };
-        register_wgpu_callbacks(&CALLBACKS).expect("test callback pair must register");
-
-        let allocator = MnemosyneAllocator::<StandardPolicy, WgpuStagingBackend>::new();
-        let layout = Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
-        let ptr = unsafe { allocator.alloc(layout) };
-        assert!(!ptr.is_null(), "Wgpu staging backend allocation failed");
-
-        unsafe {
-            ptr.write(99);
-            assert_eq!(ptr.read(), 99);
-            allocator.dealloc(ptr, layout);
-        }
-    }
-
     #[cfg(not(windows))]
     {
         if !is_cuda_available() {

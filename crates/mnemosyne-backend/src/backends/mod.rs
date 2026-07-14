@@ -17,4 +17,3 @@ mod unix;
 pub use self::unix::UnixBackend as DefaultBackend;
 
 pub mod cuda;
-pub mod wgpu;

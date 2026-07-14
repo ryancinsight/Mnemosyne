@@ -1,6 +1,25 @@
 # Gap Audit
 
+## 2026-07-13 concurrent pool reclamation correction
+
+- [closed] A symbolized RITK production crash reached
+  `TaggedSegmentStack::pop` while reading `current_ptr.next_free_segment`.
+  `mnemosyne-decay` concurrently calls `purge_segment_pool`, whose `take_all`
+  detached and released mappings without excluding a pop that had already
+  observed the old head. The high-bit mutation tag prevents stale CAS success;
+  it does not preserve pointer lifetime. All stack head/link operations now
+  share a cache-line-isolated lifetime lock, and the deterministic
+  `detach_waits_for_active_head_observer` regression pins that detach cannot
+  return while an observer is active. Evidence tier: symbolized native crash,
+  type-structured RAII synchronization, and value-semantic nextest coverage.
+
 ## Residual risk / open findings
+
+- WGPU raw-pointer staging has no Mnemosyne residual: the backend, callback
+  registry, allocator selectors, pools, and facade exports are deleted. Full
+  workspace Clippy, 287 value-semantic nextest cases, doctests, rustdoc, and
+  pre-1.0 semver classification pass. Hephaestus provider integration remains
+  tracked by Atlas WGPU-030 rather than this repository.
 
 - Resolved provider drift: Eunomia and Melinoe Git requirements are exact and
   workspace-owned; member manifests no longer select moving source heads.
@@ -21,11 +40,10 @@
   transfer is not layout-compatible with `Vec`'s allocator contract, so the
   retained design copies once and releases the distinct aligned allocation.
   Miri nextest passes with leak checking enabled.
-- Closed the WGPU callback-generation defect with one immutable static pair
-  published through one atomic pointer. A 64-iteration two-registrar race test
-  proves exactly one distinct pair wins and every observed allocation is
-  accepted by the matching deallocator. Evidence tier: atomic type structure,
-  Release/Acquire publication, and value-semantic concurrency testing.
+- Closed the WGPU allocator contract defect by deleting the callback backend.
+  WGPU 30 mapped-write views are explicit write-only byte sinks and cannot
+  satisfy Mnemosyne's generally readable/writable raw-pointer contract.
+  Evidence tier: provider type-system enforcement and downstream compilation.
 - Memory finding: the dormant per-CPU cache reserves 720,896 bytes of static
   storage although every production backend currently disables it. Remove or
   compile it out; do not enable it without contention and retention evidence.
@@ -104,7 +122,7 @@
   forwards `mnemosyne-arena/eunomia`; the no-default-features tree keeps
   Eunomia absent.
 
-2026-07-06 AR-2 WGPU callback soundness follow-through:
+2026-07-06 AR-2 WGPU callback soundness follow-through (superseded by ADR 0003):
 - Closed the public WGPU callback static soundness hole. The selected design is
   private raw storage plus typed unsafe registration, rather than public
   `AtomicPtr<c_void>` slots or a safe registration function. The unsafe
