@@ -147,9 +147,14 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
 
     // SAFETY: `segment`/`page_index` come from `locate_segment` on an
     // allocator-owned `ptr`, so the segment header is live and the index is in
-    // bounds of its `pages` array.
-    let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
-    let is_old_small = page_index > 0 && page.block_size > 0;
+    // bounds of its `pages` array. Keep this as a raw pointer until the old
+    // block has been replaced: `alloc_class` may read the same segment while
+    // selecting its fresh page, and an outstanding `&mut Page` would violate
+    // Stacked Borrows before the replacement free begins.
+    let page = unsafe { (*segment).pages.as_mut_ptr().add(page_index) };
+    // SAFETY: `page` is the live page recovered from the allocator-owned
+    // segment and `block_size` is initialized for every allocated small block.
+    let is_old_small = page_index > 0 && unsafe { (*page).block_size > 0 };
 
     let mut new_ptr = core::ptr::null_mut();
     let mut local_free_done = false;
@@ -188,6 +193,12 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                                     new_ptr,
                                     core::cmp::min(layout.size(), new_size),
                                 );
+                                // SAFETY: `segment`/`page_index` identify the
+                                // live page and its key slot. Read the segment
+                                // metadata before materializing `page_ref`,
+                                // because the exclusive page borrow must not
+                                // overlap this shared parent-segment access.
+                                let cookie = (*segment).cookie_for::<P>(page_index);
                                 // SAFETY: `page` is the exclusively-borrowed page
                                 // owning the old block; reborrowing yields the sole
                                 // live `&mut` for the free bookkeeping below.
@@ -200,10 +211,6 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                                 let block = ptr as *mut Block;
                                 let page_free = page_ref.free;
                                 let page_alloc_count = page_ref.alloc_count;
-                                // SAFETY: `segment` owns `page`; `page_index` is
-                                // that page's index into the `keys` array,
-                                // satisfying `cookie_for`'s contract.
-                                let cookie = (*segment).cookie_for::<P>(page_index);
                                 if page_ref.alloc_count == 0 {
                                     std::process::abort();
                                 }
