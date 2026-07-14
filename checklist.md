@@ -2,22 +2,24 @@
 
 Target version: 0.4.0
 
-Sprint phase: Execution (2026-07-13 WGPU 30 provider contract correction in
-progress alongside the disjoint RITK page-provenance lane).
+Sprint phase: Closure (2026-07-13 WGPU 30 provider contract correction complete;
+the disjoint RITK page-provenance lane remains in progress).
 
 Combined branch gate: workspace clippy is warning-clean; workspace nextest
-passes 288/288; workspace doctests pass (10 passed, one intentionally ignored);
-workspace rustdoc completes warning-clean.
+passes 287/287; workspace doctests pass (10 passed, one intentionally ignored);
+workspace rustdoc completes warning-clean; cargo-semver-checks classifies the
+0.3.0 -> 0.4.0 facade and 0.2.0 -> 0.3.0 backend changes as valid pre-1.0 major
+version increments.
 
 ## In progress — WGPU 30 staging ownership [major]
 
 - [x] Record the WGPU 30 incompatibility and deletion decision in ADR 0003.
-- [ ] Delete the raw-pointer WGPU callback registry, backend, facade exports,
+- [x] Delete the raw-pointer WGPU callback registry, backend, facade exports,
   allocator selectors, and callback-specific tests and documentation.
-- [ ] Pass format, warning-denied workspace Clippy, nextest, doctest, rustdoc,
+- [x] Pass format, warning-denied workspace Clippy, nextest, doctest, rustdoc,
   and semver analysis.
-- [ ] Publish Mnemosyne 0.4.0 and migrate Hephaestus to explicit provider-owned
-  staging buffers.
+- [x] Publish the verified Mnemosyne 0.4.0 provider commit. Hephaestus migration
+  continues under the Atlas WGPU-030 cross-repo item.
 
 ## Rejected — RITK 0.2 page provenance
 

@@ -19,8 +19,7 @@
 //!   [`BackendMemoryStats`] snapshot, and the per-concern unit tests
 //!   for the `record_*` family.
 //! - [`backends`] owns the per-OS / per-platform backend
-//!   implementations (`UnixBackend`, `WindowsBackend`, the CUDA
-//!   variants, and `WgpuStagingBackend`).
+//!   implementations (`UnixBackend`, `WindowsBackend`, and the CUDA variants).
 //!
 //! Public re-exports at the crate root keep the canonical
 //! `mnemosyne_backend::CudaUnifiedBackend`, `MemoryBackendWrapper`,
@@ -38,10 +37,6 @@ pub mod reset;
 pub use backends::DefaultBackend;
 pub use backends::cuda::{
     CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend, is_cuda_available,
-};
-pub use backends::wgpu::{
-    WgpuAllocateCallback, WgpuCallbackRegistrationError, WgpuCallbacks, WgpuDeallocateCallback,
-    WgpuStagingBackend, register_wgpu_callbacks,
 };
 pub use mapping::MemoryBackendWrapper;
 pub use recorders::{BackendMemoryStats, backend_memory_stats};

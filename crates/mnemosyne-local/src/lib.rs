@@ -213,4 +213,3 @@ impl_local_allocator_selector!(mnemosyne_backend::MemoryBackendWrapper);
 impl_local_allocator_selector!(mnemosyne_backend::CudaUnifiedBackend);
 impl_local_allocator_selector!(mnemosyne_backend::CudaDeviceBackend);
 impl_local_allocator_selector!(mnemosyne_backend::CudaHostPinnedBackend);
-impl_local_allocator_selector!(mnemosyne_backend::WgpuStagingBackend);

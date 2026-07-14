@@ -1,14 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-07-13
 
 ### Breaking
 
-- `mnemosyne-backend` 0.2.0 and the `mnemosyne` 0.3.0 facade replace the
-  independently replaceable WGPU callback functions with one immutable static
-  `WgpuCallbacks` pair. Construct the pair once with `WgpuCallbacks::new`, then
-  pass its static reference to `register_wgpu_callbacks`; handle the typed
-  conflict result when another pair already owns the process registry.
+- `mnemosyne-backend` 0.3.0 and the `mnemosyne` 0.4.0 facade remove
+  `WgpuStagingBackend`, `WgpuCallbacks`, callback registration, and their
+  selector implementations. WGPU 30 mapped-write views do not satisfy the
+  generally writable raw-pointer contract required by `MemoryBackend`.
+
+### Migration
+
+- WGPU consumers own buffer creation, mapping, explicit byte-slice transfers,
+  and resource lifetimes in their provider crate. Do not substitute a host
+  allocator or label ordinary host storage as WGPU-pinned memory.
 
 ### Changed
 
@@ -29,11 +34,6 @@
   provenance before reuse, and cross-thread frees no longer create exclusive
   references to owner-managed page metadata. The exact Hermes allocation/free
   regression passes Miri under Stacked Borrows and Tree Borrows.
-- WGPU staging callback registration now publishes one immutable static
-  `WgpuCallbacks` pair through one atomic pointer. The same static pair is
-  idempotent; a competing pair returns `WgpuCallbackRegistrationError` and
-  cannot replace the deallocator for live allocations. The sibling
-  `hephaestus-wgpu` constructor is migrated in the same change set.
 - Latent `nightly_tls` build break: `mnemosyne-prof` imported
   `get_profiler_state` unconditionally although its definition is
   `#[cfg(not(nightly_tls_active))]` — an E0432 whenever the nightly
