@@ -10,6 +10,16 @@ Combined branch gate: workspace clippy is warning-clean; workspace nextest
 passes 288/288; workspace doctests pass (10 passed, one intentionally ignored);
 workspace rustdoc completes warning-clean.
 
+## In progress — RITK 0.2 page provenance
+
+- [x] [patch] Correlate the RITK native crash with its pre-fix Mnemosyne pin.
+- [ ] [patch] Port the Miri-verified page-provenance correction to the 0.2 line.
+- [ ] [patch] Pass focused allocator nextest and warning-denied Clippy.
+- [ ] [patch] Pin RITK to the verified provider revision and pass the exact
+  registration wheel gate without a native crash.
+- [ ] [patch] Synchronize provider and consumer PM artifacts, then publish the
+  verified commits.
+
 ## Verified — Themis provider identity [patch]
 
 - [x] Consolidate arena, heap, and local Themis dependencies into the workspace

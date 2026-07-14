@@ -727,12 +727,17 @@ remainder, each Definition-of-Ready):
 
 ## Open
 
-- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-local`,
+- [patch] status=done owner=codex scope=`crates/mnemosyne-local`,
   allocator regression tests, and PM artifacts; root-cause and eliminate the
   Miri-confirmed alloc/free page-metadata aliasing violation recorded in
   `gap_audit.md`. Acceptance: the Hermes reproducer passes under both Stacked
   Borrows and Tree Borrows, focused Mnemosyne value-semantic tests pass under
   nextest, and the fix introduces no allocator-cycle threshold regression.
+- [patch] status=in-progress owner=codex scope=`D:/atlas/worktrees/mnemosyne-ritk`
+  on branch `codex/mnemosyne-0.2-page-provenance`; port the Miri-verified
+  page-provenance correction onto the exact 0.2 provider line consumed by RITK.
+  Acceptance: focused allocator nextest and Clippy pass, RITK pins the verified
+  revision, and its registration wheel completes without a native crash.
 - [patch] Investigate the remaining `allocator deallocation latency/large_8192` gap to RpMalloc. Current retained comparison is Mnemosyne `40.909 ns` versus RpMalloc `6.871 ns` (`5.95x`); the residual work is in same-owner small-page full/active page-list transition cost and benchmark-row variance, not large/huge unmapping.
 
 ## Next
