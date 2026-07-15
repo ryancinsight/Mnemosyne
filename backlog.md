@@ -115,9 +115,13 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
 
-- [ ] [patch] Replace `mnemosyne-prof`'s global active-sample RMW and pointer
-  modulo sharding only after Criterion profiles show the occupancy-mask and
-  mixed-hash designs reduce contention without regressing allocator latency.
+- [patch] status=in-progress owner=codex scope=`mnemosyne-prof` Criterion
+  benchmark evidence and PM artifacts on `codex/mnemosyne-prof-contention-profile`;
+  profile the global active-sample RMW and pointer-modulo sharding before any
+  mutation. Acceptance: record current median/interval evidence, identify the
+  measured binding mechanism or state that the profile is insufficient, and
+  leave the occupancy-mask/mixed-hash implementation decision open until a
+  matched A/B exists.
 - [ ] [arch] Split the 870-line profiler sampler by capture, slot lifecycle,
   and aggregation concern, and consolidate duplicated backend type lists at
   their deepest owning module without changing the hot-path representation.
