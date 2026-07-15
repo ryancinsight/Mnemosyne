@@ -788,7 +788,7 @@ remainder, each Definition-of-Ready):
 
 ## Open
 
-- [patch] status=todo owner=unassigned scope=`crates/mnemosyne-arena/src/segment/pool/{tagged_stack,cache_aligned}.rs` and allocator benchmarks; measure the per-stack lifetime-lock contention introduced by PR #9 against the pre-lock parent under matched Criterion workloads. Acceptance: capture median and confidence interval for segment-cache eviction and threaded/cross-thread rows, then either retain the lock with evidence or implement a correctness-preserving upstream optimization with value-semantic and concurrency gates.
+- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-arena/src/segment/pool/{tagged_stack,cache_aligned}.rs`, allocator benchmarks, and contention PM entries; last-update=2026-07-15. Measure the per-stack lifetime-lock contention introduced by PR #9 against the pre-lock parent under matched Criterion workloads. Acceptance: capture median and confidence interval for segment-cache eviction and threaded/cross-thread rows, then either retain the lock with evidence or implement a correctness-preserving upstream optimization with value-semantic and concurrency gates.
 
 - [patch] status=done owner=codex scope=`crates/mnemosyne-local`,
   allocator regression tests, and PM artifacts; root-cause and eliminate the
