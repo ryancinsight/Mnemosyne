@@ -115,7 +115,7 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
 
-- [ ] [patch] Profile `mnemosyne-prof`'s global active-sample RMW and
+- [ ] [patch] status=in-progress owner=codex scope=`crates/mnemosyne-benchmarks/benches/allocator/{profiler,mod}.rs`, `allocator_bench.rs`, and profiler PM entries; last-update=2026-07-15. Profile `mnemosyne-prof`'s global active-sample RMW and
   pointer-modulo sharding before any mutation. Current evidence: the real
   single-thread leak-detector row is 1.0797 us median [1.0731, 1.0877] us;
   Windows flamegraph capture is blocked by the administrator-only profiler
