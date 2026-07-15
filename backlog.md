@@ -788,7 +788,17 @@ remainder, each Definition-of-Ready):
 
 ## Open
 
-- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-benchmarks/benches/segment_lock.rs`, `crates/mnemosyne-benchmarks/Cargo.toml`, and contention PM entries; last-update=2026-07-15. Isolate `CacheAlignedSegmentLock` uncontended and contended cost using the canonical source implementation and a persistent bounded worker harness. Acceptance: compare the same lock-only rows at the merged and pre-lock provider states, then either retain the existing spin/yield policy or implement a measured upstream adjustment with value-semantic concurrency gates.
+- [x] [patch] status=done owner=codex scope=`crates/mnemosyne-benchmarks/benches/segment_lock.rs`, `crates/mnemosyne-benchmarks/Cargo.toml`, and contention PM entries; last-update=2026-07-15. Isolate `CacheAlignedSegmentLock` uncontended and contended cost using the canonical source implementation and a persistent bounded worker harness. Acceptance: compare the same lock-only rows at the merged and pre-lock provider states, then either retain the existing spin/yield policy or implement a measured upstream adjustment with value-semantic concurrency gates.
+
+  The source-included lock-only Criterion A/B uses a zero-sized unlocked
+  reference control and the same persistent four-worker harness. The reference
+  rows are `27.859 ps` `[27.669, 28.102] ps` uncontended and `1.5305 us`
+  `[1.4876, 1.5834] us` through the worker harness. The lifetime-lock rows are
+  `4.5471 ns` `[4.5396, 4.5583] ns` and `201.73 us`
+  `[184.35, 222.88] us`. The derived deltas are approximately `4.52 ns` per
+  uncontended acquisition and `50.0 ns` per contended acquisition after
+  subtracting the shared worker baseline. The existing 64-spin/yield policy is
+  retained; no production synchronization mutation is justified.
 
 - [x] [patch] status=done owner=codex scope=`crates/mnemosyne-arena/src/segment/pool/{tagged_stack,cache_aligned}.rs`, allocator benchmarks, and contention PM entries; last-update=2026-07-15. Measure the per-stack lifetime-lock contention introduced by PR #9 against the pre-lock parent under matched Criterion workloads. Acceptance: capture median and confidence interval for segment-cache eviction and threaded/cross-thread rows, then either retain the lock with evidence or implement a correctness-preserving upstream optimization with value-semantic and concurrency gates.
 
