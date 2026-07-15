@@ -9,10 +9,10 @@ Target version: 0.4.0
 - [x] Serialize head observation through link access/detach with RAII release.
 - [x] Add deterministic detach/observer exclusion and contention conservation
   regressions.
-- [ ] Verify the unchanged RITK Python wheel suite against this provider pin.
+- [x] Verify the unchanged RITK Python wheel suite against this provider pin.
 
-Sprint phase: Closure (2026-07-13 WGPU 30 provider contract correction complete;
-RITK crash correction in progress on the 0.2 provider line).
+Sprint phase: Closure (2026-07-15 provider audit; segment reclamation correction
+merged in PR #9; lock-contention measurement remains open).
 
 Combined branch gate: workspace clippy is warning-clean; workspace nextest
 passes 287/287; workspace doctests pass (10 passed, one intentionally ignored);
@@ -20,16 +20,18 @@ workspace rustdoc completes warning-clean; cargo-semver-checks classifies the
 0.3.0 -> 0.4.0 facade and 0.2.0 -> 0.3.0 backend changes as valid pre-1.0 major
 version increments.
 
-## In progress — concurrent huge-pool reclamation [patch]
+## Verified — concurrent huge-pool reclamation [patch]
 
 - [x] Capture a symbolized production crash at `TaggedSegmentStack::pop` while
   the decay engine can concurrently detach and release the same stack.
-- [ ] Serialize head-pointer observation through detach so no thread can retain
-  a dereferenceable pointer after reclamation begins.
-- [ ] Add an adversarial concurrent pop/detach regression and pass focused
-  nextest plus warning-denied Clippy on the exact RITK provider line.
-- [ ] Pin RITK to the verified provider revision and pass the unchanged Python
-  wheel suite under its committed nextest-equivalent CI timeout policy.
+- [x] Serialize head-pointer observation through detach so no thread can retain
+  a dereferenceable pointer after reclamation begins. Merged as PR #9
+  (`01e7de7`), implementation commit `09b2ef8`.
+- [x] Add adversarial concurrent pop/detach and pool-conservation regressions;
+  current `mnemosyne-arena` nextest passes 43/43 and focused Clippy is
+  warning-clean.
+- [x] Pin RITK to the verified provider revision; merged RITK PR #33 has green
+  Rust, wheel-smoke, Python 3.9–3.13, audit, and CodeRabbit checks.
 
 ## In progress — WGPU 30 staging ownership [major]
 
