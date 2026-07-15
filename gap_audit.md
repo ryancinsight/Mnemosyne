@@ -56,7 +56,8 @@
   removes two responsibility overlaps from the manifest without adding a
   wrapper, clone, or alternate implementation. Evidence tier: source topology,
   warning-denied Clippy, and 15/15 focused nextest. Capture, store, sampling,
-  and report ownership remain open under ADR 0004.
+  and report ownership were then completed in the subsequent ADR 0004
+  increments.
 
 - [arch/closed-increment] Bounded frame capture and sampling-interval generation
   were mixed into the sampler manifest. Moved both to
@@ -84,6 +85,17 @@
   warning-denied Clippy, format verification, 15/15 focused nextest, doctests,
   and rustdoc. Report aggregation and output remain open under ADR 0004; no
   performance or contention improvement is claimed.
+
+- [arch/closed] Report aggregation, symbol resolution, leak-report formatting,
+  and file output were mixed into the sampler manifest. Moved them to
+  `mnemosyne-prof/src/sampler/report.rs`, re-exported the unchanged public
+  `dump_profile`/`dump_leaks` contracts, and colocated the detached snapshot
+  regression with `store.rs`. Evidence tier: source topology,
+  warning-denied Clippy, format verification, 15/15 focused nextest, doctests,
+  rustdoc, and Criterion. The final focused Criterion row is
+  `[1.0638, 1.0669, 1.0723] us` with a `-1.0618%` point change within the noise
+  threshold; no performance gain is claimed. ADR 0004's sampler topology
+  extraction is complete. The separate profiler contention A/B remains open.
 
 ## Residual risk / open findings
 

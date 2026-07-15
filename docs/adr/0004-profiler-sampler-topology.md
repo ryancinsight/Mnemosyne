@@ -28,6 +28,13 @@ existing generic-free hot path, lock ownership, allocation behavior, and
 `StackId` representation unchanged. No compatibility module or forwarding
 wrapper is retained after each leaf moves.
 
+The final tree now contains all six canonical leaves: `hasher`,
+`stack_interner`, `capture`, `store`, `sampling`, and `report`. Final evidence is
+the warning-denied package gates, 15/15 focused nextest, doctests, rustdoc, and
+the focused Criterion row `[1.0638, 1.0669, 1.0723] us`; Criterion reports a
+`-1.0618%` point change within the noise threshold against the stored baseline.
+This is no-regression evidence, not a performance-gain claim.
+
 ## Rejected alternative
 
 Leaving the sampler as one file preserves short-term call-site stability but

@@ -40,9 +40,9 @@ contention attribution remains unverified.
   focused `mnemosyne-prof` nextest suite (15/15).
 
 Evidence tier: module-topology/type-level ownership plus value-semantic nextest
-and warning-denied compiler diagnostics. The remaining capture, store, sampling,
-and report extraction is tracked as the next architectural increment; no
-performance improvement is claimed by this structural change.
+and warning-denied compiler diagnostics. Capture, store, sampling, and report
+leaves are verified in the subsequent ADR 0004 increments; no performance
+improvement is claimed by this structural change.
 
 ## Verified — profiler sampler capture leaf [arch]
 
@@ -74,6 +74,22 @@ and warning-denied compiler diagnostics. Doctest and rustdoc verification are
 run for the commit; no contention or throughput improvement is claimed by this
 structural change.
 
+## Verified — profiler sampler report leaf [arch]
+
+- [x] Move folded-profile aggregation, symbol resolution, leak-report
+  formatting, and report-file output into `sampler/report.rs`.
+- [x] Preserve the public `dump_profile`/`dump_leaks` contracts and move the
+  detached snapshot regression beside the store that owns its state.
+- [x] Verify format, warning-denied Clippy, focused `mnemosyne-prof` nextest
+  (15/15), doctests, and rustdoc.
+- [x] Re-run the focused Criterion row. The final result is
+  `[1.0638, 1.0669, 1.0723] us`; Criterion reports a `-1.0618%` point change
+  within its noise threshold against the stored baseline.
+
+Evidence tier: module-topology/type-level ownership, compiler diagnostics,
+value-semantic nextest, documentation gates, and empirical Criterion
+no-regression evidence. This extraction does not claim a performance gain.
+
 ## Verified — profiler sampler sampling leaf [arch]
 
 - [x] Move profiler reset, allocation/free sampling, sampling-budget updates,
@@ -84,8 +100,8 @@ structural change.
   (15/15), doctests, and rustdoc.
 
 Evidence tier: module-topology/type-level ownership, compiler diagnostics, and
-value-semantic nextest. Report aggregation/output remains the final ADR 0004
-increment; no performance or contention improvement is claimed by this
+value-semantic nextest. Report aggregation/output is verified in the final ADR
+0004 increment; no performance or contention improvement is claimed by this
 structural change.
 
 ## Verified — concurrent pool reclamation [patch]

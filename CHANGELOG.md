@@ -9,7 +9,7 @@
   720,896-byte cache table; explicit cache use allocates it on first access.
 - `mnemosyne-prof` now owns deterministic hashing and stack interning in
   dedicated sampler leaves. The public `StackId` and `Sample` contracts remain
-  unchanged; remaining sampler responsibility extraction is tracked separately.
+  unchanged; all sampler responsibilities now have dedicated canonical leaves.
 - `mnemosyne-prof` now owns bounded frame capture and sampling-interval
   generation in a dedicated capture leaf. Sampling semantics and public
   contracts remain unchanged.
@@ -19,6 +19,9 @@
 - `mnemosyne-prof` now owns profiler reset and allocation/free sampling
   orchestration in a dedicated sampling leaf. Crate-visible hook contracts and
   thread-local safety boundaries remain unchanged.
+- `mnemosyne-prof` now owns report aggregation, symbol resolution, and leak
+  report output in a dedicated report leaf. `dump_profile` and `dump_leaks`
+  remain unchanged at the public boundary.
 
 ## 0.4.0 - 2026-07-13
 

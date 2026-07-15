@@ -134,19 +134,18 @@ audit, in priority order:
   and `sampler/mod.rs`; store increment merged in PR #19 at `a281082`.
   Active-sample storage, accounting, lifecycle, and detached snapshots now have
   one canonical leaf with public contracts unchanged.
-- [arch] status=in-progress owner=codex scope=`crates/mnemosyne-prof/src/sampler/sampling.rs`
-  and `sampler/mod.rs`, ADR 0004, and PM artifacts on
-  `codex/mnemosyne-split-sampler-sampling`; move profiler reset, allocation/free
-  sampling, and thread-local sampling-budget orchestration into one canonical
-  leaf without changing hot-path semantics. Acceptance: focused tests,
-  warning-denied Clippy, format, doctest, and rustdoc gates are green.
-- [ ] [arch] status=todo owner=unassigned scope=`crates/mnemosyne-prof/src/sampler/`
-  report aggregation and output; complete ADR 0004's remaining sampler
-  extraction without changing public contracts or hot-path representations.
-  Acceptance: the report leaf owns symbol resolution and file output, no
-  forwarding wrappers or duplicate implementations remain, the focused nextest
-  and warning-denied Clippy gates are green, and the sampler Criterion baseline
-  has no measured regression.
+- [x] [arch] status=done owner=codex scope=`crates/mnemosyne-prof/src/sampler/sampling.rs`
+  and `sampler/mod.rs`; sampling increment merged in PR #20 at `7046976`.
+  Profiler reset and allocation/free sampling orchestration now have one
+  canonical leaf with crate-visible hook contracts unchanged.
+- [x] [arch] status=done owner=codex scope=`crates/mnemosyne-prof/src/sampler/report.rs`
+  and `sampler/mod.rs`; final ADR 0004 sampler extraction is complete on
+  `codex/mnemosyne-split-sampler-report`. Symbol resolution, folded-profile
+  aggregation, leak-report formatting, and file output now have one canonical
+  leaf. Acceptance evidence: warning-denied Clippy, focused nextest 15/15,
+  doctests, rustdoc, and final Criterion row `[1.0638, 1.0669, 1.0723] us`
+  with a `-1.0618%` point change reported within the noise threshold. No
+  performance improvement is claimed.
 
 Filed from the 2026-06-27 deep contention/memory audit (read-only fan-out over
 arena/local/core/heap/backend). Ranked by value; each carries a testable
