@@ -9,6 +9,8 @@ build = "build.rs"
 [features]
 default = ["mnemosyne-memory"]
 mnemosyne-memory = ["mnemosyne/branded"]
+# Enables the hosted yield branch in the source-included arena lock benchmark.
+std = []
 # Opt-in jemalloc comparator on Windows by linking a system-installed
 # `libjemalloc_s.a` (e.g. MSYS2 `mingw-w64-*-jemalloc`). `tikv-jemallocator`
 # builds jemalloc from source, which does not link on windows-gnu, so the
@@ -43,6 +45,10 @@ mnemosyne-build-util = { path = "../mnemosyne-build-util" }
 
 [[bench]]
 name = "allocator_bench"
+harness = false
+
+[[bench]]
+name = "segment_lock"
 harness = false
 
 [[bench]]

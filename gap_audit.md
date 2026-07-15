@@ -113,10 +113,14 @@
 
 ## Residual risk / open findings
 
-- [audit/open] Segment-cache lock attribution remains unverified in isolation.
-  The next evidence increment requires a lock-only or otherwise source-matched
-  harness on a quiescent host; the current provider-parent comparison is
-  sufficient to retain the safety lock but not to tune its spin/yield policy.
+- [closed] Segment-cache lock attribution now has a source-matched lock-only
+  harness. A zero-sized unlocked control measured `27.859 ps` uncontended and
+  `1.5305 us` through the same bounded worker harness; the actual lifetime lock
+  measured `4.5471 ns` and `201.73 us`. The derived deltas are approximately
+  `4.52 ns` and `50.0 ns` per acquisition, respectively, after subtracting the
+  shared worker baseline. The 64-spin/yield policy remains unchanged because
+  this measurement does not establish a safe alternative; the lock continues
+  to protect the observed head mapping through successor access and detach.
 
 - WGPU raw-pointer staging has no Mnemosyne residual: the backend, callback
   registry, allocator selectors, pools, and facade exports are deleted. Full

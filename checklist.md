@@ -33,7 +33,25 @@ production backends still compile `ENABLE_CPU_CACHE = false`.
 
 Evidence tier: source-level reclamation/lifetime audit plus empirical matched
 Criterion rows. No production mutation was made; the safety lock remains the
-single ownership seam until a lock-isolated harness provides stronger evidence.
+single ownership seam, with the isolated lock harness providing the stronger
+cost baseline recorded below.
+
+## Verified — isolated segment-lock baseline [patch]
+
+- [x] Add a canonical source-included Criterion leaf with a persistent bounded
+  worker harness and a zero-sized unlocked control strategy.
+- [x] Measure the actual lifetime lock at `4.5471 ns`
+  `[4.5396, 4.5583] ns` uncontended and `201.73 us`
+  `[184.35, 222.88] us` across the four-worker row. The identical unlocked
+  control measured `27.859 ps` `[27.669, 28.102] ps` and `1.5305 us`
+  `[1.4876, 1.5834] us`.
+- [x] Retain the 64-spin/yield policy. The comparison supplies a source-matched
+  cost baseline but no evidence that changing allocator synchronization would
+  preserve reclamation safety or improve the measured workload.
+
+Evidence tier: canonical source inclusion, zero-sized reference strategy,
+bounded persistent workers, warning-denied Clippy, and Criterion empirical
+measurement. No production allocator code changed.
 
 ## Verified — profiler active-sample occupancy [patch]
 

@@ -29,6 +29,9 @@
 - Completed the PR #9 segment lifetime-lock audit against its pre-lock parent.
   The lock remains the reclamation ownership seam; the noisy provider-state
   benchmark comparison did not justify a synchronization mutation.
+- Added a source-matched `mnemosyne-benchmarks` segment-lock Criterion leaf with
+  a zero-sized unlocked control and bounded persistent workers. The measured
+  lock baseline is recorded without changing allocator synchronization policy.
 
 ## 0.4.0 - 2026-07-13
 
