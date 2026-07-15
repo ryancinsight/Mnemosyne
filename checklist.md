@@ -74,6 +74,20 @@ and warning-denied compiler diagnostics. Doctest and rustdoc verification are
 run for the commit; no contention or throughput improvement is claimed by this
 structural change.
 
+## Verified — profiler sampler sampling leaf [arch]
+
+- [x] Move profiler reset, allocation/free sampling, sampling-budget updates,
+  and provider-hook re-exports into `sampler/sampling.rs`.
+- [x] Preserve the existing crate-visible hook contracts and the
+  thread-local ownership/safety boundary for `ThreadState`.
+- [x] Verify format, warning-denied Clippy, focused `mnemosyne-prof` nextest
+  (15/15), doctests, and rustdoc.
+
+Evidence tier: module-topology/type-level ownership, compiler diagnostics, and
+value-semantic nextest. Report aggregation/output remains the final ADR 0004
+increment; no performance or contention improvement is claimed by this
+structural change.
+
 ## Verified — concurrent pool reclamation [patch]
 
 - [x] Localize the native crash to a stale huge-pool head dereference during a

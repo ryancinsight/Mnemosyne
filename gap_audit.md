@@ -76,6 +76,15 @@
   report output remain open under ADR 0004; no contention or throughput
   improvement is claimed.
 
+- [arch/closed-increment] Profiler reset, allocation/free sampling, and
+  thread-local sampling-budget orchestration were mixed into the sampler
+  manifest. Moved these responsibilities to
+  `mnemosyne-prof/src/sampler/sampling.rs`; the crate-visible hook contracts and
+  `ThreadState` safety boundary are unchanged. Evidence tier: source topology,
+  warning-denied Clippy, format verification, 15/15 focused nextest, doctests,
+  and rustdoc. Report aggregation and output remain open under ADR 0004; no
+  performance or contention improvement is claimed.
+
 ## Residual risk / open findings
 
 - WGPU raw-pointer staging has no Mnemosyne residual: the backend, callback
