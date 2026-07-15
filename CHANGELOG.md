@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `mnemosyne-local` now stores `PER_CPU_CACHE` behind a
+  `OnceLock<Box<PerCpuCache>>` handle. Production backends do not reserve the
+  720,896-byte cache table; explicit cache use allocates it on first access.
+
 ## 0.4.0 - 2026-07-13
 
 ### Breaking

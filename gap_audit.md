@@ -24,6 +24,18 @@
   current-provider `cargo nextest` 43/43, focused warning-denied Clippy, and
   consumer CI.
 
+- [closed] `mnemosyne-local` reserved the complete 720,896-byte
+  `PER_CPU_CACHE` table even though every production `MemoryBackend` keeps
+  `ENABLE_CPU_CACHE = false`. Replaced the inline static with a
+  `OnceLock<Box<PerCpuCache>>` handle: the static carries only initialization
+  state and the table is allocated on first explicit cache access. The
+  `PerCpuCacheHandle` layout is compile-time checked to remain smaller than
+  `PerCpuCache`, and a value-semantic unit test verifies the before/after
+  initialization states. Evidence tier: type-level layout enforcement,
+  release compilation, 62/62 local allocator nextest cases, and warning-denied
+  Clippy. No throughput improvement is claimed because production backends do
+  not enter the cache branch.
+
 ## Residual risk / open findings
 
 - WGPU raw-pointer staging has no Mnemosyne residual: the backend, callback
@@ -787,8 +799,7 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
   reads in `free.rs`/`local_alloc.rs`, the masked-segment derefs, and the
   `NonNull::new_unchecked(block)` double-free guards) and in `mnemosyne-core`;
   deferred as a separate [patch] to keep this change atomic and off the hot
-  local files. The `per_cpu.rs` always-resident `PER_CPU_CACHE` static
-  (`MAX_CPUS = 256` × `NUM_SIZE_CLASSES` × 8 `AtomicUsize`, BSS/zero-page
-  backed) is a deliberate memory-safe design tradeoff, not a defect — left
-  unchanged because resizing it trades address-space for added fast-path
-  bounds/branch logic with no measured win.
+  local files. The former always-resident `per_cpu.rs` table is superseded by
+  the lazy `OnceLock<Box<PerCpuCache>>` handle recorded above; no static table
+  reservation remains in the production cache symbol. The separate profiler
+  contention findings remain measurement-gated.

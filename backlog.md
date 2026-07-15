@@ -102,6 +102,14 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
   `docs/adr/0002-immutable-wgpu-callback-pair.md`. ADR 0003 subsequently
   removes this backend because WGPU 30 invalidates its pointer contract.
 
+- [x] [minor] Replace the always-resident 720,896-byte per-CPU cache table with
+  a `OnceLock<Box<PerCpuCache>>` handle. The production static now stores only
+  the initialization cell; the table is allocated on first explicit cache use.
+  `PER_CPU_CACHE` field access remains available through `Deref`. Evidence:
+  compile-time handle-versus-table layout assertion, lazy-initialization value
+  test, release build, 62 local allocator nextest cases, and warning-denied
+  Clippy.
+
 ## Open
 
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
@@ -110,7 +118,6 @@ audit, in priority order:
 - [ ] [patch] Replace `mnemosyne-prof`'s global active-sample RMW and pointer
   modulo sharding only after Criterion profiles show the occupancy-mask and
   mixed-hash designs reduce contention without regressing allocator latency.
-- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-local/src/per_cpu.rs`, topology tests, and PM artifacts on `codex/mnemosyne-remove-dormant-cache`; replace the always-resident per-CPU cache table with lazy storage while every production backend has `ENABLE_CPU_CACHE = false`. Acceptance: the production static no longer reserves the 720,896-byte table, direct cache behavior remains value-semantic, and allocator nextest/Clippy gates stay green.
 - [ ] [arch] Split the 870-line profiler sampler by capture, slot lifecycle,
   and aggregation concern, and consolidate duplicated backend type lists at
   their deepest owning module without changing the hot-path representation.
