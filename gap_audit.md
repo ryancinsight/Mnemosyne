@@ -58,6 +58,15 @@
   warning-denied Clippy, and 15/15 focused nextest. Capture, store, sampling,
   and report ownership remain open under ADR 0004.
 
+- [arch/closed-increment] Bounded frame capture and sampling-interval generation
+  were mixed into the sampler manifest. Moved both to
+  `mnemosyne-prof/src/sampler/capture.rs` and retained the manifest's active
+  sample lifecycle boundary. The 32-frame cap, per-thread random state, and
+  exponential interval calculation are unchanged. Evidence tier: source
+  extraction, warning-denied Clippy, format verification, and 15/15 focused
+  nextest. Store, sampling orchestration, and report ownership remain open under
+  ADR 0004; no performance improvement is claimed.
+
 ## Residual risk / open findings
 
 - WGPU raw-pointer staging has no Mnemosyne residual: the backend, callback

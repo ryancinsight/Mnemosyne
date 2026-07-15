@@ -10,6 +10,9 @@
 - `mnemosyne-prof` now owns deterministic hashing and stack interning in
   dedicated sampler leaves. The public `StackId` and `Sample` contracts remain
   unchanged; remaining sampler responsibility extraction is tracked separately.
+- `mnemosyne-prof` now owns bounded frame capture and sampling-interval
+  generation in a dedicated capture leaf. Sampling semantics and public
+  contracts remain unchanged.
 
 ## 0.4.0 - 2026-07-13
 

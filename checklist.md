@@ -44,6 +44,20 @@ and warning-denied compiler diagnostics. The remaining capture, store, sampling,
 and report extraction is tracked as the next architectural increment; no
 performance improvement is claimed by this structural change.
 
+## Verified — profiler sampler capture leaf [arch]
+
+- [x] Move bounded frame capture and sampling-interval generation into
+  `sampler/capture.rs`; retain the sampler manifest as the boundary for active
+  sample lifecycle calls.
+- [x] Keep the existing capture bound, per-thread random state, and exponential
+  interval calculation unchanged.
+- [x] Verify format, warning-denied Clippy, and the focused
+  `mnemosyne-prof` nextest suite (15/15).
+
+Evidence tier: behavior-preserving source extraction plus compiler diagnostics
+and value-semantic nextest. Doctest and rustdoc verification are run for the
+commit; no performance improvement is claimed by this structural change.
+
 ## Verified — concurrent pool reclamation [patch]
 
 - [x] Localize the native crash to a stale huge-pool head dereference during a
