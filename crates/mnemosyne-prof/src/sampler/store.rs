@@ -109,3 +109,37 @@ pub(super) fn active_sample_snapshot() -> Vec<ActiveSample> {
 fn sample_shard(ptr: usize) -> usize {
     (ptr >> 6) % SHARDS
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_sample_snapshot_is_detached_from_live_shards() {
+        crate::reset_profiler_for_testing();
+
+        let ptr = 0x1000usize as *mut u8;
+        crate::sampler::sample_alloc_inner(ptr, 64, true);
+
+        let snapshot = active_sample_snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].ptr, ptr as usize);
+        assert_eq!(snapshot[0].size, 64);
+        assert!(
+            !snapshot[0].stack.is_empty(),
+            "snapshot must retain resolved stack frames"
+        );
+
+        crate::sampler::sample_free_inner(ptr);
+        assert!(
+            active_sample_snapshot().is_empty(),
+            "live shard map must be empty after freeing the sampled pointer"
+        );
+        assert_eq!(
+            snapshot[0].size, 64,
+            "snapshot must retain a value copy after the live sample is removed"
+        );
+
+        crate::reset_profiler_for_testing();
+    }
+}
