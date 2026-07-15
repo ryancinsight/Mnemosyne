@@ -4,7 +4,7 @@ Status: accepted
 
 ## Context
 
-`mnemosyne-prof/src/sampler.rs` contains stack hashing, stack interning,
+Before this extraction, `mnemosyne-prof/src/sampler.rs` contained stack hashing, stack interning,
 active-sample storage, sampling cadence, stack capture, and report rendering.
 The mixed ownership makes the sampler's lock, allocation, and output concerns
 hard to audit independently and places the file above the repository's deep

@@ -47,6 +47,17 @@
   mixed-hash, or count-sharding mutation is justified until a matched
   multi-thread A/B is available.
 
+- [arch/closed-increment] The profiler sampler's deterministic hasher and stack
+  interner were mixed into the sampler manifest with active-sample storage,
+  capture, and report output. Moved hashing to
+  `mnemosyne-prof/src/sampler/hasher.rs` and stack identity/lifecycle to
+  `mnemosyne-prof/src/sampler/stack_interner.rs`; colocated their value-semantic
+  tests and kept `StackId`, `Sample`, and report entry points unchanged. This
+  removes two responsibility overlaps from the manifest without adding a
+  wrapper, clone, or alternate implementation. Evidence tier: source topology,
+  warning-denied Clippy, and 15/15 focused nextest. Capture, store, sampling,
+  and report ownership remain open under ADR 0004.
+
 ## Residual risk / open findings
 
 - WGPU raw-pointer staging has no Mnemosyne residual: the backend, callback
