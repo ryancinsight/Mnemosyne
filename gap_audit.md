@@ -36,6 +36,17 @@
   Clippy. No throughput improvement is claimed because production backends do
   not enter the cache branch.
 
+- [audit/open] `mnemosyne-prof` still performs a global
+  `ACTIVE_SAMPLES_COUNT.fetch_add/sub` for every inserted/removed sample and
+  routes active samples with `(ptr >> 6) % SHARDS`. These are measured
+  contention candidates, not defects by source inspection alone. The real
+  leak-detector small-cycle Criterion row measured 1.0797 us median with a
+  1.0731–1.0877 us interval on this Windows host, but the run is single-thread
+  and cannot attribute cross-thread cost. A `cargo flamegraph` attempt failed
+  with the Windows profiler backend's `NotAnAdmin` error. No occupancy-mask,
+  mixed-hash, or count-sharding mutation is justified until a matched
+  multi-thread A/B is available.
+
 ## Residual risk / open findings
 
 - WGPU raw-pointer staging has no Mnemosyne residual: the backend, callback

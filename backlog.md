@@ -115,9 +115,13 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
 
-- [ ] [patch] Replace `mnemosyne-prof`'s global active-sample RMW and pointer
-  modulo sharding only after Criterion profiles show the occupancy-mask and
-  mixed-hash designs reduce contention without regressing allocator latency.
+- [ ] [patch] Profile `mnemosyne-prof`'s global active-sample RMW and
+  pointer-modulo sharding before any mutation. Current evidence: the real
+  single-thread leak-detector row is 1.0797 us median [1.0731, 1.0877] us;
+  Windows flamegraph capture is blocked by the administrator-only profiler
+  backend (`NotAnAdmin`). Acceptance remains a matched multi-thread A/B showing
+  occupancy-mask or mixed-hash contention reduction without allocator latency
+  regression.
 - [ ] [arch] Split the 870-line profiler sampler by capture, slot lifecycle,
   and aggregation concern, and consolidate duplicated backend type lists at
   their deepest owning module without changing the hot-path representation.
@@ -182,6 +186,14 @@ remainder, each Definition-of-Ready):
   for exploratory rows. Blocker: quiet machine for re-baselining. Acceptance:
   gated-row CI half-width < the 5% threshold on the recorded baseline.
 ## Completed
+
+- 2026-07-15 [patch] Profiler contention audit: code review identified the
+  global `ACTIVE_SAMPLES_COUNT.fetch_add/sub` and pointer-modulo shard routing
+  as the candidate shared lines, while the current Criterion measurement is
+  single-thread only. Recorded the leak-detector small-cycle median and
+  confidence interval above; the Windows flamegraph attempt returned
+  `NotAnAdmin`. No hot-path mutation is accepted until a multi-thread A/B is
+  available.
 
 - 2026-07-06 AR-8 [minor]: `mnemosyne-prof` stack interning now routes
   captured stacks across 64 cache-line-aligned shards by stack hash, encodes
