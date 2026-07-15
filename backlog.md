@@ -829,9 +829,23 @@ remainder, each Definition-of-Ready):
   revision, and its registration wheel completes without a native crash.
   Rejected after audit: RITK already pins `477f957`, whose parent is the exact
   Miri-verified correction `5a9f49f`; no consumer pin change is required.
-- [patch] Investigate the remaining `allocator deallocation latency/large_8192` gap to RpMalloc. Current retained comparison is Mnemosyne `40.909 ns` versus RpMalloc `6.871 ns` (`5.95x`); the residual work is in same-owner small-page full/active page-list transition cost and benchmark-row variance, not large/huge unmapping.
+- [x] [patch] status=done owner=codex scope=`crates/mnemosyne-local`,
+  `crates/mnemosyne-benchmarks`, and performance PM artifacts;
+  last-update=2026-07-15. Investigate the remaining
+  `allocator deallocation latency/large_8192` gap to RpMalloc. The matched
+  default-feature Criterion row measures Mnemosyne `36.960 ns`
+  `[33.540, 38.661] ns` versus RpMalloc `6.1139 ns`
+  `[5.8441, 6.5791] ns` (`6.05x`). `8192` is the maximum small class, and
+  the opt-in branch probe plus value-semantic regression establish that the
+  same-owner single-block case commits through `InPlaceSmall`, with no large/
+  huge classifier or full-page relink. No production mutation is justified:
+  the measured row does not enter the page-list transition candidates, and
+  the remaining gap is comparator implementation difference rather than an
+  identified Mnemosyne correctness or contention defect.
 
 ## Next
 
-- [patch] Complete the Miri page-metadata provenance fix before resuming the
-  RpMalloc deallocation-gap investigation.
+- [x] [patch] Complete the Miri page-metadata provenance fix before resuming the
+  RpMalloc deallocation-gap investigation. The merged provider head already
+  contains `5a9f49f`; the exact Hermes regression passes under both Miri
+  aliasing models and the RITK 0.2 pin was verified against that correction.

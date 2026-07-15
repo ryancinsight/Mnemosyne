@@ -23,7 +23,7 @@
 #![cfg(feature = "dealloc-probe")]
 
 use mnemosyne_backend::MemoryBackendWrapper as Backend;
-use mnemosyne_core::StandardPolicy as Policy;
+use mnemosyne_core::{StandardPolicy as Policy, constants::MAX_SMALL_ALLOC_SIZE};
 use mnemosyne_local::dealloc_counters::{DeallocPath, reset, snapshot, total};
 use mnemosyne_local::{thread_alloc, thread_free_layout};
 
@@ -104,6 +104,51 @@ fn dealloc_probe_records_layout_small_frees_as_in_place() {
         0,
         "same-thread non-reentrant frees must not fall back to the cold path"
     );
+}
+
+/// The maximum small class must use the same-owner in-place commit arm when
+/// one block is allocated and released from the current segment. This pins the
+/// branch classification used by the `allocator deallocation latency/large_8192`
+/// comparator row without adding probe overhead to the production build.
+#[test]
+fn dealloc_probe_records_maximum_small_free_as_in_place() {
+    reset();
+
+    // Safety: `MAX_SMALL_ALLOC_SIZE` is the validated upper bound of the
+    // small-allocation path and `ALIGN` is a power-of-two alignment accepted by
+    // the allocator.
+    let ptr = unsafe { thread_alloc::<Policy, Backend>(MAX_SMALL_ALLOC_SIZE, ALIGN) };
+    assert!(
+        !ptr.is_null(),
+        "maximum small allocation returned a null pointer"
+    );
+
+    // Safety: `ptr` was returned by the matching allocator and is released
+    // exactly once with the original size and alignment.
+    unsafe {
+        thread_free_layout::<Policy, Backend>(ptr, MAX_SMALL_ALLOC_SIZE, ALIGN);
+    }
+
+    let mut counts = [0_u64; DeallocPath::COUNT];
+    for (path, _, count) in snapshot() {
+        counts[path.index()] = count;
+    }
+    assert_eq!(
+        counts[DeallocPath::InPlaceSmall.index()],
+        1,
+        "maximum small free must commit through the in-place path"
+    );
+    assert_eq!(
+        counts[DeallocPath::HugeClassifier.index()],
+        0,
+        "maximum small free must not enter the large/huge classifier"
+    );
+    assert_eq!(
+        counts[DeallocPath::FullToActive.index()],
+        0,
+        "single current-segment free must not relink a full page"
+    );
+    assert_eq!(total(), 1, "one allocation/free pair must commit one path");
 }
 
 /// After a `reset()` the snapshot reports zero on every arm. This
