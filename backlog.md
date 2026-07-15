@@ -130,16 +130,20 @@ audit, in priority order:
   and `sampler/mod.rs`; capture increment merged in PR #18 at `3a6b643`.
   Bounded frame capture and sampling-interval generation now have one canonical
   leaf, with sampling semantics and public contracts unchanged.
-- [arch] status=in-progress owner=codex scope=`crates/mnemosyne-prof/src/sampler/store.rs`
+- [x] [arch] status=done owner=codex scope=`crates/mnemosyne-prof/src/sampler/store.rs`
+  and `sampler/mod.rs`; store increment merged in PR #19 at `a281082`.
+  Active-sample storage, accounting, lifecycle, and detached snapshots now have
+  one canonical leaf with public contracts unchanged.
+- [arch] status=in-progress owner=codex scope=`crates/mnemosyne-prof/src/sampler/sampling.rs`
   and `sampler/mod.rs`, ADR 0004, and PM artifacts on
-  `codex/mnemosyne-split-sampler-store`; move active-sample storage, count
-  accounting, reset, and detached snapshot construction into one canonical
-  store leaf without changing the hot-path representation. Acceptance: focused
-  tests, warning-denied Clippy, format, doctest, and rustdoc gates are green.
+  `codex/mnemosyne-split-sampler-sampling`; move profiler reset, allocation/free
+  sampling, and thread-local sampling-budget orchestration into one canonical
+  leaf without changing hot-path semantics. Acceptance: focused tests,
+  warning-denied Clippy, format, doctest, and rustdoc gates are green.
 - [ ] [arch] status=todo owner=unassigned scope=`crates/mnemosyne-prof/src/sampler/`
-  sampling orchestration and report leaves; complete ADR 0004's remaining
-  sampler extraction without changing public contracts or hot-path
-  representations. Acceptance: each leaf owns one responsibility, no
+  report aggregation and output; complete ADR 0004's remaining sampler
+  extraction without changing public contracts or hot-path representations.
+  Acceptance: the report leaf owns symbol resolution and file output, no
   forwarding wrappers or duplicate implementations remain, the focused nextest
   and warning-denied Clippy gates are green, and the sampler Criterion baseline
   has no measured regression.

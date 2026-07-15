@@ -1,82 +1,18 @@
 mod capture;
 mod hasher;
+mod sampling;
 mod stack_interner;
 mod store;
 
 use core::ffi::c_void;
-use core::sync::atomic::Ordering;
 use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
 use std::io::Write;
 
-use crate::SAMPLE_INTERVAL;
-
-use capture::{capture_stack, next_sample_interval};
+pub(crate) use sampling::{reset_sampler_state, sample_alloc_inner, sample_free_inner};
 pub use stack_interner::StackId;
-use stack_interner::{release_stack, reset_stack_interner_state};
 pub use store::Sample;
-use store::{
-    ActiveSample, active_sample_snapshot, insert_sample, remove_sample, reset_active_samples,
-};
-
-/// Reset the sampler state (active samples).
-pub(crate) fn reset_sampler_state() {
-    reset_active_samples();
-    reset_stack_interner_state();
-}
-
-pub(crate) fn sample_alloc_inner(ptr: *mut u8, size: usize, leak_active: bool) {
-    let debit = crate::sample_debit(size);
-
-    #[cfg(nightly_tls_active)]
-    {
-        let mut val = crate::get_bytes_until_sample();
-        maybe_record_sample(ptr, size, leak_active, debit, &mut val);
-        crate::set_bytes_until_sample(val);
-    }
-
-    // SAFETY: `get_profiler_state()` returns this thread's own thread-local
-    // `ThreadState`; the `&mut` is exclusive (thread-local) and this runs inside
-    // the `enter_hook`/`exit_hook` re-entrancy guard, so no nested `&mut` to the
-    // same state can be live.
-    #[cfg(not(nightly_tls_active))]
-    unsafe {
-        let state = &mut *crate::get_profiler_state();
-        maybe_record_sample(ptr, size, leak_active, debit, &mut state.bytes_until_sample);
-    }
-}
-
-fn maybe_record_sample(
-    ptr: *mut u8,
-    size: usize,
-    leak_active: bool,
-    debit: isize,
-    bytes_until_sample: &mut isize,
-) {
-    if leak_active || *bytes_until_sample <= debit {
-        if !leak_active {
-            let mean = SAMPLE_INTERVAL.load(Ordering::Relaxed);
-            *bytes_until_sample = next_sample_interval(mean) as isize;
-        }
-
-        let stack = capture_stack();
-        let replaced = insert_sample(ptr as usize, Sample { size, stack });
-        if let Some(replaced) = replaced {
-            release_stack(replaced.stack);
-        }
-    }
-
-    if !leak_active {
-        *bytes_until_sample = (*bytes_until_sample).saturating_sub(debit);
-    }
-}
-
-pub(crate) fn sample_free_inner(ptr: *mut u8) {
-    let removed = remove_sample(ptr as usize);
-    if let Some(sample) = removed {
-        release_stack(sample.stack);
-    }
-}
+use store::{ActiveSample, active_sample_snapshot};
 
 /// Dumps a folded stack profile of active memory allocations to a file.
 ///

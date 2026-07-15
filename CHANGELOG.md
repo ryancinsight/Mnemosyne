@@ -16,6 +16,9 @@
 - `mnemosyne-prof` now owns active-sample sharded storage, accounting, lifecycle,
   and detached snapshots in a dedicated store leaf. The public `Sample` contract
   remains unchanged.
+- `mnemosyne-prof` now owns profiler reset and allocation/free sampling
+  orchestration in a dedicated sampling leaf. Crate-visible hook contracts and
+  thread-local safety boundaries remain unchanged.
 
 ## 0.4.0 - 2026-07-13
 
