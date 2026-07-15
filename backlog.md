@@ -788,6 +788,8 @@ remainder, each Definition-of-Ready):
 
 ## Open
 
+- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-benchmarks/benches/segment_lock.rs`, `crates/mnemosyne-benchmarks/Cargo.toml`, and contention PM entries; last-update=2026-07-15. Isolate `CacheAlignedSegmentLock` uncontended and contended cost using the canonical source implementation and a persistent bounded worker harness. Acceptance: compare the same lock-only rows at the merged and pre-lock provider states, then either retain the existing spin/yield policy or implement a measured upstream adjustment with value-semantic concurrency gates.
+
 - [x] [patch] status=done owner=codex scope=`crates/mnemosyne-arena/src/segment/pool/{tagged_stack,cache_aligned}.rs`, allocator benchmarks, and contention PM entries; last-update=2026-07-15. Measure the per-stack lifetime-lock contention introduced by PR #9 against the pre-lock parent under matched Criterion workloads. Acceptance: capture median and confidence interval for segment-cache eviction and threaded/cross-thread rows, then either retain the lock with evidence or implement a correctness-preserving upstream optimization with value-semantic and concurrency gates.
 
   The merged lock-bearing provider (`2adec54`) was compared with the pre-lock
