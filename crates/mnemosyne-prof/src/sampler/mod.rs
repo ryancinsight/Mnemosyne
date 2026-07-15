@@ -1,72 +1,27 @@
 mod capture;
 mod hasher;
 mod stack_interner;
+mod store;
 
 use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
 use std::io::Write;
-use std::sync::{Arc, Mutex};
 
-use crate::{ACTIVE_SAMPLES_COUNT, SAMPLE_INTERVAL};
+use crate::SAMPLE_INTERVAL;
 
 use capture::{capture_stack, next_sample_interval};
-use hasher::FastBuildHasher;
 pub use stack_interner::StackId;
-use stack_interner::{release_stack, reset_stack_interner_state, resolve_stack};
-
-/// Representation of a sampled memory allocation.
-#[derive(Clone, Copy)]
-pub struct Sample {
-    /// Allocated size of the block in bytes.
-    pub size: usize,
-    /// Interned identity of the retained stack trace (resolve via the interner).
-    pub stack: StackId,
-}
-
-#[derive(Clone)]
-struct ActiveSample {
-    ptr: usize,
-    size: usize,
-    stack: Arc<[usize]>,
-}
-
-const SHARDS: usize = 64;
-
-#[repr(align(64))]
-struct Shard {
-    mutex: Mutex<Option<HashMap<usize, Sample, FastBuildHasher>>>,
-}
-
-static ACTIVE_SAMPLES: [Shard; SHARDS] = [const {
-    Shard {
-        mutex: Mutex::new(None),
-    }
-}; SHARDS];
-
-fn get_map(
-    shard: usize,
-) -> std::sync::MutexGuard<'static, Option<HashMap<usize, Sample, FastBuildHasher>>> {
-    let mut lock = ACTIVE_SAMPLES[shard]
-        .mutex
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if lock.is_none() {
-        *lock = Some(HashMap::with_hasher(FastBuildHasher));
-    }
-    lock
-}
+use stack_interner::{release_stack, reset_stack_interner_state};
+pub use store::Sample;
+use store::{
+    ActiveSample, active_sample_snapshot, insert_sample, remove_sample, reset_active_samples,
+};
 
 /// Reset the sampler state (active samples).
 pub(crate) fn reset_sampler_state() {
-    for shard in &ACTIVE_SAMPLES {
-        let mut lock = shard
-            .mutex
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *lock = None;
-    }
+    reset_active_samples();
     reset_stack_interner_state();
 }
 
@@ -105,19 +60,7 @@ fn maybe_record_sample(
         }
 
         let stack = capture_stack();
-        let shard = sample_shard(ptr as usize);
-        let replaced = {
-            let mut lock = get_map(shard);
-            if let Some(ref mut map) = *lock {
-                let replaced = map.insert(ptr as usize, Sample { size, stack });
-                if replaced.is_none() {
-                    ACTIVE_SAMPLES_COUNT.fetch_add(1, Ordering::Relaxed);
-                }
-                replaced
-            } else {
-                None
-            }
-        };
+        let replaced = insert_sample(ptr as usize, Sample { size, stack });
         if let Some(replaced) = replaced {
             release_stack(replaced.stack);
         }
@@ -129,27 +72,10 @@ fn maybe_record_sample(
 }
 
 pub(crate) fn sample_free_inner(ptr: *mut u8) {
-    let shard = sample_shard(ptr as usize);
-    let removed = {
-        let mut lock = get_map(shard);
-        if let Some(ref mut map) = *lock {
-            let removed = map.remove(&(ptr as usize));
-            if removed.is_some() {
-                ACTIVE_SAMPLES_COUNT.fetch_sub(1, Ordering::Relaxed);
-            }
-            removed
-        } else {
-            None
-        }
-    };
+    let removed = remove_sample(ptr as usize);
     if let Some(sample) = removed {
         release_stack(sample.stack);
     }
-}
-
-#[inline]
-fn sample_shard(ptr: usize) -> usize {
-    (ptr >> 6) % SHARDS
 }
 
 /// Dumps a folded stack profile of active memory allocations to a file.
@@ -243,27 +169,6 @@ fn dump_leaks_inner(path: &str) -> std::io::Result<usize> {
     }
 
     Ok(samples.len())
-}
-
-fn active_sample_snapshot() -> Vec<ActiveSample> {
-    let total = ACTIVE_SAMPLES_COUNT.load(Ordering::Relaxed);
-    let mut samples = Vec::with_capacity(total);
-    for shard in &ACTIVE_SAMPLES {
-        let lock = shard
-            .mutex
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(ref map) = *lock {
-            samples.extend(map.iter().filter_map(|(&ptr, sample)| {
-                resolve_stack(sample.stack).map(|stack| ActiveSample {
-                    ptr,
-                    size: sample.size,
-                    stack,
-                })
-            }));
-        }
-    }
-    samples
 }
 
 fn leak_report_file<'a>(
