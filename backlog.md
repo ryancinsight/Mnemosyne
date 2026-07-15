@@ -12,9 +12,10 @@
 - [x] [patch] Pin Eunomia and Melinoe once in the workspace SSOT for
   standalone-Git reproducibility.
 
-- [patch] status=review owner=codex scope=`mnemosyne-arena` Fix concurrent
-  segment-head reclamation exposed by the RITK registration suite. Provider
-  gates pass; consumer wheel verification remains the acceptance boundary.
+- [x] [patch] status=done owner=codex scope=`mnemosyne-arena`; fix concurrent
+  segment-head reclamation exposed by the RITK registration suite. The fix is
+  merged in PR #9 (`01e7de7`, implementation `09b2ef8`); provider gates and the
+  consumer wheel boundary are green.
 
 ## Atlas in-house replacement roadmap — mnemosyne slice [arch]
 
@@ -741,7 +742,7 @@ remainder, each Definition-of-Ready):
 
 ## Open
 
-- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-arena/src/segment/pool/{tagged_stack,cache_aligned}.rs`, focused tests, and PM artifacts on `codex/mnemosyne-0.2-huge-reclamation`; prevent the decay engine from releasing a detached huge segment while a concurrent pop retains its former head pointer. Acceptance: an adversarial value-semantic concurrency regression passes under nextest, focused Clippy is warning-clean, and the unchanged RITK wheel suite no longer faults.
+- [patch] status=todo owner=unassigned scope=`crates/mnemosyne-arena/src/segment/pool/{tagged_stack,cache_aligned}.rs` and allocator benchmarks; measure the per-stack lifetime-lock contention introduced by PR #9 against the pre-lock parent under matched Criterion workloads. Acceptance: capture median and confidence interval for segment-cache eviction and threaded/cross-thread rows, then either retain the lock with evidence or implement a correctness-preserving upstream optimization with value-semantic and concurrency gates.
 
 - [patch] status=done owner=codex scope=`crates/mnemosyne-local`,
   allocator regression tests, and PM artifacts; root-cause and eliminate the

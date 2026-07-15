@@ -13,6 +13,17 @@
   return while an observer is active. Evidence tier: symbolized native crash,
   type-structured RAII synchronization, and value-semantic nextest coverage.
 
+- [closed] The concurrent reclamation backlog and checklist remained attached
+  to the closed `codex/mnemosyne-0.2-huge-reclamation` branch after the fix had
+  merged through PR #9 (`01e7de7`; implementation `09b2ef8`) into `origin/main`.
+  Reconciled the PM artifacts so `TaggedSegmentStack` remains the single
+  source of truth for segment and huge-pool head operations, with
+  `CacheAlignedSegmentLock` as the ownership seam for pointer lifetime. The
+  RITK consumer boundary is also closed: PR #33 reports green Rust, wheel,
+  Python, audit, and CodeRabbit checks. Evidence tier: merged GitHub history,
+  current-provider `cargo nextest` 43/43, focused warning-denied Clippy, and
+  consumer CI.
+
 ## Residual risk / open findings
 
 - WGPU raw-pointer staging has no Mnemosyne residual: the backend, callback
@@ -52,6 +63,18 @@
   collapses aligned medium/large allocations onto few shards, and the sampler
   performs nested report locks. These are profiled candidates, not accepted
   optimizations.
+- Contention finding requiring measurement: the reclamation fix serializes each
+  stack `push`, `push_chain`, `pop`, and `take_all` under one bounded spin/yield
+  lock. This is required for pointer lifetime safety, but no speedup or neutral
+  cost is claimed. The remaining Definition-of-Ready experiment is a matched
+  Criterion A/B comparison against the pre-lock parent for segment-cache,
+  threaded-allocation, and cross-thread-handoff workloads; a change is
+  admissible only if it preserves the existing adversarial concurrency tests.
+  Current-provider observations on this Windows host are `Segment cache
+  eviction/Mnemosyne` at 301.58 us median [297.86, 306.09] us and `Threaded
+  saturated small allocation cycles/Mnemosyne` at 83.038 us median [77.653,
+  90.547] us. These are empirical baseline samples, not comparative speedup
+  evidence.
 - Comparator gap audit: system malloc, jemalloc, mimalloc, rpmalloc, and
   snmalloc remain benchmark/reference comparators only. Mnemosyne already owns
   its fitting mechanisms—thread-local allocation, page-local remote-free
