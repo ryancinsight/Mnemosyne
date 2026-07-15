@@ -29,6 +29,21 @@ production backends still compile `ENABLE_CPU_CACHE = false`.
 Evidence tier: source audit plus empirical single-thread Criterion measurement;
 contention attribution remains unverified.
 
+## Verified — profiler sampler topology first increment [arch]
+
+- [x] Move deterministic hashing into `sampler/hasher.rs` and stack identity,
+  deduplication, and reference lifecycle into `sampler/stack_interner.rs`.
+- [x] Move the hash and interner value-semantic tests beside their canonical
+  implementations; retain the public `StackId`/`Sample` boundary without a
+  compatibility module or forwarding wrapper.
+- [x] Verify `cargo fmt --all -- --check`, warning-denied Clippy, and the
+  focused `mnemosyne-prof` nextest suite (15/15).
+
+Evidence tier: module-topology/type-level ownership plus value-semantic nextest
+and warning-denied compiler diagnostics. The remaining capture, store, sampling,
+and report extraction is tracked as the next architectural increment; no
+performance improvement is claimed by this structural change.
+
 ## Verified — concurrent pool reclamation [patch]
 
 - [x] Localize the native crash to a stale huge-pool head dereference during a
