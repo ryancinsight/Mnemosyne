@@ -741,7 +741,7 @@ remainder, each Definition-of-Ready):
 
 ## Open
 
-- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-arena/src/segment/pool/{tagged_stack,cache_aligned}.rs`, focused tests, and PM artifacts on `codex/mnemosyne-0.2-huge-reclamation`; prevent the decay engine from releasing a detached huge segment while a concurrent pop retains its former head pointer. Acceptance: an adversarial value-semantic concurrency regression passes under nextest, focused Clippy is warning-clean, and the unchanged RITK wheel suite no longer faults.
+- [patch] status=in-progress owner=codex scope=`backlog.md`, `checklist.md`, and `gap_audit.md` on `codex/mnemosyne-reconcile-reclamation`; reconcile the already-merged segment-head reclamation fix, record its verification evidence, and separate the remaining contention benchmark from the closed correctness item. Acceptance: merged-provider evidence is linked, current arena gates are rerun, and the per-stack lock cost remains an explicit measured-work item rather than an unverified optimization claim.
 
 - [patch] status=done owner=codex scope=`crates/mnemosyne-local`,
   allocator regression tests, and PM artifacts; root-cause and eliminate the
