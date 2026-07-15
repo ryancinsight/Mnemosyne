@@ -110,9 +110,7 @@ audit, in priority order:
 - [ ] [patch] Replace `mnemosyne-prof`'s global active-sample RMW and pointer
   modulo sharding only after Criterion profiles show the occupancy-mask and
   mixed-hash designs reduce contention without regressing allocator latency.
-- [ ] [patch] Remove or compile out the dormant per-CPU cache's 720,896-byte
-  static table while every production backend has `ENABLE_CPU_CACHE = false`;
-  acceptance: binary-size evidence and unchanged allocator behavior.
+- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-local/src/per_cpu.rs`, topology tests, and PM artifacts on `codex/mnemosyne-remove-dormant-cache`; replace the always-resident per-CPU cache table with lazy storage while every production backend has `ENABLE_CPU_CACHE = false`. Acceptance: the production static no longer reserves the 720,896-byte table, direct cache behavior remains value-semantic, and allocator nextest/Clippy gates stay green.
 - [ ] [arch] Split the 870-line profiler sampler by capture, slot lifecycle,
   and aggregation concern, and consolidate duplicated backend type lists at
   their deepest owning module without changing the hot-path representation.
