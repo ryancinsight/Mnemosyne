@@ -13,6 +13,9 @@
 - `mnemosyne-prof` now owns bounded frame capture and sampling-interval
   generation in a dedicated capture leaf. Sampling semantics and public
   contracts remain unchanged.
+- `mnemosyne-prof` now owns active-sample sharded storage, accounting, lifecycle,
+  and detached snapshots in a dedicated store leaf. The public `Sample` contract
+  remains unchanged.
 
 ## 0.4.0 - 2026-07-13
 

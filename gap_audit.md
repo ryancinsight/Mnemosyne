@@ -67,6 +67,15 @@
   nextest. Store, sampling orchestration, and report ownership remain open under
   ADR 0004; no performance improvement is claimed.
 
+- [arch/closed-increment] Active-sample sharded storage, cache-line alignment,
+  count accounting, reset, insertion/removal, and detached snapshot
+  construction were mixed into the sampler manifest. Moved these responsibilities
+  to `mnemosyne-prof/src/sampler/store.rs`; the `Sample` contract and snapshot
+  values are unchanged. Evidence tier: source topology, warning-denied Clippy,
+  format verification, and 15/15 focused nextest. Sampling orchestration and
+  report output remain open under ADR 0004; no contention or throughput
+  improvement is claimed.
+
 ## Residual risk / open findings
 
 - WGPU raw-pointer staging has no Mnemosyne residual: the backend, callback

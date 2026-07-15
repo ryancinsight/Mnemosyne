@@ -126,19 +126,23 @@ audit, in priority order:
   ADR 0004, and PM artifacts; first sampler increment merged in PR #17 at
   `1c91baf`. Hashing and stack interning now live in canonical leaves with
   colocated value-semantic tests; public contracts are unchanged.
-- [arch] status=in-progress owner=codex scope=`crates/mnemosyne-prof/src/sampler/capture.rs`
+- [x] [arch] status=done owner=codex scope=`crates/mnemosyne-prof/src/sampler/capture.rs`
+  and `sampler/mod.rs`; capture increment merged in PR #18 at `3a6b643`.
+  Bounded frame capture and sampling-interval generation now have one canonical
+  leaf, with sampling semantics and public contracts unchanged.
+- [arch] status=in-progress owner=codex scope=`crates/mnemosyne-prof/src/sampler/store.rs`
   and `sampler/mod.rs`, ADR 0004, and PM artifacts on
-  `codex/mnemosyne-split-sampler-lifecycle`; move bounded frame capture and
-  sampling-interval generation into the capture leaf without changing sampling
-  semantics or hot-path representations. Acceptance: focused tests, warning-
-  denied Clippy, format, doctest, and rustdoc gates are green.
+  `codex/mnemosyne-split-sampler-store`; move active-sample storage, count
+  accounting, reset, and detached snapshot construction into one canonical
+  store leaf without changing the hot-path representation. Acceptance: focused
+  tests, warning-denied Clippy, format, doctest, and rustdoc gates are green.
 - [ ] [arch] status=todo owner=unassigned scope=`crates/mnemosyne-prof/src/sampler/`
-  store, sampling, and report leaves; complete ADR 0004's remaining sampler
-  extraction without changing public contracts or hot-path representations.
-  Acceptance: each leaf owns one responsibility, no forwarding wrappers or
-  duplicate implementations remain, the focused nextest and warning-denied
-  Clippy gates are green, and the sampler Criterion baseline has no measured
-  regression.
+  sampling orchestration and report leaves; complete ADR 0004's remaining
+  sampler extraction without changing public contracts or hot-path
+  representations. Acceptance: each leaf owns one responsibility, no
+  forwarding wrappers or duplicate implementations remain, the focused nextest
+  and warning-denied Clippy gates are green, and the sampler Criterion baseline
+  has no measured regression.
 
 Filed from the 2026-06-27 deep contention/memory audit (read-only fan-out over
 arena/local/core/heap/backend). Ranked by value; each carries a testable

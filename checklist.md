@@ -58,6 +58,22 @@ Evidence tier: behavior-preserving source extraction plus compiler diagnostics
 and value-semantic nextest. Doctest and rustdoc verification are run for the
 commit; no performance improvement is claimed by this structural change.
 
+## Verified — profiler sampler store leaf [arch]
+
+- [x] Move sharded active-sample maps, cache-line alignment, count accounting,
+  reset, insertion/removal, and detached snapshot construction into
+  `sampler/store.rs`.
+- [x] Keep the sampler manifest as the event-orchestration and report boundary;
+  preserve the public `Sample` contract and the existing snapshot value
+  semantics.
+- [x] Verify format, warning-denied Clippy, and the focused
+  `mnemosyne-prof` nextest suite (15/15).
+
+Evidence tier: module-topology/type-level ownership plus value-semantic nextest
+and warning-denied compiler diagnostics. Doctest and rustdoc verification are
+run for the commit; no contention or throughput improvement is claimed by this
+structural change.
+
 ## Verified — concurrent pool reclamation [patch]
 
 - [x] Localize the native crash to a stale huge-pool head dereference during a
