@@ -2,6 +2,20 @@
 
 Target version: 0.4.0
 
+## Verified — dormant per-CPU cache storage [minor]
+
+- [x] Replace the always-resident 720,896-byte `PER_CPU_CACHE` table with a
+  `OnceLock<Box<PerCpuCache>>` handle. The static now stores only the lazy
+  initialization cell and preserves direct cache behavior through `Deref`.
+- [x] Pin lazy initialization with a value-semantic unit test and a
+  compile-time handle-versus-table layout assertion.
+- [x] Verify fmt, release compilation, all-target warning-denied Clippy, and
+  `cargo nextest run -p mnemosyne-local --locked --no-fail-fast` (62/62).
+
+Evidence tier: type-level layout enforcement plus value-semantic nextest and
+release artifact compilation. No allocator throughput speedup is claimed; all
+production backends still compile `ENABLE_CPU_CACHE = false`.
+
 ## Verified — concurrent pool reclamation [patch]
 
 - [x] Localize the native crash to a stale huge-pool head dereference during a

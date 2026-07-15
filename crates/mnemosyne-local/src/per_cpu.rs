@@ -1,12 +1,16 @@
 //! Lock-free per-CPU L1 block caching.
 //!
-//! Stores block pointers in a flat atomic array inside static global memory
-//! (`PER_CPU_CACHE`), making it 100% memory-safe and UAF-free without dereferencing
-//! block payload memory.
+//! Stores block pointers in a flat atomic array behind the process-global
+//! `PER_CPU_CACHE` handle, making it 100% memory-safe and UAF-free without
+//! dereferencing block payload memory. The table is allocated only when the
+//! cache is explicitly used.
 
+use core::ops::Deref;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::policy::AllocPolicy;
+use std::boxed::Box;
+use std::sync::OnceLock;
 
 const MAX_CACHED_BLOCKS: usize = 8;
 const MAX_CPUS: usize = 256;
@@ -62,6 +66,47 @@ impl PerCpuCache {
     }
 }
 
+/// Lazily allocated handle for the global per-CPU cache.
+///
+/// `OnceLock<Box<_>>` keeps the process-global static to a pointer-sized
+/// initialization cell. The 720,896-byte cache table is allocated only after
+/// the cache is explicitly used, so disabled production backends do not carry
+/// its BSS/zero-page reservation.
+pub struct PerCpuCacheHandle {
+    storage: OnceLock<Box<PerCpuCache>>,
+}
+
+impl PerCpuCacheHandle {
+    /// Creates an uninitialized cache handle.
+    pub const fn new() -> Self {
+        Self {
+            storage: OnceLock::new(),
+        }
+    }
+
+    #[inline]
+    fn get(&self) -> &PerCpuCache {
+        self.storage
+            .get_or_init(|| Box::new(PerCpuCache::new()))
+            .as_ref()
+    }
+}
+
+impl Default for PerCpuCacheHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Deref for PerCpuCacheHandle {
+    type Target = PerCpuCache;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.get()
+    }
+}
+
 /// The global per-CPU cache instance.
 ///
 /// # Backend-keying invariant (latent hazard)
@@ -82,7 +127,10 @@ impl PerCpuCache {
 /// invariant is documented rather than type-enforced. Any future backend that
 /// sets `ENABLE_CPU_CACHE = true` alongside another such backend must first
 /// introduce that per-backend keying.
-pub static PER_CPU_CACHE: PerCpuCache = PerCpuCache::new();
+pub static PER_CPU_CACHE: PerCpuCacheHandle = PerCpuCacheHandle::new();
+
+const _: () =
+    assert!(core::mem::size_of::<PerCpuCacheHandle>() < core::mem::size_of::<PerCpuCache>());
 
 static DISABLE_CPU_CACHE: AtomicBool = AtomicBool::new(false);
 
@@ -272,4 +320,22 @@ pub fn try_free_cpu<P: AllocPolicy>(ptr: *mut u8, class: usize) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_CPUS, PerCpuCacheHandle};
+
+    #[test]
+    fn cache_handle_allocates_storage_on_first_access() {
+        let handle = PerCpuCacheHandle::new();
+        assert_eq!(handle.storage.get().map(|cache| cache.slots.len()), None);
+
+        let _cache = handle.get();
+
+        assert_eq!(
+            handle.storage.get().map(|cache| cache.slots.len()),
+            Some(MAX_CPUS)
+        );
+    }
 }
