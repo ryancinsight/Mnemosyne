@@ -788,7 +788,21 @@ remainder, each Definition-of-Ready):
 
 ## Open
 
-- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-arena/src/segment/pool/{tagged_stack,cache_aligned}.rs`, allocator benchmarks, and contention PM entries; last-update=2026-07-15. Measure the per-stack lifetime-lock contention introduced by PR #9 against the pre-lock parent under matched Criterion workloads. Acceptance: capture median and confidence interval for segment-cache eviction and threaded/cross-thread rows, then either retain the lock with evidence or implement a correctness-preserving upstream optimization with value-semantic and concurrency gates.
+- [x] [patch] status=done owner=codex scope=`crates/mnemosyne-arena/src/segment/pool/{tagged_stack,cache_aligned}.rs`, allocator benchmarks, and contention PM entries; last-update=2026-07-15. Measure the per-stack lifetime-lock contention introduced by PR #9 against the pre-lock parent under matched Criterion workloads. Acceptance: capture median and confidence interval for segment-cache eviction and threaded/cross-thread rows, then either retain the lock with evidence or implement a correctness-preserving upstream optimization with value-semantic and concurrency gates.
+
+  The merged lock-bearing provider (`2adec54`) was compared with the pre-lock
+  parent (`477f957`) on the same Windows host. Segment eviction measured
+  `239.94 us` `[235.58, 246.31] us` post-lock versus `231.85 us`
+  `[228.94, 235.72] us` pre-lock in the first matched run. Threaded small
+  cycles measured `7.411 us` `[6.8026, 7.8406] us` post-lock versus `8.558 us`
+  `[8.0492, 9.2929] us` pre-lock. Cross-thread small handoff measured
+  `14.120 us` `[13.303, 14.826] us` post-lock versus `15.441 us`
+  `[15.062, 15.815] us` pre-lock; Criterion reported `p = 0.09`. A second
+  post-lock segment run measured `303.30 us` `[293.29, 314.26] us`, exposing
+  host contention/noise on this row. PR #9 changes more than the lock, so these
+  are provider-state comparisons, not lock-only attribution. The reclamation
+  lock is retained; no safe optimization is justified without a lock-isolated
+  harness.
 
 - [patch] status=done owner=codex scope=`crates/mnemosyne-local`,
   allocator regression tests, and PM artifacts; root-cause and eliminate the

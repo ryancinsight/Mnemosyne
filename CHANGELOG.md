@@ -26,6 +26,9 @@
   shard instead of using a process-global counter. Free callbacks probe only
   their pointer's shard, and missing shard maps are no longer allocated during
   removal.
+- Completed the PR #9 segment lifetime-lock audit against its pre-lock parent.
+  The lock remains the reclamation ownership seam; the noisy provider-state
+  benchmark comparison did not justify a synchronization mutation.
 
 ## 0.4.0 - 2026-07-13
 

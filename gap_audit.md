@@ -49,6 +49,18 @@
   residual measurement candidate; the administrator-only Windows flamegraph
   blocker remains recorded and is not used as performance evidence.
 
+- [closed] The PR #9 per-stack lifetime lock was audited against the pre-lock
+  parent `477f957` under the segment-eviction, threaded-small, and cross-thread
+  Criterion workloads. The first segment row was `239.94 us`
+  `[235.58, 246.31] us` post-lock versus `231.85 us` `[228.94, 235.72] us`
+  pre-lock; threaded-small and cross-thread rows were lower post-lock, with the
+  latter's comparison not significant (`p = 0.09`). A second segment run was
+  `303.30 us` `[293.29, 314.26] us`, demonstrating host noise while peer Cargo
+  checks were active. PR #9 changes 15 files beyond the lock implementation, so
+  the data cannot isolate lock cost. The lock remains because it protects the
+  head mapping lifetime through successor dereference and detach; no production
+  optimization is justified by this noisy provider-state comparison.
+
 - [arch/closed-increment] The profiler sampler's deterministic hasher and stack
   interner were mixed into the sampler manifest with active-sample storage,
   capture, and report output. Moved hashing to
@@ -100,6 +112,11 @@
   extraction is complete. The separate profiler contention A/B remains open.
 
 ## Residual risk / open findings
+
+- [audit/open] Segment-cache lock attribution remains unverified in isolation.
+  The next evidence increment requires a lock-only or otherwise source-matched
+  harness on a quiescent host; the current provider-parent comparison is
+  sufficient to retain the safety lock but not to tune its spin/yield policy.
 
 - WGPU raw-pointer staging has no Mnemosyne residual: the backend, callback
   registry, allocator selectors, pools, and facade exports are deleted. Full
