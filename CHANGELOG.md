@@ -22,6 +22,10 @@
 - `mnemosyne-prof` now owns report aggregation, symbol resolution, and leak
   report output in a dedicated report leaf. `dump_profile` and `dump_leaks`
   remain unchanged at the public boundary.
+- `mnemosyne-prof` now tracks active-sample occupancy per cache-line-aligned
+  shard instead of using a process-global counter. Free callbacks probe only
+  their pointer's shard, and missing shard maps are no longer allocated during
+  removal.
 
 ## 0.4.0 - 2026-07-13
 

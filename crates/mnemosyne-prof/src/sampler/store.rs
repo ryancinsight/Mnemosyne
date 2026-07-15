@@ -1,7 +1,6 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-
-use crate::ACTIVE_SAMPLES_COUNT;
 
 use super::hasher::FastBuildHasher;
 use super::stack_interner::{StackId, resolve_stack};
@@ -27,11 +26,13 @@ const SHARDS: usize = 64;
 #[repr(align(64))]
 struct Shard {
     mutex: Mutex<Option<HashMap<usize, Sample, FastBuildHasher>>>,
+    active: AtomicBool,
 }
 
 static ACTIVE_SAMPLES: [Shard; SHARDS] = [const {
     Shard {
         mutex: Mutex::new(None),
+        active: AtomicBool::new(false),
     }
 }; SHARDS];
 
@@ -55,38 +56,46 @@ pub(super) fn reset_active_samples() {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *lock = None;
+        shard.active.store(false, Ordering::Release);
     }
 }
 
 pub(super) fn insert_sample(ptr: usize, sample: Sample) -> Option<Sample> {
-    let mut lock = get_map(sample_shard(ptr));
+    let shard = sample_shard(ptr);
+    let mut lock = get_map(shard);
     let replaced = if let Some(ref mut map) = *lock {
         map.insert(ptr, sample)
     } else {
         None
     };
     if replaced.is_none() {
-        ACTIVE_SAMPLES_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        ACTIVE_SAMPLES[shard].active.store(true, Ordering::Release);
     }
     replaced
 }
 
 pub(super) fn remove_sample(ptr: usize) -> Option<Sample> {
-    let mut lock = get_map(sample_shard(ptr));
-    let removed = if let Some(ref mut map) = *lock {
-        map.remove(&ptr)
-    } else {
-        None
+    let shard = sample_shard(ptr);
+    let mut lock = ACTIVE_SAMPLES[shard]
+        .mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (removed, became_empty) = match lock.as_mut() {
+        Some(map) => {
+            let removed = map.remove(&ptr);
+            let became_empty = removed.is_some() && map.is_empty();
+            (removed, became_empty)
+        }
+        None => return None,
     };
-    if removed.is_some() {
-        ACTIVE_SAMPLES_COUNT.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+    if became_empty {
+        ACTIVE_SAMPLES[shard].active.store(false, Ordering::Release);
     }
     removed
 }
 
 pub(super) fn active_sample_snapshot() -> Vec<ActiveSample> {
-    let total = ACTIVE_SAMPLES_COUNT.load(core::sync::atomic::Ordering::Relaxed);
-    let mut samples = Vec::with_capacity(total);
+    let mut samples = Vec::new();
     for shard in &ACTIVE_SAMPLES {
         let lock = shard
             .mutex
@@ -103,6 +112,13 @@ pub(super) fn active_sample_snapshot() -> Vec<ActiveSample> {
         }
     }
     samples
+}
+
+#[inline]
+pub(crate) fn has_active_sample_for(ptr: usize) -> bool {
+    ACTIVE_SAMPLES[sample_shard(ptr)]
+        .active
+        .load(Ordering::Acquire)
 }
 
 #[inline]
@@ -123,6 +139,7 @@ mod tests {
 
         let snapshot = active_sample_snapshot();
         assert_eq!(snapshot.len(), 1);
+        assert!(has_active_sample_for(ptr as usize));
         assert_eq!(snapshot[0].ptr, ptr as usize);
         assert_eq!(snapshot[0].size, 64);
         assert!(
@@ -135,6 +152,7 @@ mod tests {
             active_sample_snapshot().is_empty(),
             "live shard map must be empty after freeing the sampled pointer"
         );
+        assert!(!has_active_sample_for(ptr as usize));
         assert_eq!(
             snapshot[0].size, 64,
             "snapshot must retain a value copy after the live sample is removed"

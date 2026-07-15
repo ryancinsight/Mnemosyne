@@ -36,16 +36,18 @@
   Clippy. No throughput improvement is claimed because production backends do
   not enter the cache branch.
 
-- [audit/open] `mnemosyne-prof` still performs a global
-  `ACTIVE_SAMPLES_COUNT.fetch_add/sub` for every inserted/removed sample and
-  routes active samples with `(ptr >> 6) % SHARDS`. These are measured
-  contention candidates, not defects by source inspection alone. The real
-  leak-detector small-cycle Criterion row measured 1.0797 us median with a
-  1.0731–1.0877 us interval on this Windows host, but the run is single-thread
-  and cannot attribute cross-thread cost. A `cargo flamegraph` attempt failed
-  with the Windows profiler backend's `NotAnAdmin` error. No occupancy-mask,
-  mixed-hash, or count-sharding mutation is justified until a matched
-  multi-thread A/B is available.
+- [closed] `mnemosyne-prof` no longer performs a process-global
+  `ACTIVE_SAMPLES_COUNT.fetch_add/sub` for every inserted/removed sample. Each
+  cache-line-aligned shard owns an `AtomicBool` occupancy flag updated while its
+  map mutex is held; `on_free` probes only the pointer's shard, and removal no
+  longer initializes an empty map. The matched four-thread Criterion A/B changed
+  the leak-detector row from `[2.2952, 2.3488, 2.4254] ms` to
+  `[2.2389, 2.2623, 2.2816] ms` (`-4.7386%`, `p = 0.00`) while the disabled row
+  showed no significant change (`p = 0.67`). Evidence tier: source audit,
+  cache-line-aligned type layout, 15/15 focused nextest, warning-denied Clippy,
+  and matched empirical measurement. The unchanged pointer-modulo routing is a
+  residual measurement candidate; the administrator-only Windows flamegraph
+  blocker remains recorded and is not used as performance evidence.
 
 - [arch/closed-increment] The profiler sampler's deterministic hasher and stack
   interner were mixed into the sampler manifest with active-sample storage,

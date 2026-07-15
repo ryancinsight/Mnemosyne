@@ -16,18 +16,23 @@ Evidence tier: type-level layout enforcement plus value-semantic nextest and
 release artifact compilation. No allocator throughput speedup is claimed; all
 production backends still compile `ENABLE_CPU_CACHE = false`.
 
-## Verified — profiler contention audit [patch]
+## Verified — profiler active-sample occupancy [patch]
 
-- [x] Inspect the active-sample count and pointer-to-shard hot path.
-- [x] Measure the real leak-detector small-cycle benchmark at 1.0797 us median
-  [1.0731, 1.0877] us on this Windows host.
-- [x] Attempt CPU flamegraph capture; record the administrator-only
-  `NotAnAdmin` blocker without treating it as code evidence.
-- [x] Keep the occupancy-mask/mixed-hash implementation decision open until a
-  matched multi-thread A/B can separate global-RMW and shard-lock costs.
+- [x] Replace the process-global active-sample RMW with one cache-line-sharded
+  occupancy flag per active-sample map and remove empty-map initialization from
+  the free path.
+- [x] Preserve resident-sample eviction after leak-detector disable and assert
+  occupancy transitions in the focused value-semantic tests.
+- [x] Run the matched four-thread benchmark: the disabled row changed from
+  `[10.215, 11.440, 12.975] us` to `[9.9740, 10.668, 11.417] us` with no
+  significant change (`p = 0.67`); the leak-detector row changed from
+  `[2.2952, 2.3488, 2.4254] ms` to `[2.2389, 2.2623, 2.2816] ms`, a
+  `-4.7386%` median change (`p = 0.00`).
 
-Evidence tier: source audit plus empirical single-thread Criterion measurement;
-contention attribution remains unverified.
+Evidence tier: source-level lock/ownership audit, cache-line layout enforced by
+the shard type, 15/15 focused nextest, warning-denied Clippy, and matched
+Criterion empirical A/B. The Windows flamegraph path remains blocked by
+`NotAnAdmin`; no pointer-mixing speedup is claimed.
 
 ## Verified — profiler sampler topology first increment [arch]
 

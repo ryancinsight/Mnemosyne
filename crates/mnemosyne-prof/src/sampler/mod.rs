@@ -9,3 +9,4 @@ pub use report::{dump_leaks, dump_profile};
 pub(crate) use sampling::{reset_sampler_state, sample_alloc_inner, sample_free_inner};
 pub use stack_interner::StackId;
 pub use store::Sample;
+pub(super) use store::has_active_sample_for;

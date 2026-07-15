@@ -35,7 +35,6 @@ static PROFILING_ACTIVE: AtomicBool = AtomicBool::new(false);
 static LEAK_DETECTOR_ACTIVE: AtomicBool = AtomicBool::new(false);
 static PROFILING_OR_HOOKS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static SAMPLE_INTERVAL: AtomicUsize = AtomicUsize::new(512 * 1024); // Default 512 KB
-static ACTIVE_SAMPLES_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Serializes control-plane updates (hook registration, sampler and
 /// leak-detector enable/disable) with the recompute of
@@ -110,7 +109,6 @@ pub fn reset_profiler_for_testing() {
         ALLOC_HOOK.store(core::ptr::null_mut(), Ordering::Release);
         FREE_HOOK.store(core::ptr::null_mut(), Ordering::Release);
         SAMPLE_INTERVAL.store(512 * 1024, Ordering::Release);
-        ACTIVE_SAMPLES_COUNT.store(0, Ordering::Release);
     });
     // Sampler-internal locks are taken outside `UPDATE_LOCK` to keep the
     // control-plane lock leaf-level (no nested acquisition order to maintain).
@@ -211,8 +209,7 @@ pub fn on_free(ptr: *mut u8, size: usize) {
     // The cold path has work exactly when a free hook is registered or a
     // resident sample may need eviction; the profiling/leak flags are
     // irrelevant to frees (see `on_free_cold`).
-    if FREE_HOOK.load(Ordering::Relaxed).is_null()
-        && ACTIVE_SAMPLES_COUNT.load(Ordering::Relaxed) == 0
+    if FREE_HOOK.load(Ordering::Relaxed).is_null() && !sampler::has_active_sample_for(ptr as usize)
     {
         return;
     }
@@ -231,10 +228,10 @@ fn on_free_cold(ptr: *mut u8, size: usize) {
     // the sampler or leak detector was active must still be evicted when it
     // is freed after those modes were disabled. Gating removal on the active
     // flags would (a) make a later `dump_leaks` falsely report the freed
-    // block and (b) leave `ACTIVE_SAMPLES_COUNT` above zero forever, taxing
-    // every subsequent free with this cold call. Gate on resident samples
-    // instead.
-    let samples_resident = ACTIVE_SAMPLES_COUNT.load(Ordering::Relaxed) > 0;
+    // block and (b) leave the pointer's occupancy flag set forever, taxing
+    // every subsequent free in that shard with this cold call. Gate on
+    // resident samples instead.
+    let samples_resident = sampler::has_active_sample_for(ptr as usize);
     if hook_ptr.is_null() && !samples_resident {
         return;
     }
