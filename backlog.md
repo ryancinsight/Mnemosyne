@@ -115,13 +115,18 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
 
-- [ ] [patch] status=in-progress owner=codex scope=`crates/mnemosyne-benchmarks/benches/allocator/{profiler,mod}.rs`, `allocator_bench.rs`, and profiler PM entries; last-update=2026-07-15. Profile `mnemosyne-prof`'s global active-sample RMW and
+- [ ] [patch] status=in-progress owner=codex scope=`crates/mnemosyne-prof/src/{lib.rs,sampler/{mod.rs,store.rs}}`, `crates/mnemosyne-benchmarks/benches/allocator/{profiler,mod}.rs`, `allocator_bench.rs`, and profiler PM entries; last-update=2026-07-15. Profile `mnemosyne-prof`'s global active-sample RMW and
   pointer-modulo sharding before any mutation. Current evidence: the real
   single-thread leak-detector row is 1.0797 us median [1.0731, 1.0877] us;
   Windows flamegraph capture is blocked by the administrator-only profiler
   backend (`NotAnAdmin`). Acceptance remains a matched multi-thread A/B showing
   occupancy-mask or mixed-hash contention reduction without allocator latency
   regression.
+- Baseline increment 2026-07-15: the matched four-thread small-allocation
+  workload measured `[10.215, 11.440, 12.975] us` with the profiler disabled and
+  `[2.2952, 2.3488, 2.4254] ms` with leak detection enabled. This establishes an
+  empirical overhead baseline; it does not attribute the delta to one shared
+  operation.
 - [x] [arch] status=done owner=codex scope=`crates/mnemosyne-prof/src/sampler/`,
   ADR 0004, and PM artifacts; first sampler increment merged in PR #17 at
   `1c91baf`. Hashing and stack interning now live in canonical leaves with
