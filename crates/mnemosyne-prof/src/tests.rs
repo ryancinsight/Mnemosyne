@@ -1,5 +1,3 @@
-use core::sync::atomic::Ordering;
-
 #[test]
 fn sample_metadata_stores_fixed_stack_id() {
     assert_eq!(
@@ -11,7 +9,7 @@ fn sample_metadata_stores_fixed_stack_id() {
 
 /// Regression test: a block sampled under the leak detector and freed after
 /// `disable_leak_detector()` must still be evicted — otherwise a later
-/// `dump_leaks` falsely reports it and `ACTIVE_SAMPLES_COUNT` never drains.
+/// `dump_leaks` falsely reports it and the pointer's shard remains occupied.
 #[test]
 fn free_after_leak_detector_disable_drains_resident_samples() {
     crate::reset_profiler_for_testing();
@@ -22,17 +20,15 @@ fn free_after_leak_detector_disable_drains_resident_samples() {
     // the real allocator.
     let ptr = 0x0006_4000_usize as *mut u8;
     crate::on_alloc(ptr, 256);
-    assert_eq!(
-        crate::ACTIVE_SAMPLES_COUNT.load(Ordering::Relaxed),
-        1,
+    assert!(
+        crate::sampler::has_active_sample_for(ptr as usize),
         "leak detector must record the allocation as a resident sample"
     );
 
     crate::disable_leak_detector();
     crate::on_free(ptr, 256);
-    assert_eq!(
-        crate::ACTIVE_SAMPLES_COUNT.load(Ordering::Relaxed),
-        0,
+    assert!(
+        !crate::sampler::has_active_sample_for(ptr as usize),
         "a free after disabling the leak detector must drain the resident sample"
     );
 
@@ -73,13 +69,12 @@ fn leak_detector_tracks_allocations_despite_stale_sampling_budget() {
     crate::enable_leak_detector();
     let ptr = 0x0007_4000_usize as *mut u8;
     crate::on_alloc(ptr, 64);
-    assert_eq!(
-        crate::ACTIVE_SAMPLES_COUNT.load(Ordering::Relaxed),
-        1,
+    assert!(
+        crate::sampler::has_active_sample_for(ptr as usize),
         "leak detector must track an allocation despite a stale sampling budget"
     );
     crate::on_free(ptr, 64);
-    assert_eq!(crate::ACTIVE_SAMPLES_COUNT.load(Ordering::Relaxed), 0);
+    assert!(!crate::sampler::has_active_sample_for(ptr as usize));
 
     crate::reset_profiler_for_testing();
 }

@@ -115,13 +115,21 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
 
-- [ ] [patch] Profile `mnemosyne-prof`'s global active-sample RMW and
-  pointer-modulo sharding before any mutation. Current evidence: the real
-  single-thread leak-detector row is 1.0797 us median [1.0731, 1.0877] us;
-  Windows flamegraph capture is blocked by the administrator-only profiler
-  backend (`NotAnAdmin`). Acceptance remains a matched multi-thread A/B showing
-  occupancy-mask or mixed-hash contention reduction without allocator latency
-  regression.
+- [x] [patch] status=done owner=codex scope=`crates/mnemosyne-prof/src/{lib.rs,sampler/{mod.rs,store.rs},tests.rs}`, `crates/mnemosyne-benchmarks/benches/allocator/{profiler,mod}.rs`, `allocator_bench.rs`, and profiler PM entries; last-update=2026-07-15. Replace `mnemosyne-prof`'s global active-sample RMW with per-shard occupancy flags and stop allocating empty maps on remove.
+  The pre-change source audit identified pointer-modulo sharding as a separate
+  candidate. The real single-thread leak-detector row was 1.0797 us median
+  [1.0731, 1.0877] us; Windows flamegraph capture is blocked by the
+  administrator-only profiler backend (`NotAnAdmin`).
+- Baseline increment 2026-07-15: the matched four-thread small-allocation
+  workload measured `[10.215, 11.440, 12.975] us` with the profiler disabled and
+  `[2.2952, 2.3488, 2.4254] ms` with leak detection enabled. This establishes an
+  empirical overhead baseline; it does not attribute the delta to one shared
+  operation.
+- Matched post-change A/B: disabled `[9.9740, 10.668, 11.417] us` with no
+  significant change (`p = 0.67`); leak detector `[2.2389, 2.2623, 2.2816] ms`,
+  `-4.7386%` median change with `p = 0.00`. The occupancy-flag change is retained;
+  pointer mixing remains unmodified because this increment did not measure a
+  routing shortfall.
 - [x] [arch] status=done owner=codex scope=`crates/mnemosyne-prof/src/sampler/`,
   ADR 0004, and PM artifacts; first sampler increment merged in PR #17 at
   `1c91baf`. Hashing and stack interning now live in canonical leaves with
