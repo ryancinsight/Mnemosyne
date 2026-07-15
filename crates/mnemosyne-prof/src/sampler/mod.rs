@@ -1,3 +1,4 @@
+mod capture;
 mod hasher;
 mod stack_interner;
 
@@ -10,12 +11,10 @@ use std::sync::{Arc, Mutex};
 
 use crate::{ACTIVE_SAMPLES_COUNT, SAMPLE_INTERVAL};
 
+use capture::{capture_stack, next_sample_interval};
 use hasher::FastBuildHasher;
 pub use stack_interner::StackId;
-use stack_interner::{intern_stack, release_stack, reset_stack_interner_state, resolve_stack};
-
-/// Maximum captured stack depth (instruction pointers per sample).
-pub(crate) const MAX_STACK_FRAMES: usize = 32;
+use stack_interner::{release_stack, reset_stack_interner_state, resolve_stack};
 
 /// Representation of a sampled memory allocation.
 #[derive(Clone, Copy)]
@@ -129,30 +128,6 @@ fn maybe_record_sample(
     }
 }
 
-pub(crate) fn capture_stack() -> StackId {
-    let (frames, len) = capture_stack_frames();
-    intern_stack(&frames[..len])
-}
-
-fn capture_stack_frames() -> ([usize; MAX_STACK_FRAMES], usize) {
-    let mut frames = [0usize; MAX_STACK_FRAMES];
-    let mut len = 0usize;
-
-    backtrace::trace(|frame| {
-        let ip = frame.ip() as usize;
-        if ip != 0 {
-            if len == MAX_STACK_FRAMES {
-                return false;
-            }
-            frames[len] = ip;
-            len += 1;
-        }
-        len < MAX_STACK_FRAMES
-    });
-
-    (frames, len)
-}
-
 pub(crate) fn sample_free_inner(ptr: *mut u8) {
     let shard = sample_shard(ptr as usize);
     let removed = {
@@ -175,30 +150,6 @@ pub(crate) fn sample_free_inner(ptr: *mut u8) {
 #[inline]
 fn sample_shard(ptr: usize) -> usize {
     (ptr >> 6) % SHARDS
-}
-
-fn next_sample_interval(mean: usize) -> usize {
-    std::thread_local! {
-        static RNG: core::cell::Cell<u64> = const { core::cell::Cell::new(0x123456789abcdef) };
-    }
-    RNG.with(|rng_state| {
-        let mut state = rng_state.get();
-        if state == 0 {
-            state = 0x123456789abcdef
-                ^ (std::time::SystemTime::now()
-                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as u64);
-        }
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        rng_state.set(state);
-
-        let u = (state as f64) / (u64::MAX as f64);
-        let u = if u < 1e-9 { 1e-9 } else { u };
-        (-u.ln() * mean as f64) as usize
-    })
 }
 
 /// Dumps a folded stack profile of active memory allocations to a file.
