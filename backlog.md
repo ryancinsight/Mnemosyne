@@ -122,9 +122,12 @@ audit, in priority order:
   backend (`NotAnAdmin`). Acceptance remains a matched multi-thread A/B showing
   occupancy-mask or mixed-hash contention reduction without allocator latency
   regression.
-- [ ] [arch] Split the 870-line profiler sampler by capture, slot lifecycle,
-  and aggregation concern, and consolidate duplicated backend type lists at
-  their deepest owning module without changing the hot-path representation.
+- [arch] status=in-progress owner=codex scope=`crates/mnemosyne-prof/src/sampler.rs`,
+  `crates/mnemosyne-prof/src/sampler/`, ADR 0004, and PM artifacts on
+  `codex/mnemosyne-split-profiler-sampler`; split capture, slot lifecycle, and
+  aggregation into vertical modules without changing the hot-path
+  representation. First increment: move stack hashing/interner ownership into
+  its canonical leaf and keep all existing value-semantic tests green.
 
 Filed from the 2026-06-27 deep contention/memory audit (read-only fan-out over
 arena/local/core/heap/backend). Ranked by value; each carries a testable
