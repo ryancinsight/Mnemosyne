@@ -16,6 +16,25 @@ Evidence tier: type-level layout enforcement plus value-semantic nextest and
 release artifact compilation. No allocator throughput speedup is claimed; all
 production backends still compile `ENABLE_CPU_CACHE = false`.
 
+## Verified — segment lifetime-lock contention audit [patch]
+
+- [x] Compare the merged lock-bearing provider `2adec54` with the pre-lock
+  parent `477f957` using the segment-eviction, threaded-small, and cross-thread
+  Criterion rows.
+- [x] Retain `CacheAlignedSegmentLock`: segment eviction was `239.94 us`
+  `[235.58, 246.31] us` post-lock versus `231.85 us` `[228.94, 235.72] us`
+  pre-lock in the first run, while threaded-small and cross-thread rows did not
+  regress (`7.411 us` versus `8.558 us`, and `14.120 us` versus `15.441 us`;
+  cross-thread `p = 0.09`).
+- [x] Record the second post-lock segment row (`303.30 us`
+  `[293.29, 314.26] us`) as host-contention noise rather than attributing it to
+  the lock. The compared provider revisions also contain broader PR #9 changes,
+  so no lock-only speedup or regression claim is made.
+
+Evidence tier: source-level reclamation/lifetime audit plus empirical matched
+Criterion rows. No production mutation was made; the safety lock remains the
+single ownership seam until a lock-isolated harness provides stronger evidence.
+
 ## Verified — profiler active-sample occupancy [patch]
 
 - [x] Replace the process-global active-sample RMW with one cache-line-sharded
