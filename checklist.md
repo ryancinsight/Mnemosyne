@@ -16,6 +16,19 @@ Evidence tier: type-level layout enforcement plus value-semantic nextest and
 release artifact compilation. No allocator throughput speedup is claimed; all
 production backends still compile `ENABLE_CPU_CACHE = false`.
 
+## Verified — profiler contention audit [patch]
+
+- [x] Inspect the active-sample count and pointer-to-shard hot path.
+- [x] Measure the real leak-detector small-cycle benchmark at 1.0797 us median
+  [1.0731, 1.0877] us on this Windows host.
+- [x] Attempt CPU flamegraph capture; record the administrator-only
+  `NotAnAdmin` blocker without treating it as code evidence.
+- [x] Keep the occupancy-mask/mixed-hash implementation decision open until a
+  matched multi-thread A/B can separate global-RMW and shard-lock costs.
+
+Evidence tier: source audit plus empirical single-thread Criterion measurement;
+contention attribution remains unverified.
+
 ## Verified — concurrent pool reclamation [patch]
 
 - [x] Localize the native crash to a stale huge-pool head dereference during a
