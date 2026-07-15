@@ -113,6 +113,18 @@
 
 ## Residual risk / open findings
 
+- [closed] The remaining `allocator deallocation latency/large_8192` gap is
+  not a hidden large/huge unmapping path. `8192` equals
+  `MAX_SMALL_ALLOC_SIZE`; the opt-in branch probe and value-semantic regression
+  record the same-owner single-block free in `InPlaceSmall`, with zero
+  `HugeClassifier` and `FullToActive` commits. A matched default-feature
+  Criterion run measures Mnemosyne `36.960 ns` `[33.540, 38.661] ns` versus
+  RpMalloc `6.1139 ns` `[5.8441, 6.5791] ns` (`6.05x`). No safe production
+  optimization was identified: the page-list transition candidates are absent
+  from the measured row, and no source-level correctness or contention defect
+  remains to fix in this scope. Evidence tier: source audit, value-semantic
+  nextest, warning-denied Clippy, and empirical Criterion measurement.
+
 - [closed] Segment-cache lock attribution now has a source-matched lock-only
   harness. A zero-sized unlocked control measured `27.859 ps` uncontended and
   `1.5305 us` through the same bounded worker harness; the actual lifetime lock

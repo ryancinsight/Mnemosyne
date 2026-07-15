@@ -32,6 +32,11 @@
 - Added a source-matched `mnemosyne-benchmarks` segment-lock Criterion leaf with
   a zero-sized unlocked control and bounded persistent workers. The measured
   lock baseline is recorded without changing allocator synchronization policy.
+- Closed the maximum-small deallocation audit: the `large/8192` row remains an
+  in-place same-owner free, and the matched default-feature comparison records
+  Mnemosyne `36.960 ns` versus RpMalloc `6.1139 ns`. Added a value-semantic
+  probe regression for the branch classification; no speculative allocator
+  mutation was justified.
 
 ## 0.4.0 - 2026-07-13
 

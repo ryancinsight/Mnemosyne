@@ -829,14 +829,19 @@ remainder, each Definition-of-Ready):
   revision, and its registration wheel completes without a native crash.
   Rejected after audit: RITK already pins `477f957`, whose parent is the exact
   Miri-verified correction `5a9f49f`; no consumer pin change is required.
-- [patch] status=in-progress owner=codex scope=`crates/mnemosyne-local`,
+- [x] [patch] status=done owner=codex scope=`crates/mnemosyne-local`,
   `crates/mnemosyne-benchmarks`, and performance PM artifacts;
   last-update=2026-07-15. Investigate the remaining
-  `allocator deallocation latency/large_8192` gap to RpMalloc. Acceptance:
-  establish the exact same-owner branch mix and a matched Criterion baseline,
-  then implement only a correctness-preserving upstream optimization supported
-  by value-semantic tests and a default-feature threshold run; otherwise close
-  the item with the measured residual and rejected alternatives recorded.
+  `allocator deallocation latency/large_8192` gap to RpMalloc. The matched
+  default-feature Criterion row measures Mnemosyne `36.960 ns`
+  `[33.540, 38.661] ns` versus RpMalloc `6.1139 ns`
+  `[5.8441, 6.5791] ns` (`6.05x`). `8192` is the maximum small class, and
+  the opt-in branch probe plus value-semantic regression establish that the
+  same-owner single-block case commits through `InPlaceSmall`, with no large/
+  huge classifier or full-page relink. No production mutation is justified:
+  the measured row does not enter the page-list transition candidates, and
+  the remaining gap is comparator implementation difference rather than an
+  identified Mnemosyne correctness or contention defect.
 
 ## Next
 

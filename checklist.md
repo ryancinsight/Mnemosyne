@@ -53,6 +53,26 @@ Evidence tier: canonical source inclusion, zero-sized reference strategy,
 bounded persistent workers, warning-denied Clippy, and Criterion empirical
 measurement. No production allocator code changed.
 
+## Verified — maximum-small deallocation residual audit [patch]
+
+- [x] Reconcile the stale Miri prerequisite: the merged provider head contains
+  the Miri-verified page-provenance correction `5a9f49f`, and the RITK 0.2 pin
+  already consumes its corrected parent line.
+- [x] Re-run the matched default-feature deallocation group. The
+  `large/8192` row measures Mnemosyne `36.960 ns` `[33.540, 38.661] ns` versus
+  RpMalloc `6.1139 ns` `[5.8441, 6.5791] ns`; this is a `6.05x` comparator gap.
+- [x] Extend the opt-in deallocation probe with a value-semantic regression for
+  `MAX_SMALL_ALLOC_SIZE`, proving the exact same-owner case records
+  `InPlaceSmall` and excludes `HugeClassifier` and `FullToActive`.
+- [x] Preserve the production path. The measured row is an in-place maximum
+  small-class free, so the previously audited page-list transition candidates
+  are not on this hot path; no speculative source change was made.
+
+Evidence tier: source-level size-class proof, 3/3 feature-gated nextest,
+warning-denied Clippy, and matched Criterion empirical measurement. The
+comparator gap remains open as a reference observation, not as an identified
+Mnemosyne defect.
+
 ## Verified — profiler active-sample occupancy [patch]
 
 - [x] Replace the process-global active-sample RMW with one cache-line-sharded
