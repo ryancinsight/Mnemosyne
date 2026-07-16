@@ -1,15 +1,18 @@
 # Gap Audit
 
-## 2026-07-15 Themis default-branch source convergence
+## 2026-07-15 provider default-source convergence
 
-- [closed] Mnemosyne carried a revision-qualified Themis source while current
-  consumers resolve the provider default branch. The workspace contract now
-  removes that quarantine and regenerates the lockfile under the canonical
-  source identity. `mnemosyne-local` passes 62/62 focused nextest cases,
-  warning-denied Clippy, and formatting; its dependency tree has one Themis
-  source. The downstream Moirai graph audit remains the consumer acceptance
-  step. Evidence tier: compile-time source convergence plus value-semantic
-  allocator regression coverage.
+- [closed] Mnemosyne carried revision-qualified Eunomia and Melinoe
+  sources while direct consumers resolve provider defaults. The workspace
+  contract removes that quarantine and regenerates the lockfile under one
+  canonical identity. Eunomia's default source declares Rust 1.95, so ADR 0006
+  raises the published MSRV and pre-1.0 versions together. Acceptance requires
+  the focused allocator regression, warning-denied Clippy, formatting, rustdoc,
+  and downstream Moirai graph audit. Rust 1.94 rejects the declared packages;
+  Rust 1.95 compiles `mnemosyne-local`; the focused 68-case Nextest listing,
+  Clippy, formatter, doctest, rustdoc, and source-identity scan pass. Evidence
+  tier: compiler-enforced MSRV/source convergence plus value-semantic allocator
+  regression coverage.
 
 ## 2026-07-13 concurrent pool reclamation correction
 

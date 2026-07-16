@@ -4,9 +4,14 @@
 
 ### Changed
 
-- The workspace Themis dependency now tracks the provider default branch
-  without a revision quarantine, so downstream Atlas consumers converge on one
-  canonical source identity.
+- The workspace Themis, Eunomia, and Melinoe dependencies track their provider
+  default branches without revision quarantine, so downstream Atlas consumers
+  converge on one canonical source identity.
+
+### Breaking
+
+- All published Mnemosyne crates now require Rust 1.95. Migration: update the
+  consumer toolchain before resolving the default Eunomia provider source.
 - `mnemosyne-local` now stores `PER_CPU_CACHE` behind a
   `OnceLock<Box<PerCpuCache>>` handle. Production backends do not reserve the
   720,896-byte cache table; explicit cache use allocates it on first access.

@@ -159,97 +159,95 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     let mut new_ptr = core::ptr::null_mut();
     let mut local_free_done = false;
 
-    if is_old_small {
-        if let Some(class) = new_class {
-            let slot_ptr = B::get_allocator_ptr_raw();
-            if !slot_ptr.is_null() {
-                // SAFETY: `get_allocator_ptr_raw` returns this thread's TLS
-                // allocator slot; the non-null check confirms initialization and
-                // the slot is thread-affine, so this `&mut` is the sole reference.
-                let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
-                if !alloc.is_allocating {
-                    // SAFETY: `segment` is the live header recovered from `ptr`;
-                    // `is_owned_by` reads its owner field and compares against the
-                    // current thread's allocator pointer.
-                    let is_owner = unsafe { (*segment).is_owned_by(|| slot_ptr) };
+    if is_old_small && let Some(class) = new_class {
+        let slot_ptr = B::get_allocator_ptr_raw();
+        if !slot_ptr.is_null() {
+            // SAFETY: `get_allocator_ptr_raw` returns this thread's TLS
+            // allocator slot; the non-null check confirms initialization and
+            // the slot is thread-affine, so this `&mut` is the sole reference.
+            let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
+            if !alloc.is_allocating {
+                // SAFETY: `segment` is the live header recovered from `ptr`;
+                // `is_owned_by` reads its owner field and compares against the
+                // current thread's allocator pointer.
+                let is_owner = unsafe { (*segment).is_owned_by(|| slot_ptr) };
 
-                    if is_owner {
-                        alloc.is_allocating = true;
-                        // SAFETY: `alloc` is the exclusively-borrowed owning
-                        // allocator and `is_allocating` is set to guard re-entry;
-                        // `class` is a valid size class from `small_path_class`.
-                        let allocated = unsafe { alloc.alloc_class::<P>(class) };
-                        new_ptr = allocated;
-                        if !new_ptr.is_null() {
-                            unsafe {
-                                // SAFETY: `new_ptr` is a fresh block of at least
-                                // `new_adjusted` bytes; init writes only within it.
-                                initialize_allocated_bytes::<P>(new_ptr, new_adjusted);
-                                // SAFETY: `ptr` (old, valid for `layout.size()`)
-                                // and `new_ptr` (fresh, distinct block) are
-                                // non-overlapping; copy length is the smaller size.
-                                core::ptr::copy_nonoverlapping(
-                                    ptr,
-                                    new_ptr,
-                                    core::cmp::min(layout.size(), new_size),
-                                );
-                                // SAFETY: `segment`/`page_index` identify the
-                                // live page and its key slot. Read the segment
-                                // metadata before materializing `page_ref`,
-                                // because the exclusive page borrow must not
-                                // overlap this shared parent-segment access.
-                                let cookie = (*segment).cookie_for::<P>(page_index);
-                                // SAFETY: `page` is the exclusively-borrowed page
-                                // owning the old block; reborrowing yields the sole
-                                // live `&mut` for the free bookkeeping below.
-                                let page_ref = &mut *page;
-                                if P::ENABLE_POISONING {
-                                    // SAFETY: `ptr` is the old block, valid for the
-                                    // page's `block_size` bytes being poisoned.
-                                    poison_freed_bytes::<P>(ptr, page_ref.block_size);
-                                }
-                                let block = ptr as *mut Block;
-                                let page_free = page_ref.free;
-                                let page_alloc_count = page_ref.alloc_count;
-                                if page_ref.alloc_count == 0 {
-                                    std::process::abort();
-                                }
-                                // SAFETY: `block` is the old user pointer, non-null
-                                // by the allocator invariant; `new_unchecked` is
-                                // sound and equality with `page_free` is the
-                                // double-free guard.
-                                if Some(NonNull::new_unchecked(block)) == page_free {
-                                    std::process::abort();
-                                }
-                                if page_free.is_some()
-                                    && (page_alloc_count != 1 || alloc.is_current_segment(segment))
-                                {
-                                    // SAFETY: in-place free — `block` is the guarded
-                                    // old block, `page_free`/`cookie` are `page_ref`'s
-                                    // current head and cookie, and `page_alloc_count`
-                                    // is its live count (`>= 1`), so the shared commit
-                                    // stays inside this owned page.
-                                    crate::free::commit_in_place_free::<P>(
-                                        block,
-                                        page_ref,
-                                        page_free,
-                                        cookie,
-                                        page_alloc_count,
-                                    );
-                                } else {
-                                    // SAFETY: `block` belongs to `page_ref` in
-                                    // `segment` at `page_index`, and `alloc` owns
-                                    // them — exactly `do_local_free_internal`'s
-                                    // contract for the page-list transition path.
-                                    let _became_empty = do_local_free_internal::<P, B>(
-                                        alloc, block, page_ref, segment, page_index,
-                                    );
-                                }
+                if is_owner {
+                    alloc.is_allocating = true;
+                    // SAFETY: `alloc` is the exclusively-borrowed owning
+                    // allocator and `is_allocating` is set to guard re-entry;
+                    // `class` is a valid size class from `small_path_class`.
+                    let allocated = unsafe { alloc.alloc_class::<P>(class) };
+                    new_ptr = allocated;
+                    if !new_ptr.is_null() {
+                        unsafe {
+                            // SAFETY: `new_ptr` is a fresh block of at least
+                            // `new_adjusted` bytes; init writes only within it.
+                            initialize_allocated_bytes::<P>(new_ptr, new_adjusted);
+                            // SAFETY: `ptr` (old, valid for `layout.size()`)
+                            // and `new_ptr` (fresh, distinct block) are
+                            // non-overlapping; copy length is the smaller size.
+                            core::ptr::copy_nonoverlapping(
+                                ptr,
+                                new_ptr,
+                                core::cmp::min(layout.size(), new_size),
+                            );
+                            // SAFETY: `segment`/`page_index` identify the
+                            // live page and its key slot. Read the segment
+                            // metadata before materializing `page_ref`,
+                            // because the exclusive page borrow must not
+                            // overlap this shared parent-segment access.
+                            let cookie = (*segment).cookie_for::<P>(page_index);
+                            // SAFETY: `page` is the exclusively-borrowed page
+                            // owning the old block; reborrowing yields the sole
+                            // live `&mut` for the free bookkeeping below.
+                            let page_ref = &mut *page;
+                            if P::ENABLE_POISONING {
+                                // SAFETY: `ptr` is the old block, valid for the
+                                // page's `block_size` bytes being poisoned.
+                                poison_freed_bytes::<P>(ptr, page_ref.block_size);
                             }
-                            local_free_done = true;
+                            let block = ptr as *mut Block;
+                            let page_free = page_ref.free;
+                            let page_alloc_count = page_ref.alloc_count;
+                            if page_ref.alloc_count == 0 {
+                                std::process::abort();
+                            }
+                            // SAFETY: `block` is the old user pointer, non-null
+                            // by the allocator invariant; `new_unchecked` is
+                            // sound and equality with `page_free` is the
+                            // double-free guard.
+                            if Some(NonNull::new_unchecked(block)) == page_free {
+                                std::process::abort();
+                            }
+                            if page_free.is_some()
+                                && (page_alloc_count != 1 || alloc.is_current_segment(segment))
+                            {
+                                // SAFETY: in-place free — `block` is the guarded
+                                // old block, `page_free`/`cookie` are `page_ref`'s
+                                // current head and cookie, and `page_alloc_count`
+                                // is its live count (`>= 1`), so the shared commit
+                                // stays inside this owned page.
+                                crate::free::commit_in_place_free::<P>(
+                                    block,
+                                    page_ref,
+                                    page_free,
+                                    cookie,
+                                    page_alloc_count,
+                                );
+                            } else {
+                                // SAFETY: `block` belongs to `page_ref` in
+                                // `segment` at `page_index`, and `alloc` owns
+                                // them — exactly `do_local_free_internal`'s
+                                // contract for the page-list transition path.
+                                let _became_empty = do_local_free_internal::<P, B>(
+                                    alloc, block, page_ref, segment, page_index,
+                                );
+                            }
                         }
-                        alloc.is_allocating = false;
+                        local_free_done = true;
                     }
+                    alloc.is_allocating = false;
                 }
             }
         }
