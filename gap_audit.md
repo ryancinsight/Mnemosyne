@@ -1,5 +1,16 @@
 # Gap Audit
 
+## 2026-07-15 Themis default-branch source convergence
+
+- [closed] Mnemosyne carried a revision-qualified Themis source while current
+  consumers resolve the provider default branch. The workspace contract now
+  removes that quarantine and regenerates the lockfile under the canonical
+  source identity. `mnemosyne-local` passes 62/62 focused nextest cases,
+  warning-denied Clippy, and formatting; its dependency tree has one Themis
+  source. The downstream Moirai graph audit remains the consumer acceptance
+  step. Evidence tier: compile-time source convergence plus value-semantic
+  allocator regression coverage.
+
 ## 2026-07-13 concurrent pool reclamation correction
 
 - [closed] A symbolized RITK production crash reached
