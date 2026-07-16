@@ -2,6 +2,19 @@
 
 Target version: 0.4.0
 
+## Verified — Themis default-branch convergence [patch]
+
+- [x] Remove the workspace-level Themis revision quarantine while retaining the
+  provider version and feature contract.
+- [x] Regenerate `Cargo.lock` so its Themis source is the provider default
+  branch identity.
+- [x] Pass `cargo nextest run -p mnemosyne-local --locked --no-fail-fast`
+  (62/62), warning-denied Clippy, and formatting; the dependency tree exposes
+  one default-branch Themis identity.
+
+Evidence tier: compile-time provider-source convergence plus value-semantic
+allocator regression coverage.
+
 ## Verified — dormant per-CPU cache storage [minor]
 
 - [x] Replace the always-resident 720,896-byte `PER_CPU_CACHE` table with a

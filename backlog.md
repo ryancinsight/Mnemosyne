@@ -17,6 +17,12 @@
   merged in PR #9 (`01e7de7`, implementation `09b2ef8`); provider gates and the
   consumer wheel boundary are green.
 
+- [x] [patch] status=review owner=codex scope=`Cargo.toml`, `Cargo.lock`, and
+  release artifacts; remove the Themis revision quarantine so consumers follow
+  its default branch through one canonical source identity. Acceptance: focused
+  allocator gates are green and the Moirai consumer no longer duplicates the
+  Themis source.
+
 ## Atlas in-house replacement roadmap — mnemosyne slice [arch]
 
 mnemosyne is the allocation SSOT. The GPU program (coeus/apollo using wgpu + cuda-oxide)

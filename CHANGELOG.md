@@ -4,6 +4,9 @@
 
 ### Changed
 
+- The workspace Themis dependency now tracks the provider default branch
+  without a revision quarantine, so downstream Atlas consumers converge on one
+  canonical source identity.
 - `mnemosyne-local` now stores `PER_CPU_CACHE` behind a
   `OnceLock<Box<PerCpuCache>>` handle. Production backends do not reserve the
   720,896-byte cache table; explicit cache use allocates it on first access.
