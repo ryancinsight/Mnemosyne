@@ -9,8 +9,9 @@
   obsolete callbacks and selectors are deleted and the remaining backends pass
   the workspace gates. Hephaestus migration is tracked by Atlas WGPU-030.
 
-- [x] [patch] Pin Eunomia and Melinoe once in the workspace SSOT for
-  standalone-Git reproducibility.
+- [x] [major] Follow Eunomia and Melinoe provider default branches from the
+  workspace SSOT, raise the published Rust MSRV to 1.95, and advance the
+  pre-1.0 package versions. `Cargo.lock` remains the reproducibility pin.
 
 - [x] [patch] status=done owner=codex scope=`mnemosyne-arena`; fix concurrent
   segment-head reclamation exposed by the RITK registration suite. The fix is

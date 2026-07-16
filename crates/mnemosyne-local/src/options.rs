@@ -127,17 +127,13 @@ fn init_options_from_env() {
         }
     }
 
-    if let Some(parsed) = parse_env_bool("MNEMOSYNE_PROF") {
-        if parsed {
-            let interval = parse_env_usize("MNEMOSYNE_PROF_SAMPLE_INTERVAL").unwrap_or(512 * 1024);
-            mnemosyne_prof::enable_profiling(interval);
-        }
+    if let Some(true) = parse_env_bool("MNEMOSYNE_PROF") {
+        let interval = parse_env_usize("MNEMOSYNE_PROF_SAMPLE_INTERVAL").unwrap_or(512 * 1024);
+        mnemosyne_prof::enable_profiling(interval);
     }
 
-    if let Some(parsed) = parse_env_bool("MNEMOSYNE_LEAK_DETECTOR") {
-        if parsed {
-            mnemosyne_prof::enable_leak_detector();
-        }
+    if let Some(true) = parse_env_bool("MNEMOSYNE_LEAK_DETECTOR") {
+        mnemosyne_prof::enable_leak_detector();
     }
 }
 

@@ -1,19 +1,21 @@
 # Checklist
 
-Target version: 0.4.0
+Target version: 0.5.0
 
-## Verified — Themis default-branch convergence [patch]
+## Provider default-source convergence [patch]
 
-- [x] Remove the workspace-level Themis revision quarantine while retaining the
-  provider version and feature contract.
-- [x] Regenerate `Cargo.lock` so its Themis source is the provider default
-  branch identity.
-- [x] Pass `cargo nextest run -p mnemosyne-local --locked --no-fail-fast`
-  (62/62), warning-denied Clippy, and formatting; the dependency tree exposes
-  one default-branch Themis identity.
+- [x] Remove the workspace-level Themis, Eunomia, and Melinoe revision
+  quarantine while retaining provider version and feature contracts.
+- [x] Record ADR 0006: Eunomia's merged default source requires Rust 1.95, so
+  each published Mnemosyne crate advances its pre-1.0 breaking version.
+- [x] Regenerate `Cargo.lock` so its provider sources follow their default
+  branches with no duplicate identities.
+- [x] Pass Rust 1.95 compilation, the focused allocator Nextest gate,
+  warning-denied Clippy, formatting, doctest, and rustdoc before publication.
 
-Evidence tier: compile-time provider-source convergence plus value-semantic
-allocator regression coverage.
+Evidence tier: Rust 1.94 rejects the declared 1.95 packages; Rust 1.95 builds
+`mnemosyne-local`; the focused Nextest listing contains 68 test cases and its
+run passes. Clippy, doctest, rustdoc, and the provider duplicate scan pass.
 
 ## Verified — dormant per-CPU cache storage [minor]
 
