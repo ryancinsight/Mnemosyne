@@ -112,13 +112,14 @@ fn main() -> io::Result<()> {
         }
     }
 
-    if flags.enforce_thresholds && !flags.refresh_baseline {
-        if let Some(missing_baseline_rows) = missing_baseline_rows {
-            return Err(io::Error::other(format!(
-                "Missing selected benchmark rows for threshold enforcement: {}",
-                missing_baseline_rows
-            )));
-        }
+    if flags.enforce_thresholds
+        && !flags.refresh_baseline
+        && let Some(missing_baseline_rows) = missing_baseline_rows
+    {
+        return Err(io::Error::other(format!(
+            "Missing selected benchmark rows for threshold enforcement: {}",
+            missing_baseline_rows
+        )));
     }
 
     if regression_detected && flags.enforce_thresholds && !flags.refresh_baseline {

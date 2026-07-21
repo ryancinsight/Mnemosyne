@@ -22,10 +22,9 @@ pub fn collect_estimates(path: &Path, rows: &mut Vec<SummaryRow<'static>>) -> io
                 .and_then(|parent| parent.file_name())
                 .and_then(|name| name.to_str())
                 == Some("new")
+            && let Some(row) = parse_estimates(&child)?
         {
-            if let Some(row) = parse_estimates(&child)? {
-                rows.push(row);
-            }
+            rows.push(row);
         }
     }
 

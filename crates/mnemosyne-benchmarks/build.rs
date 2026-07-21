@@ -26,12 +26,12 @@ fn find_jemalloc_lib_dir() -> Option<PathBuf> {
     for entry in env::split_paths(&path) {
         // MSYS2 layout: `.../ucrt64/bin` (or `mingw64/bin`) has a sibling
         // `.../ucrt64/lib` holding `libjemalloc_s.a`.
-        if entry.file_name().is_some_and(|n| n == "bin") {
-            if let Some(parent) = entry.parent() {
-                let lib = parent.join("lib");
-                if lib.join("libjemalloc_s.a").exists() {
-                    return Some(lib);
-                }
+        if entry.file_name().is_some_and(|n| n == "bin")
+            && let Some(parent) = entry.parent()
+        {
+            let lib = parent.join("lib");
+            if lib.join("libjemalloc_s.a").exists() {
+                return Some(lib);
             }
         }
     }
