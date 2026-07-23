@@ -6,7 +6,9 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread::{self, JoinHandle};
 
-use cache_aligned::{CacheAlignedAtomicPtr, CacheAlignedAtomicUsize, CacheAlignedSegmentLock};
+use cache_aligned::{
+    CacheAlignedAtomicUsize, CacheAlignedSegmentLock, TaggedHead, TaggedStackState,
+};
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 const WORKERS: usize = 4;
@@ -115,14 +117,21 @@ impl<S: LockStrategy> Drop for LockWorkers<S> {
 }
 
 fn validate_included_canonical_surface() {
-    let pointer = CacheAlignedAtomicPtr::new();
+    let pointer = TaggedHead::new();
     let state = pointer.load(Ordering::Relaxed);
-    let address = CacheAlignedAtomicPtr::ptr(state);
-    let successor = CacheAlignedAtomicPtr::tagged_successor(address, state);
+    let address = TaggedHead::ptr(state);
+    let successor = TaggedHead::tagged_successor(address, state);
     match pointer.compare_exchange_weak(state, successor, Ordering::AcqRel, Ordering::Acquire) {
         Ok(value) | Err(value) => black_box(value),
     };
     black_box(pointer.swap_null(Ordering::AcqRel));
+
+    let packed = TaggedStackState::new();
+    assert_eq!(
+        std::mem::size_of_val(&packed),
+        std::mem::align_of_val(&packed)
+    );
+    black_box(packed.len());
 
     let counter = CacheAlignedAtomicUsize::new(0);
     black_box(counter.value.load(Ordering::Relaxed));

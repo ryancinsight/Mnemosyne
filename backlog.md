@@ -179,7 +179,7 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   is small and a helper risks obscuring the hot path. Re-evaluate only if a
   fourth caching provider appears.
 
-- [ ] [perf-experiment] status=in-progress owner=codex scope=`crates/mnemosyne-arena/src/segment/pool/{cache_aligned.rs,tagged_stack.rs}`, `crates/mnemosyne-benchmarks/benches/segment_lock.rs`, and matching PM entries; last-update 2026-07-23. Benchmark whether combining the lock-free pool bucket's
+- [ ] [perf-experiment] status=blocked owner=codex scope=`crates/mnemosyne-arena/src/segment/pool/{cache_aligned.rs,tagged_stack.rs,list.rs}`, `crates/mnemosyne-benchmarks/benches/segment_lock.rs`, and matching PM entries; last-update 2026-07-23. Benchmark whether combining the reclamation-safe pool stack's
   `head` + `count` onto ONE cache line beats the current per-atomic isolation.
   Every push/pop touches both atomics, so a single 64-byte line would touch one
   line per op (not two) and halve the bucket BSS (64 B vs 128 B/bucket; ~96 KiB
@@ -189,9 +189,12 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   (huge cycle/dealloc, cross-thread handoff, segment cache eviction, burst
   retention), not just the threshold gate. Acceptance: A/B shows neutral-or-
   better on those rows -> combine + keep the BSS win; else keep separate +
-  document the measured reason. Needs a quiet benchmarking machine (noise-
-  sensitive, warm path). Rename `CacheAlignedAtomicPtr` (it is a tagged head,
-  not a bare ptr) when this lands.
+  document the measured reason. Blocker: this host cannot link the Criterion
+  executable: GNU UCRT linking fails against the Rust MSVCRT libraries, the
+  MSVC toolchain lacks its C/C++ include environment, and the alternate mingw64
+  linker exits 8. Re-open on a Windows host with one coherent native toolchain
+  and a quiet benchmark run. Rename `CacheAlignedAtomicPtr` (it is a tagged
+  head, not a bare ptr) when this lands.
 
 Filed from the 2026-07-01 four-agent audit cycle (high-severity findings were
 fixed in the same cycle — see `## Completed`; these are the deferred
