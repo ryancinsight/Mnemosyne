@@ -179,7 +179,7 @@ Added from the 2026-06-27 deep audit of the under-examined crates
   is small and a helper risks obscuring the hot path. Re-evaluate only if a
   fourth caching provider appears.
 
-- [ ] [perf-experiment] Benchmark whether combining the lock-free pool bucket's
+- [ ] [perf-experiment] status=in-progress owner=codex scope=`crates/mnemosyne-arena/src/segment/pool/{cache_aligned.rs,tagged_stack.rs}`, `crates/mnemosyne-benchmarks/benches/segment_lock.rs`, and matching PM entries; last-update 2026-07-23. Benchmark whether combining the lock-free pool bucket's
   `head` + `count` onto ONE cache line beats the current per-atomic isolation.
   Every push/pop touches both atomics, so a single 64-byte line would touch one
   line per op (not two) and halve the bucket BSS (64 B vs 128 B/bucket; ~96 KiB
