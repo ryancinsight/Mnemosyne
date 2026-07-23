@@ -4,21 +4,21 @@
 //! ([`super::huge_pool`]) and the segment pool ([`super::list`]).
 //!
 //! Both pools previously hand-drove the identical push / pop / `take_all` CAS
-//! loops over [`CacheAlignedAtomicPtr`]; centralizing them here means the head
+//! loops over [`TaggedHead`]; centralizing them here means the head
 //! lifetime and ordering discipline live in exactly one place. A per-stack
 //! [`CacheAlignedSegmentLock`] covers every head observation and successor-link
 //! dereference. This is required because a mutation tag rejects a stale CAS but
 //! cannot stop a concurrent decay sweep from releasing the observed mapping
 //! before the pointer is dereferenced.
 //!
-//! The head and count keep their own cache lines ([`CacheAlignedAtomicPtr`] /
-//! [`CacheAlignedAtomicUsize`] are each `#[repr(align(64))]`), matching the
-//! prior per-atomic-isolation layout; consolidating into a single line is a
-//! separate, benchmark-gated experiment (see backlog).
+//! The tagged head and advisory count share one cache-line-packed
+//! [`TaggedStackState`]. Stack mutation already holds the lifetime lock, so the
+//! packed state preserves the synchronization contract while removing one
+//! per-stack alignment block. The resulting layout is benchmark-gated because
+//! lock-free `len` readers can still observe the count while stack mutation
+//! updates the same line.
 
-use super::cache_aligned::{
-    CacheAlignedAtomicPtr, CacheAlignedAtomicUsize, CacheAlignedSegmentLock,
-};
+use super::cache_aligned::{CacheAlignedSegmentLock, TaggedHead, TaggedStackState};
 use core::sync::atomic::Ordering;
 use mnemosyne_core::types::Segment;
 
@@ -28,20 +28,22 @@ pub(crate) struct TaggedSegmentStack {
     /// Serializes head observation through successor access or detachment, so
     /// a detached mapping can be released after `take_all` returns.
     mutation_lock: CacheAlignedSegmentLock,
-    /// Tagged head: low 48 bits are the head segment address, high bits a
-    /// wrapping mutation tag that defeats ABA on single-element `pop`.
-    head: CacheAlignedAtomicPtr,
-    /// Advisory count of segments currently on the stack.
-    count: CacheAlignedAtomicUsize,
+    /// Tagged head and advisory count packed into one cache line.
+    state: TaggedStackState,
 }
+
+const _: () = assert!(
+    core::mem::size_of::<TaggedSegmentStack>()
+        == core::mem::size_of::<CacheAlignedSegmentLock>()
+            + core::mem::size_of::<TaggedStackState>()
+);
 
 impl TaggedSegmentStack {
     /// Creates a new empty stack.
     pub(crate) const fn new() -> Self {
         Self {
             mutation_lock: CacheAlignedSegmentLock::new(),
-            head: CacheAlignedAtomicPtr::new(),
-            count: CacheAlignedAtomicUsize::new(0),
+            state: TaggedStackState::new(),
         }
     }
 
@@ -49,7 +51,7 @@ impl TaggedSegmentStack {
     /// callers tolerate a small skew under concurrency).
     #[inline(always)]
     pub(crate) fn len(&self) -> usize {
-        self.count.value.load(Ordering::Relaxed)
+        self.state.len()
     }
 
     /// Pushes `segment` onto the stack and increments the count.
@@ -61,17 +63,17 @@ impl TaggedSegmentStack {
     #[inline]
     pub(crate) unsafe fn push(&self, segment: *mut Segment) {
         let _guard = self.mutation_lock.lock();
-        let mut current = self.head.load(Ordering::Relaxed);
+        let mut current = self.state.head.load(Ordering::Relaxed);
         loop {
-            let current_ptr = CacheAlignedAtomicPtr::ptr(current);
+            let current_ptr = TaggedHead::ptr(current);
             // SAFETY: by contract the caller owns `segment` exclusively until the
             // publishing CAS succeeds, so writing its link first is unobservable
             // to other threads until then.
             unsafe {
                 (*segment).next_free_segment = current_ptr;
             }
-            let next = CacheAlignedAtomicPtr::tagged_successor(segment, current);
-            match self.head.compare_exchange_weak(
+            let next = TaggedHead::tagged_successor(segment, current);
+            match self.state.head.compare_exchange_weak(
                 current,
                 next,
                 Ordering::Release,
@@ -81,7 +83,7 @@ impl TaggedSegmentStack {
                 Err(actual) => current = actual,
             }
         }
-        self.count.value.fetch_add(1, Ordering::Relaxed);
+        self.state.count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Pushes a pre-linked chain of `len` segments in a single tagged CAS and
@@ -104,17 +106,17 @@ impl TaggedSegmentStack {
     pub(crate) unsafe fn push_chain(&self, head: *mut Segment, tail: *mut Segment, len: usize) {
         debug_assert!(!head.is_null() && !tail.is_null() && len >= 1);
         let _guard = self.mutation_lock.lock();
-        let mut current = self.head.load(Ordering::Relaxed);
+        let mut current = self.state.head.load(Ordering::Relaxed);
         loop {
-            let current_ptr = CacheAlignedAtomicPtr::ptr(current);
+            let current_ptr = TaggedHead::ptr(current);
             // SAFETY: by contract the caller owns the whole chain exclusively
             // until the publishing CAS succeeds, so linking `tail` to the
             // observed stack head is unobservable to other threads until then.
             unsafe {
                 (*tail).next_free_segment = current_ptr;
             }
-            let next = CacheAlignedAtomicPtr::tagged_successor(head, current);
-            match self.head.compare_exchange_weak(
+            let next = TaggedHead::tagged_successor(head, current);
+            match self.state.head.compare_exchange_weak(
                 current,
                 next,
                 Ordering::Release,
@@ -127,7 +129,7 @@ impl TaggedSegmentStack {
                 Err(actual) => current = actual,
             }
         }
-        self.count.value.fetch_add(len, Ordering::Relaxed);
+        self.state.count.fetch_add(len, Ordering::Relaxed);
     }
 
     /// Pops the head segment, returning null when empty, decrementing the count
@@ -139,12 +141,12 @@ impl TaggedSegmentStack {
     #[inline]
     pub(crate) fn pop(&self) -> *mut Segment {
         let _guard = self.mutation_lock.lock();
-        if self.count.value.load(Ordering::Relaxed) == 0 {
+        if self.state.count.load(Ordering::Relaxed) == 0 {
             return core::ptr::null_mut();
         }
-        let mut current = self.head.load(Ordering::Acquire);
+        let mut current = self.state.head.load(Ordering::Acquire);
         loop {
-            let current_ptr = CacheAlignedAtomicPtr::ptr(current);
+            let current_ptr = TaggedHead::ptr(current);
             if current_ptr.is_null() {
                 return core::ptr::null_mut();
             }
@@ -156,8 +158,8 @@ impl TaggedSegmentStack {
             // concurrent push/pop changes the head tag, so our CAS fails and
             // retries rather than acting on a stale successor.
             let next_ptr = unsafe { (*current_ptr).next_free_segment };
-            let next = CacheAlignedAtomicPtr::tagged_successor(next_ptr, current);
-            match self.head.compare_exchange_weak(
+            let next = TaggedHead::tagged_successor(next_ptr, current);
+            match self.state.head.compare_exchange_weak(
                 current,
                 next,
                 Ordering::Acquire,
@@ -170,7 +172,7 @@ impl TaggedSegmentStack {
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    self.count.value.fetch_sub(1, Ordering::Relaxed);
+                    self.state.count.fetch_sub(1, Ordering::Relaxed);
                     // SAFETY: the successful CAS removed `current_ptr` from the
                     // shared stack, so this thread now exclusively owns it.
                     unsafe {
@@ -188,8 +190,8 @@ impl TaggedSegmentStack {
     #[inline]
     pub(crate) fn take_all(&self) -> (*mut Segment, usize) {
         let _guard = self.mutation_lock.lock();
-        let head = CacheAlignedAtomicPtr::ptr(self.head.swap_null(Ordering::Acquire));
-        let count = self.count.value.swap(0, Ordering::Relaxed);
+        let head = TaggedHead::ptr(self.state.head.swap_null(Ordering::Acquire));
+        let count = self.state.count.swap(0, Ordering::Relaxed);
         (head, count)
     }
 }

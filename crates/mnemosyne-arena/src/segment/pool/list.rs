@@ -1,7 +1,8 @@
 //! Reclamation-safe per-NUMA-node segment pool.
 //!
 //! The pool is a singly-linked stack of free [`Segment`] nodes whose head is a
-//! tagged `CacheAlignedAtomicPtr` (address + wrapping mutation tag). The shared
+//! tagged [`TaggedHead`](super::cache_aligned::TaggedHead) (address + wrapping
+//! mutation tag). The shared
 //! stack serializes head observation through successor access or detachment so
 //! a decay sweep may release a detached mapping after `take_all` returns.
 //!
@@ -88,8 +89,9 @@ impl NodeSegmentPool {
     /// its head (or null) and the number of segments detached, and leaving
     /// the pool empty.
     ///
-    /// This is a single `swap` on the head atomic — no lock acquisition, so
-    /// it never serializes with allocators pushing/popping on the same pool.
+    /// The stack's lifetime lock protects the head and intrusive links while
+    /// detaching; the returned chain is therefore no longer reachable by
+    /// concurrent pool operations when ownership transfers to the caller.
     /// Ownership of every detached segment transfers to the caller, which
     /// must release or re-cache them.
     #[inline]

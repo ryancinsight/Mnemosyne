@@ -2,6 +2,28 @@
 
 Target version: 0.5.0
 
+## Blocked — packed tagged pool state [perf-experiment]
+
+- [x] Replace separate cache-line-aligned tagged-head and advisory-count
+  fields with one `TaggedStackState` cache line, retaining the atomic count
+  because `len` is an intentional lock-free advisory read.
+- [x] Pin the packed layout with compile-time size assertions and preserve
+  stack value/concurrency tests.
+- [ ] Compare the exact warm-pool rows before and after the layout change:
+  huge allocation/deallocation, cross-thread handoff, segment-cache eviction,
+  and burst retention. Keep the packed state only if the matched rows are
+  neutral-or-better; otherwise restore the prior isolated layout and record
+  the measured reason.
+- [x] Synchronize the stale `take_all` documentation, which previously claimed
+  detachment bypassed the lifetime lock.
+
+- [ ] Benchmark acceptance is blocked on a coherent native Windows linker and
+  quiet host; the packed state is not a throughput-optimized claim until the
+  exact warm-pool A/B rows are available.
+
+Evidence tier: source-level synchronization/layout audit, compile-time layout
+assertions, value-semantic and concurrent nextest, plus matched Criterion rows.
+
 ## Provider default-source convergence [patch]
 
 - [x] Remove the workspace-level Themis, Eunomia, and Melinoe revision

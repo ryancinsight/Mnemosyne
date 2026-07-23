@@ -1,15 +1,43 @@
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use mnemosyne_core::types::Segment;
 
-/// Cache-line aligned tagged atomic segment pointer used by segment-pool heads.
+/// Tagged atomic segment head used by segment-pool stacks.
 ///
 /// On 64-bit targets this packs the segment address into the low 48 bits and a
 /// wrapping mutation tag into the high bits. The tag changes on every successful
 /// push/pop CAS, preventing stale-head ABA from installing an obsolete
 /// `next_free_segment` link.
-#[repr(align(64))]
-pub(crate) struct CacheAlignedAtomicPtr {
+#[repr(transparent)]
+pub(crate) struct TaggedHead {
     value: AtomicUsize,
+}
+
+/// Cache-line-packed head and advisory count for one segment-pool stack.
+///
+/// Stack mutation already holds [`CacheAlignedSegmentLock`], so isolating the
+/// two fields from each other cannot prevent concurrent head/count writes. The
+/// count remains atomic because `len` is an intentionally lock-free advisory
+/// read. Keeping both values in one cache line removes one alignment padding
+/// block per stack while preserving that synchronization contract.
+#[repr(C, align(64))]
+pub(crate) struct TaggedStackState {
+    pub(crate) head: TaggedHead,
+    pub(crate) count: AtomicUsize,
+}
+
+impl TaggedStackState {
+    #[inline(always)]
+    pub(crate) const fn new() -> Self {
+        Self {
+            head: TaggedHead::new(),
+            count: AtomicUsize::new(0),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn len(&self) -> usize {
+        self.count.load(core::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 /// Cache-line-isolated lock protecting intrusive segment-head lifetimes.
@@ -79,7 +107,7 @@ impl Drop for SegmentLockGuard<'_> {
     }
 }
 
-impl CacheAlignedAtomicPtr {
+impl TaggedHead {
     #[cfg(target_pointer_width = "64")]
     const PACKED_PTR_BITS: u32 = 48;
     #[cfg(not(target_pointer_width = "64"))]
@@ -171,3 +199,7 @@ impl CacheAlignedAtomicUsize {
         }
     }
 }
+
+const _: () = assert!(core::mem::size_of::<TaggedHead>() == core::mem::size_of::<AtomicUsize>());
+const _: () =
+    assert!(core::mem::size_of::<TaggedStackState>() == core::mem::align_of::<TaggedStackState>());

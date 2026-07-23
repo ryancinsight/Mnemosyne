@@ -4,6 +4,11 @@
 
 ### Changed
 
+- `mnemosyne-arena` pool stacks now pack their tagged head and advisory count
+  into one cache-line-aligned state object. The count remains atomic for
+  lock-free advisory reads. Source-level layout and allocator tests pass; no
+  throughput improvement is claimed until matched warm-pool benchmark rows
+  are available.
 - The workspace Themis, Eunomia, and Melinoe dependencies track their provider
   default branches without revision quarantine, so downstream Atlas consumers
   converge on one canonical source identity.
