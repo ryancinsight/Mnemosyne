@@ -80,14 +80,9 @@ pub(super) fn remove_sample(ptr: usize) -> Option<Sample> {
         .mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let (removed, became_empty) = match lock.as_mut() {
-        Some(map) => {
-            let removed = map.remove(&ptr);
-            let became_empty = removed.is_some() && map.is_empty();
-            (removed, became_empty)
-        }
-        None => return None,
-    };
+    let map = lock.as_mut()?;
+    let removed = map.remove(&ptr);
+    let became_empty = removed.is_some() && map.is_empty();
     if became_empty {
         ACTIVE_SAMPLES[shard].active.store(false, Ordering::Release);
     }
