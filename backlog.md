@@ -37,9 +37,9 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
   host/device/stream is a compile-time proof (pairs with hephaestus + coeus Stage D).
 
 ### Heterogeneous tiers + kernel resource budgets (atlas ADR 0002)
-- [ ] [minor] Tier-keyed device pools: allocation keyed by themis
+- [ ] [minor] status=in-progress owner=codex scope=`crates/mnemosyne-backend/src/backends/cuda/mod.rs`, `crates/mnemosyne-arena/src/segment/pool/mod.rs`, `crates/mnemosyne-local/src/lib.rs`, `crates/mnemosyne-heap/src/{tiered_backend.rs,tiered_heap.rs,tier.rs}`, matching tests/docs, and package metadata; Tier-keyed device pools: allocation keyed by themis
   `MemoryTier` (`Hbm` vs the new `Gddr`) + `PlacementHint`, with pinned-host
-  (`HostPinned`) staging pools, behind the existing `MemoryBackend` seam.
+  (`HostPinned`) staging pools, behind the existing `MemoryBackend` seam. Last-update=2026-07-23.
 - [x] [minor] `KernelResourceBudget` (`mnemosyne-core::kernel_budget`):
   registers/thread, shared-mem/block, threads/block with fully-`const`
   occupancy limiters (`blocks_limited_by_{registers,shared_mem,threads}`,
