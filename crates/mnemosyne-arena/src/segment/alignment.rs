@@ -1,6 +1,6 @@
-//! Utility functions for segment alignment arithmetic.
+//! Segment alignment arithmetic.
 
-/// Utility to align an address up to a given alignment boundary, returning `None` on overflow.
+/// Align an address up to a given alignment boundary, returning `None` on overflow.
 ///
 /// # Invariants
 ///

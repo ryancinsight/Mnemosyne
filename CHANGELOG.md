@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Segment alignment arithmetic and allocator benchmark support now live in
+  named vertical leaves instead of generic `utils`/`helpers` modules. Benchmark
+  registration, platform policy, failure handling, and allocation operations
+  retain one canonical implementation; timed scenarios are unchanged.
 - `mnemosyne-local` now keys its thread-local allocator caches by backend and
   free-list encryption mode. Owner-side frees, reallocations, cross-thread
   publication, and optional per-CPU publication encode links from the owning
@@ -26,6 +30,9 @@
 
 ### Breaking
 
+- The public `mnemosyne_arena::segment::utils` module is removed. Consumers
+  should use the unchanged `checked_align_up` re-export from
+  `mnemosyne_arena::segment` or `mnemosyne_arena`.
 - Branded `Heap::realloc` and `TieredHeap::realloc` now return a typed
   `Result<Option<_>, ReallocError>` instead of losing the source block through
   `Option` on invalid layouts or allocation failure. `ReallocError` and

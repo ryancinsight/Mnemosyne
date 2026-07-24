@@ -2,7 +2,32 @@
 
 Target version: 0.6.0
 
-## In progress — Branded free layout lifetime [patch]
+## Verified — Vertical module cleanup [arch]
+
+- [x] Replace the generic `mnemosyne-arena::segment::utils` leaf with the
+  named `alignment` leaf while preserving the crate-root and segment-level
+  `checked_align_up` re-exports.
+- [x] Split allocator benchmark support into named `allocation`, `failure`,
+  `platform`, and `registration` leaves; update every benchmark caller without
+  changing a timed operation or scenario.
+- [x] Run focused format, package check, benchmark-target compilation, and
+  warning-denied Clippy gates. Do not claim a runtime or benchmark result.
+
+Scope owner: `crates/mnemosyne-arena/src/segment/`,
+`crates/mnemosyne-benchmarks/benches/allocator/`, and these PM entries.
+
+Acceptance: no touched production or benchmark module is named `utils` or
+`helpers`; every moved operation has one canonical implementation; public
+`checked_align_up` re-exports remain value-compatible; the exact benchmark
+targets compile.
+
+Evidence tier: focused rustfmt and `git diff --check`; `mnemosyne-arena`
+package check and nextest 43/43; `mnemosyne-benchmarks` all-target check and
+nextest 20/20; warning-denied all-target/all-feature Clippy; arena doctests and
+rustdoc; semver check from baseline revision `63623cb` to the current 0.6.0
+major change. No runtime or benchmark result is claimed.
+
+## Verified — Branded free layout lifetime [patch]
 
 - [x] Compute `size_of_val` for a branded block before `drop_in_place` in
   `Heap::free`; the post-drop reference is not a valid value reference even

@@ -1,8 +1,8 @@
 //! Aligned segment allocations from the OS or global pools.
 
+use super::alignment::checked_align_up;
 use super::pool::HasSegmentPool;
 use super::stats::SegmentRelease;
-use super::utils::checked_align_up;
 use crate::numa::current_numa_node;
 use mnemosyne_core::constants::{
     MAX_RETAINED_SEGMENTS_LIMIT, PAGE_SIZE, SEGMENT_ALIGN, SEGMENT_SIZE,

@@ -2,13 +2,15 @@ use core::alloc::{GlobalAlloc, Layout};
 use criterion::{Criterion, Throughput};
 use std::alloc::System;
 
+use super::allocation::alloc_realloc_dealloc;
 #[cfg(jemalloc_available)]
 use super::compat::bench_jemalloc;
 use super::constants::{
     HUGE_REALLOC_SRC_LAYOUT, LARGE_LAYOUT, LARGE_WITHIN_CLASS_LAYOUT, SMALL_LAYOUT,
     SMALL_WITHIN_CLASS_LAYOUT,
 };
-use super::helpers::{alloc_realloc_dealloc, bench_iter_case, snmalloc_skips};
+use super::platform::snmalloc_skips;
+use super::registration::bench_iter_case;
 
 pub fn bench_realloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("Realloc latency");

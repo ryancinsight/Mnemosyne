@@ -1,10 +1,12 @@
 use core::alloc::GlobalAlloc;
 use criterion::{BenchmarkId, Criterion, Throughput, black_box};
 
+use super::allocation::alloc_usable_dealloc;
 #[cfg(jemalloc_available)]
 use super::compat::bench_jemalloc;
 use super::constants::{HUGE_LAYOUT, LARGE_LAYOUT, MEDIUM_LAYOUT, SMALL_LAYOUT};
-use super::helpers::{alloc_usable_dealloc, benchmark_failure, require_allocated, snmalloc_skips};
+use super::failure::{benchmark_failure, require_allocated};
+use super::platform::snmalloc_skips;
 
 pub fn bench_usable_size(c: &mut Criterion) {
     let mut group = c.benchmark_group("Usable size latency");

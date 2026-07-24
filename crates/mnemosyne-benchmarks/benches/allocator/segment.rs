@@ -1,7 +1,7 @@
 use criterion::{Criterion, Throughput, black_box};
 
 use super::constants::SEGMENT_EVICTION_ALLOCS;
-use super::helpers::benchmark_failure;
+use super::failure::benchmark_failure;
 
 #[inline(never)]
 /// Exercises the segment cache retention and purge boundary.

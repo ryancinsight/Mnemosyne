@@ -7,7 +7,8 @@ use super::constants::{
     CROSS_THREAD_ALLOCS, HUGE_LAYOUT, LARGE_LAYOUT, MEDIUM_LAYOUT, SATURATED_THREAD_ALLOCS,
     SMALL_LAYOUT, THREAD_ALLOCS, THREADS,
 };
-use super::helpers::{benchmark_failure, snmalloc_skips};
+use super::failure::benchmark_failure;
+use super::platform::snmalloc_skips;
 use super::workers::{HandoffWorker, ThreadCycleWorkers};
 
 pub fn bench_cross_thread_free(c: &mut Criterion) {

@@ -5,10 +5,11 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread;
 
+use super::allocation::alloc_dealloc;
 use super::constants::{
     CROSS_THREAD_ALLOCS, CROSS_THREAD_QUEUE_BOUND, THREAD_ALLOCS, THREAD_WORK_QUEUE_BOUND, THREADS,
 };
-use super::helpers::{alloc_dealloc, benchmark_failure, require_allocated};
+use super::failure::{benchmark_failure, require_allocated};
 
 pub struct HandoffBatch {
     pub layout: Layout,

@@ -1,10 +1,13 @@
+mod allocation;
 mod compat;
 mod constants;
 mod cross_thread;
-mod helpers;
+mod failure;
 mod latency;
+mod platform;
 mod profiler;
 mod realloc;
+mod registration;
 mod segment;
 mod throughput;
 mod workers;

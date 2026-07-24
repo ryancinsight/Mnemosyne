@@ -2,13 +2,13 @@ use core::alloc::GlobalAlloc;
 use criterion::{Criterion, Throughput};
 use std::alloc::System;
 
+use super::allocation::{AllocatedBlock, alloc_dealloc, burst_alloc_dealloc, dealloc_only};
 #[cfg(jemalloc_available)]
 use super::compat::bench_jemalloc;
 use super::constants::{BATCH_ALLOCS, HUGE_LAYOUT, LARGE_LAYOUT, MEDIUM_LAYOUT, SMALL_LAYOUT};
-use super::helpers::{
-    AllocatedBlock, alloc_dealloc, bench_batched_case, bench_iter_case, burst_alloc_dealloc,
-    dealloc_only, require_allocated, snmalloc_skips,
-};
+use super::failure::require_allocated;
+use super::platform::snmalloc_skips;
+use super::registration::{bench_batched_case, bench_iter_case};
 
 pub fn bench_allocator_cycles(c: &mut Criterion) {
     let mut group = c.benchmark_group("Allocator cycle latency");
