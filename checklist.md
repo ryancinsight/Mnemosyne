@@ -2,6 +2,19 @@
 
 Target version: 0.6.0
 
+## In progress — Branded free layout lifetime [patch]
+
+- [ ] Compute `size_of_val` for a branded block before `drop_in_place` in
+  `Heap::free`; the post-drop reference is not a valid value reference even
+  though the metadata is unchanged.
+- [ ] Add value-semantic sized and unsized free regressions, preserving drop
+  counts and allocation reclamation.
+- [ ] Run focused heap formatting, warning-denied Clippy, nextest, doctests,
+  and rustdoc. Do not claim a performance change.
+
+Scope owner: `crates/mnemosyne-heap/src/heap.rs`,
+`crates/mnemosyne-heap/src/tests/`, and this PM section.
+
 ## Verified — AR-1 encryption-mode binding [arch]
 
 - [x] Key the public thread-local allocator selector by backend and
