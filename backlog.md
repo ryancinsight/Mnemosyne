@@ -131,6 +131,8 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
 
+- [ ] [patch] status=in-progress owner=codex scope=`crates/mnemosyne-heap/src/{heap.rs,raw_heap.rs}`, `crates/mnemosyne-heap/src/tests/`, and matching PM entries; last-update=2026-07-24. Reject invalid `new_size`/alignment combinations at the branded realloc boundary instead of falling back to the old `Layout`, which can silently allocate the wrong size. Acceptance: invalid layouts return `None`/null without allocation or mutation; valid zero-sized and ordinary realloc semantics remain value-correct; focused heap nextest, Clippy, doctests, rustdoc, and formatting pass. Non-goal: changing allocator growth heuristics or benchmark instruments.
+
 - [x] [patch] status=done owner=codex scope=`crates/mnemosyne-prof/src/{lib.rs,sampler/{mod.rs,store.rs},tests.rs}`, `crates/mnemosyne-benchmarks/benches/allocator/{profiler,mod}.rs`, `allocator_bench.rs`, and profiler PM entries; last-update=2026-07-15. Replace `mnemosyne-prof`'s global active-sample RMW with per-shard occupancy flags and stop allocating empty maps on remove.
   The pre-change source audit identified pointer-modulo sharding as a separate
   candidate. The real single-thread leak-detector row was 1.0797 us median

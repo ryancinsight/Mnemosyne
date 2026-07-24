@@ -50,6 +50,17 @@ for `mnemosyne-backend` 0.5.0, `mnemosyne-heap` 0.3.0, and `mnemosyne` 0.6.0.
 No throughput speedup claim; the change isolates ownership and reclamation
 state.
 
+## In progress — Branded realloc layout validation [patch]
+
+- [ ] Reject `Layout::from_size_align(new_size, layout.align())` failures in
+  both the raw branded heap realloc core and the public `Heap::realloc` ZST /
+  zero-layout path; do not substitute the old layout.
+- [ ] Add value-semantic regressions proving invalid requests return failure,
+  do not mutate or free the old block, and valid realloc paths retain their
+  existing bytes and ownership behavior.
+- [ ] Run focused heap formatting, warning-denied Clippy, nextest, doctests,
+  and rustdoc. Do not claim a performance change.
+
 ## Blocked — packed tagged pool state [perf-experiment]
 
 - [x] Replace separate cache-line-aligned tagged-head and advisory-count
