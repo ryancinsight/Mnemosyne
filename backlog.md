@@ -195,6 +195,8 @@ acceptance criterion and named blocker so it is Definition-of-Ready.
 Added from the 2026-06-27 deep audit of the under-examined crates
 (`mnemosyne-prof`, `mnemosyne-c-shim`, `mnemosyne-heap` containers):
 
+- [ ] [arch] status=in-progress owner=codex scope=`crates/mnemosyne-arena/src/segment/{mod.rs,alloc.rs,utils.rs}` and `crates/mnemosyne-benchmarks/benches/allocator/{mod.rs,helpers.rs,cross_thread.rs,latency.rs,realloc.rs,segment.rs,throughput.rs,workers.rs}`; last-update=2026-07-24. Replace generic `utils.rs`/`helpers.rs` leaves with named vertical modules whose files each own one concern. Acceptance: no touched production or benchmark module is named `utils` or `helpers`; alignment, benchmark registration, benchmark failure/policy, and allocation operations retain one canonical implementation; focused package checks and benchmark-target compilation pass; no runtime or benchmark result claim is made.
+
 - [ ] [patch] (Optional, low value) The cached-pointer fast path (check cell/OS
   slot; if non-null reconstitute + `is_allocating` guard + run; else init) is
   structurally repeated between `with_allocator` and `with_allocator_unguarded`
