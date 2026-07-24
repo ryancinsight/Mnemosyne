@@ -90,6 +90,16 @@ warning-denied Clippy, focused `mnemosyne-heap` nextest 54/54, four runnable
 and six compile-fail doctests, and heap rustdoc. The overflow regression
 asserts the vector's values, pointer, and capacity remain unchanged.
 
+## In progress — Branded source-layout validation [patch]
+
+- [ ] Add a typed source-layout mismatch reason and validate non-ZST source
+  capacity/alignment before `RawHeap::realloc` can copy or reuse the block.
+- [ ] Add a value-semantic regression for an oversized caller layout that
+  preserves source bytes and ownership; keep valid branded, tiered, zero-size,
+  and vector realloc behavior unchanged.
+- [ ] Run focused heap formatting, warning-denied Clippy, nextest, doctests,
+  and rustdoc. Do not claim a performance change.
+
 ## Blocked — packed tagged pool state [perf-experiment]
 
 - [x] Replace separate cache-line-aligned tagged-head and advisory-count
