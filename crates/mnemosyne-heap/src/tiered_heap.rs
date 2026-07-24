@@ -29,7 +29,7 @@
 //! wrong pool.
 
 use crate::brand::{BrandedBlock, ThreadLocalToken};
-use crate::heap::Heap;
+use crate::heap::{Heap, ReallocError, ReallocFailure};
 use crate::raw_heap::RawHeap;
 use crate::tier::{MemoryTier, PlacementHint, tier_for};
 use crate::tiered_backend::{TierSelection, TieredBackend};
@@ -109,6 +109,60 @@ impl<'brand, T: ?Sized> TieredBlock<'brand, T> {
     #[must_use]
     pub fn as_ptr(&self) -> *mut T {
         self.block.as_ptr()
+    }
+}
+
+/// A failed tiered reallocation that retains the source block and its tier.
+///
+/// Call [`Self::into_block`] to recover the source allocation after inspecting
+/// [`Self::reason`]. The error is an ownership handle: callers must either
+/// recover the block or explicitly release it through the owning heap.
+#[must_use]
+pub struct TieredReallocError<'brand, T: ?Sized> {
+    block: TieredBlock<'brand, T>,
+    reason: ReallocFailure,
+}
+
+impl<'brand, T: ?Sized> TieredReallocError<'brand, T> {
+    /// Returns the failure classification without consuming the source block.
+    #[inline]
+    #[must_use]
+    pub fn reason(&self) -> ReallocFailure {
+        self.reason
+    }
+
+    /// Recovers the original source block without dropping or deallocating it.
+    #[inline]
+    #[must_use]
+    pub fn into_block(self) -> TieredBlock<'brand, T> {
+        self.block
+    }
+}
+
+impl<'brand, T: ?Sized> core::fmt::Debug for TieredReallocError<'brand, T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TieredReallocError")
+            .field("block", &self.block.as_ptr())
+            .field("tier", &self.block.tier)
+            .field("reason", &self.reason)
+            .finish()
+    }
+}
+
+fn map_realloc_result<'brand, T: ?Sized>(
+    tier: MemoryTier,
+    result: Result<Option<BrandedBlock<'brand, u8>>, ReallocError<'brand, T>>,
+) -> Result<Option<TieredBlock<'brand, u8>>, TieredReallocError<'brand, T>> {
+    match result {
+        Ok(block) => Ok(block.map(|block| TieredBlock { block, tier })),
+        Err(error) => {
+            let reason = error.reason();
+            let block = error.into_block();
+            Err(TieredReallocError {
+                block: TieredBlock { block, tier },
+                reason,
+            })
+        }
     }
 }
 
@@ -208,10 +262,17 @@ impl<'brand, P: AllocPolicy> TieredHeap<'brand, P> {
     /// Reallocates a `TieredBlock` in place on its sub-heap, carrying
     /// the same tier over to the new block.
     ///
-    /// Returns `None` if `new_size == 0` (block is dropped per
-    /// `Heap::realloc`'s zero-realloc contract) or if the underlying
-    /// sub-heap realloc fails. On success the returned block's tier
-    /// matches the input.
+    /// Returns `Ok(None)` if `new_size == 0` (the block is dropped per
+    /// `Heap::realloc`'s zero-realloc contract). Invalid layouts and
+    /// replacement allocation failures return [`TieredReallocError`] carrying
+    /// the original block and tier, so failure cannot leak the source.
+    /// On success the returned block's tier matches the input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TieredReallocError`] when the requested layout is invalid or
+    /// the replacement allocation cannot be obtained. The error owns the
+    /// original block and its tier.
     #[inline]
     #[must_use = "dropping the result discards the realloc outcome"]
     pub fn realloc<T: ?Sized>(
@@ -220,15 +281,25 @@ impl<'brand, P: AllocPolicy> TieredHeap<'brand, P> {
         block: TieredBlock<'brand, T>,
         layout: Layout,
         new_size: usize,
-    ) -> Option<TieredBlock<'brand, u8>> {
+    ) -> Result<Option<TieredBlock<'brand, u8>>, TieredReallocError<'brand, T>> {
         let tier = block.tier;
         let inner = block.block;
-        let new_block = match TieredBackend::for_tier(tier) {
-            Some(TierSelection::Host) => self.host.realloc(token, inner, layout, new_size),
-            Some(TierSelection::HostPinned) => self.pinned.realloc(token, inner, layout, new_size),
-            Some(TierSelection::Device) => self.device.realloc(token, inner, layout, new_size),
-            Some(TierSelection::Hbm) => self.hbm.realloc(token, inner, layout, new_size),
-            Some(TierSelection::Gddr) => self.gddr.realloc(token, inner, layout, new_size),
+        match TieredBackend::for_tier(tier) {
+            Some(TierSelection::Host) => {
+                map_realloc_result(tier, self.host.realloc(token, inner, layout, new_size))
+            }
+            Some(TierSelection::HostPinned) => {
+                map_realloc_result(tier, self.pinned.realloc(token, inner, layout, new_size))
+            }
+            Some(TierSelection::Device) => {
+                map_realloc_result(tier, self.device.realloc(token, inner, layout, new_size))
+            }
+            Some(TierSelection::Hbm) => {
+                map_realloc_result(tier, self.hbm.realloc(token, inner, layout, new_size))
+            }
+            Some(TierSelection::Gddr) => {
+                map_realloc_result(tier, self.gddr.realloc(token, inner, layout, new_size))
+            }
             // See `alloc` / `free` rationale: a budget-only-tier
             // `TieredBlock` cannot reach this path through a safe
             // construction. Debug-assert the invariant; the empty body
@@ -240,10 +311,12 @@ impl<'brand, P: AllocPolicy> TieredHeap<'brand, P> {
                 );
                 let _ = layout;
                 let _ = new_size;
-                None
+                Err(TieredReallocError {
+                    block: TieredBlock { block: inner, tier },
+                    reason: ReallocFailure::AllocationFailed,
+                })
             }
-        };
-        new_block.map(|b| TieredBlock { block: b, tier })
+        }
     }
 }
 

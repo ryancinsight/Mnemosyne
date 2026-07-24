@@ -50,16 +50,30 @@ for `mnemosyne-backend` 0.5.0, `mnemosyne-heap` 0.3.0, and `mnemosyne` 0.6.0.
 No throughput speedup claim; the change isolates ownership and reclamation
 state.
 
-## In progress — Branded realloc layout validation [patch]
+## Verified — Branded realloc ownership and layout validation [major]
 
-- [ ] Reject `Layout::from_size_align(new_size, layout.align())` failures in
-  both the raw branded heap realloc core and the public `Heap::realloc` ZST /
-  zero-layout path; do not substitute the old layout.
-- [ ] Add value-semantic regressions proving invalid requests return failure,
-  do not mutate or free the old block, and valid realloc paths retain their
-  existing bytes and ownership behavior.
-- [ ] Run focused heap formatting, warning-denied Clippy, nextest, doctests,
-  and rustdoc. Do not claim a performance change.
+- [x] Replace the old `Option` return with typed `ReallocError` /
+  `TieredReallocError` results that retain the source block and, for tiered
+  blocks, the source tier. `BrandedVec` must restore the source pointer before
+  returning its existing `Err(())` contract.
+- [x] Reject `Layout::from_size_align(new_size, layout.align())` failures
+  before raw allocator access; never substitute the old layout.
+- [x] Add value-semantic regressions proving invalid requests report the
+  classification, preserve source bytes and ownership, and leave valid,
+  zero-size, tiered, and vector realloc behavior correct.
+- [x] Run focused heap formatting, warning-denied Clippy, nextest, doctests,
+  rustdoc, and semver checks. Do not claim a performance change.
+
+Evidence tier: source-level layout validation and ownership audit; focused
+`mnemosyne-heap` nextest 53/53; workspace nextest 282/282; warning-denied
+Clippy for the heap and facade; heap and facade doctests/rustdoc; semver checks
+for `mnemosyne-heap` and `mnemosyne`. The invalid-layout regression reads the
+source block after failure and explicitly releases it. No throughput or
+allocation-speed improvement is claimed.
+
+Residual: `ReallocError` and `TieredReallocError` are explicit ownership
+handles because branded blocks are manually released values; callers must
+recover the block with `into_block` and release it when no longer needed.
 
 ## Blocked — packed tagged pool state [perf-experiment]
 

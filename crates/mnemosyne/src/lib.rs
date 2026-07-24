@@ -14,8 +14,8 @@ pub use mnemosyne_core::{AllocPolicy, StandardPolicy, options::MnemosyneOptions}
 pub use mnemosyne_hardened::{HardenedPolicy, SecurePolicy};
 #[cfg(feature = "branded")]
 pub use mnemosyne_heap::{
-    BrandedBlock, BrandedBox, BrandedCell, BrandedVec, Heap, InvariantLifetime, ThreadLocalToken,
-    scope as branded_scope,
+    BrandedBlock, BrandedBox, BrandedCell, BrandedVec, Heap, InvariantLifetime, ReallocError,
+    ReallocFailure, ThreadLocalToken, scope as branded_scope,
 };
 pub use mnemosyne_local::{LocalAllocatorSelector, SizeClassOccupancy, usable_size};
 pub use mnemosyne_prof::{

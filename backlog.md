@@ -1,5 +1,7 @@
 # Backlog
 
+- [x] [major] status=done owner=codex scope=`crates/mnemosyne-heap/src/{heap.rs,raw_heap.rs}, crates/mnemosyne-heap/src/tests/, crates/mnemosyne/src/lib.rs`, and matching documentation; last-update=2026-07-24. Replace branded realloc's old-layout fallback and source-block loss with validated layouts plus typed errors that retain ownership through the raw, tiered, and vector paths. Acceptance met: invalid requests never enter raw allocation, failure returns the original block/tier, successful and zero-size contracts remain value-correct, and focused plus workspace gates pass. Public return-type break is documented for the pending pre-1.0 version integration. Evidence: focused heap nextest 53/53, workspace nextest 282/282, warning-denied Clippy, doctests/rustdoc, and semver checks.
+
 - [x] [major] **WGPU-030, done; owner Codex; scope
   `mnemosyne-backend`, facade re-exports, backend selector impls/tests/docs, and
   release artifacts; last update 2026-07-13.** Remove the process-global WGPU

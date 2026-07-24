@@ -234,7 +234,8 @@ fn tiered_heap_realloc_preserves_tier() {
 
         let new_block = tiered
             .realloc(&mut token, block, layout, 64)
-            .expect("realloc failed");
+            .expect("tiered realloc returned an error")
+            .expect("tiered realloc did not return a replacement block");
         assert_eq!(
             new_block.tier(),
             original_tier,
@@ -254,7 +255,9 @@ fn tiered_heap_realloc_to_zero_drops_without_replacing() {
             .expect("initial allocation failed");
         let result = tiered.realloc(&mut token, block, test_layout(32, 8), 0);
         assert!(
-            result.is_none(),
+            result
+                .expect("tiered zero realloc returned an unexpected error")
+                .is_none(),
             "realloc to new_size = 0 must drop the block without a replacement"
         );
     });

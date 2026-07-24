@@ -29,7 +29,8 @@ fn test_heap_realloc() {
 
         let new_block = heap
             .realloc(&mut token, block, layout, 32)
-            .expect("heap realloc failed");
+            .expect("heap realloc returned an error")
+            .expect("heap realloc did not return a replacement block");
         let new_ptr = new_block.as_ptr();
         unsafe {
             assert_eq!(new_ptr.read(), 99);
@@ -69,7 +70,8 @@ fn test_branded_heap_realloc() {
         }
         let new_block = heap
             .realloc(&mut token, block, layout, 32)
-            .expect("branded realloc failed");
+            .expect("branded realloc returned an error")
+            .expect("branded realloc did not return a replacement block");
         let new_ptr = new_block.as_ptr();
         unsafe {
             assert_eq!(new_ptr.read(), 99);
@@ -94,7 +96,8 @@ fn test_branded_heap_realloc_zst_to_nonzero_skips_source_free() {
 
         let new_block = heap
             .realloc(&mut token, block, Layout::new::<Marker>(), 16)
-            .expect("ZST-to-nonzero realloc failed");
+            .expect("ZST-to-nonzero realloc returned an error")
+            .expect("ZST-to-nonzero realloc did not return a replacement block");
         let after_alloc = heap.stats();
 
         assert!(
@@ -130,7 +133,9 @@ fn test_branded_heap_realloc_zst_to_zero_drops_without_allocating() {
         let after = heap.stats();
 
         assert!(
-            result.is_none(),
+            result
+                .expect("ZST-to-zero realloc returned an unexpected error")
+                .is_none(),
             "ZST-to-zero realloc must consume the block without a replacement"
         );
         assert_eq!(
@@ -142,6 +147,38 @@ fn test_branded_heap_realloc_zst_to_zero_drops_without_allocating() {
             1,
             "ZST-to-zero realloc must drop the owned value exactly once"
         );
+    });
+}
+
+#[test]
+fn test_branded_heap_realloc_invalid_layout_returns_source_block() {
+    scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+        let layout = test_layout(16, 8);
+        let block = heap
+            .alloc(&token, layout)
+            .expect("source allocation for invalid realloc failed");
+        unsafe { block.as_ptr().write(0x5A) };
+
+        let error = match heap.realloc(&mut token, block, layout, usize::MAX) {
+            Ok(_) => panic!("invalid realloc layout unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.reason(),
+            ReallocFailure::InvalidLayout {
+                new_size: usize::MAX,
+                alignment: 8,
+            },
+            "invalid realloc must report the rejected layout"
+        );
+
+        let source = error.into_block();
+        assert_eq!(
+            unsafe { source.as_ptr().read() },
+            0x5A,
+            "failed realloc must preserve the source allocation"
+        );
+        heap.free_uninit(&mut token, source);
     });
 }
 

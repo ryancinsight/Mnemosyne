@@ -22,7 +22,8 @@ fn test_multi_heap_basic() {
 
         let block = heap
             .realloc(&mut token, block, layout, 64)
-            .expect("heap realloc failed");
+            .expect("heap realloc returned an error")
+            .expect("heap realloc did not return a replacement block");
         assert_eq!(unsafe { block.as_ptr().read() }, 123);
 
         heap.free_uninit(&mut token, block);

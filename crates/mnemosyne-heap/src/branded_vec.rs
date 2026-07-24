@@ -183,11 +183,20 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
                 ptr: self.ptr,
                 _marker: PhantomData,
             };
-            let new_block = self
+            match self
                 .heap
                 .realloc(token, block, old_layout, new_layout.size())
-                .ok_or(())?;
-            self.ptr = new_block.ptr.cast();
+            {
+                Ok(Some(new_block)) => self.ptr = new_block.ptr.cast(),
+                Ok(None) => {
+                    debug_assert!(false, "vector growth must not request a zero-sized realloc");
+                    return Err(());
+                }
+                Err(error) => {
+                    self.ptr = error.into_block().ptr.cast();
+                    return Err(());
+                }
+            }
         }
         self.cap = new_cap;
         Ok(())
@@ -266,12 +275,19 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         };
         let new_size = core::mem::size_of::<T>() * self.len;
         match self.heap.realloc(token, block, old_layout, new_size) {
-            Some(new_block) => {
+            Ok(Some(new_block)) => {
                 self.ptr = new_block.ptr.cast();
                 self.cap = self.len;
                 Ok(())
             }
-            None => Err(()),
+            Ok(None) => {
+                debug_assert!(false, "nonzero shrink must not free its source block");
+                Err(())
+            }
+            Err(error) => {
+                self.ptr = error.into_block().ptr.cast();
+                Err(())
+            }
         }
     }
 }

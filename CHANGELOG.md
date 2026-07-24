@@ -26,6 +26,12 @@
 
 ### Breaking
 
+- Branded `Heap::realloc` and `TieredHeap::realloc` now return a typed
+  `Result<Option<_>, ReallocError>` instead of losing the source block through
+  `Option` on invalid layouts or allocation failure. `ReallocError` and
+  `TieredReallocError` retain the original block for recovery, and invalid
+  `new_size`/alignment pairs are rejected before raw allocator access. A zero
+  `new_size` still frees the source and returns `Ok(None)`.
 - `LocalAllocatorSelector` implementations must provide independent standard
   and encrypted-mode cache accessors. Implementors using
   `impl_local_allocator_selector!` receive the canonical implementation.

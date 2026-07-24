@@ -7,6 +7,59 @@ use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::LocalAllocatorSelector;
 use mnemosyne_local::internal::HasSegmentPool;
 
+/// The reason a branded reallocation could not produce a replacement block.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ReallocFailure {
+    /// `new_size` and the existing alignment cannot form a valid `Layout`.
+    InvalidLayout { new_size: usize, alignment: usize },
+    /// The requested replacement allocation could not be obtained.
+    AllocationFailed,
+}
+
+/// A failed branded reallocation that retains ownership of the source block.
+///
+/// The source block is returned inside the error so allocation failure cannot
+/// leak it. Call [`Self::into_block`] to recover it, or inspect [`Self::reason`]
+/// before deciding how to handle the failure; the recovered block remains
+/// explicitly owned and must be released through the heap when no longer
+/// needed.
+#[must_use]
+pub struct ReallocError<'brand, T: ?Sized> {
+    block: BrandedBlock<'brand, T>,
+    reason: ReallocFailure,
+}
+
+impl<'brand, T: ?Sized> ReallocError<'brand, T> {
+    #[inline]
+    fn new(block: BrandedBlock<'brand, T>, reason: ReallocFailure) -> Self {
+        Self { block, reason }
+    }
+
+    /// Returns the failure classification without consuming the source block.
+    #[inline]
+    #[must_use]
+    pub fn reason(&self) -> ReallocFailure {
+        self.reason
+    }
+
+    /// Recovers the original source block without dropping or deallocating it.
+    #[inline]
+    #[must_use]
+    pub fn into_block(self) -> BrandedBlock<'brand, T> {
+        self.block
+    }
+}
+
+impl<'brand, T: ?Sized> core::fmt::Debug for ReallocError<'brand, T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ReallocError")
+            .field("block", &self.block)
+            .field("reason", &self.reason)
+            .finish()
+    }
+}
+
 /// A scoped, lifetime-branded memory heap.
 ///
 /// `Heap` is the single public heap surface. It statically validates local
@@ -162,6 +215,16 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
     }
 
     /// Reallocates a memory block from this heap.
+    ///
+    /// The source block is returned inside [`ReallocError`] when the requested
+    /// layout is invalid or replacement allocation fails, so failure does not
+    /// leak or invalidate the original allocation. A `new_size` of zero frees
+    /// the source block and returns `Ok(None)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReallocError`] with the original source block when the new
+    /// layout is invalid or replacement allocation fails.
     #[inline(always)]
     pub fn realloc<T: ?Sized>(
         &self,
@@ -169,22 +232,37 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
         block: BrandedBlock<'brand, T>,
         layout: Layout,
         new_size: usize,
-    ) -> Option<BrandedBlock<'brand, u8>> {
+    ) -> Result<Option<BrandedBlock<'brand, u8>>, ReallocError<'brand, T>> {
         let ptr = block.ptr.as_ptr() as *mut u8;
         if new_size == 0 {
             self.free(token, block);
-            return None;
+            return Ok(None);
         }
 
-        // SAFETY: `block` is a `BrandedBlock<'brand, T>` and `&mut token` proves
-        // exclusive access for this brand, so `block.ptr` points to a live `T`;
-        // `size_of_val` only inspects that value's layout to detect a ZST.
+        let new_layout = match Layout::from_size_align(new_size, layout.align()) {
+            Ok(new_layout) => new_layout,
+            Err(_) => {
+                return Err(ReallocError::new(
+                    block,
+                    ReallocFailure::InvalidLayout {
+                        new_size,
+                        alignment: layout.align(),
+                    },
+                ));
+            }
+        };
+
+        // ZSTs have no allocator-owned source mapping. The source value stays
+        // recoverable if the replacement allocation fails, just like a normal
+        // block below.
+        // SAFETY: `block` is a live branded block and the matching token
+        // proves exclusive access, so reading its value layout is valid.
         let is_zst = unsafe { core::mem::size_of_val(&*block.ptr.as_ptr()) == 0 };
         if layout.size() == 0 || is_zst {
-            return self.alloc(
-                token,
-                Layout::from_size_align(new_size, layout.align()).unwrap_or(layout),
-            );
+            return self
+                .alloc(token, new_layout)
+                .map(Some)
+                .ok_or_else(|| ReallocError::new(block, ReallocFailure::AllocationFailed));
         }
 
         let marker = block._marker;
@@ -194,10 +272,13 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
         // access. This satisfies `realloc_owned_unchecked`'s contract, which
         // either grows/shrinks in place or moves the bytes and frees the old
         // allocation, returning the (possibly relocated) block.
-        let new_ptr = unsafe { self.raw.realloc_owned_unchecked(ptr, layout, new_size) };
-        NonNull::new(new_ptr).map(|ptr| BrandedBlock {
-            ptr,
-            _marker: marker,
-        })
+        let new_ptr = unsafe { self.raw.realloc_owned_unchecked(ptr, layout, new_layout) };
+        match NonNull::new(new_ptr) {
+            Some(ptr) => Ok(Some(BrandedBlock {
+                ptr,
+                _marker: marker,
+            })),
+            None => Err(ReallocError::new(block, ReallocFailure::AllocationFailed)),
+        }
     }
 }

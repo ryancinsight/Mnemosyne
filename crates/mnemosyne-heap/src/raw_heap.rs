@@ -287,16 +287,18 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
     ///
     /// `ptr` must be null or a live block previously returned by this
     /// `RawHeap` under `layout`, not yet freed; `layout` must be the layout
-    /// it was allocated with. The allocator must be exclusively accessible
-    /// (brand-confined to one thread).
+    /// it was allocated with. `new_layout` must be a valid layout for the
+    /// requested replacement block. The allocator must be exclusively
+    /// accessible (brand-confined to one thread).
     #[inline(always)]
     pub(crate) unsafe fn realloc_owned_unchecked(
         &self,
         ptr: *mut u8,
         layout: Layout,
-        new_size: usize,
+        new_layout: Layout,
     ) -> *mut u8 {
         ensure_options_initialized();
+        let new_size = new_layout.size();
         if new_size == 0 {
             if !ptr.is_null() {
                 // SAFETY: zero-realloc frees the block. `ptr` is a live block
@@ -307,7 +309,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             return core::ptr::null_mut();
         }
         if ptr.is_null() {
-            return self.alloc(Layout::from_size_align(new_size, layout.align()).unwrap_or(layout));
+            return self.alloc(new_layout);
         }
 
         // SAFETY: `ptr` is a live block allocated under `layout` per the
@@ -317,8 +319,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             return ptr;
         }
 
-        let new_ptr =
-            self.alloc(Layout::from_size_align(new_size, layout.align()).unwrap_or(layout));
+        let new_ptr = self.alloc(new_layout);
         if new_ptr.is_null() {
             return core::ptr::null_mut();
         }

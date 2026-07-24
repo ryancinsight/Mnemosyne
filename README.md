@@ -17,6 +17,7 @@ Its design incorporates core lessons from modern allocator research (specificall
 ### 2. Global Allocator Shell and Heap Branding Boundary
 *   The top-level `mnemosyne` crate exposes the global allocator, policy types, telemetry, and branded ownership APIs. Explicit isolated heaps remain in the `mnemosyne-heap` crate instead of being presented as a second allocator choice from the shell crate.
 *   `MnemosyneHeap` and `BrandedHeap` share one internal `RawHeap<P, B>` implementation for allocation, free, and realloc mechanics. Branding adds type-level ownership evidence at the API boundary; it does not clone allocator algorithms.
+*   Branded `Heap::realloc` validates the requested size/alignment before entering the raw allocator and returns `Result<Option<_>, ReallocError>`; a failure owns the original block so callers can recover or release it without a leak. `TieredHeap::realloc` preserves the carried tier through the same error contract. A zero `new_size` frees the source and returns `Ok(None)`.
 *   Use the global allocator for process-wide allocation, branded heaps when lifetime branding improves ownership stability, and explicit heaps only for isolated allocation streams or targeted tests/benchmarks.
 
 ### 3. Contention-Free Cross-Thread Free Queueing (Snmalloc Style)
