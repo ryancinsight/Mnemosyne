@@ -33,6 +33,27 @@ fn test_branded_vec_growth_and_drop() {
 }
 
 #[test]
+fn test_branded_vec_reserve_overflow_preserves_state() {
+    scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+        let mut vec = BrandedVec::new(&heap);
+        vec.push(&mut token, 41_u32)
+            .expect("first vector push failed");
+        vec.push(&mut token, 42_u32)
+            .expect("second vector push failed");
+
+        let ptr = vec.as_slice().as_ptr();
+        let capacity = vec.capacity();
+        assert!(
+            vec.reserve(&mut token, usize::MAX).is_err(),
+            "reserve overflow must return an error"
+        );
+        assert_eq!(vec.as_slice(), &[41, 42]);
+        assert_eq!(vec.as_slice().as_ptr(), ptr);
+        assert_eq!(vec.capacity(), capacity);
+    });
+}
+
+#[test]
 fn test_branded_vec_zst_uses_sentinel_capacity_and_drops_elements() {
     ZST_DROP_COUNT.with(|c| c.set(0));
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {

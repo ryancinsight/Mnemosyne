@@ -171,14 +171,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             let block = self.heap.alloc(token, new_layout).ok_or(())?;
             self.ptr = block.ptr.cast();
         } else {
-            let old_layout = Layout::array::<T>(self.cap).unwrap_or_else(|_| {
-                debug_assert!(false, "Layout array calculation failed for valid capacity");
-                // SAFETY: this branch is reached only when `self.cap != 0`, which
-                // means a `Layout::array::<T>(self.cap)` already succeeded at the
-                // prior allocation site; recomputing the identical layout cannot
-                // fail, so the `Err` arm is unreachable.
-                unsafe { core::hint::unreachable_unchecked() }
-            });
+            // `self.cap` was validated when the current allocation was made,
+            // but retain the fallible boundary so a corrupted or future-mutated
+            // capacity cannot turn an allocation failure into undefined behavior.
+            let old_layout = Layout::array::<T>(self.cap).map_err(|_| ())?;
             let block = BrandedBlock {
                 ptr: self.ptr,
                 _marker: PhantomData,

@@ -75,15 +75,20 @@ Residual: `ReallocError` and `TieredReallocError` are explicit ownership
 handles because branded blocks are manually released values; callers must
 recover the block with `into_block` and release it when no longer needed.
 
-## In progress — Fallible vector growth safety [patch]
+## Verified — Fallible vector growth safety [patch]
 
-- [ ] Replace the `unreachable_unchecked` branch after the repeated
+- [x] Replace the `unreachable_unchecked` branch after the repeated
   `Layout::array` calculation in `BrandedVec::grow_to` with an explicit
   fallible return; the path is cold and already returns `Result<(), ()>`.
-- [ ] Preserve vector contents, pointer, and capacity on all growth failures;
+- [x] Preserve vector contents, pointer, and capacity on all growth failures;
   add or tighten the strongest local value-semantic regression available.
-- [ ] Run focused heap formatting, warning-denied Clippy, nextest, doctests,
+- [x] Run focused heap formatting, warning-denied Clippy, nextest, doctests,
   and rustdoc. Do not claim a performance change.
+
+Evidence tier: production unsafe scan, focused rustfmt and `git diff --check`,
+warning-denied Clippy, focused `mnemosyne-heap` nextest 54/54, four runnable
+and six compile-fail doctests, and heap rustdoc. The overflow regression
+asserts the vector's values, pointer, and capacity remain unchanged.
 
 ## Blocked — packed tagged pool state [perf-experiment]
 
