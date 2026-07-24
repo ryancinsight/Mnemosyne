@@ -39,7 +39,7 @@ fn test_per_cpu_cache() {
     assert!(!ptr.is_null());
 
     // Try to free to the CPU cache
-    let freed = per_cpu::try_free_cpu::<StandardPolicy>(ptr, 0);
+    let freed = per_cpu::try_free_cpu(ptr, 0, false);
     assert!(freed);
 
     // Pop it back from the CPU cache

@@ -12,15 +12,11 @@ use mnemosyne_core::validation::{is_valid_alloc_request, is_valid_layout_alloc_r
 ///
 /// This function is unsafe because it handles raw pointers and manual layouts.
 ///
-/// One free-list encryption mode per backend (ADR 0001): every policy used
-/// with a given backend `B` in a process must agree on
-/// `P::ENABLE_FREE_LIST_ENCRYPTION`. The thread allocator is keyed by `B`
-/// alone, so its pages are keyed under the first owning policy's mode; a
-/// later chain operation under a disagreeing policy would corrupt the free
-/// list. Debug builds abort on the mismatch (the `Segment::cookie_for`
-/// tripwire); the type-level fix (allocator keyed by encryption class) is
-/// tracked by ADR 0001. This applies equally to `thread_free` and
-/// `thread_realloc`.
+/// The TLS allocator is keyed by `(B, P::ENABLE_FREE_LIST_ENCRYPTION)`, so
+/// pages owned by standard and encrypted policies cannot share an active-page
+/// list. Free and realloc operations still derive link encoding from the
+/// owning segment because their caller policy may differ from the policy that
+/// created the allocation.
 #[inline(always)]
 pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
     size: usize,
@@ -113,7 +109,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
         }
     };
 
-    let slot_ptr = B::get_allocator_ptr_raw();
+    let slot_ptr = B::get_allocator_ptr_raw_for_policy::<P>();
     if !slot_ptr.is_null() {
         // SAFETY: `get_allocator_ptr_raw` returns this thread's TLS allocator
         // slot; the non-null check confirms it is initialized, and the slot is
@@ -191,7 +187,7 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
     let alloc = if let Some(alloc_ptr) = alloc_opt {
         unsafe { &mut *alloc_ptr.as_ptr() }
     } else {
-        let slot_ptr = B::get_allocator_ptr();
+        let slot_ptr = B::get_allocator_ptr_for_policy::<P>();
         if slot_ptr.is_null() {
             return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
         }

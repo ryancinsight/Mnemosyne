@@ -4,6 +4,10 @@
 
 ### Changed
 
+- `mnemosyne-local` now keys its thread-local allocator caches by backend and
+  free-list encryption mode. Owner-side frees, reallocations, cross-thread
+  publication, and optional per-CPU publication encode links from the owning
+  segment's mode, preventing mixed Standard/Hardened chains.
 - `mnemosyne-arena` pool stacks now pack their tagged head and advisory count
   into one cache-line-aligned state object. The count remains atomic for
   lock-free advisory reads. Source-level layout and allocator tests pass; no
@@ -15,6 +19,10 @@
 
 ### Breaking
 
+- `LocalAllocatorSelector` implementations must provide independent standard
+  and encrypted-mode cache accessors. Implementors using
+  `impl_local_allocator_selector!` receive the canonical implementation.
+  `mnemosyne-local` advances from 0.2.0 to 0.3.0 for this public seam change.
 - All published Mnemosyne crates now require Rust 1.95. Migration: update the
   consumer toolchain before resolving the default Eunomia provider source.
 - `mnemosyne-local` now stores `PER_CPU_CACHE` behind a

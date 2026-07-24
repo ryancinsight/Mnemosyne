@@ -57,6 +57,18 @@ impl AtomicFreeList {
     /// This is used for cross-thread deallocation.
     #[inline]
     pub fn push<P: crate::policy::AllocPolicy>(&self, block: NonNull<Block>) {
+        self.push_dynamic(block, P::ENABLE_FREE_LIST_ENCRYPTION);
+    }
+
+    /// Pushes a block using the encryption mode recorded by its owning
+    /// segment.
+    ///
+    /// Cross-thread frees may be issued under a different policy type than
+    /// the policy that created the block. The segment's mode is therefore the
+    /// SSOT for this operation; selecting from the freeing caller's `P` would
+    /// recreate the mixed-chain corruption AR-1 prevents.
+    #[inline]
+    pub fn push_dynamic(&self, block: NonNull<Block>, encrypted: bool) {
         let block_ptr = block.as_ptr();
         // A tagged-pointer free list inherently materializes pointers from
         // integers, so it uses *exposed* provenance (it cannot be
@@ -75,7 +87,7 @@ impl AtomicFreeList {
         // index, satisfying `cookie_for`'s contract.
         let cookie = unsafe {
             let (segment, page_index) = crate::types::locate_segment(block_ptr.cast::<u8>());
-            (*segment.cast_const()).cookie_for::<P>(page_index)
+            (*segment.cast_const()).cookie_for_dynamic(encrypted, page_index)
         };
 
         let mut current = self.head.load(Ordering::Relaxed);
@@ -90,7 +102,7 @@ impl AtomicFreeList {
             // Safety: block_ptr is valid, writeable, aligned memory, exclusive
             // to the pushing thread until the CAS publishes it.
             unsafe {
-                (*block_ptr).set_next::<P>(NonNull::new(current_ptr), cookie);
+                (*block_ptr).set_next_dynamic(NonNull::new(current_ptr), encrypted, cookie);
             }
 
             let next_val = (next_count << Self::PACKED_PTR_BITS) | block_addr;
@@ -140,9 +152,17 @@ impl AtomicFreeList {
     /// This is used for cross-thread deallocation.
     #[inline]
     pub fn push<P: crate::policy::AllocPolicy>(&self, block: NonNull<Block>) {
+        self.push_dynamic(block, P::ENABLE_FREE_LIST_ENCRYPTION);
+    }
+
+    /// Pushes a block using the encryption mode recorded by its owning
+    /// segment. See the 64-bit implementation for the policy-mismatch
+    /// rationale.
+    #[inline]
+    pub fn push_dynamic(&self, block: NonNull<Block>, encrypted: bool) {
         let block_ptr = block.as_ptr();
         let block_addr = block_ptr as usize;
-        let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
+        let cookie = if encrypted {
             let segment_addr = block_addr & !(crate::constants::SEGMENT_SIZE - 1);
             let page_index =
                 (block_addr & (crate::constants::SEGMENT_SIZE - 1)) >> crate::constants::PAGE_SHIFT;
@@ -162,7 +182,7 @@ impl AtomicFreeList {
             // Safety: block_ptr is guaranteed to be valid, writeable, aligned memory,
             // exclusive to the thread calling push.
             unsafe {
-                (*block_ptr).set_next::<P>(NonNull::new(current), cookie);
+                (*block_ptr).set_next_dynamic(NonNull::new(current), encrypted, cookie);
             }
             match self.head.compare_exchange_weak(
                 current,

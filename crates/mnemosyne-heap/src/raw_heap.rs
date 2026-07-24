@@ -232,13 +232,15 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         // SAFETY: exclusive, thread-confined access to the allocator per the
         // `# Safety` contract, so `&mut` from the `UnsafeCell` is sound.
         let alloc = unsafe { &mut *self.allocator.get() };
+        let encrypted = unsafe { (*segment).free_list_encrypted };
         if alloc.is_allocating {
             // SAFETY: re-entrant free while the allocator is mid-operation;
             // `block` is a non-null live block of `page` (allocator
             // invariant), so `new_unchecked` is sound and the page-local
             // atomic free list takes ownership of it.
             unsafe {
-                page.thread_free.push::<P>(NonNull::new_unchecked(block));
+                page.thread_free
+                    .push_dynamic(NonNull::new_unchecked(block), encrypted);
             }
             return;
         }
@@ -248,11 +250,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         // SAFETY: `segment` is the live segment owning `page`; `page_index`
         // indexes its `keys` array (sized `PAGES_PER_SEGMENT`) and is the
         // page's own index, so the read is in bounds.
-        let cookie = if P::ENABLE_FREE_LIST_ENCRYPTION {
-            unsafe { (*segment).keys[page_index] }
-        } else {
-            0
-        };
+        let cookie = unsafe { (*segment).cookie_for_dynamic(encrypted, page_index) };
         // SAFETY: `(*segment).is_current` reads a flag in the live segment
         // header.
         if page_alloc_count != 1 || unsafe { (*segment).is_current } {
@@ -261,7 +259,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             // free-list head, and decrementing the page/segment occupancy all
             // stay within `page`/`segment` under exclusive access.
             unsafe {
-                (*block).set_next::<P>(page_free, cookie);
+                (*block).set_next_dynamic(page_free, encrypted, cookie);
                 page.free = Some(NonNull::new_unchecked(block));
                 page.decrement_alloc_count_for_segment(segment, page_index);
             }
@@ -274,7 +272,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         // runs under the exclusive `alloc` borrow with the `is_allocating`
         // guard set.
         let became_empty =
-            unsafe { do_local_free_internal::<P, B>(alloc, block, page, segment, page_index) };
+            unsafe { do_local_free_internal::<B>(alloc, block, page, segment, page_index) };
 
         if became_empty {
             // SAFETY: `alloc` is the exclusively-borrowed allocator; recording

@@ -160,7 +160,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     let mut local_free_done = false;
 
     if is_old_small && let Some(class) = new_class {
-        let slot_ptr = B::get_allocator_ptr_raw();
+        let slot_ptr = B::get_allocator_ptr_raw_for_policy::<P>();
         if !slot_ptr.is_null() {
             // SAFETY: `get_allocator_ptr_raw` returns this thread's TLS
             // allocator slot; the non-null check confirms initialization and
@@ -197,7 +197,8 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                             // metadata before materializing `page_ref`,
                             // because the exclusive page borrow must not
                             // overlap this shared parent-segment access.
-                            let cookie = (*segment).cookie_for::<P>(page_index);
+                            let encrypted = (*segment).free_list_encrypted;
+                            let cookie = (*segment).cookie_for_dynamic(encrypted, page_index);
                             // SAFETY: `page` is the exclusively-borrowed page
                             // owning the old block; reborrowing yields the sole
                             // live `&mut` for the free bookkeeping below.
@@ -228,11 +229,12 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                                 // current head and cookie, and `page_alloc_count`
                                 // is its live count (`>= 1`), so the shared commit
                                 // stays inside this owned page.
-                                crate::free::commit_in_place_free::<P>(
+                                crate::free::commit_in_place_free(
                                     block,
                                     page_ref,
                                     page_free,
                                     cookie,
+                                    encrypted,
                                     page_alloc_count,
                                 );
                             } else {
@@ -240,7 +242,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                                 // `segment` at `page_index`, and `alloc` owns
                                 // them — exactly `do_local_free_internal`'s
                                 // contract for the page-list transition path.
-                                let _became_empty = do_local_free_internal::<P, B>(
+                                let _became_empty = do_local_free_internal::<B>(
                                     alloc, block, page_ref, segment, page_index,
                                 );
                             }

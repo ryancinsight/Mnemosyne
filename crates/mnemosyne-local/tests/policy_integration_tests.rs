@@ -6,17 +6,12 @@
 //! * memory is poisoned on deallocation (`ENABLE_POISONING = true`), and
 //! * cross-class reallocations zero out the expanded portion correctly.
 //!
-//! Encryption-mode discipline (ADR 0001): a backend's thread allocator keys
-//! its segments under the first policy that owns them, and every chain encode/
-//! decode must agree with that recorded mode — so `HardenedPolicy`
-//! (`ENABLE_FREE_LIST_ENCRYPTION = true`) is exercised in its own `#[test]`
-//! processes here, never interleaved with unencrypted policies on the same
-//! backend. The prior interleaved forms passed only while no chain operation
-//! touched a mismatched page (bump-path luck); the debug tripwire in
-//! `Segment::cookie_for` now rejects that pattern loudly
-//! (`mixed_encryption_modes_trip_debug_safeguard` pins it). Unencrypted
-//! policies (`StandardPolicy`, `SecurePolicy`, custom zero/poison policies)
-//! share a mode and may still interleave freely.
+//! Encryption-mode discipline (ADR 0001): the public thread allocator now
+//! selects TLS state by backend and `ENABLE_FREE_LIST_ENCRYPTION`. Owner-side
+//! links still use the segment's recorded mode, so Standard/Hardened calls may
+//! interleave safely. The mixed-mode value-semantic test below exercises both
+//! directions; unencrypted policies (`StandardPolicy`, `SecurePolicy`, custom
+//! zero/poison policies) continue to share the standard slot.
 
 use mnemosyne_backend::MemoryBackendWrapper as Backend;
 use mnemosyne_core::StandardPolicy;
@@ -107,8 +102,7 @@ fn test_realloc_under_policies() {
 }
 
 /// `HardenedPolicy` realloc byte preservation + expanded zeroing, in its own
-/// process so this backend's segments are keyed under the encrypted mode from
-/// first ownership (one encryption mode per backend; ADR 0001).
+/// process so the encrypted-policy TLS slot owns the segment (ADR 0001).
 #[test]
 fn test_realloc_under_hardened_policy() {
     use core::alloc::Layout;
@@ -357,26 +351,35 @@ fn test_in_place_realloc_growth_under_hardened_policy() {
     }
 }
 
-/// Pins the ADR 0001 interim safeguard: interleaving an encrypted policy with
-/// an unencrypted one on the SAME backend writes/decodes wrong-mode links —
-/// the debug tripwire in `Segment::cookie_for` must reject it before the
-/// chain corrupts. The standard allocation keys this backend's segment
-/// unencrypted; the hardened free then commits through `cookie_for::<Hardened>`
-/// against that segment and must hit the mode-mismatch assertion.
+/// Pins ADR 0001's mode-keyed routing: a hardened-policy free of a standard
+/// allocation must use the owning segment's unencrypted encoding, then the
+/// standard allocator must be able to reuse that exact block.
 #[test]
-#[cfg(debug_assertions)]
-#[should_panic(expected = "free-list mode mismatch")]
-fn mixed_encryption_modes_trip_debug_safeguard() {
+fn mixed_encryption_modes_round_trip_without_corruption() {
     const SIZE: usize = 48;
     const ALIGN: usize = 8;
     unsafe {
         let ptr_std = thread_alloc::<StandardPolicy, Backend>(SIZE, ALIGN);
         assert!(!ptr_std.is_null());
-        // Same size class, same thread allocator, same (unencrypted) segment:
-        // the bump-path allocation itself does not touch a chain...
         let ptr_hrd = thread_alloc::<HardenedPolicy, Backend>(SIZE, ALIGN);
         assert!(!ptr_hrd.is_null());
-        // ...but the encrypted free must fetch a chain cookie and trips.
+
+        // The freeing policy intentionally differs from the allocation policy.
         thread_free::<HardenedPolicy, Backend>(ptr_hrd);
+        thread_free::<HardenedPolicy, Backend>(ptr_std);
+
+        let reused_std = thread_alloc::<StandardPolicy, Backend>(SIZE, ALIGN);
+        assert_eq!(
+            reused_std, ptr_std,
+            "standard segment free-list link must remain decodable"
+        );
+
+        thread_free::<StandardPolicy, Backend>(reused_std);
+        let reused_hrd = thread_alloc::<HardenedPolicy, Backend>(SIZE, ALIGN);
+        assert_eq!(
+            reused_hrd, ptr_hrd,
+            "hardened segment free-list link must remain decodable"
+        );
+        thread_free::<HardenedPolicy, Backend>(reused_hrd);
     }
 }

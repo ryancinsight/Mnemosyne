@@ -247,13 +247,16 @@ pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
 }
 
 /// Tries to free a block back to the per-CPU cache.
+///
+/// The cache stores raw unencoded links, so an encrypted segment block must
+/// never enter it even when the freeing call uses a standard policy.
 #[inline(always)]
-pub fn try_free_cpu<P: AllocPolicy>(ptr: *mut u8, class: usize) -> bool {
+pub fn try_free_cpu(ptr: *mut u8, class: usize, encrypted: bool) -> bool {
     if ptr.is_null() {
         return false;
     }
 
-    if P::ENABLE_FREE_LIST_ENCRYPTION {
+    if encrypted {
         return false;
     }
 
