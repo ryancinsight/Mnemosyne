@@ -37,9 +37,18 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
   host/device/stream is a compile-time proof (pairs with hephaestus + coeus Stage D).
 
 ### Heterogeneous tiers + kernel resource budgets (atlas ADR 0002)
-- [ ] [minor] Tier-keyed device pools: allocation keyed by themis
+- [x] [minor] status=done owner=codex scope=`crates/mnemosyne-backend/src/backends/cuda/mod.rs`, `crates/mnemosyne-arena/src/segment/pool/mod.rs`, `crates/mnemosyne-local/src/lib.rs`, `crates/mnemosyne-heap/src/{tiered_backend.rs,tiered_heap.rs,tier.rs}`, `crates/mnemosyne-decay/src/lib.rs`, matching tests/docs, and package metadata; Tier-keyed device pools: allocation keyed by themis
   `MemoryTier` (`Hbm` vs the new `Gddr`) + `PlacementHint`, with pinned-host
-  (`HostPinned`) staging pools, behind the existing `MemoryBackend` seam.
+  (`HostPinned`) staging pools, behind the existing `MemoryBackend` seam. The
+  new HBM/GDDR backends are zero-sized static-dispatch identities over the
+  shared CUDA managed-memory driver, with independent segment pools, TLS
+  selectors, and decay coverage; no physical technology-placement guarantee
+  is claimed because the current driver API does not expose one. Evidence:
+  full debug workspace nextest 281/281; affected debug slice 129/129;
+  warning-denied workspace Clippy; workspace doctests/rustdoc; semver checks
+  for backend 0.5.0, heap 0.3.0, and facade 0.6.0. Release workspace slice
+  is 199/200 because the existing stripped-release leak-detector symbol
+  assertion fails; no allocator test was weakened. Last-update=2026-07-23.
 - [x] [minor] `KernelResourceBudget` (`mnemosyne-core::kernel_budget`):
   registers/thread, shared-mem/block, threads/block with fully-`const`
   occupancy limiters (`blocks_limited_by_{registers,shared_mem,threads}`,

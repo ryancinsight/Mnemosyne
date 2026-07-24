@@ -329,6 +329,86 @@ impl MemoryBackend for CudaDeviceBackend {
     }
 }
 
+/// Allocates through the shared device driver while allowing the arena to
+/// keep a distinct pool identity for a device memory tier.
+///
+/// CUDA's managed allocation API does not expose an HBM-versus-GDDR selector;
+/// the tier-specific wrappers therefore preserve the provider's device
+/// allocation semantics and split allocator-local retention state. A future
+/// provider with an explicit tier selector can replace the wrapper's
+/// monomorphic forwarding without changing the heap dispatch surface.
+#[inline(always)]
+unsafe fn allocate_device_tier(size: usize) -> *mut u8 {
+    // SAFETY: the caller upholds the `MemoryBackend::allocate` contract, and
+    // `CudaDeviceBackend` is the shared driver-backed implementation.
+    unsafe { CudaDeviceBackend::allocate(size) }
+}
+
+/// Releases a tier-keyed device allocation through the shared CUDA driver.
+#[inline(always)]
+unsafe fn deallocate_device_tier(ptr: *mut u8, size: usize) -> bool {
+    // SAFETY: the caller upholds the `MemoryBackend::deallocate` contract, and
+    // the pointer was allocated by the shared device backend.
+    unsafe { CudaDeviceBackend::deallocate(ptr, size) }
+}
+
+/// A zero-sized device backend with an allocator-local HBM pool identity.
+///
+/// The current CUDA provider uses the same managed-memory driver operation as
+/// [`CudaDeviceBackend`]. This type separates segment and thread-local pool
+/// ownership for `MemoryTier::Hbm` without adding a runtime dispatch branch.
+pub struct CudaHbmBackend;
+
+/// A zero-sized device backend with an allocator-local GDDR pool identity.
+///
+/// The current CUDA provider uses the same managed-memory driver operation as
+/// [`CudaDeviceBackend`]. This type separates segment and thread-local pool
+/// ownership for `MemoryTier::Gddr` without adding a runtime dispatch branch.
+pub struct CudaGddrBackend;
+
+const _: () = assert!(
+    core::mem::size_of::<CudaHbmBackend>() == 0
+        && core::mem::size_of::<CudaGddrBackend>() == 0
+        && core::mem::align_of::<CudaHbmBackend>() == 1
+        && core::mem::align_of::<CudaGddrBackend>() == 1
+);
+
+macro_rules! impl_device_tier_backend {
+    ($backend:ty) => {
+        impl MemoryBackend for $backend {
+            const SUPPORTS_PAGE_RESET: bool = CudaDeviceBackend::SUPPORTS_PAGE_RESET;
+            const SUPPORTS_MAKE_GUARD: bool = CudaDeviceBackend::SUPPORTS_MAKE_GUARD;
+            const SUPPORTS_DECOMMIT: bool = CudaDeviceBackend::SUPPORTS_DECOMMIT;
+            const ENABLE_CPU_CACHE: bool = CudaDeviceBackend::ENABLE_CPU_CACHE;
+
+            /// Allocates from the shared CUDA device driver under the tier pool key.
+            ///
+            /// # Safety
+            ///
+            /// The size must be greater than zero and page-aligned.
+            #[inline(always)]
+            unsafe fn allocate(size: usize) -> *mut u8 {
+                // SAFETY: forwarded caller contract.
+                unsafe { allocate_device_tier(size) }
+            }
+
+            /// Releases a device allocation under the tier pool key.
+            ///
+            /// # Safety
+            ///
+            /// The pointer must be valid and the size must match the allocation.
+            #[inline(always)]
+            unsafe fn deallocate(ptr: *mut u8, size: usize) -> bool {
+                // SAFETY: forwarded caller contract.
+                unsafe { deallocate_device_tier(ptr, size) }
+            }
+        }
+    };
+}
+
+impl_device_tier_backend!(CudaHbmBackend);
+impl_device_tier_backend!(CudaGddrBackend);
+
 /// A memory backend allocating CUDA page-locked (pinned) host memory.
 ///
 /// `allocate` returns null on failure (driver unavailable, driver allocation

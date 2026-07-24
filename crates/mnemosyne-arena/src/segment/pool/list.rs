@@ -1,8 +1,7 @@
 //! Reclamation-safe per-NUMA-node segment pool.
 //!
 //! The pool is a singly-linked stack of free [`Segment`] nodes whose head is a
-//! tagged [`TaggedHead`](super::cache_aligned::TaggedHead) (address + wrapping
-//! mutation tag). The shared
+//! tagged `TaggedHead` (address + wrapping mutation tag). The shared
 //! stack serializes head observation through successor access or detachment so
 //! a decay sweep may release a detached mapping after `take_all` returns.
 //!

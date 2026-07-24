@@ -1,15 +1,17 @@
 //! Tier-aware heap façade on top of the internal raw heap.
 //!
-//! [`TieredHeap`] owns three typed [`crate::heap::Heap`] instances,
+//! [`TieredHeap`] owns five typed [`crate::heap::Heap`] instances,
 //! each a thin wrapper over one raw-heap monomorphization:
 //!
 //! | `TierSelection`     | Sub-heap backend                              |
 //! |---------------------|-----------------------------------------------|
 //! | `Host`              | [`mnemosyne_backend::MemoryBackendWrapper`]   |
 //! | `HostPinned`        | [`mnemosyne_backend::CudaHostPinnedBackend`]  |
-//! | `Device`            | [`mnemosyne_backend::CudaDeviceBackend`]      |
+//! | `Device`             | [`mnemosyne_backend::CudaDeviceBackend`]      |
+//! | `Hbm`               | [`mnemosyne_backend::CudaHbmBackend`]         |
+//! | `Gddr`              | [`mnemosyne_backend::CudaGddrBackend`]       |
 //!
-//! All three sub-heaps share one higher-ranked `'brand` lifetime minted
+//! All five sub-heaps share one higher-ranked `'brand` lifetime minted
 //! by [`scope_tiered`] via [`melinoe::sync::thread_local_scope`]; each
 //! sub-heap's `BrandedBlock` carries the same brand so [`TieredHeap::free`]
 //! can route a `TieredBlock` back to the right pool using its carried
@@ -38,7 +40,7 @@ use mnemosyne_core::AllocPolicy;
 
 /// A tier-aware heap façade.
 ///
-/// Holds three typed [`Heap`] sub-heaps under one higher-ranked `'brand`
+/// Holds five typed [`Heap`] sub-heaps under one higher-ranked `'brand`
 /// lifetime. [`alloc`](Self::alloc) routes a `PlacementHint` to the
 /// right sub-heap and wraps the resulting `BrandedBlock` in a
 /// [`TieredBlock`] carrying the resolved tier; [`free`](Self::free) and
@@ -51,6 +53,8 @@ use mnemosyne_core::AllocPolicy;
 pub struct TieredHeap<'brand, P: AllocPolicy> {
     host: Heap<'brand, P, mnemosyne_backend::MemoryBackendWrapper>,
     device: Heap<'brand, P, mnemosyne_backend::CudaDeviceBackend>,
+    hbm: Heap<'brand, P, mnemosyne_backend::CudaHbmBackend>,
+    gddr: Heap<'brand, P, mnemosyne_backend::CudaGddrBackend>,
     pinned: Heap<'brand, P, mnemosyne_backend::CudaHostPinnedBackend>,
 }
 
@@ -144,6 +148,14 @@ impl<'brand, P: AllocPolicy> TieredHeap<'brand, P> {
                 .device
                 .alloc(token, layout)
                 .map(|b| TieredBlock { block: b, tier }),
+            Some(TierSelection::Hbm) => self
+                .hbm
+                .alloc(token, layout)
+                .map(|b| TieredBlock { block: b, tier }),
+            Some(TierSelection::Gddr) => self
+                .gddr
+                .alloc(token, layout)
+                .map(|b| TieredBlock { block: b, tier }),
             // None covers the budget-only tiers (`Registers`,
             // `SharedMem`): atlas ADR 0002 budgets that the GPU
             // compiler and kernel launch own, not address space the
@@ -178,6 +190,8 @@ impl<'brand, P: AllocPolicy> TieredHeap<'brand, P> {
             Some(TierSelection::Host) => self.host.free(token, inner),
             Some(TierSelection::HostPinned) => self.pinned.free(token, inner),
             Some(TierSelection::Device) => self.device.free(token, inner),
+            Some(TierSelection::Hbm) => self.hbm.free(token, inner),
+            Some(TierSelection::Gddr) => self.gddr.free(token, inner),
             // A `TieredBlock` carrying a budget-only tier cannot
             // exist via the safe `alloc` path; reaching this arm
             // means a non-alloc construction spliced a tier that
@@ -213,6 +227,8 @@ impl<'brand, P: AllocPolicy> TieredHeap<'brand, P> {
             Some(TierSelection::Host) => self.host.realloc(token, inner, layout, new_size),
             Some(TierSelection::HostPinned) => self.pinned.realloc(token, inner, layout, new_size),
             Some(TierSelection::Device) => self.device.realloc(token, inner, layout, new_size),
+            Some(TierSelection::Hbm) => self.hbm.realloc(token, inner, layout, new_size),
+            Some(TierSelection::Gddr) => self.gddr.realloc(token, inner, layout, new_size),
             // See `alloc` / `free` rationale: a budget-only-tier
             // `TieredBlock` cannot reach this path through a safe
             // construction. Debug-assert the invariant; the empty body
@@ -233,7 +249,7 @@ impl<'brand, P: AllocPolicy> TieredHeap<'brand, P> {
 
 /// Mints one compile-time unique brand and constructs a [`TieredHeap`].
 ///
-/// Mirrors [`crate::brand::scope`] but constructs three typed sub-heaps
+/// Mirrors [`crate::brand::scope`] but constructs five typed sub-heaps
 /// sharing the same brand, then hands both to the closure. The
 /// higher-ranked `'brand` keeps the heap and the token capability
 /// provably paired for the scope's lifetime; they cannot escape the
@@ -267,6 +283,14 @@ where
             },
             device: Heap {
                 raw: RawHeap::<P, mnemosyne_backend::CudaDeviceBackend>::new(),
+                _phantom: PhantomData,
+            },
+            hbm: Heap {
+                raw: RawHeap::<P, mnemosyne_backend::CudaHbmBackend>::new(),
+                _phantom: PhantomData,
+            },
+            gddr: Heap {
+                raw: RawHeap::<P, mnemosyne_backend::CudaGddrBackend>::new(),
                 _phantom: PhantomData,
             },
             pinned: Heap {
