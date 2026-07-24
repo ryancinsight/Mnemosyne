@@ -208,6 +208,11 @@ fn cold_arm_thread_exit<B: HasSegmentPool>(
 }
 
 /// Trait resolving dynamic backend-specific thread-local cache selection.
+///
+/// Implementors provide independent cache state for the standard and
+/// encrypted free-list modes. The exported selector macro is the canonical
+/// implementation; custom implementations must preserve the same ownership
+/// and mode-isolation contract.
 pub trait LocalAllocatorSelector<B: HasSegmentPool>: HasSegmentPool {
     /// Evaluates the closure with a mutable reference to the thread-local allocator cache,
     /// arming the re-entrancy guard.
@@ -235,4 +240,36 @@ pub trait LocalAllocatorSelector<B: HasSegmentPool>: HasSegmentPool {
 
     /// Returns the raw pointer to the thread-local allocator cache without triggering lazy initialization.
     fn get_allocator_ptr_raw() -> *mut core::ffi::c_void;
+
+    /// Runs `f` against the TLS allocator selected by the compile-time
+    /// free-list encryption mode.
+    ///
+    /// The mode is part of the selector call, not process-global state. This
+    /// gives each `(backend, encryption mode)` pair an independent allocator
+    /// cache while preserving static dispatch and the existing backend seam.
+    fn with_allocator_for_policy<P: mnemosyne_core::AllocPolicy, R>(
+        f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
+    ) -> Option<R>;
+
+    /// Mode-keyed counterpart of [`Self::with_allocator_unguarded`].
+    ///
+    /// # Safety
+    ///
+    /// `f` must not, directly or transitively, invoke an allocator entry point
+    /// on the current thread.
+    unsafe fn with_allocator_unguarded_for_policy<P: mnemosyne_core::AllocPolicy, R>(
+        f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
+    ) -> Option<R>;
+
+    /// Returns the initialized mode-keyed allocator pointer, arming its TLS
+    /// slot when necessary.
+    fn get_allocator_ptr_for_policy<P: mnemosyne_core::AllocPolicy>() -> *mut core::ffi::c_void;
+
+    /// Returns the initialized mode-keyed allocator pointer without creating
+    /// its slot.
+    fn get_allocator_ptr_raw_for_policy<P: mnemosyne_core::AllocPolicy>() -> *mut core::ffi::c_void;
+
+    /// Returns the raw pointer for a statically selected free-list encoding
+    /// mode without creating its slot.
+    fn get_allocator_ptr_raw_for_encryption<const ENCRYPTED: bool>() -> *mut core::ffi::c_void;
 }

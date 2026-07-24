@@ -391,6 +391,87 @@ fn test_orphan_adoption_skips_policy_mismatched_segment() {
 }
 
 #[test]
+fn test_mixed_policy_free_and_realloc_preserve_segment_encoding() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("local allocator test lock was poisoned");
+    use mnemosyne_hardened::HardenedPolicy;
+    use std::alloc::Layout;
+
+    // Safety: TEST_LOCK is held; no concurrent allocator activity.
+    unsafe { drain_orphan_pools_for_test() };
+
+    // The public free-function surface uses separate zero-cost TLS slots for
+    // the two encoding modes. The slots are distinct even though both use the
+    // same backend type and allocator representation.
+    let hardened_slot =
+        <DefaultBackend as LocalAllocatorSelector<DefaultBackend>>::get_allocator_ptr_for_policy::<
+            HardenedPolicy,
+        >();
+    let standard_slot =
+        <DefaultBackend as LocalAllocatorSelector<DefaultBackend>>::get_allocator_ptr_for_policy::<
+            StandardPolicy,
+        >();
+    assert!(
+        !standard_slot.is_null(),
+        "standard TLS slot must initialize"
+    );
+
+    let hardened_first = unsafe { crate::thread_alloc::<HardenedPolicy, DefaultBackend>(32, 8) };
+    let hardened_second = unsafe { crate::thread_alloc::<HardenedPolicy, DefaultBackend>(32, 8) };
+    let hardened_third = unsafe { crate::thread_alloc::<HardenedPolicy, DefaultBackend>(32, 8) };
+    assert!(!hardened_first.is_null());
+    assert!(!hardened_second.is_null());
+    assert!(!hardened_third.is_null());
+    let hardened_slot_after = <DefaultBackend as LocalAllocatorSelector<DefaultBackend>>::
+        get_allocator_ptr_raw_for_policy::<HardenedPolicy>();
+    assert!(!hardened_slot_after.is_null());
+    assert_ne!(
+        hardened_slot_after, standard_slot,
+        "standard and hardened policies must not share a TLS allocator"
+    );
+    assert_eq!(hardened_slot, hardened_slot_after);
+
+    // Free a hardened block through the standard policy. The free path must
+    // identify the hardened owner and use the segment's encoded-chain mode,
+    // rather than the freeing call's policy type.
+    unsafe {
+        crate::thread_free::<StandardPolicy, DefaultBackend>(hardened_second);
+    }
+    let reused = unsafe { crate::thread_alloc::<HardenedPolicy, DefaultBackend>(32, 8) };
+    assert_eq!(
+        reused, hardened_second,
+        "hardened free-list head must remain decodable after a standard-policy free"
+    );
+
+    // Reallocate another hardened block through the standard policy. This
+    // exercises the fallback path's old-block free, which must apply the same
+    // segment-keyed encoding before the hardened allocator pops it.
+    let layout = Layout::from_size_align(32, 8).expect("test layout is valid");
+    let resized = unsafe {
+        crate::thread_realloc::<StandardPolicy, DefaultBackend>(hardened_first, layout, 64)
+    };
+    assert!(
+        !resized.is_null(),
+        "mixed-policy realloc must produce a block"
+    );
+    let realloc_reused = unsafe { crate::thread_alloc::<HardenedPolicy, DefaultBackend>(32, 8) };
+    assert_eq!(
+        realloc_reused, hardened_first,
+        "hardened allocator must decode the block freed by standard-policy realloc"
+    );
+
+    // Safety: every pointer is live and freed exactly once under a policy
+    // whose free path now consults the owning segment's mode.
+    unsafe {
+        crate::thread_free::<HardenedPolicy, DefaultBackend>(hardened_third);
+        crate::thread_free::<HardenedPolicy, DefaultBackend>(reused);
+        crate::thread_free::<HardenedPolicy, DefaultBackend>(realloc_reused);
+        crate::thread_free::<StandardPolicy, DefaultBackend>(resized);
+    }
+}
+
+#[test]
 fn test_online_defragmentation_page_prioritization() {
     let _guard = TEST_LOCK
         .lock()

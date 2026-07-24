@@ -179,6 +179,118 @@ macro_rules! impl_local_allocator_selector {
             #[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), any(not(all(windows, target_arch = "x86_64")), miri)))]
             type SelectedTls = $crate::tls::NativeOsTls<$backend, SlotAccess>;
 
+            // The hardened policy gets a distinct cache so pages owned by the
+            // standard and encrypted policies cannot share one allocator's
+            // active-page lists. The two slots intentionally use the same TLS
+            // provider shape; only the slot identity changes.
+            #[cfg(nightly_tls_active)]
+            #[thread_local]
+            static ENCRYPTED_ALLOCATOR_SLOT: $crate::LocalAllocatorSlot<$backend> =
+                $crate::LocalAllocatorSlot::new();
+
+            #[cfg(not(nightly_tls_active))]
+            std::thread_local! {
+                static ENCRYPTED_ALLOCATOR_SLOT: $crate::LocalAllocatorSlot<$backend> = const {
+                    $crate::LocalAllocatorSlot::new()
+                };
+            }
+
+            std::thread_local! {
+                static ENCRYPTED_CACHED_SLOT_PTR: core::cell::Cell<*mut core::ffi::c_void> = const {
+                    core::cell::Cell::new(core::ptr::null_mut())
+                };
+
+                #[cfg(nightly_tls_active)]
+                static ENCRYPTED_ALLOCATOR_EXIT_GUARD: $crate::ThreadExitReclaim<$backend> = const {
+                    $crate::ThreadExitReclaim::new()
+                };
+            }
+
+            #[cfg(nightly_tls_active)]
+            #[thread_local]
+            static mut ENCRYPTED_QUICK_ALLOCATOR_PTR: *mut core::ffi::c_void = core::ptr::null_mut();
+
+            static ENCRYPTED_OS_TLS_KEY: core::sync::atomic::AtomicU32 =
+                core::sync::atomic::AtomicU32::new(u32::MAX);
+
+            struct EncryptedSlotAccess;
+            impl $crate::tls::TlsSlotAccess<$backend> for EncryptedSlotAccess {
+                #[inline(always)]
+                fn get_slot_standard<R>(
+                    f: impl FnOnce(&$crate::LocalAllocatorSlot<$backend>) -> R,
+                ) -> R {
+                    #[cfg(nightly_tls_active)]
+                    {
+                        f(&ENCRYPTED_ALLOCATOR_SLOT)
+                    }
+                    #[cfg(not(nightly_tls_active))]
+                    {
+                        ENCRYPTED_ALLOCATOR_SLOT.with(f)
+                    }
+                }
+
+                #[inline(always)]
+                fn get_cached_cell<R>(
+                    f: impl FnOnce(&core::cell::Cell<*mut core::ffi::c_void>) -> R,
+                ) -> R {
+                    ENCRYPTED_CACHED_SLOT_PTR.with(f)
+                }
+
+                #[inline(always)]
+                fn arm_thread_exit(slot: &$crate::LocalAllocatorSlot<$backend>) {
+                    #[cfg(nightly_tls_active)]
+                    {
+                        $crate::arm_thread_exit(slot, &ENCRYPTED_ALLOCATOR_EXIT_GUARD);
+                    }
+                    #[cfg(not(nightly_tls_active))]
+                    {
+                        let _ = slot;
+                    }
+                }
+
+                #[inline(always)]
+                fn get_os_tls_key() -> &'static core::sync::atomic::AtomicU32 {
+                    &ENCRYPTED_OS_TLS_KEY
+                }
+
+                #[cfg(nightly_tls_active)]
+                #[inline(always)]
+                fn get_slot_nightly<R>(
+                    f: impl FnOnce(&$crate::LocalAllocatorSlot<$backend>) -> R,
+                ) -> R {
+                    f(&ENCRYPTED_ALLOCATOR_SLOT)
+                }
+
+                #[cfg(nightly_tls_active)]
+                #[inline(always)]
+                fn get_quick_allocator_ptr() -> *mut core::ffi::c_void {
+                    unsafe { ENCRYPTED_QUICK_ALLOCATOR_PTR }
+                }
+
+                #[cfg(nightly_tls_active)]
+                #[inline(always)]
+                fn set_quick_allocator_ptr(ptr: *mut core::ffi::c_void) {
+                    unsafe { ENCRYPTED_QUICK_ALLOCATOR_PTR = ptr; }
+                }
+            }
+
+            #[cfg(all(nightly_tls_active, not(miri)))]
+            type EncryptedSelectedTls = $crate::tls::NightlyTls<$backend, EncryptedSlotAccess>;
+
+            #[cfg(any(
+                miri,
+                all(not(nightly_tls_active), feature = "std_tls")
+            ))]
+            type EncryptedSelectedTls =
+                $crate::tls::CachedCellTls<$backend, EncryptedSlotAccess>;
+
+            #[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), all(windows, target_arch = "x86_64"), not(miri)))]
+            type EncryptedSelectedTls = $crate::tls::AsmTls<$backend, EncryptedSlotAccess>;
+
+            #[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), any(not(all(windows, target_arch = "x86_64")), miri)))]
+            type EncryptedSelectedTls =
+                $crate::tls::NativeOsTls<$backend, EncryptedSlotAccess>;
+
             impl $crate::LocalAllocatorSelector<$backend> for $backend {
                 #[inline(always)]
                 fn with_allocator<R>(
@@ -203,6 +315,56 @@ macro_rules! impl_local_allocator_selector {
                 #[inline(always)]
                 fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
                     <SelectedTls as $crate::tls::TlsProvider<$backend>>::get_allocator_ptr_raw()
+                }
+
+                #[inline(always)]
+                fn with_allocator_for_policy<P: mnemosyne_core::AllocPolicy, R>(
+                    f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
+                ) -> Option<R> {
+                    if P::ENABLE_FREE_LIST_ENCRYPTION {
+                        <EncryptedSelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator(f)
+                    } else {
+                        <SelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator(f)
+                    }
+                }
+
+                #[inline(always)]
+                unsafe fn with_allocator_unguarded_for_policy<P: mnemosyne_core::AllocPolicy, R>(
+                    f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
+                ) -> Option<R> {
+                    if P::ENABLE_FREE_LIST_ENCRYPTION {
+                        unsafe { <EncryptedSelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator_unguarded(f) }
+                    } else {
+                        unsafe { <SelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator_unguarded(f) }
+                    }
+                }
+
+                #[inline(always)]
+                fn get_allocator_ptr_for_policy<P: mnemosyne_core::AllocPolicy>() -> *mut core::ffi::c_void {
+                    $crate::ensure_options_initialized();
+                    if P::ENABLE_FREE_LIST_ENCRYPTION {
+                        <EncryptedSelectedTls as $crate::tls::TlsProvider<$backend>>::get_allocator_ptr()
+                    } else {
+                        <SelectedTls as $crate::tls::TlsProvider<$backend>>::get_allocator_ptr()
+                    }
+                }
+
+                #[inline(always)]
+                fn get_allocator_ptr_raw_for_policy<P: mnemosyne_core::AllocPolicy>() -> *mut core::ffi::c_void {
+                    if P::ENABLE_FREE_LIST_ENCRYPTION {
+                        <EncryptedSelectedTls as $crate::tls::TlsProvider<$backend>>::get_allocator_ptr_raw()
+                    } else {
+                        <SelectedTls as $crate::tls::TlsProvider<$backend>>::get_allocator_ptr_raw()
+                    }
+                }
+
+                #[inline(always)]
+                fn get_allocator_ptr_raw_for_encryption<const ENCRYPTED: bool>() -> *mut core::ffi::c_void {
+                    if ENCRYPTED {
+                        <EncryptedSelectedTls as $crate::tls::TlsProvider<$backend>>::get_allocator_ptr_raw()
+                    } else {
+                        <SelectedTls as $crate::tls::TlsProvider<$backend>>::get_allocator_ptr_raw()
+                    }
                 }
             }
         };

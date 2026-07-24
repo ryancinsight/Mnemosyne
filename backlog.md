@@ -200,24 +200,7 @@ Filed from the 2026-07-01 four-agent audit cycle (high-severity findings were
 fixed in the same cycle — see `## Completed`; these are the deferred
 remainder, each Definition-of-Ready):
 
-- [ ] [arch] status=in-progress owner=codex scope=`crates/mnemosyne-core/src/{sync.rs,types/{block.rs,page/init.rs,page/reclaim.rs,segment.rs}}`, `crates/mnemosyne-local/src/{alloc.rs,free.rs,realloc.rs,local_alloc/,tls.rs,tls_slot.rs}`, and matching tests/ADR/PM entries; last-update=2026-07-23. AR-1: Mixed free-list-encryption policies over one backend are
-  latently unsound at the chain level. **Decision recorded in
-  [docs/adr/0001-free-list-encryption-mode-binding.md](docs/adr/0001-free-list-encryption-mode-binding.md)
-  (Option C recommended; implementation proceeds in this bounded slice).** Owner-side paths
-  (`pop_block::<P>`, `set_next::<P>`, `AtomicFreeList::push::<P>`) select
-  encoding from the CALLER's static policy while the segment carries a dynamic
-  `free_list_encrypted` flag; two policies with different
-  `ENABLE_FREE_LIST_ENCRYPTION` on one backend share class pages, so one page's
-  chain can mix encodings (reachable via the public `thread_alloc`/`thread_free`
-  free functions, single-thread same-page — the 2026-07-01 orphan-adoption gate
-  closed only the cross-thread instance). ADR recommends Option C (key the TLS
-  allocator by encryption class: sound and zero-cost for the default policy)
-  over dynamic-flag-everywhere (hot-path regression) or a `P==B` const-assert
-  (conflates policy with backend). Blocker: ADR sign-off. **Step 1 (interim
-  debug-assert safeguard at `Segment::cookie_for`) DONE 2026-07-02** — see
-  `## Completed`; the remaining work is the type-level allocator-keying.
-  Acceptance: an interleaved standard+hardened same-page chain-pop test
-  round-trips without abort under a release build.
+- [x] [arch] status=done owner=codex scope=`crates/mnemosyne-core/src/{sync.rs,types/{block.rs,page/reclaim.rs,segment.rs}}`, `crates/mnemosyne-local/src/{alloc.rs,free.rs,per_cpu.rs,realloc.rs,local_alloc/,lib.rs,tls_slot.rs,Cargo.toml}`, `crates/mnemosyne-heap/src/raw_heap.rs`, `Cargo.lock`, and matching tests/ADR/PM entries; last-update=2026-07-23. AR-1: Implemented ADR 0001 Option C. The selector macro now provides independent standard and encrypted TLS allocator slots, and policy const propagation selects the slot without a standard-path segment-header load. Owner free, realloc, atomic cross-thread publication, branded raw-heap free, and per-CPU cache publication use the owning segment's `free_list_encrypted` mode as the encoding SSOT. Added mixed-policy alloc/free/realloc value-semantic regressions with pointer-reuse assertions and distinct-slot assertions. The required public seam change is classified as `mnemosyne-local` 0.3.0. Evidence: focused touched-file rustfmt check; warning-denied Clippy; `cargo test --doc --manifest-path crates/mnemosyne-local/Cargo.toml --locked --all-features`; `cargo doc --manifest-path crates/mnemosyne-local/Cargo.toml --locked --all-features --no-deps`; `cargo nextest run --manifest-path crates/mnemosyne-local/Cargo.toml --locked --no-fail-fast` 63/63; release nextest 63/63; branded heap nextest 51/51. No benchmark speedup claim; codegen/criterion proof remains separate performance work.
 - [ ] [patch] AR-4: benchmark gate statistics are too weak for the 1.05
   threshold: `sample_size(10)` / 500 ms measurement yields CI widths the
   variance report itself flags at 15-25%. Fix: raise measurement time/samples

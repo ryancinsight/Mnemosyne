@@ -218,13 +218,11 @@ impl Segment {
     /// The const `P::ENABLE_FREE_LIST_ENCRYPTION` const-propagates into
     /// [`Segment::cookie_for_dynamic`], so the branch resolves at compile time.
     ///
-    /// Debug builds additionally enforce the one-encryption-mode-per-backend
-    /// contract (ADR 0001 interim safeguard): every static-policy encode and
-    /// decode routes through this chokepoint, so a policy whose
-    /// `ENABLE_FREE_LIST_ENCRYPTION` disagrees with this segment's recorded
-    /// `free_list_encrypted` mode — the mixed-policy chain-corruption
-    /// precondition — aborts loudly here instead of writing or decoding a
-    /// wrong-mode link. Release builds compile the check out.
+    /// Debug builds additionally enforce that the static policy agrees with
+    /// this segment's recorded mode. This remains a diagnostic guard for
+    /// lower-level direct `ThreadAllocator` callers; the public thread-local
+    /// selector prevents the mismatch by assigning each mode its own cache.
+    /// Release builds compile the check out.
     ///
     /// # Safety
     ///
@@ -234,7 +232,7 @@ impl Segment {
         debug_assert_eq!(
             self.free_list_encrypted,
             P::ENABLE_FREE_LIST_ENCRYPTION,
-            "free-list mode mismatch: policy vs segment (one encryption mode per backend; ADR 0001)"
+            "free-list mode mismatch: policy vs segment (ADR 0001)"
         );
         // SAFETY: forwarded unchanged from this method's `# Safety` contract.
         unsafe { self.cookie_for_dynamic(P::ENABLE_FREE_LIST_ENCRYPTION, page_index) }

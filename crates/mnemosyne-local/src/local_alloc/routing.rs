@@ -17,7 +17,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// # Safety
     ///
-    /// `class` must be a valid size class index (< `NUM_SIZE_CLASSES`).
+    /// `class` must be a valid size class index (< `NUM_SIZE_CLASSES`). Every
+    /// policy used with this allocator instance must have the same
+    /// `ENABLE_FREE_LIST_ENCRYPTION` value; the public `thread_*` entry points
+    /// enforce that separation through their mode-keyed TLS slots.
     #[inline(always)]
     pub unsafe fn alloc_class<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
         if let Some(page_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
@@ -59,7 +62,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// # Safety
     ///
-    /// This method is unsafe because it works with raw pointers and handles manual memory layouts.
+    /// This method is unsafe because it works with raw pointers and handles
+    /// manual memory layouts. The policy mode must match the mode used by all
+    /// pages already owned by this allocator instance.
     #[cfg(test)]
     #[inline(always)]
     pub unsafe fn alloc<P: AllocPolicy>(&mut self, size: usize) -> *mut u8 {
@@ -76,8 +81,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// # Safety
     ///
-    /// The caller must ensure that the allocator is in a valid state and the size class
-    /// index is within bounds of the `active_pages` array.
+    /// The caller must ensure that the allocator is in a valid state, the size
+    /// class index is within bounds of the `active_pages` array, and the policy
+    /// mode matches the mode used by all pages already owned by this allocator.
     #[inline(never)]
     pub unsafe fn alloc_cold<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
         unsafe { self.record_defrag_operation::<P>() };
@@ -386,8 +392,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 ///
 /// An orphan's live free chains are encoded under the segment's recorded
 /// `free_list_encrypted` mode with the per-page keys already in its header,
-/// while the owner-side hot paths (`pop_block`, local free) select encryption
-/// statically from `P`. A thread may therefore adopt only an orphan whose
+/// while the owner-side allocation hot paths (`pop_block`, page initialization)
+/// select encryption statically from `P`; local free paths use the recorded
+/// mode. A thread may therefore adopt only an orphan whose
 /// recorded mode matches `P::ENABLE_FREE_LIST_ENCRYPTION`; a mismatched orphan
 /// is deferred on a local intrusive chain and pushed back to the orphan pool
 /// for a matching-policy thread once a usable segment is found. Fresh and

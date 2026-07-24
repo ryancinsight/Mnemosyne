@@ -2,6 +2,30 @@
 
 Target version: 0.5.0
 
+## Verified — AR-1 encryption-mode binding [arch]
+
+- [x] Key the public thread-local allocator selector by backend and
+  `AllocPolicy::ENABLE_FREE_LIST_ENCRYPTION` using independent standard and
+  encrypted TLS slots. Static policy selection preserves the monomorphic
+  StandardPolicy allocation path.
+- [x] Make owner frees, realloc old-block frees, atomic cross-thread
+  publication, branded raw-heap frees, and optional per-CPU publication use
+  the owning segment's recorded encoding mode. Remove the unused policy
+  parameter from the shared local-free routine.
+- [x] Replace the obsolete debug-only mixed-mode panic expectation with
+  value-semantic mixed-policy tests covering pointer reuse and realloc.
+- [x] Update ADR 0001 and the Unreleased changelog entry.
+
+Evidence tier: release and debug value-semantic nextest, warning-denied
+Clippy, doctest, rustdoc, and focused formatting. `mnemosyne-local` passed
+63/63 debug and 63/63 release tests; `mnemosyne-heap` passed 51/51. No
+throughput or codegen improvement is claimed without a benchmark baseline.
+
+Residual: workspace `cargo fmt --all --check` still reports two unrelated
+line-wrapping differences in
+`crates/mnemosyne-benchmarks/benches/allocator/workers.rs`; all touched files
+pass the focused format check.
+
 ## Blocked — packed tagged pool state [perf-experiment]
 
 - [x] Replace separate cache-line-aligned tagged-head and advisory-count

@@ -1,8 +1,8 @@
 # ADR 0001 — Binding free-list encryption mode to avoid mixed-policy corruption
 
-- Status: Proposed (awaiting sign-off; blocks backlog AR-1 implementation)
+- Status: Accepted and implemented
 - Change class: [arch]
-- Date: 2026-07-01
+- Date: 2026-07-23
 - Scope: `mnemosyne-core` (`policy`, `types::page`, `types::segment`, `sync`),
   `mnemosyne-local` (`alloc`, `free`, `realloc`, `local_alloc::*`), the
   `thread_alloc`/`thread_free`/`thread_realloc` free-function surface.
@@ -14,13 +14,11 @@ When true, a page's intrusive free-list `next` links are XOR-encoded with a
 per-page cookie (`Segment::keys[page_index]`, derived from a per-thread seed);
 `HardenedPolicy` sets it, `StandardPolicy`/`SecurePolicy` do not.
 
-The per-thread `ThreadAllocator<B>` is keyed **only by backend `B`** (see
-`impl_local_allocator_selector!` in `mnemosyne-local/src/lib.rs`): the TLS slot
-is selected by `B`, and the policy `P` is an **independent** generic supplied
-per call to `thread_alloc::<P, B>` / `thread_free::<P, B>`. One allocator
-instance is therefore shared by every policy that targets a given backend, and
-its `active_pages[class]` list hands the same page to allocations made under
-different `P`.
+Before this decision, the per-thread TLS slot was keyed **only by backend `B`**
+(see `impl_local_allocator_selector!` in `mnemosyne-local/src/lib.rs`): the
+policy `P` was an independent generic supplied per call to
+`thread_alloc::<P, B>` / `thread_free::<P, B>`. The same TLS allocator instance
+could therefore hand one page to different encryption modes.
 
 Every hot-path encode/decode selects the mode from the **caller's** policy as a
 compile-time constant:
@@ -38,8 +36,9 @@ header (a different cache line from the page metadata), so the default policy
 never pays a segment-header access.
 
 The segment additionally carries a **dynamic** `free_list_encrypted: bool`.
-The cold sweep/reclaim paths (`local_alloc::segment::reclaim`) correctly decode
-using this dynamic flag; the hot paths do not.
+The cold sweep/reclaim paths (`local_alloc::segment::reclaim`) already decode
+using this dynamic flag; the former hot free and cross-thread publication paths
+did not.
 
 ### The defect (AR-1)
 
@@ -135,26 +134,32 @@ conflating safety policy with backend identity.
 
 ## Consequences / implementation plan (post-sign-off)
 
-1. **Interim safeguard (independent, ship first, zero release cost):** add a
-   `debug_assert_eq!((*segment).free_list_encrypted, P::ENABLE_FREE_LIST_ENCRYPTION)`
-   at the free-path site where the segment is already loaded, and a matching
-   debug assert on the alloc reclaim path, so any mixed-mode page aborts loudly
-   in debug/CI builds while release stays untouched. Add a `#[should_panic]`
-   (debug) or mode-mismatch test that pops a deliberately mixed page. This
-   converts the silent UB into a caught invariant violation immediately.
-2. Extend the selector trait/macro to a `(B, ENCRYPTION)` slot key; route
-   `thread_alloc`/`thread_realloc` by `P`'s const bit.
-3. Switch `thread_free_classified`'s owner path, `do_local_free_internal`,
-   `AtomicFreeList::push`, and the cross-thread reclaim to decode/encode via
-   the segment's dynamic `free_list_encrypted` flag (consolidate with the
-   existing sweep-path dynamic decode — pairs with the AR-6 `cookie_for`
-   accessor).
-4. Verify with an interleaved Standard+Hardened same-page alloc/free/realloc
-   test (value-semantic: the chain round-trips and no abort fires) and a
-   criterion check that the `StandardPolicy` alloc fast path is unchanged
-   (codegen/differential).
+Implementation is complete:
 
-Until sign-off and steps 2–4 land, the contract is documented on the
-`thread_*` functions: **all allocations and frees through a given backend must
-use one `ENABLE_FREE_LIST_ENCRYPTION` setting**, and step 1's debug assert
-enforces it in tests.
+1. The selector macro declares independent standard and encrypted TLS slots,
+   cached pointers, and thread-exit state. `P::ENABLE_FREE_LIST_ENCRYPTION`
+   selects the slot through a monomorphized policy method; the standard
+   allocation fast path retains its existing provider and does not read the
+   segment header.
+2. `thread_alloc` and the local small-realloc path use the mode-keyed slot.
+   This prevents their active-page lists from sharing pages across encoding
+   modes.
+3. `thread_free`, `thread_realloc`, `AtomicFreeList`, and the branded raw-heap
+   free path read the owning segment's mode before encoding a link. The
+   owner probe checks both mode-keyed TLS slots, so a mismatched freeing policy
+   cannot publish a link with the wrong cookie.
+4. `test_mixed_policy_free_and_realloc_preserve_segment_encoding` verifies
+   standard-policy free and realloc of hardened allocations, followed by
+   hardened free-list reuse and pointer identity. It also verifies distinct
+   TLS slot identities for the two modes.
+
+The lower-level `ThreadAllocator<B>::alloc::<P>` methods remain unsafe and
+carry the existing caller obligation to use one encryption mode per allocator
+instance. The public `thread_*` routing and branded heap surfaces now enforce
+the mode boundary through their policy-keyed storage and segment-owned free
+encoding.
+
+The selector trait and the mode-aware `per_cpu::try_free_cpu` contract are
+public API changes for `mnemosyne-local`; the package version advances from
+0.2.0 to 0.3.0. Consumers implementing `LocalAllocatorSelector` must add the
+mode-keyed methods or migrate to `impl_local_allocator_selector!`.
