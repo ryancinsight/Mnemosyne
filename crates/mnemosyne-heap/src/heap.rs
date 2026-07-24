@@ -144,13 +144,15 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
         // SAFETY: `block` is a `BrandedBlock<'brand, T>`, and the matching
         // `&mut ThreadLocalToken<'brand>` proves exclusive access for this
         // brand, so `ptr` points to a live, fully-initialized `T` uniquely
-        // owned here. `drop_in_place` runs `T::drop` exactly once; the block is
-        // consumed by value so the pointer is never reused. `size_of_val`
-        // reads only the layout of the live `T`, and a non-ZST block was
-        // allocated by this same heap, satisfying `free_raw`'s contract.
+        // owned here. Reading the runtime layout before dropping is valid for
+        // sized and unsized values; using the pointer after `drop_in_place`
+        // would not be. `drop_in_place` runs `T::drop` exactly once; the block
+        // is consumed by value so the pointer is never reused. A non-ZST block
+        // was allocated by this same heap, satisfying `free_raw`'s contract.
         unsafe {
+            let size = core::mem::size_of_val(&*ptr);
             core::ptr::drop_in_place(ptr);
-            if core::mem::size_of_val(&*ptr) != 0 {
+            if size != 0 {
                 self.free_raw(ptr as *mut u8);
             }
         }

@@ -52,6 +52,22 @@ fn test_branded_cell_unsized_slice() {
 }
 
 #[test]
+fn test_branded_heap_free_drops_unsized_value_before_reclaim() {
+    let counter = std::sync::atomic::AtomicUsize::new(0);
+    scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+        let mut vec = BrandedVec::new(&heap);
+        for _ in 0..3 {
+            vec.push(&mut token, DropTracker(&counter))
+                .expect("unsized free regression allocation failed");
+        }
+
+        let cell = vec.into_cell(&mut token);
+        heap.free(&mut token, unsafe { cell.into_block() });
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+    });
+}
+
+#[test]
 fn test_branded_cell_multi_mutable_borrow() {
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
         let b1 = heap

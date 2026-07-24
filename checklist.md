@@ -4,16 +4,23 @@ Target version: 0.6.0
 
 ## In progress — Branded free layout lifetime [patch]
 
-- [ ] Compute `size_of_val` for a branded block before `drop_in_place` in
+- [x] Compute `size_of_val` for a branded block before `drop_in_place` in
   `Heap::free`; the post-drop reference is not a valid value reference even
   though the metadata is unchanged.
-- [ ] Add value-semantic sized and unsized free regressions, preserving drop
+- [x] Add value-semantic sized and unsized free regressions, preserving drop
   counts and allocation reclamation.
-- [ ] Run focused heap formatting, warning-denied Clippy, nextest, doctests,
+- [x] Run focused heap formatting, warning-denied Clippy, nextest, doctests,
   and rustdoc. Do not claim a performance change.
 
 Scope owner: `crates/mnemosyne-heap/src/heap.rs`,
 `crates/mnemosyne-heap/src/tests/`, and this PM section.
+
+Evidence tier: source-level unsafe-lifetime audit, focused rustfmt and
+`git diff --check`, package check, warning-denied Clippy, `mnemosyne-heap`
+nextest 56/56, four runnable plus six compile-fail doctests, and heap rustdoc.
+Workspace formatting still reports only the unrelated line wrapping in
+`crates/mnemosyne-benchmarks/benches/allocator/workers.rs`. No performance
+claim.
 
 ## Verified — AR-1 encryption-mode binding [arch]
 
