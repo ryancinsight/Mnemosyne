@@ -33,8 +33,17 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
   unified-vs-discrete policy through the `MemoryBackend` seam. Compose cuda-oxide
   allocation interop with the existing dlopen `cuMemAllocManaged` path; add wgpu
   buffer-pool hooks. ADR.
-- [ ] [minor] Stage D1: melinoe-branded device buffers so ownership transfer between
-  host/device/stream is a compile-time proof (pairs with hephaestus + coeus Stage D).
+- [ ] [minor] status=blocked owner=external integration scope=`mnemosyne-heap`,
+  `hephaestus-core`, and the paired coeus Stage D consumer; last-update=2026-07-24.
+  Stage D1: melinoe-branded device buffers so ownership transfer between
+  host/device/stream is a compile-time proof. Blocker: Mnemosyne's
+  `MemoryBackend` owns raw mapped allocation/free, Melinoe supplies only
+  lifetime-branded tokens, and the current provider-owned Hephaestus
+  `DeviceBuffer<T>` plus stream/synchronize contracts carry device allocation
+  and completion semantics. A second Mnemosyne wrapper would duplicate the
+  provider seam and cannot prove asynchronous stream lifetime. Re-open when
+  the provider contract exposes a branded device/stream ownership boundary and
+  a concrete consumer integration target; do not add a downstream adapter.
 
 ### Heterogeneous tiers + kernel resource budgets (atlas ADR 0002)
 - [x] [minor] status=done owner=codex scope=`crates/mnemosyne-backend/src/backends/cuda/mod.rs`, `crates/mnemosyne-arena/src/segment/pool/mod.rs`, `crates/mnemosyne-local/src/lib.rs`, `crates/mnemosyne-heap/src/{tiered_backend.rs,tiered_heap.rs,tier.rs}`, `crates/mnemosyne-decay/src/lib.rs`, matching tests/docs, and package metadata; Tier-keyed device pools: allocation keyed by themis
