@@ -374,4 +374,6 @@ macro_rules! impl_local_allocator_selector {
 impl_local_allocator_selector!(mnemosyne_backend::MemoryBackendWrapper);
 impl_local_allocator_selector!(mnemosyne_backend::CudaUnifiedBackend);
 impl_local_allocator_selector!(mnemosyne_backend::CudaDeviceBackend);
+impl_local_allocator_selector!(mnemosyne_backend::CudaHbmBackend);
+impl_local_allocator_selector!(mnemosyne_backend::CudaGddrBackend);
 impl_local_allocator_selector!(mnemosyne_backend::CudaHostPinnedBackend);

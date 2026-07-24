@@ -8,8 +8,8 @@ use mnemosyne::{
 
 #[cfg(not(windows))]
 use mnemosyne::{
-    CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend, is_cuda_available,
-    memory_stats_generic,
+    CudaDeviceBackend, CudaGddrBackend, CudaHbmBackend, CudaHostPinnedBackend, CudaUnifiedBackend,
+    is_cuda_available, memory_stats_generic,
 };
 
 #[global_allocator]

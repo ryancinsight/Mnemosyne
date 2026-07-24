@@ -1,6 +1,6 @@
 # Checklist
 
-Target version: 0.5.0
+Target version: 0.6.0
 
 ## Verified — AR-1 encryption-mode binding [arch]
 
@@ -25,6 +25,30 @@ Residual: workspace `cargo fmt --all --check` still reports two unrelated
 line-wrapping differences in
 `crates/mnemosyne-benchmarks/benches/allocator/workers.rs`; all touched files
 pass the focused format check.
+
+## Verified — Tier-keyed device pools [minor]
+
+- [x] Split `MemoryTier::Hbm` and `MemoryTier::Gddr` into independent
+  zero-sized CUDA backend identities. They retain the shared CUDA managed
+  allocation driver because the current provider API has no physical
+  HBM/GDDR selector; no unsupported placement guarantee is introduced.
+- [x] Give HBM, GDDR, generic device, and pinned-host backends independent
+  arena pool statics and local allocator selector instantiations. Add both
+  tier-keyed pools to the decay sweep so retained mappings remain reclaimable.
+- [x] Route `PlacementHint::Tier` through one `TieredBackend::for_tier` SSOT
+  and five typed `TieredHeap` sub-heaps. Add value-semantic routing and pool
+  identity regressions, generic CUDA backend round-trip coverage, and the
+  compile-time ZST layout assertion.
+- [x] Synchronize README, changelog, package versions, and lockfile.
+
+Evidence tier: full debug workspace nextest 281/281 (focused affected slice
+129/129); release workspace slice 199/200 with the pre-existing
+stripped-release leak-detector symbol assertion as the only failure;
+workspace warning-denied Clippy; workspace doctests;
+workspace rustdoc after removing one stale private-link warning; semver checks
+for `mnemosyne-backend` 0.5.0, `mnemosyne-heap` 0.3.0, and `mnemosyne` 0.6.0.
+No throughput speedup claim; the change isolates ownership and reclamation
+state.
 
 ## Blocked — packed tagged pool state [perf-experiment]
 

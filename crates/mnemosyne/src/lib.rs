@@ -7,8 +7,8 @@ use mnemosyne_core::NUM_SIZE_CLASSES;
 use mnemosyne_local::{thread_alloc_layout, thread_free_layout, thread_realloc};
 
 pub use mnemosyne_backend::{
-    CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend, MemoryBackendWrapper,
-    is_cuda_available,
+    CudaDeviceBackend, CudaGddrBackend, CudaHbmBackend, CudaHostPinnedBackend, CudaUnifiedBackend,
+    MemoryBackendWrapper, is_cuda_available,
 };
 pub use mnemosyne_core::{AllocPolicy, StandardPolicy, options::MnemosyneOptions};
 pub use mnemosyne_hardened::{HardenedPolicy, SecurePolicy};

@@ -72,7 +72,7 @@ fn test_secure_policy() {
 }
 
 #[test]
-fn test_cuda_unified_backend() {
+fn test_cuda_backends() {
     let _guard = TEST_LOCK
         .lock()
         .expect("global allocator test lock was poisoned");
@@ -91,63 +91,38 @@ fn test_cuda_unified_backend() {
             return;
         }
 
-        // Test CudaUnifiedBackend
-        {
-            let allocator = MnemosyneAllocator::<StandardPolicy, CudaUnifiedBackend>::new();
-            let layout =
-                Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
-            let ptr = unsafe { allocator.alloc(layout) };
-            assert!(!ptr.is_null(), "CUDA unified backend allocation failed");
-
-            unsafe {
-                ptr.write(42);
-                assert_eq!(ptr.read(), 42);
-                allocator.dealloc(ptr, layout);
-            }
-
-            let stats = memory_stats_generic::<CudaUnifiedBackend>();
-            assert_eq!(stats.current_thread_live_allocations, 0);
-        }
-
-        // Test CudaDeviceBackend
-        {
-            let allocator = MnemosyneAllocator::<StandardPolicy, CudaDeviceBackend>::new();
-            let layout =
-                Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
-            let ptr = unsafe { allocator.alloc(layout) };
-            assert!(!ptr.is_null(), "CUDA device backend allocation failed");
-
-            unsafe {
-                ptr.write(43);
-                assert_eq!(ptr.read(), 43);
-                allocator.dealloc(ptr, layout);
-            }
-
-            let stats = memory_stats_generic::<CudaDeviceBackend>();
-            assert_eq!(stats.current_thread_live_allocations, 0);
-        }
-
-        // Test CudaHostPinnedBackend
-        {
-            let allocator = MnemosyneAllocator::<StandardPolicy, CudaHostPinnedBackend>::new();
-            let layout =
-                Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
-            let ptr = unsafe { allocator.alloc(layout) };
-            assert!(!ptr.is_null(), "CUDA host pinned backend allocation failed");
-
-            unsafe {
-                ptr.write(44);
-                assert_eq!(ptr.read(), 44);
-                allocator.dealloc(ptr, layout);
-            }
-
-            let stats = memory_stats_generic::<CudaHostPinnedBackend>();
-            assert_eq!(stats.current_thread_live_allocations, 0);
-        }
+        assert_cuda_backend_round_trip::<CudaUnifiedBackend>(42, "unified");
+        assert_cuda_backend_round_trip::<CudaDeviceBackend>(43, "device");
+        assert_cuda_backend_round_trip::<CudaHbmBackend>(44, "HBM");
+        assert_cuda_backend_round_trip::<CudaGddrBackend>(45, "GDDR");
+        assert_cuda_backend_round_trip::<CudaHostPinnedBackend>(46, "host pinned");
 
         // Verify is_cuda_available is callable
         let _ = is_cuda_available();
 
         unsafe { mnemosyne_backend::backends::cuda::destroy_temp_context(ctx) };
     }
+}
+
+#[cfg(not(windows))]
+fn assert_cuda_backend_round_trip<B>(value: u8, name: &str)
+where
+    B: mnemosyne_arena::HasSegmentPool + mnemosyne::LocalAllocatorSelector<B>,
+{
+    let allocator = MnemosyneAllocator::<StandardPolicy, B>::new();
+    let layout = Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
+    let ptr = unsafe { allocator.alloc(layout) };
+    assert!(!ptr.is_null(), "CUDA {name} backend allocation failed");
+
+    unsafe {
+        ptr.write(value);
+        assert_eq!(ptr.read(), value);
+        allocator.dealloc(ptr, layout);
+    }
+
+    let stats = memory_stats_generic::<B>();
+    assert_eq!(
+        stats.current_thread_live_allocations, 0,
+        "CUDA {name} backend retained a live allocation"
+    );
 }

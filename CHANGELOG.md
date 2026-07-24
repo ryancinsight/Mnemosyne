@@ -13,6 +13,13 @@
   lock-free advisory reads. Source-level layout and allocator tests pass; no
   throughput improvement is claimed until matched warm-pool benchmark rows
   are available.
+- `mnemosyne-heap` now gives `Hbm` and `Gddr` independent zero-sized CUDA
+  backend identities and retained segment/TLS pools. The shared CUDA driver
+  remains the allocation provider because its managed-memory API does not
+  select physical technology; no physical HBM/GDDR placement guarantee is
+  claimed. `HostPinned` remains an independent staging pool.
+- The additive tier backend surface advances `mnemosyne-backend` to 0.5.0,
+  `mnemosyne-heap` to 0.3.0, and the top-level `mnemosyne` facade to 0.6.0.
 - The workspace Themis, Eunomia, and Melinoe dependencies track their provider
   default branches without revision quarantine, so downstream Atlas consumers
   converge on one canonical source identity.

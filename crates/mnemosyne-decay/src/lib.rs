@@ -96,7 +96,7 @@ pub fn decay_step() {
     // segment/orphan pools production code can populate. Pool population
     // happens only through a thread allocator, which requires a
     // `LocalAllocatorSelector` impl (`mnemosyne-local/src/lib.rs`), so the
-    // swept set is exactly the four production selector backends. A new
+    // swept set is exactly the six production selector backends. A new
     // backend gaining a selector impl MUST be added here, or its orphaned
     // segments and retained mappings are never reclaimed.
     //
@@ -104,8 +104,9 @@ pub fn decay_step() {
     // - `MemoryBackendWrapper`: routing backend of the global allocator
     //   (`Mnemosyne`, `MnemosyneAllocator` default) and the branded
     //   `Heap`/`TieredHeap` host tier — the primary populated pool set.
-    // - `CudaUnifiedBackend`/`CudaDeviceBackend`/`CudaHostPinnedBackend`:
-    //   device, unified, and pinned pools reachable through
+    // - `CudaUnifiedBackend`/`CudaDeviceBackend`/`CudaHbmBackend`/
+    //   `CudaGddrBackend`/`CudaHostPinnedBackend`: device, unified, tier-keyed
+    //   device, and pinned pools reachable through
     //   `MnemosyneAllocator<P, B>` and `TieredHeap`'s typed sub-heaps.
     // `DefaultBackend` is intentionally absent: it implements
     // `HasSegmentPool`, but its `LocalAllocatorSelector` impl exists only in
@@ -115,6 +116,8 @@ pub fn decay_step() {
     decay_step_for_backend::<mnemosyne_backend::MemoryBackendWrapper>();
     decay_step_for_backend::<mnemosyne_backend::CudaUnifiedBackend>();
     decay_step_for_backend::<mnemosyne_backend::CudaDeviceBackend>();
+    decay_step_for_backend::<mnemosyne_backend::CudaHbmBackend>();
+    decay_step_for_backend::<mnemosyne_backend::CudaGddrBackend>();
     decay_step_for_backend::<mnemosyne_backend::CudaHostPinnedBackend>();
 }
 

@@ -1,9 +1,10 @@
 //! Tier-aware backend vocabulary façade.
 //!
-//! [`TieredBackend`] maps every `MemoryTier` to one of the three concrete
+//! [`TieredBackend`] maps every `MemoryTier` to one of the five concrete
 //! `MemoryBackend` impls that participate in [`crate::tiered_heap::TieredHeap`]:
 //! host (`MemoryBackendWrapper`), CUDA page-locked host
-//! (`CudaHostPinnedBackend`), and CUDA device-local (`CudaDeviceBackend`).
+//! (`CudaHostPinnedBackend`), and tier-keyed CUDA device-local
+//! (`CudaDeviceBackend`, `CudaHbmBackend`, `CudaGddrBackend`).
 //!
 //! It is **not itself** a `MemoryBackend` impl. The
 //! [`mnemosyne_core::MemoryBackend`] trait is *not* object-safe
@@ -44,17 +45,21 @@ use crate::tier::MemoryTier;
 
 /// Backend-keyed selection produced by [`TieredBackend::for_tier`].
 ///
-/// `Copy` because each variant is a tag against the three concrete
+/// `Copy` because each variant is a tag against the five concrete
 /// backends in [`mnemosyne_backend`]; runtime payloads are zero-sized
 /// unit types so the enum is also `Eq`/`Hash`/etc.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TierSelection {
-    /// Host memory: standard `Dram`, host-attached `Hbm`, or persistent.
+    /// Host memory: standard `Dram` or persistent.
     Host,
     /// CUDA page-locked host (DMA-staging).
     HostPinned,
-    /// CUDA device-local memory: discrete `Device` or `Gddr`.
+    /// CUDA device-local memory with unspecified technology.
     Device,
+    /// CUDA device-local memory with the HBM pool identity.
+    Hbm,
+    /// CUDA device-local memory with the GDDR pool identity.
+    Gddr,
 }
 
 /// Tier-aware backend vocabulary façade.
@@ -73,22 +78,22 @@ impl TieredBackend {
     /// | `MemoryTier`       | `TierSelection` |
     /// |--------------------|------------------|
     /// | `Dram`             | `Host`           |
-    /// | `Hbm`              | `Host`           |
+    /// | `Hbm`              | `Hbm`            |
     /// | `Persistent`       | `Host`           |
     /// | `HostPinned`       | `HostPinned`     |
     /// | `Device`           | `Device`         |
-    /// | `Gddr`             | `Device`         |
+    /// | `Gddr`             | `Gddr`           |
     /// | `Registers`        | `None`           |
     /// | `SharedMem`        | `None`           |
     #[inline]
     #[must_use = "dropping the resolved tier-backend mapping discards the dispatch result"]
     pub fn for_tier(tier: MemoryTier) -> Option<TierSelection> {
         match tier {
-            MemoryTier::Dram | MemoryTier::Hbm | MemoryTier::Persistent => {
-                Some(TierSelection::Host)
-            }
+            MemoryTier::Dram | MemoryTier::Persistent => Some(TierSelection::Host),
+            MemoryTier::Hbm => Some(TierSelection::Hbm),
             MemoryTier::HostPinned => Some(TierSelection::HostPinned),
-            MemoryTier::Device | MemoryTier::Gddr => Some(TierSelection::Device),
+            MemoryTier::Device => Some(TierSelection::Device),
+            MemoryTier::Gddr => Some(TierSelection::Gddr),
             MemoryTier::Registers | MemoryTier::SharedMem => None,
         }
     }

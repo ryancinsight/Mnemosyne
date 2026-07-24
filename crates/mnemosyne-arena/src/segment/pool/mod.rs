@@ -121,6 +121,28 @@ impl HasSegmentPool for mnemosyne_backend::CudaDeviceBackend {
     }
 }
 
+static CUDA_HBM_POOLS: BackendPools = BackendPools::new();
+
+impl private::Sealed for mnemosyne_backend::CudaHbmBackend {}
+
+impl HasSegmentPool for mnemosyne_backend::CudaHbmBackend {
+    #[inline(always)]
+    fn pools() -> &'static BackendPools {
+        &CUDA_HBM_POOLS
+    }
+}
+
+static CUDA_GDDR_POOLS: BackendPools = BackendPools::new();
+
+impl private::Sealed for mnemosyne_backend::CudaGddrBackend {}
+
+impl HasSegmentPool for mnemosyne_backend::CudaGddrBackend {
+    #[inline(always)]
+    fn pools() -> &'static BackendPools {
+        &CUDA_GDDR_POOLS
+    }
+}
+
 static CUDA_HOST_PINNED_POOLS: BackendPools = BackendPools::new();
 
 impl private::Sealed for mnemosyne_backend::CudaHostPinnedBackend {}

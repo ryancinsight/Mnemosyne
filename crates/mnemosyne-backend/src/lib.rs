@@ -36,7 +36,8 @@ pub mod reset;
 
 pub use backends::DefaultBackend;
 pub use backends::cuda::{
-    CudaDeviceBackend, CudaHostPinnedBackend, CudaUnifiedBackend, is_cuda_available,
+    CudaDeviceBackend, CudaGddrBackend, CudaHbmBackend, CudaHostPinnedBackend, CudaUnifiedBackend,
+    is_cuda_available,
 };
 pub use mapping::MemoryBackendWrapper;
 pub use recorders::{BackendMemoryStats, backend_memory_stats};

@@ -24,6 +24,7 @@ use crate::tier::tier_for;
 use crate::tier::{MemoryTier, PlacementHint};
 use crate::tiered_backend::{TierSelection, TieredBackend};
 use crate::tiered_heap::scope_tiered;
+use mnemosyne_arena::HasSegmentPool;
 use themis::{LocalityDomainId, NumaNodeId};
 
 // ---- tier resolution ----
@@ -110,12 +111,25 @@ fn tiered_backend_for_tier_routes_host_family_to_host_selection() {
         Some(TierSelection::Host)
     );
     assert_eq!(
-        TieredBackend::for_tier(MemoryTier::Hbm),
-        Some(TierSelection::Host)
-    );
-    assert_eq!(
         TieredBackend::for_tier(MemoryTier::Persistent),
         Some(TierSelection::Host)
+    );
+}
+
+#[test]
+fn tiered_backend_keeps_device_tiers_on_distinct_pool_keys() {
+    assert_eq!(
+        TieredBackend::for_tier(MemoryTier::Hbm),
+        Some(TierSelection::Hbm)
+    );
+    assert_eq!(
+        TieredBackend::for_tier(MemoryTier::Gddr),
+        Some(TierSelection::Gddr)
+    );
+    assert_ne!(
+        mnemosyne_backend::CudaHbmBackend::global_segment_pool() as *const _,
+        mnemosyne_backend::CudaGddrBackend::global_segment_pool() as *const _,
+        "HBM and GDDR must not share retained segment state"
     );
 }
 
@@ -131,10 +145,6 @@ fn tiered_backend_for_tier_routes_pinned_to_host_pinned_selection() {
 fn tiered_backend_for_tier_routes_device_family_to_device_selection() {
     assert_eq!(
         TieredBackend::for_tier(MemoryTier::Device),
-        Some(TierSelection::Device)
-    );
-    assert_eq!(
-        TieredBackend::for_tier(MemoryTier::Gddr),
         Some(TierSelection::Device)
     );
 }
@@ -194,12 +204,14 @@ fn tiered_heap_device_and_pinned_hints_route_to_cuda_sub_heaps() {
     // surface a Some(block) with the matching tier.
     scope_tiered::<StandardPolicy, _, _>(|tiered, token| {
         let layout = test_layout(32, 8);
-        if let Some(b) = tiered.alloc(&token, layout, PlacementHint::Tier(MemoryTier::Device)) {
-            assert_eq!(
-                b.tier(),
-                MemoryTier::Device,
-                "Device-tinted dispatch must carry Device tier on the block"
-            );
+        for tier in [MemoryTier::Device, MemoryTier::Hbm, MemoryTier::Gddr] {
+            if let Some(b) = tiered.alloc(&token, layout, PlacementHint::Tier(tier)) {
+                assert_eq!(
+                    b.tier(),
+                    tier,
+                    "device-tinted dispatch must carry its requested tier on the block"
+                );
+            }
         }
         if let Some(b) = tiered.alloc(&token, layout, PlacementHint::Tier(MemoryTier::HostPinned)) {
             assert_eq!(
