@@ -200,10 +200,10 @@ Filed from the 2026-07-01 four-agent audit cycle (high-severity findings were
 fixed in the same cycle — see `## Completed`; these are the deferred
 remainder, each Definition-of-Ready):
 
-- [ ] [arch] AR-1: Mixed free-list-encryption policies over one backend are
+- [ ] [arch] status=in-progress owner=codex scope=`crates/mnemosyne-core/src/{sync.rs,types/{block.rs,page/init.rs,page/reclaim.rs,segment.rs}}`, `crates/mnemosyne-local/src/{alloc.rs,free.rs,realloc.rs,local_alloc/,tls.rs,tls_slot.rs}`, and matching tests/ADR/PM entries; last-update=2026-07-23. AR-1: Mixed free-list-encryption policies over one backend are
   latently unsound at the chain level. **Decision recorded in
   [docs/adr/0001-free-list-encryption-mode-binding.md](docs/adr/0001-free-list-encryption-mode-binding.md)
-  (Proposed — awaiting sign-off before implementation).** Owner-side paths
+  (Option C recommended; implementation proceeds in this bounded slice).** Owner-side paths
   (`pop_block::<P>`, `set_next::<P>`, `AtomicFreeList::push::<P>`) select
   encoding from the CALLER's static policy while the segment carries a dynamic
   `free_list_encrypted` flag; two policies with different
