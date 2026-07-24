@@ -13,6 +13,13 @@ use mnemosyne_local::internal::HasSegmentPool;
 pub enum ReallocFailure {
     /// `new_size` and the existing alignment cannot form a valid `Layout`.
     InvalidLayout { new_size: usize, alignment: usize },
+    /// The supplied source layout exceeds the block's usable capacity or
+    /// requires an alignment the source pointer does not satisfy.
+    InvalidSourceLayout {
+        requested_size: usize,
+        alignment: usize,
+        usable_size: usize,
+    },
     /// The requested replacement allocation could not be obtained.
     AllocationFailed,
 }
@@ -219,7 +226,9 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
     /// The source block is returned inside [`ReallocError`] when the requested
     /// layout is invalid or replacement allocation fails, so failure does not
     /// leak or invalidate the original allocation. A `new_size` of zero frees
-    /// the source block and returns `Ok(None)`.
+    /// the source block and returns `Ok(None)`. `layout` must describe the
+    /// source allocation; the boundary rejects sizes beyond the allocator's
+    /// usable capacity and source-pointer alignment mismatches.
     ///
     /// # Errors
     ///
@@ -258,11 +267,39 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
         // SAFETY: `block` is a live branded block and the matching token
         // proves exclusive access, so reading its value layout is valid.
         let is_zst = unsafe { core::mem::size_of_val(&*block.ptr.as_ptr()) == 0 };
-        if layout.size() == 0 || is_zst {
+        if is_zst {
+            if layout.size() != 0 {
+                return Err(ReallocError::new(
+                    block,
+                    ReallocFailure::InvalidSourceLayout {
+                        requested_size: layout.size(),
+                        alignment: layout.align(),
+                        usable_size: 0,
+                    },
+                ));
+            }
             return self
                 .alloc(token, new_layout)
                 .map(Some)
                 .ok_or_else(|| ReallocError::new(block, ReallocFailure::AllocationFailed));
+        }
+
+        // SAFETY: non-ZST `block` is a live allocation returned by this heap;
+        // the brand preserves that ownership and `usable_size` only reads its
+        // originating segment metadata.
+        let usable_size = unsafe { mnemosyne_local::usable_size(ptr) };
+        if layout.size() == 0
+            || layout.size() > usable_size
+            || ptr.align_offset(layout.align()) != 0
+        {
+            return Err(ReallocError::new(
+                block,
+                ReallocFailure::InvalidSourceLayout {
+                    requested_size: layout.size(),
+                    alignment: layout.align(),
+                    usable_size,
+                },
+            ));
         }
 
         let marker = block._marker;

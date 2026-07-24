@@ -183,6 +183,44 @@ fn test_branded_heap_realloc_invalid_layout_returns_source_block() {
 }
 
 #[test]
+fn test_branded_heap_realloc_rejects_oversized_source_layout() {
+    scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+        let source_layout = test_layout(1, 1);
+        let block = heap
+            .alloc(&token, source_layout)
+            .expect("source allocation for layout validation failed");
+        unsafe { block.as_ptr().write(0xA5) };
+        let usable_size = unsafe { mnemosyne_local::usable_size(block.as_ptr()) };
+        let requested_size = usable_size
+            .checked_add(1)
+            .expect("allocator usable size must leave room for a test mismatch");
+        let oversized_layout = test_layout(requested_size, source_layout.align());
+
+        let error = match heap.realloc(&mut token, block, oversized_layout, requested_size) {
+            Ok(_) => panic!("oversized source layout unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.reason(),
+            ReallocFailure::InvalidSourceLayout {
+                requested_size,
+                alignment: source_layout.align(),
+                usable_size,
+            },
+            "realloc must report the source-layout capacity mismatch"
+        );
+
+        let source = error.into_block();
+        assert_eq!(
+            unsafe { source.as_ptr().read() },
+            0xA5,
+            "source bytes must survive source-layout rejection"
+        );
+        heap.free_uninit(&mut token, source);
+    });
+}
+
+#[test]
 fn test_branded_heap_generic_and_cast() {
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
         let layout = test_layout(32, 8);

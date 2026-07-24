@@ -90,15 +90,27 @@ warning-denied Clippy, focused `mnemosyne-heap` nextest 54/54, four runnable
 and six compile-fail doctests, and heap rustdoc. The overflow regression
 asserts the vector's values, pointer, and capacity remain unchanged.
 
-## In progress — Branded source-layout validation [patch]
+## Verified — Branded source-layout validation [patch]
 
-- [ ] Add a typed source-layout mismatch reason and validate non-ZST source
+- [x] Add a typed source-layout mismatch reason and validate non-ZST source
   capacity/alignment before `RawHeap::realloc` can copy or reuse the block.
-- [ ] Add a value-semantic regression for an oversized caller layout that
+- [x] Add a value-semantic regression for an oversized caller layout that
   preserves source bytes and ownership; keep valid branded, tiered, zero-size,
   and vector realloc behavior unchanged.
-- [ ] Run focused heap formatting, warning-denied Clippy, nextest, doctests,
+- [x] Run focused heap formatting, warning-denied Clippy, nextest, doctests,
   and rustdoc. Do not claim a performance change.
+
+Evidence tier: source-level ownership/capacity/alignment validation, package
+check, warning-denied Clippy, focused `mnemosyne-heap` nextest 55/55,
+four runnable and six compile-fail doctests, heap rustdoc, and semver checks.
+The regression derives an oversized source layout from `usable_size`, verifies
+the typed failure and preserved source byte, then explicitly releases the
+recovered block.
+
+Residual: the workspace-wide locked nextest could not be rerun at this exact
+tree because concurrent peer manifest edits alternated package versions while
+the shared `Cargo.lock` held the other version set. The preceding workspace
+gate was 282/282; no workspace test failure was observed.
 
 ## Blocked — packed tagged pool state [perf-experiment]
 
