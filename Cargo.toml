@@ -18,7 +18,7 @@ exclude = ["fuzz"]
 
 [workspace.dependencies]
 themis = { git = "https://github.com/ryancinsight/themis", version = "0.10", default-features = false, features = ["std"] }
-eunomia = { git = "https://github.com/ryancinsight/eunomia", default-features = false }
+eunomia = { path = "../eunomia/crates/eunomia", default-features = false }
 melinoe = { git = "https://github.com/ryancinsight/melinoe.git", default-features = false }
 
 # Dev/test keep line tables only: full DWARF dominates target/ size for an
