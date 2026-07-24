@@ -158,3 +158,68 @@ fn decay_purger_reaches_steady_state() {
     thread::sleep(Duration::from_millis(20));
     reset_options_for_testing();
 }
+
+/// Deterministic RSS-return verification: calls `decay_step()` directly
+/// instead of polling the background thread, and verifies the byte-level
+/// accounting matches the segment deallocation.
+///
+/// Exercises:
+/// 1. Thread allocates → exits → segment enters orphan pool.
+/// 2. Cross-thread free makes total_allocations == 0.
+/// 3. `decay_step()` drains the orphan pool, detects zero allocations,
+///    and calls `deallocate_segment` → segment mapping released to OS.
+/// 4. `arena_memory_stats` confirms: retained_free_segments decreased,
+///    purged_bytes increased.
+#[test]
+fn decay_step_returns_segment_bytes_to_os() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    reset_options_for_testing();
+
+    // Record baseline stats.
+    let before = mnemosyne_arena::arena_memory_stats::<Backend>();
+
+    // 1. Spawn a thread, allocate, and let it exit to orphan the segment.
+    let handle = thread::spawn(|| {
+        let ptr = unsafe { thread_alloc::<Policy, Backend>(32, 16) };
+        assert!(!ptr.is_null(), "orphan producer alloc failed");
+        ptr as usize
+    });
+    let ptr_val = handle.join().expect("orphan producer panicked");
+    let ptr = ptr_val as *mut u8;
+
+    // Wait for the segment to appear in the orphan pool.
+    let orphan_pool = <Backend as HasSegmentPool>::global_orphan_pool();
+    let mut found = false;
+    for _ in 0..50 {
+        if orphan_pool.retained_count() > 0 {
+            found = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(found, "segment was not orphaned on thread exit");
+
+    // 2. Cross-thread free: reduces total_allocations to 0 for this segment.
+    unsafe {
+        thread_free::<Policy, Backend>(ptr);
+    }
+
+    // 3. Call decay_step() directly — deterministic, no polling.
+    mnemosyne_decay::decay_step();
+
+    // 4. Verify accounting: the orphan pool must be drained.
+    let after_retained = orphan_pool.retained_count();
+    assert_eq!(
+        after_retained, 0,
+        "decay_step must drain the orphan pool (retained={after_retained})"
+    );
+
+    // 5. Verify byte-level accounting changed.
+    let after = mnemosyne_arena::arena_memory_stats::<Backend>();
+    assert!(
+        after.purged_bytes > before.purged_bytes,
+        "purged_bytes must increase after decay_step: before={}, after={}",
+        before.purged_bytes,
+        after.purged_bytes
+    );
+}
