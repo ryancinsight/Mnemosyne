@@ -182,8 +182,11 @@ fn adversarial_single_class_checkerboard() {
     }
 
     // Verify no pointer in reuse_ptrs matches any odd-indexed (still live) pointer.
-    let live_set: std::collections::HashSet<usize> =
-        all_ptrs[1..COUNT].iter().step_by(2).map(|p| *p as usize).collect();
+    let live_set: std::collections::HashSet<usize> = all_ptrs[1..COUNT]
+        .iter()
+        .step_by(2)
+        .map(|p| *p as usize)
+        .collect();
     for &ptr in &reuse_ptrs {
         assert!(
             !live_set.contains(&(ptr as usize)),

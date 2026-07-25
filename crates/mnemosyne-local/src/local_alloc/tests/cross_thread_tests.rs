@@ -756,8 +756,8 @@ fn allocation_side_reclaim_counts_cross_thread_blocks_exactly() {
 /// 3. The owner thread can reclaim all cross-thread freed blocks.
 #[test]
 fn cross_thread_stress_producer_consumer() {
-    use std::thread;
     use std::sync::mpsc;
+    use std::thread;
 
     let _guard = TEST_LOCK
         .lock()
@@ -794,9 +794,7 @@ fn cross_thread_stress_producer_consumer() {
             for ptrs in rx {
                 for addr in ptrs {
                     unsafe {
-                        crate::thread_free::<StandardPolicy, DefaultBackend>(
-                            addr as *mut u8,
-                        );
+                        crate::thread_free::<StandardPolicy, DefaultBackend>(addr as *mut u8);
                     }
                 }
             }
@@ -827,8 +825,8 @@ fn cross_thread_stress_producer_consumer() {
 /// 2. The owner allocator remains functional after the contention storm.
 #[test]
 fn cross_thread_stress_many_to_one_free() {
-    use std::thread;
     use std::sync::mpsc;
+    use std::thread;
 
     let _guard = TEST_LOCK
         .lock()
@@ -890,4 +888,3 @@ fn cross_thread_stress_many_to_one_free() {
         crate::thread_free::<StandardPolicy, DefaultBackend>(post_stress);
     }
 }
-

@@ -10,25 +10,25 @@ default = []
 
 [dependencies]
 # Brand machinery (invariant-lifetime marker + thread-confined capability token)
-# is sourced from melinoe, the ecosystem's branding crate. Unpinned git dep:
-# resolves the default branch's tip on `cargo update`, so the heap always builds
-# against the latest published brand semantics. `default-features = false` keeps
+# is sourced from melinoe, the ecosystem's branding crate. The workspace pins
+# the sibling path and its published version together so local development and
+# package metadata resolve the same provider. `default-features = false` keeps
 # this `#![no_std]` crate free of std/alloc.
 melinoe = { workspace = true }
-mnemosyne-core = { path = "../mnemosyne-core" }
-mnemosyne-backend = { path = "../mnemosyne-backend" }
-mnemosyne-arena = { path = "../mnemosyne-arena" }
-mnemosyne-local = { path = "../mnemosyne-local" }
-mnemosyne-prof = { path = "../mnemosyne-prof" }
+mnemosyne-core = { path = "../mnemosyne-core", version = "0.2.0" }
+mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.5.0" }
+mnemosyne-arena = { path = "../mnemosyne-arena", version = "0.3.0" }
+mnemosyne-local = { path = "../mnemosyne-local", version = "0.3.0" }
+mnemosyne-prof = { path = "../mnemosyne-prof", version = "0.2.0" }
 # Phase 3 Stage D1 device-memory integration: themis owns PlacementHint +
 # MemoryTier (atlas ADR 0002). Used here as the typed placement vocabulary
 # and the host-allocatable / budget-only classification
-# (MemoryTier::is_host_allocatable). Unpinned git dep: resolves to the
-# default branch's tip on `cargo update`, so the heap always builds against
-# the latest law semantics. `default-features = false, features = ["std"]`
+# (MemoryTier::is_host_allocatable). The workspace pins the sibling path and
+# its published version together so the heap uses one law provider locally and
+# when packaged. `default-features = false, features = ["std"]`
 # matches `mnemosyne-local`/`mnemosyne-arena` so a single themis build is
 # shared by all three.
 themis = { workspace = true }
 
 [dev-dependencies]
-mnemosyne = { path = "../mnemosyne" }
+mnemosyne = { path = "../mnemosyne", version = "0.6.0" }

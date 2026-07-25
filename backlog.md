@@ -157,7 +157,7 @@ audit, in priority order:
   `melinoe` at the required versions and Themis has a released source-aligned
   dependency graph. Mnemosyne archive preparation then becomes a local gate.
 
-- [ ] [patch] status=in-progress owner=codex scope=`crates/mnemosyne-benchmarks/benches/allocator/workers.rs` and `crates/mnemosyne-local/src/local_alloc/tests/`; last-update=2026-07-25. Restore workspace rustfmt cleanliness without changing benchmark or allocator behavior. Acceptance: `cargo fmt --all --check` and `git diff --check` pass, and the focused affected-package gates remain green.
+- [x] [patch] status=done owner=codex scope=`crates/mnemosyne-benchmarks/benches/allocator/workers.rs` and `crates/mnemosyne-local/src/local_alloc/tests/`; last-update=2026-07-25. Restored workspace rustfmt cleanliness without changing benchmark or allocator behavior. Acceptance met: `cargo fmt --all --check`, `git diff --check`, focused nextest 216/216, and the affected benchmark-target compile pass.
 
 - [x] [patch] status=done owner=codex scope=`crates/mnemosyne-heap/src/heap.rs`, `crates/mnemosyne-heap/src/tests/`, and matching PM entries; last-update=2026-07-24. Compute the branded block's runtime layout before `drop_in_place` in `Heap::free`; the current post-drop `size_of_val` reference violates the initialized-value lifetime required by the unsafe operation. Acceptance met: sized and unsized branded frees retain drop counts and release the allocation, the free path has no post-drop reference, and focused heap formatting, warning-denied Clippy, nextest 56/56, four runnable plus six compile-fail doctests, and rustdoc pass. No performance claim.
 

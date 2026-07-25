@@ -13,7 +13,7 @@ eunomia = ["dep:eunomia"]
 std = ["mnemosyne-core/std"]
 
 [dependencies]
-mnemosyne-core = { path = "../mnemosyne-core" }
-mnemosyne-backend = { path = "../mnemosyne-backend" }
+mnemosyne-core = { path = "../mnemosyne-core", version = "0.2.0" }
+mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.5.0" }
 eunomia = { workspace = true, optional = true }
 themis = { workspace = true }

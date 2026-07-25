@@ -36,7 +36,8 @@ fn realloc_within_same_class_returns_same_ptr() {
     // Grow from 16 to a size still within the same class (stride).
     let new_size = stride - 1;
     let layout = core::alloc::Layout::from_size_align(16, 8).expect("layout valid");
-    let result = unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, new_size) };
+    let result =
+        unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, new_size) };
     assert_eq!(
         result, ptr,
         "realloc within same class must return the same pointer (in-place)"
@@ -44,7 +45,8 @@ fn realloc_within_same_class_returns_same_ptr() {
 
     // Shrink to >= 50% of original size — also in-place.
     let half = 16 / 2;
-    let result2 = unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, half) };
+    let result2 =
+        unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, half) };
     assert_eq!(
         result2, ptr,
         "realloc shrinking to >= 50% must return the same pointer"
@@ -77,15 +79,13 @@ fn realloc_shrink_below_half_allocates_new_block() {
 
     // Shrink to < 50% (32/64 = 50%, so use 16 which is < 50%).
     let layout = core::alloc::Layout::from_size_align(64, 8).expect("layout valid");
-    let result = unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, 16) };
+    let result =
+        unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, 16) };
     assert!(
         !result.is_null(),
         "shrink-below-half realloc must not return null"
     );
-    assert_ne!(
-        result, ptr,
-        "shrink below 50% must allocate a new block"
-    );
+    assert_ne!(result, ptr, "shrink below 50% must allocate a new block");
 
     // Verify the data was copied correctly.
     let slice = unsafe { core::slice::from_raw_parts(result, 16) };
@@ -123,15 +123,13 @@ fn realloc_grow_to_different_class_allocates_new_block() {
     // Grow to a size larger than the current class stride.
     let new_size = stride + 1;
     let layout = core::alloc::Layout::from_size_align(16, 8).expect("layout valid");
-    let result = unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, new_size) };
+    let result =
+        unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, new_size) };
     assert!(
         !result.is_null(),
         "grow-beyond-class realloc must not return null"
     );
-    assert_ne!(
-        result, ptr,
-        "grow beyond class must allocate a new block"
-    );
+    assert_ne!(result, ptr, "grow beyond class must allocate a new block");
 
     // Verify the first 16 bytes (the original data) were copied.
     let slice = unsafe { core::slice::from_raw_parts(result, 16) };
@@ -155,11 +153,7 @@ fn realloc_null_ptr_allocates_fresh() {
 
     let layout = core::alloc::Layout::from_size_align(32, 8).expect("layout valid");
     let result = unsafe {
-        crate::thread_realloc::<StandardPolicy, DefaultBackend>(
-            core::ptr::null_mut(),
-            layout,
-            32,
-        )
+        crate::thread_realloc::<StandardPolicy, DefaultBackend>(core::ptr::null_mut(), layout, 32)
     };
     assert!(
         !result.is_null(),
@@ -180,16 +174,9 @@ fn realloc_null_ptr_allocates_fresh() {
 fn realloc_null_ptr_zero_size_returns_null() {
     let layout = core::alloc::Layout::from_size_align(32, 8).expect("layout valid");
     let result = unsafe {
-        crate::thread_realloc::<StandardPolicy, DefaultBackend>(
-            core::ptr::null_mut(),
-            layout,
-            0,
-        )
+        crate::thread_realloc::<StandardPolicy, DefaultBackend>(core::ptr::null_mut(), layout, 0)
     };
-    assert!(
-        result.is_null(),
-        "realloc(null, 0) must return null"
-    );
+    assert!(result.is_null(), "realloc(null, 0) must return null");
 }
 
 /// Realloc with non-null pointer and size 0 frees the block.
@@ -231,11 +218,9 @@ fn realloc_grow_within_class_preserves_existing_data() {
     // Grow to a size still within the same class.
     let new_size = stride - 1;
     let layout = core::alloc::Layout::from_size_align(16, 8).expect("layout valid");
-    let result = unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, new_size) };
-    assert_eq!(
-        result, ptr,
-        "grow within same class must reuse the block"
-    );
+    let result =
+        unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, new_size) };
+    assert_eq!(result, ptr, "grow within same class must reuse the block");
 
     // Verify the original 16 bytes are intact.
     for i in 0..16 {
@@ -272,7 +257,8 @@ fn realloc_grow_beyond_class_copies_only_min_bytes() {
     let stride = block_stride_for(ptr);
     let new_size = stride + 16;
     let layout = core::alloc::Layout::from_size_align(16, 8).expect("layout valid");
-    let result = unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, new_size) };
+    let result =
+        unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, new_size) };
     assert!(!result.is_null());
 
     // The first 16 bytes must match.
@@ -303,18 +289,13 @@ fn realloc_shrink_then_grow_stays_in_place() {
     let layout = core::alloc::Layout::from_size_align(32, 8).expect("layout valid");
 
     // Shrink to 50% (>= 50% threshold = in-place).
-    let shrunk = unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, 16) };
-    assert_eq!(
-        shrunk, ptr,
-        "shrink to 50% must be in-place"
-    );
+    let shrunk =
+        unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, 16) };
+    assert_eq!(shrunk, ptr, "shrink to 50% must be in-place");
 
     // Grow back to original size — should also be in-place since 32 fits the class.
     let grew = unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, 32) };
-    assert_eq!(
-        grew, ptr,
-        "grow back to original must be in-place"
-    );
+    assert_eq!(grew, ptr, "grow back to original must be in-place");
 
     unsafe { crate::thread_free::<StandardPolicy, DefaultBackend>(ptr) };
 }
@@ -336,9 +317,8 @@ fn realloc_repeated_grow_shrink_cycle() {
         // Grow to just under the stride.
         let target = stride - 8;
         let layout = core::alloc::Layout::from_size_align(current_size, 8).expect("layout valid");
-        let result = unsafe {
-            crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, target)
-        };
+        let result =
+            unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, target) };
         assert_eq!(
             result, ptr,
             "in-place grow failed during cycle (current={current_size}, target={target})"
@@ -348,9 +328,8 @@ fn realloc_repeated_grow_shrink_cycle() {
         // Shrink back to 50%.
         let half = current_size / 2;
         let layout = core::alloc::Layout::from_size_align(current_size, 8).expect("layout valid");
-        let result = unsafe {
-            crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, half)
-        };
+        let result =
+            unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, half) };
         assert_eq!(
             result, ptr,
             "in-place shrink failed during cycle (current={current_size}, target={half})"
@@ -377,7 +356,8 @@ fn realloc_cross_thread_free_of_result() {
     let layout = core::alloc::Layout::from_size_align(32, 8).expect("layout valid");
 
     // Grow to a different class — forces a new block allocation.
-    let result = unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, 128) };
+    let result =
+        unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, 128) };
     assert!(!result.is_null());
     assert_ne!(result, ptr);
 
@@ -387,7 +367,9 @@ fn realloc_cross_thread_free_of_result() {
     let handle = std::thread::spawn(move || unsafe {
         crate::thread_free::<StandardPolicy, DefaultBackend>(result_val as *mut u8);
     });
-    handle.join().expect("cross-thread free of realloc result panicked");
+    handle
+        .join()
+        .expect("cross-thread free of realloc result panicked");
 }
 
 /// Realloc within the same class preserves a multi-byte marker pattern.
@@ -411,7 +393,8 @@ fn realloc_within_class_preserves_full_pattern() {
     let layout = core::alloc::Layout::from_size_align(32, 8).expect("layout valid");
 
     // Grow within the class.
-    let result = unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, stride - 1) };
+    let result =
+        unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, stride - 1) };
     assert_eq!(result, ptr, "grow within class must be in-place");
 
     // Verify all 32 bytes preserved.
@@ -447,7 +430,8 @@ fn realloc_grow_beyond_class_copies_full_old_data() {
     let stride = block_stride_for(ptr);
     let new_size = stride + 1;
     let layout = core::alloc::Layout::from_size_align(8, 8).expect("layout valid");
-    let result = unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, new_size) };
+    let result =
+        unsafe { crate::thread_realloc::<StandardPolicy, DefaultBackend>(ptr, layout, new_size) };
     assert!(!result.is_null());
     assert_ne!(result, ptr);
 

@@ -2,6 +2,37 @@
 
 Target version: 0.6.0
 
+## Verified — Local provider package metadata [patch]
+
+- [x] Add published-version requirements to the local Themis, Eunomia, and
+  Melinoe workspace paths and to every direct internal path dependency in the
+  affected arena, local, heap, and facade packages.
+- [x] Preserve one direct path-provider identity in the locked Mnemosyne
+  workspace graph; provider source code remains unchanged.
+- [x] Run locked metadata, all-feature check, nextest, doctest, and warning-
+  denied Clippy gates for the affected packages.
+
+Evidence tier: `cargo metadata --no-deps --locked` reports explicit `^version`
+requirements for every affected path dependency; `cargo check` passes;
+nextest passes 216/216; four runnable and six compile-fail heap doctests pass;
+all-target/all-feature Clippy passes. `cargo package --no-verify` reaches
+registry resolution but cannot prepare the affected archives because `eunomia`
+and `melinoe` are not present in the crates.io index. No performance claim.
+
+Residual: provider publication and Themis's optional Melinoe source edge are
+external integration work outside this repository.
+
+## Verified — Workspace formatting cleanup [patch]
+
+- [x] Apply the pinned nightly formatter to the pre-existing benchmark-worker
+  and local allocator-test formatting drift without changing behavior.
+- [x] Re-run workspace formatting, diff hygiene, focused nextest, and the
+  benchmark-target compile.
+
+Evidence tier: `cargo fmt --all --check`, `git diff --check`, focused nextest
+216/216, and `cargo check -p mnemosyne-benchmarks --benches --locked` pass.
+No performance claim.
+
 ## Verified — Vertical module cleanup [arch]
 
 - [x] Replace the generic `mnemosyne-arena::segment::utils` leaf with the
@@ -66,10 +97,8 @@ Clippy, doctest, rustdoc, and focused formatting. `mnemosyne-local` passed
 63/63 debug and 63/63 release tests; `mnemosyne-heap` passed 51/51. No
 throughput or codegen improvement is claimed without a benchmark baseline.
 
-Residual: workspace `cargo fmt --all --check` still reports two unrelated
-line-wrapping differences in
-`crates/mnemosyne-benchmarks/benches/allocator/workers.rs`; all touched files
-pass the focused format check.
+Residual: none for the previously reported workspace formatting drift; the
+cleanup is recorded in the dedicated formatting section above.
 
 ## Verified — Tier-keyed device pools [minor]
 

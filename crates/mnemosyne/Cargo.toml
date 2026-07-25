@@ -6,14 +6,14 @@ edition = "2024"
 rust-version = "1.95"
 
 [dependencies]
-mnemosyne-local = { path = "../mnemosyne-local" }
-mnemosyne-heap = { path = "../mnemosyne-heap", optional = true }
-mnemosyne-arena = { path = "../mnemosyne-arena" }
-mnemosyne-backend = { path = "../mnemosyne-backend" }
-mnemosyne-core = { path = "../mnemosyne-core" }
-mnemosyne-hardened = { path = "../mnemosyne-hardened" }
-mnemosyne-decay = { path = "../mnemosyne-decay" }
-mnemosyne-prof = { path = "../mnemosyne-prof" }
+mnemosyne-local = { path = "../mnemosyne-local", version = "0.3.0" }
+mnemosyne-heap = { path = "../mnemosyne-heap", version = "0.3.0", optional = true }
+mnemosyne-arena = { path = "../mnemosyne-arena", version = "0.3.0" }
+mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.5.0" }
+mnemosyne-core = { path = "../mnemosyne-core", version = "0.2.0" }
+mnemosyne-hardened = { path = "../mnemosyne-hardened", version = "0.2.0" }
+mnemosyne-decay = { path = "../mnemosyne-decay", version = "0.2.0" }
+mnemosyne-prof = { path = "../mnemosyne-prof", version = "0.2.0" }
 eunomia = { workspace = true, optional = true }
 
 [features]

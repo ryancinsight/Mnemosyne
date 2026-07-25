@@ -123,9 +123,7 @@ impl<A: GlobalAlloc + Send + Sync + 'static> Drop for HandoffWorker<A> {
         if let Some(handle) = self.handle.take()
             && handle.join().is_err()
         {
-            eprintln!(
-                "benchmark failure: cross-thread handoff worker panicked during shutdown"
-            );
+            eprintln!("benchmark failure: cross-thread handoff worker panicked during shutdown");
         }
     }
 }
@@ -205,9 +203,7 @@ impl<A: GlobalAlloc + Send + Sync + 'static> Drop for ThreadCycleWorkers<A> {
             if let Some(handle) = worker.handle.take()
                 && handle.join().is_err()
             {
-                eprintln!(
-                    "benchmark failure: allocation-cycle worker panicked during shutdown"
-                );
+                eprintln!("benchmark failure: allocation-cycle worker panicked during shutdown");
             }
         }
     }
