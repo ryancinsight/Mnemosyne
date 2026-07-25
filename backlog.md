@@ -140,6 +140,14 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
 
+- [ ] [patch] status=in-progress owner=codex scope=`Cargo.toml`, `Cargo.lock`,
+  `backlog.md`, `checklist.md`, and `CHANGELOG.md`; last-update=2026-07-25.
+  Restore publishable version requirements for the local Themis, Eunomia, and
+  Melinoe workspace paths introduced by commits `6a4bad7` and `1070417`.
+  Acceptance: every affected package passes `cargo package --no-verify`, the
+  locked path graph has one canonical provider identity per edge, and focused
+  checks plus package metadata validation pass without changing provider code.
+
 - [x] [patch] status=done owner=codex scope=`crates/mnemosyne-heap/src/heap.rs`, `crates/mnemosyne-heap/src/tests/`, and matching PM entries; last-update=2026-07-24. Compute the branded block's runtime layout before `drop_in_place` in `Heap::free`; the current post-drop `size_of_val` reference violates the initialized-value lifetime required by the unsafe operation. Acceptance met: sized and unsized branded frees retain drop counts and release the allocation, the free path has no post-drop reference, and focused heap formatting, warning-denied Clippy, nextest 56/56, four runnable plus six compile-fail doctests, and rustdoc pass. No performance claim.
 
 - [x] [patch] status=done owner=codex scope=`crates/mnemosyne-heap/src/branded_vec.rs`, `crates/mnemosyne-heap/src/tests/`, and matching PM entries; last-update=2026-07-24. Removed `unreachable_unchecked` from the fallible vector growth layout path and return `Err(())` if the repeated layout calculation ever fails. Acceptance met: no production `unreachable_unchecked` remains in the Mnemosyne heap/facade tree, the vector growth contract stays value-correct, and focused heap formatting, warning-denied Clippy, nextest 54/54, doctests, and rustdoc pass. No performance claim.
