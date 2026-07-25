@@ -140,14 +140,24 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
 
-- [ ] [patch] status=in-progress owner=codex scope=`Cargo.toml`, the affected
-  package manifests under `crates/`, `Cargo.lock`, `backlog.md`, `checklist.md`,
-  and `CHANGELOG.md`; last-update=2026-07-25.
+- [x] [patch] status=done owner=codex scope=`Cargo.toml`, the affected package
+  manifests under `crates/`, `Cargo.lock`, `backlog.md`, `checklist.md`, and
+  `CHANGELOG.md`; last-update=2026-07-25.
   Restore publishable version requirements for the local Themis, Eunomia, and
   Melinoe workspace paths introduced by commits `6a4bad7` and `1070417`.
-  Acceptance: every affected package passes `cargo package --no-verify`, the
-  locked path graph has one canonical provider identity per edge, and focused
-  checks plus package metadata validation pass without changing provider code.
+  Acceptance met: every direct path dependency in the affected packages has a
+  published-version requirement; locked metadata and all focused native gates
+  pass; package archive preparation is attempted and is blocked only by the
+  absent `eunomia`/`melinoe` registry packages. Provider code is unchanged.
+
+- [ ] [patch] status=blocked owner=external scope=`eunomia`, `melinoe`, and
+  `themis` provider publication metadata; last-update=2026-07-25. Publish the
+  provider crates and replace Themis's optional git Melinoe edge with the
+  canonical provider source. Re-open when crates.io contains `eunomia` and
+  `melinoe` at the required versions and Themis has a released source-aligned
+  dependency graph. Mnemosyne archive preparation then becomes a local gate.
+
+- [ ] [patch] status=in-progress owner=codex scope=`crates/mnemosyne-benchmarks/benches/allocator/workers.rs` and `crates/mnemosyne-local/src/local_alloc/tests/`; last-update=2026-07-25. Restore workspace rustfmt cleanliness without changing benchmark or allocator behavior. Acceptance: `cargo fmt --all --check` and `git diff --check` pass, and the focused affected-package gates remain green.
 
 - [x] [patch] status=done owner=codex scope=`crates/mnemosyne-heap/src/heap.rs`, `crates/mnemosyne-heap/src/tests/`, and matching PM entries; last-update=2026-07-24. Compute the branded block's runtime layout before `drop_in_place` in `Heap::free`; the current post-drop `size_of_val` reference violates the initialized-value lifetime required by the unsafe operation. Acceptance met: sized and unsized branded frees retain drop counts and release the allocation, the free path has no post-drop reference, and focused heap formatting, warning-denied Clippy, nextest 56/56, four runnable plus six compile-fail doctests, and rustdoc pass. No performance claim.
 
