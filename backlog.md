@@ -140,8 +140,9 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
 
-- [ ] [patch] status=in-progress owner=codex scope=`Cargo.toml`, `Cargo.lock`,
-  `backlog.md`, `checklist.md`, and `CHANGELOG.md`; last-update=2026-07-25.
+- [ ] [patch] status=in-progress owner=codex scope=`Cargo.toml`, the affected
+  package manifests under `crates/`, `Cargo.lock`, `backlog.md`, `checklist.md`,
+  and `CHANGELOG.md`; last-update=2026-07-25.
   Restore publishable version requirements for the local Themis, Eunomia, and
   Melinoe workspace paths introduced by commits `6a4bad7` and `1070417`.
   Acceptance: every affected package passes `cargo package --no-verify`, the
