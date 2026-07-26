@@ -17,9 +17,9 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.dependencies]
-themis = { path = "../themis", version = "0.10.1", default-features = false, features = ["std"] }
-eunomia = { path = "../eunomia/crates/eunomia", version = "0.7.0", default-features = false }
-melinoe = { path = "../melinoe", version = "0.9.0", default-features = false }
+themis = { git = "https://github.com/ryancinsight/themis", version = "0.10.1", default-features = false, features = ["std"] }
+eunomia = { git = "https://github.com/ryancinsight/eunomia", version = "0.7.0", default-features = false }
+melinoe = { git = "https://github.com/ryancinsight/melinoe.git", version = "0.9.0", default-features = false }
 
 # Dev/test keep line tables only: full DWARF dominates target/ size for an
 # allocator workspace while backtraces need only line info. Overflow checks are

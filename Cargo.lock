@@ -250,6 +250,7 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 [[package]]
 name = "eunomia"
 version = "0.7.0"
+source = "git+https://github.com/ryancinsight/eunomia#5e7c28089d4b6715cbf455929e067a62b70bf37d"
 dependencies = [
  "bytemuck",
  "libm",
@@ -366,10 +367,6 @@ dependencies = [
  "cc",
  "cty",
 ]
-
-[[package]]
-name = "melinoe"
-version = "0.9.0"
 
 [[package]]
 name = "melinoe"
@@ -493,7 +490,7 @@ dependencies = [
 name = "mnemosyne-heap"
 version = "0.3.0"
 dependencies = [
- "melinoe 0.9.0",
+ "melinoe",
  "mnemosyne",
  "mnemosyne-arena",
  "mnemosyne-backend",
@@ -507,7 +504,7 @@ dependencies = [
 name = "mnemosyne-local"
 version = "0.3.0"
 dependencies = [
- "melinoe 0.9.0",
+ "melinoe",
  "mnemosyne-arena",
  "mnemosyne-backend",
  "mnemosyne-build-util",
@@ -797,8 +794,9 @@ dependencies = [
 [[package]]
 name = "themis"
 version = "0.10.1"
+source = "git+https://github.com/ryancinsight/themis#035445f493754815e4580d59389580dfa0dc48df"
 dependencies = [
- "melinoe 0.9.0 (git+https://github.com/ryancinsight/melinoe.git)",
+ "melinoe",
 ]
 
 [[package]]
