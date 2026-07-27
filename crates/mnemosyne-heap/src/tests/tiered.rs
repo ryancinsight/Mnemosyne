@@ -10,7 +10,7 @@
 //! - [`tiered_backend`]  — `TieredBackend::for_tier(tier)` returns the
 //!   canonical `TierSelection` per tier; budget-only tiers return
 //!   `None`.
-//! - [`tiered_heap`]     — `scope_tiered::<P>` constructs three typed
+//! - [`tiered_heap`]     — `scope_tiered::<P>` constructs five typed
 //!   sub-heaps sharing one higher-ranked `'brand`, and `alloc`/`free`
 //!   routes `TieredBlock`s back to the right sub-heap.
 //!
@@ -105,47 +105,31 @@ fn tiered_backend_rejects_budget_only_tiers() {
 }
 
 #[test]
-fn tiered_backend_for_tier_routes_host_family_to_host_selection() {
-    assert_eq!(
-        TieredBackend::for_tier(MemoryTier::Dram),
-        Some(TierSelection::Host)
-    );
-    assert_eq!(
-        TieredBackend::for_tier(MemoryTier::Persistent),
-        Some(TierSelection::Host)
-    );
+fn tiered_backend_for_tier_matches_every_allocatable_selection() {
+    let mappings = [
+        (MemoryTier::Dram, TierSelection::Host),
+        (MemoryTier::Persistent, TierSelection::Host),
+        (MemoryTier::HostPinned, TierSelection::HostPinned),
+        (MemoryTier::Device, TierSelection::Device),
+        (MemoryTier::Hbm, TierSelection::Hbm),
+        (MemoryTier::Gddr, TierSelection::Gddr),
+    ];
+
+    for (tier, selection) in mappings {
+        assert_eq!(
+            TieredBackend::for_tier(tier),
+            Some(selection),
+            "allocatable tier must retain its typed backend selection"
+        );
+    }
 }
 
 #[test]
 fn tiered_backend_keeps_device_tiers_on_distinct_pool_keys() {
-    assert_eq!(
-        TieredBackend::for_tier(MemoryTier::Hbm),
-        Some(TierSelection::Hbm)
-    );
-    assert_eq!(
-        TieredBackend::for_tier(MemoryTier::Gddr),
-        Some(TierSelection::Gddr)
-    );
     assert_ne!(
         mnemosyne_backend::CudaHbmBackend::global_segment_pool() as *const _,
         mnemosyne_backend::CudaGddrBackend::global_segment_pool() as *const _,
         "HBM and GDDR must not share retained segment state"
-    );
-}
-
-#[test]
-fn tiered_backend_for_tier_routes_pinned_to_host_pinned_selection() {
-    assert_eq!(
-        TieredBackend::for_tier(MemoryTier::HostPinned),
-        Some(TierSelection::HostPinned)
-    );
-}
-
-#[test]
-fn tiered_backend_for_tier_routes_device_family_to_device_selection() {
-    assert_eq!(
-        TieredBackend::for_tier(MemoryTier::Device),
-        Some(TierSelection::Device)
     );
 }
 
