@@ -2,25 +2,41 @@
 
 Target version: 0.6.0
 
-## Verified — Local provider package metadata [patch]
+## Verified — Provider package metadata and source identity [patch]
 
 - [x] Add published-version requirements to the local Themis, Eunomia, and
   Melinoe workspace paths and to every direct internal path dependency in the
   affected arena, local, heap, and facade packages.
-- [x] Preserve one direct path-provider identity in the locked Mnemosyne
-  workspace graph; provider source code remains unchanged.
-- [x] Run locked metadata, all-feature check, nextest, doctest, and warning-
-  denied Clippy gates for the affected packages.
+- [x] Preserve one direct git-provider identity in the locked Mnemosyne
+  workspace graph so standalone git consumers resolve the provider graph;
+  provider source code remains unchanged.
+- [x] Restore git sources after the intermediate Atlas-local path overlay; the
+  published-version requirements remain attached to each provider dependency.
 
-Evidence tier: `cargo metadata --no-deps --locked` reports explicit `^version`
-requirements for every affected path dependency; `cargo check` passes;
-nextest passes 216/216; four runnable and six compile-fail heap doctests pass;
-all-target/all-feature Clippy passes. `cargo package --no-verify` reaches
-registry resolution but cannot prepare the affected archives because `eunomia`
-and `melinoe` are not present in the crates.io index. No performance claim.
+Evidence tier: `cargo metadata --no-deps --locked` confirms that the current
+manifests retain git sources plus explicit published-version requirements for
+every affected provider; commit `8ba205c` records library checks and 101/101
+tests after restoration. Archive preparation remains blocked until the
+provider crates are published. No performance claim.
 
 Residual: provider publication and Themis's optional Melinoe source edge are
 external integration work outside this repository.
+
+## Verified — Checked allocation invalid-state exits [patch]
+
+- [x] Replace the three production `unreachable_unchecked` exits in
+  `mnemosyne-core` and `mnemosyne-local` with checked boundaries and the
+  existing corruption/failure contracts.
+- [x] Confirm valid size-class mapping and allocation behavior with focused
+  value-semantic tests; scan the production crates for remaining unchecked
+  unreachable exits.
+- [x] Run formatting, focused check/nextest, doctest, warning-denied Clippy,
+  and rustdoc gates. No performance improvement claim is in scope.
+
+Evidence tier: `cargo fmt --all --check`, locked all-feature check, nextest
+187/187, doctests (4 runnable and 6 compile-fail heap cases), warning-denied
+all-target Clippy, rustdoc, and `git diff --check`. The production crate scan
+finds no remaining `unreachable_unchecked`. No performance improvement claim.
 
 ## Verified — Workspace formatting cleanup [patch]
 

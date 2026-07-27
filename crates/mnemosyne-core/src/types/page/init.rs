@@ -64,11 +64,7 @@ impl Page {
             // invariant (pointer is non-null) holds.
             unsafe { NonNull::new_unchecked(block_ptr) }
         } else {
-            // SAFETY: the function's `# Safety` contract requires the page to
-            // have free blocks or uninitialized blocks remaining; both prior
-            // arms are exhausted only when neither holds, which the caller
-            // guarantees cannot occur, so this branch is genuinely unreachable.
-            unsafe { core::hint::unreachable_unchecked() }
+            abort_on_corruption("pop_block called on an exhausted page");
         }
     }
 

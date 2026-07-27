@@ -24,10 +24,13 @@
   claimed. `HostPinned` remains an independent staging pool.
 - The additive tier backend surface advances `mnemosyne-backend` to 0.5.0,
   `mnemosyne-heap` to 0.3.0, and the top-level `mnemosyne` facade to 0.6.0.
-- The workspace Themis, Eunomia, and Melinoe dependencies use local sibling
-  paths with published-version requirements, so monorepo builds and packaged
-  manifests share one dependency contract. Archive preparation remains gated
-  on publication of the provider crates.
+- The workspace Themis, Eunomia, and Melinoe dependencies retain git sources
+  with published-version requirements, so standalone Mnemosyne consumers
+  resolve the provider graph without Atlas-local sibling paths. Archive
+  preparation remains gated on publication of the provider crates.
+- Production allocation invalid-state exits now use checked boundaries and the
+  canonical corruption sink instead of `unreachable_unchecked`. Valid
+  allocation paths are unchanged; no performance improvement is claimed.
 
 ### Breaking
 

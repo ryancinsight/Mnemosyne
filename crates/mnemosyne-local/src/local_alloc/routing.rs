@@ -346,17 +346,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
         }
 
-        debug_assert!(
-            self.current_segment.is_some(),
-            "get_new_page reached slicing path without a current segment"
-        );
-        // Safety: control only reaches here after the preceding branch either
-        // observed a Some `current_segment` or installed one via
-        // `allocate_segment`. The null-return path above precludes None.
-        let seg = match self.current_segment {
-            Some(s) => s.as_ptr(),
-            None => unsafe { core::hint::unreachable_unchecked() },
+        let Some(seg) = self.current_segment else {
+            return core::ptr::null_mut();
         };
+        let seg = seg.as_ptr();
         // Safety: seg points to a valid Segment owned by us. We index into pages array.
         let page_ptr = unsafe { &mut (*seg).pages[self.next_page_index] as *mut Page };
         self.next_page_index += 1;

@@ -130,14 +130,8 @@ const fn size_to_class_nonzero_arithmetic(size: usize) -> Option<usize> {
     ];
 
     let bits = usize::BITS - (size - 1).leading_zeros();
-    if bits >= 14 {
-        // SAFETY: the early return above rejects `size > MAX_SMALL_ALLOC_SIZE`
-        // (8192), so here `1 <= size <= 8192`, giving `size - 1 <= 8191 = 0x1FFF`
-        // which needs at most 13 significant bits; thus `bits <= 13` and this
-        // branch is unreachable. The `LOOKUP` table has exactly 14 entries
-        // (indices 0..=13), so eliminating this branch also proves the
-        // subsequent `LOOKUP[bits]` index is in bounds.
-        unsafe { core::hint::unreachable_unchecked() }
+    if bits >= LOOKUP.len() as u32 {
+        return None;
     }
     let entry = &LOOKUP[bits as usize];
     Some(entry.base as usize + ((size - entry.sub as usize) >> entry.shift))
