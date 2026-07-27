@@ -38,6 +38,24 @@ Evidence tier: `cargo fmt --all --check`, locked all-feature check, nextest
 all-target Clippy, rustdoc, and `git diff --check`. The production crate scan
 finds no remaining `unreachable_unchecked`. No performance improvement claim.
 
+## Verified — Vertical page-module split [arch]
+
+- [x] Move pointer-provenance refresh, page-local block allocation/reclaim,
+  branded intrusive-list primitives, and allocator list transitions into
+  named `local_alloc/page/` leaves.
+- [x] Keep `local_alloc/page/mod.rs` manifest-only and preserve the existing
+  internal call paths through curated `pub(crate)` re-exports; do not add
+  compatibility aliases or duplicate implementations.
+- [x] Verify the split with formatting, locked all-feature check, nextest,
+  doctest, warning-denied Clippy, and rustdoc. No performance improvement
+  claim is in scope.
+
+Evidence tier: five vertical leaves (`access`, `allocation`, `lists`,
+`transitions`, and the manifest) replace the 546-line mixed-concern file;
+focused nextest passes 169/169, heap doctests pass 4 runnable plus 6
+compile-fail cases, and check/Clippy/rustdoc are warning-clean. No runtime or
+benchmark result is claimed.
+
 ## Verified — Workspace formatting cleanup [patch]
 
 - [x] Apply the pinned nightly formatter to the pre-existing benchmark-worker

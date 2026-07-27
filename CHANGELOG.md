@@ -31,6 +31,10 @@
 - Production allocation invalid-state exits now use checked boundaries and the
   canonical corruption sink instead of `unreachable_unchecked`. Valid
   allocation paths are unchanged; no performance improvement is claimed.
+- `mnemosyne-local` page-local allocation and intrusive-list code now lives in
+  named vertical leaves for pointer access, block allocation/reclaim, list
+  primitives, and allocator transitions. The page module remains a manifest;
+  allocation behavior and timed paths are unchanged.
 
 ### Breaking
 
