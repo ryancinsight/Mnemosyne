@@ -28,7 +28,7 @@
 //! 2. **Single dispatch table.** Both [`TieredBackend`] and
 //!    [`crate::tiered_heap::TieredHeap`] call into
 //!    [`TierSelection`] for per-tier routing — the host / host-pinned /
-//!    device classification lives in exactly one place
+//!    device-family classification lives in exactly one place
 //!    ([`TieredBackend::for_tier`]), eliminating the duplication between
 //!    the two leaf modules.
 //!
