@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- Bind the `themis` crate alias to the renamed `themis-topology` package so
+  fresh Git dependency resolution follows the provider identity.
+
 ### Changed
 
 - Segment alignment arithmetic and allocator benchmark support now live in
