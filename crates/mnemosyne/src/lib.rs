@@ -50,9 +50,15 @@ pub fn configure(options: MnemosyneOptions) {
 /// Snapshot of Mnemosyne memory mapping and segment cache state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MemoryStats {
+    /// Address space currently mapped from the OS, in bytes. Reserved
+    /// space, not resident: a range stays counted after its physical
+    /// backing is released, because the mapping is still held.
     pub current_mapped_bytes: usize,
+    /// High-water mark of [`Self::current_mapped_bytes`].
     pub peak_mapped_bytes: usize,
+    /// Successful map requests to the OS.
     pub map_calls: usize,
+    /// Successful unmap requests to the OS.
     pub unmap_calls: usize,
     /// Number of confirmed backend `page_reset` calls (Linux `MADV_DONTNEED`,
     /// macOS/FreeBSD `MADV_FREE`, Windows `VirtualAlloc(MEM_RESET)`).
@@ -64,11 +70,18 @@ pub struct MemoryStats {
     pub guard_install_calls: usize,
     /// Cumulative byte count passed to confirmed `make_guard` calls.
     pub guard_install_bytes: usize,
+    /// Free segments held in the cache for reuse instead of unmapped.
     pub retained_free_segments: usize,
+    /// Cap on [`Self::retained_free_segments`]; segments beyond it are
+    /// purged rather than retained.
     pub max_retained_free_segments: usize,
+    /// Bytes represented by the retained free segments.
     pub retained_free_bytes: usize,
+    /// Segments returned to the OS by decay.
     pub purged_segments: usize,
+    /// Decay purge passes performed.
     pub purge_calls: usize,
+    /// Bytes returned to the OS by those purges.
     pub purged_bytes: usize,
     /// Number of segments whose physical backing was released by a
     /// confirmed `page_reset` while the segment itself remained cached
@@ -82,13 +95,27 @@ pub struct MemoryStats {
     /// Total bytes of huge blocks currently retained in the huge-allocation
     /// cache across all NUMA nodes.
     pub retained_huge_bytes: usize,
+    /// Allocations currently handed out by the calling thread.
     pub current_thread_live_allocations: usize,
+    /// Segments the calling thread owns and allocates from without
+    /// coordination.
     pub current_thread_owned_segments: usize,
+    /// Blocks freed by another thread and drained back into this
+    /// thread's pages.
     pub cross_thread_reclaimed_blocks: usize,
+    /// Times a size class exhausted its page and acquired another; the
+    /// sum of the three sources below.
     pub page_refills: usize,
+    /// Refills served from an already-held empty page, the cheapest
+    /// outcome.
     pub recycled_pages: usize,
+    /// Refills that carved a new page from an owned segment.
     pub fresh_pages: usize,
+    /// Refills that needed a new segment, the only source reaching the
+    /// OS backend.
     pub fresh_segments: usize,
+    /// Segments inherited from threads that exited still owning them,
+    /// which keeps their memory reusable rather than stranded.
     pub orphan_segments_adopted: usize,
     pub recycle_sweeps: usize,
     pub size_class_occupancy: [SizeClassOccupancy; NUM_SIZE_CLASSES],
