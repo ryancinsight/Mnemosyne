@@ -8,24 +8,59 @@ use mnemosyne_core::types::Page;
 /// Occupancy counters for a single size class in the current thread allocator.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SizeClassOccupancy {
+    /// Pages holding at least one live allocation.
     pub active_pages: usize,
+    /// Pages with no live allocation, retained for reuse rather than
+    /// returned, so a refill of this size class costs no syscall.
     pub empty_pages: usize,
+    /// Allocations currently handed out from this size class.
     pub live_allocations: usize,
+    /// Slots across all pages of this size class, live or free.
+    ///
+    /// Against [`Self::live_allocations`] this gives the class's internal
+    /// fragmentation: a large gap means pages are pinned by a few
+    /// scattered survivors.
     pub total_slots: usize,
 }
 
 /// Snapshot of the current thread-local allocator state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ThreadAllocatorStats {
+    /// Allocations currently handed out by this thread across every size
+    /// class.
     pub current_thread_live_allocations: usize,
+    /// Segments this thread owns and allocates from without coordination.
     pub current_thread_owned_segments: usize,
+    /// Blocks freed by another thread and returned to this thread's pages.
+    ///
+    /// Cross-thread frees are queued to the owning thread rather than
+    /// mutating its pages directly, so this counts the deferred returns
+    /// that have been drained.
     pub cross_thread_reclaimed_blocks: usize,
+    /// Times a size class exhausted its page and had to acquire another.
+    ///
+    /// The sum of the three sources below, and the headline number for how
+    /// often the fast path fell through.
     pub page_refills: usize,
+    /// Refills served from an empty page this thread already held — the
+    /// cheapest outcome, no segment or OS work.
     pub recycled_pages: usize,
+    /// Refills that carved a new page from an owned segment.
     pub fresh_pages: usize,
+    /// Refills that required a new segment, the only source that can reach
+    /// the OS backend.
     pub fresh_segments: usize,
+    /// Segments inherited from threads that exited while still owning them.
+    ///
+    /// Adoption is what keeps a terminated thread's memory reusable
+    /// instead of stranded until process exit.
     pub orphan_segments_adopted: usize,
+    /// Sweeps over pages looking for empties to recycle.
+    ///
+    /// Against [`Self::recycled_pages`] this shows whether sweeping is
+    /// paying for itself or scanning without finding reusable pages.
     pub recycle_sweeps: usize,
+    /// Per-size-class occupancy, indexed by size class.
     pub size_class_occupancy: [SizeClassOccupancy; NUM_SIZE_CLASSES],
 }
 

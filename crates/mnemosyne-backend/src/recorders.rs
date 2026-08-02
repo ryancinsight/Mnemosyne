@@ -22,9 +22,24 @@ static DECOMMIT_BYTES: AtomicUsize = AtomicUsize::new(0);
 /// Snapshot of OS mappings requested by Mnemosyne.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BackendMemoryStats {
+    /// Address space currently mapped from the OS, in bytes.
+    ///
+    /// Reserved address space, not resident memory: a range stays counted
+    /// here after `page_reset` or `decommit` releases its physical
+    /// backing, because the mapping itself is still held.
     pub current_mapped_bytes: usize,
+    /// High-water mark of [`Self::current_mapped_bytes`].
+    ///
+    /// Retained because the instantaneous value hides transient peaks: a
+    /// workload that maps and unmaps in bursts can sit near zero while
+    /// having demanded far more at once.
     pub peak_mapped_bytes: usize,
+    /// Number of successful map requests to the OS.
+    ///
+    /// Against [`Self::unmap_calls`], a persistent gap is expected rather
+    /// than a leak: decay deliberately retains cold segments for reuse.
     pub map_calls: usize,
+    /// Number of successful unmap requests to the OS.
     pub unmap_calls: usize,
     /// Number of `page_reset` calls that the OS confirmed.
     ///

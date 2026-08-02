@@ -1,6 +1,7 @@
 //! The Mnemosyne high-performance memory allocator global interface.
 
 #![no_std]
+#![deny(missing_docs)]
 
 use core::alloc::{GlobalAlloc, Layout};
 use mnemosyne_core::NUM_SIZE_CLASSES;
@@ -117,7 +118,13 @@ pub struct MemoryStats {
     /// Segments inherited from threads that exited still owning them,
     /// which keeps their memory reusable rather than stranded.
     pub orphan_segments_adopted: usize,
+    /// Decay-sweep passes over pages looking for empties to recycle.
+    ///
+    /// Against [`Self::recycled_pages`] this shows whether sweeping is
+    /// paying for itself or scanning without finding reusable pages.
     pub recycle_sweeps: usize,
+    /// Per-size-class occupancy for the calling thread, indexed by size
+    /// class.
     pub size_class_occupancy: [SizeClassOccupancy; NUM_SIZE_CLASSES],
 }
 

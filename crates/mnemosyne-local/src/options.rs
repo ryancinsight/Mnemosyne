@@ -91,6 +91,12 @@ fn parse_env_bool(name: &str) -> Option<bool> {
     }
 }
 
+/// Initializes tuning options from the environment once, if not already
+/// done.
+///
+/// Cheap enough for the allocation path: the common case is a single
+/// acquire load of the init flag, with the environment parse happening
+/// only on the first call.
 #[inline(always)]
 pub fn ensure_options_initialized() {
     if !OPTIONS_INIT.load(core::sync::atomic::Ordering::Acquire) {

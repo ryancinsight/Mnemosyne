@@ -15,15 +15,27 @@ use std::sync::OnceLock;
 const MAX_CACHED_BLOCKS: usize = 8;
 const MAX_CPUS: usize = 256;
 
+/// Whether the per-CPU block cache is consulted on the alloc/free fast
+/// path.
+///
+/// Disabled under `cfg(test)` so tests observe the thread-local path
+/// deterministically: the per-CPU cache can otherwise satisfy a request
+/// from another CPU's slot and make occupancy assertions flaky.
 #[cfg(test)]
 pub static PER_CPU_CACHE_ENABLED: AtomicBool = AtomicBool::new(false);
 
+/// Whether the per-CPU block cache is consulted on the alloc/free fast
+/// path.
 #[cfg(not(test))]
 pub static PER_CPU_CACHE_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// A lock-free block cache slot for a single CPU, protected against UAF and ABA hazards.
 #[repr(align(64))]
 pub struct CpuCacheSlot {
+    /// Cached block addresses per size class, zero meaning an empty entry.
+    ///
+    /// The slot is cache-line aligned so neighbouring CPUs do not contend
+    /// on the same line while pushing and popping their own caches.
     pub blocks: [[AtomicUsize; MAX_CACHED_BLOCKS]; NUM_SIZE_CLASSES],
 }
 
@@ -47,6 +59,7 @@ impl CpuCacheSlot {
 /// Global per-CPU block cache array.
 #[repr(align(64))]
 pub struct PerCpuCache {
+    /// One cache-line-aligned slot per CPU, indexed by CPU id.
     pub slots: [CpuCacheSlot; MAX_CPUS],
 }
 

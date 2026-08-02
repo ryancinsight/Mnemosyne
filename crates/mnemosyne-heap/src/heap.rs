@@ -12,12 +12,20 @@ use mnemosyne_local::internal::HasSegmentPool;
 #[non_exhaustive]
 pub enum ReallocFailure {
     /// `new_size` and the existing alignment cannot form a valid `Layout`.
-    InvalidLayout { new_size: usize, alignment: usize },
+    InvalidLayout {
+        /// The requested new size.
+        new_size: usize,
+        /// The existing block alignment the new size had to satisfy.
+        alignment: usize,
+    },
     /// The supplied source layout exceeds the block's usable capacity or
     /// requires an alignment the source pointer does not satisfy.
     InvalidSourceLayout {
+        /// Size named by the caller-supplied source layout.
         requested_size: usize,
+        /// Alignment named by that layout.
         alignment: usize,
+        /// Capacity the block actually provides.
         usable_size: usize,
     },
     /// The requested replacement allocation could not be obtained.

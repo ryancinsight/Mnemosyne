@@ -1,3 +1,21 @@
+//! Background decay and reclamation for Mnemosyne arenas.
+//!
+//! Segments freed by the allocator are not returned to the operating
+//! system immediately: holding them lets a subsequent allocation of the
+//! same size class reuse the mapping instead of paying another syscall.
+//! This crate owns the opposite side of that trade — it periodically
+//! purges segments that have gone cold, so a burst of allocation does not
+//! pin resident memory indefinitely.
+//!
+//! [`init_decay_engine`] lazily spawns the worker thread, gated on the
+//! `MNEMOSYNE_PURGE_CADENCE_MS` cadence (zero disables decay entirely and
+//! spawns no thread). [`decay_step`] performs one sweep across the active
+//! backends and is public so a caller running its own scheduler, or a test
+//! needing determinism, can drive reclamation without the background
+//! thread.
+
+#![deny(missing_docs)]
+
 use core::sync::atomic::Ordering;
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::options::PURGE_CADENCE_MS;

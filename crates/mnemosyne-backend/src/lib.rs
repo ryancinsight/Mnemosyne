@@ -27,6 +27,7 @@
 //! live under [`backends`].
 
 #![no_std]
+#![deny(missing_docs)]
 
 pub mod backends;
 pub mod guard;

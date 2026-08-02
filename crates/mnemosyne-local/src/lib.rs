@@ -1,6 +1,7 @@
 //! Thread-local cache allocation and deallocation routing.
 
 #![no_std]
+#![deny(missing_docs)]
 // The `nightly_tls` feature requests the ELF/PE `#[thread_local]` accessor.
 // The unstable path is compiled only when the active compiler is nightly;
 // stable builds, including `--all-features`, use the portable TLS provider.

@@ -12,6 +12,12 @@ use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::round_up_size;
 use mnemosyne_core::types::{Block, locate_segment};
 
+/// Whether a small reallocation can stay in its current size class.
+///
+/// True when the new size still rounds to the same class stride, so the
+/// existing block already has room and `realloc` can return the same
+/// pointer without copying. Alignments above `MIN_BLOCK_SIZE` are
+/// rejected outright, since those are not served by the small path.
 #[inline(always)]
 pub fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> bool {
     if layout.align() > MIN_BLOCK_SIZE {

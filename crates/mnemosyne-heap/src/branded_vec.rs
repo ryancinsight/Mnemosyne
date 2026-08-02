@@ -8,7 +8,10 @@ use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::LocalAllocatorSelector;
 use mnemosyne_local::internal::HasSegmentPool;
 
+/// Growth, indexing and element access for [`BrandedVec`].
 pub mod ops;
+/// Standard-trait impls (iteration, comparison, formatting) for
+/// [`BrandedVec`].
 pub mod traits;
 
 /// A dynamically growing array allocated from a `Heap`.
