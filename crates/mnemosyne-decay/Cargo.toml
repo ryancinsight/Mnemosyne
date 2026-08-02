@@ -16,4 +16,4 @@ mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.5.0" }
 mnemosyne-arena = { path = "../mnemosyne-arena", version = "0.3.0" }
 
 [dev-dependencies]
-mnemosyne-local = { path = "../mnemosyne-local", version = "0.3.0" }
+mnemosyne-local = { path = "../mnemosyne-local" }
