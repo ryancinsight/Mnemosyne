@@ -6,7 +6,7 @@ Target version: 0.6.0
 
 - [x] Bind `themis` to package `themis-topology` 0.10.1.
 - [x] Refresh dependency resolution and pass focused gates.
-- [ ] Merge before rerunning dependent Hephaestus provider CI.
+- [x] Merge before rerunning dependent Hephaestus provider CI.
 
 ## Verified — Provider package metadata and source identity [patch]
 

@@ -1,6 +1,6 @@
 # Backlog
 
-- [ ] [patch] **MNEM-THEMIS-PACKAGE-1 — restore Themis resolution.** Owner:
+- [x] [patch] **MNEM-THEMIS-PACKAGE-1 — restore Themis resolution.** Owner:
   Codex on `codex/mnemosyne-themis-package`. Bind the existing Rust crate alias
   to upstream package `themis-topology` 0.10.1; refresh the lockfile; pass
   focused checks; merge before dependent Hephaestus provider CI is retried.
