@@ -4,6 +4,8 @@ license = "MIT OR Apache-2.0"
 version = "0.3.0"
 edition = "2024"
 rust-version = "1.95"
+repository.workspace = true
+description = "Segment arenas and pools for the Mnemosyne allocator"
 
 [features]
 default = ["std"]
@@ -13,7 +15,7 @@ eunomia = ["dep:eunomia"]
 std = ["mnemosyne-core/std"]
 
 [dependencies]
-mnemosyne-core = { path = "../mnemosyne-core", version = "0.2.0" }
+mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.2.0" }
 mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.5.0" }
 eunomia = { workspace = true, optional = true }
 themis = { workspace = true }

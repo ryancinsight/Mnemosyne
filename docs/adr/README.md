@@ -12,3 +12,4 @@
 | [0004](0004-profiler-sampler-topology.md) | Profiler Sampler Vertical Topology | accepted |
 | [0005](0005-sharded-sample-occupancy.md) | Sharded Active-Sample Occupancy | accepted |
 | [0006](0006-provider-default-msrv.md) | Provider-default MSRV alignment | accepted |
+| [0007](0007-crates-io-package-identities.md) | crates.io package identities | Accepted |

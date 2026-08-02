@@ -5,6 +5,7 @@ version = "0.2.0"
 edition = "2024"
 rust-version = "1.95"
 build = "build.rs"
+publish = false
 
 [features]
 default = ["mnemosyne-memory"]
@@ -27,21 +28,21 @@ rpmalloc = "0.2.2"
 snmalloc-rs = { version = "0.3", features = ["win8compat"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 serde_json = "1"
-mnemosyne = { path = "../mnemosyne", default-features = false }
-mnemosyne-arena = { path = "../mnemosyne-arena" }
-mnemosyne-backend = { path = "../mnemosyne-backend" }
-mnemosyne-core = { path = "../mnemosyne-core" }
-mnemosyne-hardened = { path = "../mnemosyne-hardened" }
-mnemosyne-local = { path = "../mnemosyne-local" }
-mnemosyne-heap = { path = "../mnemosyne-heap" }
-mnemosyne-decay = { path = "../mnemosyne-decay" }
-mnemosyne-prof = { path = "../mnemosyne-prof" }
+mnemosyne = { package = "mnemosyne-memory", path = "../mnemosyne", version = "0.6.0", default-features = false }
+mnemosyne-arena = { path = "../mnemosyne-arena", version = "0.3.0" }
+mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.5.0" }
+mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.2.0" }
+mnemosyne-hardened = { path = "../mnemosyne-hardened", version = "0.2.0" }
+mnemosyne-local = { path = "../mnemosyne-local", version = "0.3.0" }
+mnemosyne-heap = { path = "../mnemosyne-heap", version = "0.3.0" }
+mnemosyne-decay = { path = "../mnemosyne-decay", version = "0.2.0" }
+mnemosyne-prof = { path = "../mnemosyne-prof", version = "0.2.0" }
 
 [target.'cfg(not(windows))'.dependencies]
 tikv-jemallocator = "0.6"
 
 [build-dependencies]
-mnemosyne-build-util = { path = "../mnemosyne-build-util" }
+mnemosyne-build-util = { path = "../mnemosyne-build-util", version = "0.2.0" }
 
 [[bench]]
 name = "allocator_bench"

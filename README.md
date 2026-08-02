@@ -2,6 +2,10 @@
 
 Mnemosyne—named after the Greek goddess of memory—is a high-performance concurrent memory allocator implemented completely in Rust. It utilizes a deep vertical hierarchical multi-crate workspace layout to enforce the Separation of Concerns (SoC), Single Responsibility Principle (SRP), Single Source of Truth (SSOT), Dependency Inversion Principle (DIP), and Don't Repeat Yourself (DRY) paradigms.
 
+The crates.io facade is `mnemosyne-memory` and the core package is
+`mnemosyne-memory-core`. Their Rust library names remain `mnemosyne` and
+`mnemosyne_core`, respectively.
+
 Its design incorporates core lessons from modern allocator research (specifically **mimalloc** and **snmalloc**), implementing thread-local fast-path caches, lock-free contention-free cross-thread message queues, and zero-cost compile-time allocation safety policies.
 
 ---

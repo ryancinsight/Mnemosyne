@@ -5,6 +5,11 @@
   to upstream package `themis-topology` 0.10.1; refresh the lockfile; pass
   focused checks; merge before dependent Hephaestus provider CI is retried.
 
+- [x] [major] Publish the allocator facade and core under the collision-free
+  `mnemosyne-memory` and `mnemosyne-memory-core` package identities. Retain
+  the existing Rust crate names through explicit library targets and dependency
+  aliases. Decision: [ADR 0007](docs/adr/0007-crates-io-package-identities.md).
+
 - [x] [major] **WGPU-030, done; owner Codex; scope
   `mnemosyne-backend`, facade re-exports, backend selector impls/tests/docs, and
   release artifacts; last update 2026-07-13.** Remove the process-global WGPU

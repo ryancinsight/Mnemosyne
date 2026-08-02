@@ -1,16 +1,21 @@
 [package]
-name = "mnemosyne"
+name = "mnemosyne-memory"
 license = "MIT OR Apache-2.0"
 version = "0.6.0"
 edition = "2024"
 rust-version = "1.95"
+repository.workspace = true
+description = "Concurrent user-space memory allocator facade"
+
+[lib]
+name = "mnemosyne"
 
 [dependencies]
 mnemosyne-local = { path = "../mnemosyne-local", version = "0.3.0" }
 mnemosyne-heap = { path = "../mnemosyne-heap", version = "0.3.0", optional = true }
 mnemosyne-arena = { path = "../mnemosyne-arena", version = "0.3.0" }
 mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.5.0" }
-mnemosyne-core = { path = "../mnemosyne-core", version = "0.2.0" }
+mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.2.0" }
 mnemosyne-hardened = { path = "../mnemosyne-hardened", version = "0.2.0" }
 mnemosyne-decay = { path = "../mnemosyne-decay", version = "0.2.0" }
 mnemosyne-prof = { path = "../mnemosyne-prof", version = "0.2.0" }
