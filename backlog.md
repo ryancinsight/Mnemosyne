@@ -1,5 +1,8 @@
 # Backlog
 
+- [x] [patch] Publish future releases through a pinned GitHub Actions workflow
+  using crates.io OIDC Trusted Publishing and no stored registry credential.
+
 - [x] [patch] Exclude cyclic workspace-only dev-dependencies from published
   manifests by leaving them path-only, as defined by Cargo's publication
   contract. Runtime and build dependencies retain registry versions.

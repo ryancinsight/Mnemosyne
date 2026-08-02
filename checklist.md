@@ -2,6 +2,11 @@
 
 Target version: 0.6.0
 
+## Trusted publishing
+
+- [x] Add and validate the release workflow, then register every published
+  package against `ryancinsight/Mnemosyne/.github/workflows/rust-release.yml`.
+
 ## MNEM-THEMIS-PACKAGE-1 [patch] — Owner: Codex
 
 - [x] Bind `themis` to package `themis-topology` 0.10.1.

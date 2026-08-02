@@ -9,6 +9,8 @@
 
 ### Changed
 
+- Add a GitHub Release workflow that validates crate identity and package
+  contents before publishing through crates.io Trusted Publishing.
 - Keep cyclic workspace-only test dependencies path-only so Cargo excludes them
   from registry archives while the source workspace retains its full tests.
 - Publish the occupied `mnemosyne` and `mnemosyne-core` package identities
