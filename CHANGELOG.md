@@ -9,6 +9,11 @@
 
 ### Changed
 
+- Publish the occupied `mnemosyne` and `mnemosyne-core` package identities
+  as `mnemosyne-memory` and `mnemosyne-memory-core` while retaining their
+  Rust library crate names.
+- Make `mnemosyne-build-util` publishable because it is a required build
+  dependency, and mark the benchmark-only workspace package non-publishable.
 - Segment alignment arithmetic and allocator benchmark support now live in
   named vertical leaves instead of generic `utils`/`helpers` modules. Benchmark
   registration, platform policy, failure handling, and allocation operations

@@ -16,6 +16,9 @@ members = [
 ]
 exclude = ["fuzz"]
 
+[workspace.package]
+repository = "https://github.com/ryancinsight/mnemosyne"
+
 [workspace.dependencies]
 themis = { package = "themis-topology", git = "https://github.com/ryancinsight/themis", version = "0.10.1", default-features = false, features = ["std"] }
 eunomia = { git = "https://github.com/ryancinsight/eunomia", version = "0.7.0", default-features = false }

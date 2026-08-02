@@ -4,6 +4,8 @@ license = "MIT OR Apache-2.0"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.95"
+repository.workspace = true
+description = "C ABI bindings for the Mnemosyne allocator"
 
 [lib]
 # `lib` keeps the crate usable from Rust tests and downstream Rust code;
@@ -12,10 +14,10 @@ rust-version = "1.95"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
-mnemosyne-local = { path = "../mnemosyne-local" }
-mnemosyne-core = { path = "../mnemosyne-core" }
-mnemosyne-backend = { path = "../mnemosyne-backend" }
-mnemosyne-prof = { path = "../mnemosyne-prof" }
+mnemosyne-local = { path = "../mnemosyne-local", version = "0.3.0" }
+mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.2.0" }
+mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.5.0" }
+mnemosyne-prof = { path = "../mnemosyne-prof", version = "0.2.0" }
 
 [features]
 nightly_tls = ["mnemosyne-prof/nightly_tls"]
