@@ -1,5 +1,9 @@
 # Backlog
 
+- [x] [patch] Exclude cyclic workspace-only dev-dependencies from published
+  manifests by leaving them path-only, as defined by Cargo's publication
+  contract. Runtime and build dependencies retain registry versions.
+
 - [x] [patch] **MNEM-THEMIS-PACKAGE-1 — restore Themis resolution.** Owner:
   Codex on `codex/mnemosyne-themis-package`. Bind the existing Rust crate alias
   to upstream package `themis-topology` 0.10.1; refresh the lockfile; pass

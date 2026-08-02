@@ -45,5 +45,5 @@ themis = { workspace = true }
 melinoe = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-mnemosyne-heap = { path = "../mnemosyne-heap", version = "0.3.0" }
-mnemosyne-hardened = { path = "../mnemosyne-hardened", version = "0.2.0" }
+mnemosyne-heap = { path = "../mnemosyne-heap" }
+mnemosyne-hardened = { path = "../mnemosyne-hardened" }

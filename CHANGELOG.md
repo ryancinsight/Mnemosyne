@@ -9,6 +9,8 @@
 
 ### Changed
 
+- Keep cyclic workspace-only test dependencies path-only so Cargo excludes them
+  from registry archives while the source workspace retains its full tests.
 - Publish the occupied `mnemosyne` and `mnemosyne-core` package identities
   as `mnemosyne-memory` and `mnemosyne-memory-core` while retaining their
   Rust library crate names.
