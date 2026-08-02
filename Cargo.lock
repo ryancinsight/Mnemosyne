@@ -417,7 +417,7 @@ dependencies = [
  "eunomia",
  "mnemosyne-backend",
  "mnemosyne-core",
- "themis",
+ "themis-topology",
 ]
 
 [[package]]
@@ -495,7 +495,7 @@ dependencies = [
  "mnemosyne-core",
  "mnemosyne-local",
  "mnemosyne-prof",
- "themis",
+ "themis-topology",
 ]
 
 [[package]]
@@ -511,7 +511,7 @@ dependencies = [
  "mnemosyne-hardened",
  "mnemosyne-heap",
  "mnemosyne-prof",
- "themis",
+ "themis-topology",
 ]
 
 [[package]]
@@ -790,7 +790,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "themis"
+name = "themis-topology"
 version = "0.10.1"
 dependencies = [
  "melinoe",

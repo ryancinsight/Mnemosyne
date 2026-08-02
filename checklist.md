@@ -2,6 +2,12 @@
 
 Target version: 0.6.0
 
+## MNEM-THEMIS-PACKAGE-1 [patch] — Owner: Codex
+
+- [x] Bind `themis` to package `themis-topology` 0.10.1.
+- [x] Refresh dependency resolution and pass focused gates.
+- [ ] Merge before rerunning dependent Hephaestus provider CI.
+
 ## Verified — Provider package metadata and source identity [patch]
 
 - [x] Add published-version requirements to the local Themis, Eunomia, and
