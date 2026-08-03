@@ -211,9 +211,9 @@ macro_rules! impl_device_tier_backend {
     };
 }
 
-mod unified;
 mod device;
 mod pinned;
+mod unified;
 
 pub use device::{CudaDeviceBackend, CudaGddrBackend, CudaHbmBackend};
 pub use pinned::CudaHostPinnedBackend;

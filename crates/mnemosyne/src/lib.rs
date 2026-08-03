@@ -5,8 +5,8 @@
 
 mod allocator;
 mod options;
-mod stats;
 pub mod scratch;
+mod stats;
 
 pub use allocator::{Mnemosyne, MnemosyneAllocator};
 pub use mnemosyne_backend::{
