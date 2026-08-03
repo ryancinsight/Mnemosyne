@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: 1.97.0
+
+jobs:
+  verify:
+    name: Rust verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy, rustfmt
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
+        with:
+          tool: nextest@0.9.140
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # mnemosyne-benchmarks is excluded throughout: it pulls snmalloc-rs,
+      # whose build fails under current host compilers (atlas
+      # backlog.md#atlas-mnemosyne-snmalloc-1). Everything else is covered.
+      #
+      # missing_const_for_thread_local is allowed because clippy 1.97.0 fires
+      # it on initializers that are ALREADY `const { .. }` -- verified at
+      # crates/mnemosyne-arena/src/segment/pool/segment_pool.rs:67. Drop the
+      # -A when the pinned toolchain moves past the false positive.
+      - name: Lint all affected targets
+        run: >-
+          cargo clippy --locked --workspace --exclude mnemosyne-benchmarks
+          --all-targets --
+          -D warnings -A clippy::missing_const_for_thread_local
+
+      - name: Run native tests
+        run: cargo nextest run --locked --workspace --exclude mnemosyne-benchmarks
+
+      - name: Run documentation tests
+        run: cargo test --locked --workspace --exclude mnemosyne-benchmarks --doc
