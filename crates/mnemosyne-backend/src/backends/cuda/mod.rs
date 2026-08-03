@@ -14,9 +14,11 @@
 //! - `context`: temporary CUDA context helpers for tests and probes.
 //! - `veh` (Windows only): vectored-exception isolation of the `cuInit`
 //!   probe.
-//! - this module: the three `MemoryBackend` impls, expressed as thin
-//!   zero-sized strategies over one generic allocate/deallocate driver
-//!   (`CudaAllocOps`), monomorphized per backend with no dynamic dispatch.
+//! - `unified`, `device`, and `pinned`: the concrete `MemoryBackend` impls,
+//!   expressed as thin zero-sized strategies over one generic
+//!   allocate/deallocate driver (`CudaAllocOps`), monomorphized per backend
+//!   with no dynamic dispatch.
+//! - this module: shared CUDA helper traits/functions plus public re-exports.
 
 mod context;
 mod loader;
@@ -29,11 +31,7 @@ pub use registry::CudaAllocationRegistry;
 
 use core::ffi::c_void;
 use core::sync::atomic::Ordering;
-use mnemosyne_core::MemoryBackend;
-use registry::{
-    CUDA_ALLOCATIONS, CUDA_DEVICE_ALLOCATIONS, CUDA_HOST_PINNED_ALLOCATIONS, register_cuda_ptr_in,
-    unregister_cuda_ptr_in,
-};
+use registry::{register_cuda_ptr_in, unregister_cuda_ptr_in};
 
 /// Zero-sized strategy surface for the shared CUDA allocate/deallocate
 /// driver.
@@ -180,202 +178,9 @@ unsafe fn managed_raw_free(free_sym: *mut c_void, ptr: *mut u8) -> core::ffi::c_
     unsafe { cu_mem_free(ptr as u64) }
 }
 
-/// A zero-copy memory backend mapping memory blocks directly using CUDA
-/// managed memory.
-///
-/// `allocate` returns null when the NVIDIA driver is not loaded, when the
-/// driver allocation fails, or when the bounded CUDA allocation registry is
-/// full (the fresh allocation is released first). There is no host fallback;
-/// callers must select another backend on null.
-pub struct CudaUnifiedBackend;
-
-impl CudaAllocOps for CudaUnifiedBackend {
-    #[inline]
-    fn registry() -> &'static CudaAllocationRegistry {
-        &CUDA_ALLOCATIONS
-    }
-
-    #[inline]
-    fn alloc_sym() -> *mut c_void {
-        loader::CU_MEM_ALLOC_MANAGED.load(Ordering::Acquire)
-    }
-
-    #[inline]
-    fn free_sym() -> *mut c_void {
-        loader::CU_MEM_FREE.load(Ordering::Acquire)
-    }
-
-    #[inline]
-    unsafe fn raw_alloc(alloc_sym: *mut c_void, size: usize) -> *mut u8 {
-        // SAFETY: forwarded caller contract (resolved `cuMemAllocManaged`).
-        unsafe { managed_raw_alloc(alloc_sym, size) }
-    }
-
-    #[inline]
-    unsafe fn raw_free(free_sym: *mut c_void, ptr: *mut u8) -> core::ffi::c_int {
-        // SAFETY: forwarded caller contract (resolved `cuMemFree`, live ptr).
-        unsafe { managed_raw_free(free_sym, ptr) }
-    }
-}
-
-impl MemoryBackend for CudaUnifiedBackend {
-    /// Allocates CUDA unified managed memory. Returns null on failure
-    /// (driver unavailable, driver allocation failure, or registry full).
-    ///
-    /// # Safety
-    ///
-    /// The size must be greater than zero and page-aligned.
-    #[inline]
-    unsafe fn allocate(size: usize) -> *mut u8 {
-        // SAFETY: forwarded caller contract.
-        unsafe { cuda_allocate::<Self>(size) }
-    }
-
-    /// Deallocates memory allocated by this backend.
-    ///
-    /// # Safety
-    ///
-    /// The ptr must be valid and size must match the allocated size.
-    #[inline]
-    unsafe fn deallocate(ptr: *mut u8, _size: usize) -> bool {
-        // SAFETY: forwarded caller contract.
-        unsafe { cuda_deallocate::<Self>(ptr) }
-    }
-}
-
-/// A memory backend allocating CUDA device memory.
-///
-/// Under the hood, this uses CUDA unified memory (`cuMemAllocManaged`) and
-/// advises the driver to prefer device placement (`cuMemAdvise` with
-/// `CU_MEM_ADVISE_SET_PREFERRED_LOCATION`). This allows the host CPU to write
-/// allocator metadata in-band without segfaulting, while keeping the
-/// allocation device-preferred for optimal kernel performance.
-///
-/// `allocate` returns null on failure (driver unavailable, driver allocation
-/// failure, or registry full); there is no host fallback.
-pub struct CudaDeviceBackend;
-
-impl CudaAllocOps for CudaDeviceBackend {
-    #[inline]
-    fn registry() -> &'static CudaAllocationRegistry {
-        &CUDA_DEVICE_ALLOCATIONS
-    }
-
-    #[inline]
-    fn alloc_sym() -> *mut c_void {
-        loader::CU_MEM_ALLOC_MANAGED.load(Ordering::Acquire)
-    }
-
-    #[inline]
-    fn free_sym() -> *mut c_void {
-        loader::CU_MEM_FREE.load(Ordering::Acquire)
-    }
-
-    #[inline]
-    unsafe fn raw_alloc(alloc_sym: *mut c_void, size: usize) -> *mut u8 {
-        // SAFETY: forwarded caller contract (resolved `cuMemAllocManaged`).
-        unsafe { managed_raw_alloc(alloc_sym, size) }
-    }
-
-    #[inline]
-    unsafe fn raw_free(free_sym: *mut c_void, ptr: *mut u8) -> core::ffi::c_int {
-        // SAFETY: forwarded caller contract (resolved `cuMemFree`, live ptr).
-        unsafe { managed_raw_free(free_sym, ptr) }
-    }
-
-    #[inline]
-    unsafe fn post_register(ptr: *mut u8, size: usize) {
-        let advise_sym = loader::CU_MEM_ADVISE.load(Ordering::Acquire);
-        if advise_sym.is_null() {
-            return;
-        }
-        type CuMemAdviseFn = unsafe extern "system" fn(u64, usize, u32, i32) -> core::ffi::c_int;
-        // SAFETY: transmute maps the verified dynamic library symbol address
-        // to a function pointer with system calling convention.
-        let cu_mem_advise: CuMemAdviseFn = unsafe { core::mem::transmute(advise_sym) };
-        // CU_MEM_ADVISE_SET_PREFERRED_LOCATION = 3, device ordinal 0.
-        // Placement advice is best-effort tuning: a nonzero status leaves the
-        // allocation valid and host-accessible, so there is no failure to
-        // surface or recover from here.
-        // SAFETY: `ptr` is a live managed allocation of `size` bytes per the
-        // trait contract.
-        let _advise_status = unsafe { cu_mem_advise(ptr as u64, size, 3, 0) };
-    }
-}
-
-impl MemoryBackend for CudaDeviceBackend {
-    /// Allocates device-preferred CUDA managed memory. Returns null on
-    /// failure (driver unavailable, driver allocation failure, or registry
-    /// full).
-    ///
-    /// # Safety
-    ///
-    /// The size must be greater than zero and page-aligned.
-    #[inline]
-    unsafe fn allocate(size: usize) -> *mut u8 {
-        // SAFETY: forwarded caller contract.
-        unsafe { cuda_allocate::<Self>(size) }
-    }
-
-    /// Deallocates memory allocated by this backend.
-    ///
-    /// # Safety
-    ///
-    /// The ptr must be valid and size must match the allocated size.
-    #[inline]
-    unsafe fn deallocate(ptr: *mut u8, _size: usize) -> bool {
-        // SAFETY: forwarded caller contract.
-        unsafe { cuda_deallocate::<Self>(ptr) }
-    }
-}
-
-/// Allocates through the shared device driver while allowing the arena to
-/// keep a distinct pool identity for a device memory tier.
-///
-/// CUDA's managed allocation API does not expose an HBM-versus-GDDR selector;
-/// the tier-specific wrappers therefore preserve the provider's device
-/// allocation semantics and split allocator-local retention state. A future
-/// provider with an explicit tier selector can replace the wrapper's
-/// monomorphic forwarding without changing the heap dispatch surface.
-#[inline(always)]
-unsafe fn allocate_device_tier(size: usize) -> *mut u8 {
-    // SAFETY: the caller upholds the `MemoryBackend::allocate` contract, and
-    // `CudaDeviceBackend` is the shared driver-backed implementation.
-    unsafe { CudaDeviceBackend::allocate(size) }
-}
-
-/// Releases a tier-keyed device allocation through the shared CUDA driver.
-#[inline(always)]
-unsafe fn deallocate_device_tier(ptr: *mut u8, size: usize) -> bool {
-    // SAFETY: the caller upholds the `MemoryBackend::deallocate` contract, and
-    // the pointer was allocated by the shared device backend.
-    unsafe { CudaDeviceBackend::deallocate(ptr, size) }
-}
-
-/// A zero-sized device backend with an allocator-local HBM pool identity.
-///
-/// The current CUDA provider uses the same managed-memory driver operation as
-/// [`CudaDeviceBackend`]. This type separates segment and thread-local pool
-/// ownership for `MemoryTier::Hbm` without adding a runtime dispatch branch.
-pub struct CudaHbmBackend;
-
-/// A zero-sized device backend with an allocator-local GDDR pool identity.
-///
-/// The current CUDA provider uses the same managed-memory driver operation as
-/// [`CudaDeviceBackend`]. This type separates segment and thread-local pool
-/// ownership for `MemoryTier::Gddr` without adding a runtime dispatch branch.
-pub struct CudaGddrBackend;
-
-const _: () = assert!(
-    core::mem::size_of::<CudaHbmBackend>() == 0
-        && core::mem::size_of::<CudaGddrBackend>() == 0
-        && core::mem::align_of::<CudaHbmBackend>() == 1
-        && core::mem::align_of::<CudaGddrBackend>() == 1
-);
-
 macro_rules! impl_device_tier_backend {
     ($backend:ty) => {
-        impl MemoryBackend for $backend {
+        impl mnemosyne_core::MemoryBackend for $backend {
             const SUPPORTS_PAGE_RESET: bool = CudaDeviceBackend::SUPPORTS_PAGE_RESET;
             const SUPPORTS_MAKE_GUARD: bool = CudaDeviceBackend::SUPPORTS_MAKE_GUARD;
             const SUPPORTS_DECOMMIT: bool = CudaDeviceBackend::SUPPORTS_DECOMMIT;
@@ -406,87 +211,13 @@ macro_rules! impl_device_tier_backend {
     };
 }
 
-impl_device_tier_backend!(CudaHbmBackend);
-impl_device_tier_backend!(CudaGddrBackend);
+mod unified;
+mod device;
+mod pinned;
 
-/// A memory backend allocating CUDA page-locked (pinned) host memory.
-///
-/// `allocate` returns null on failure (driver unavailable, driver allocation
-/// failure, or registry full); there is no host fallback.
-pub struct CudaHostPinnedBackend;
-
-impl CudaAllocOps for CudaHostPinnedBackend {
-    #[inline]
-    fn registry() -> &'static CudaAllocationRegistry {
-        &CUDA_HOST_PINNED_ALLOCATIONS
-    }
-
-    #[inline]
-    fn alloc_sym() -> *mut c_void {
-        loader::CU_MEM_HOST_ALLOC.load(Ordering::Acquire)
-    }
-
-    #[inline]
-    fn free_sym() -> *mut c_void {
-        loader::CU_MEM_FREE_HOST.load(Ordering::Acquire)
-    }
-
-    #[inline]
-    unsafe fn raw_alloc(alloc_sym: *mut c_void, size: usize) -> *mut u8 {
-        type CuMemHostAllocFn =
-            unsafe extern "system" fn(*mut *mut c_void, usize, u32) -> core::ffi::c_int;
-        // SAFETY: transmute maps the verified dynamic library symbol address
-        // to a function pointer with system calling convention.
-        let cu_mem_host_alloc: CuMemHostAllocFn = unsafe { core::mem::transmute(alloc_sym) };
-
-        let mut host_ptr: *mut c_void = core::ptr::null_mut();
-        // CU_MEMHOSTALLOC_DEVICEMAP = 0x02
-        // SAFETY: on a zero return, the driver wrote a host pointer valid for
-        // `size` bytes into `host_ptr`.
-        let res = unsafe { cu_mem_host_alloc(core::ptr::addr_of_mut!(host_ptr), size, 0x02) };
-        if res == 0 && !host_ptr.is_null() {
-            host_ptr as *mut u8
-        } else {
-            core::ptr::null_mut()
-        }
-    }
-
-    #[inline]
-    unsafe fn raw_free(free_sym: *mut c_void, ptr: *mut u8) -> core::ffi::c_int {
-        type CuMemFreeHostFn = unsafe extern "system" fn(*mut c_void) -> core::ffi::c_int;
-        // SAFETY: transmute maps the verified dynamic library symbol address
-        // to a function pointer with system calling convention.
-        let cu_mem_free_host: CuMemFreeHostFn = unsafe { core::mem::transmute(free_sym) };
-        // SAFETY: `ptr` is a live `cuMemHostAlloc` allocation per the caller
-        // contract.
-        unsafe { cu_mem_free_host(ptr as *mut c_void) }
-    }
-}
-
-impl MemoryBackend for CudaHostPinnedBackend {
-    /// Allocates CUDA page-locked host memory. Returns null on failure
-    /// (driver unavailable, driver allocation failure, or registry full).
-    ///
-    /// # Safety
-    ///
-    /// The size must be greater than zero and page-aligned.
-    #[inline]
-    unsafe fn allocate(size: usize) -> *mut u8 {
-        // SAFETY: forwarded caller contract.
-        unsafe { cuda_allocate::<Self>(size) }
-    }
-
-    /// Deallocates memory allocated by this backend.
-    ///
-    /// # Safety
-    ///
-    /// The ptr must be valid and size must match the allocated size.
-    #[inline]
-    unsafe fn deallocate(ptr: *mut u8, _size: usize) -> bool {
-        // SAFETY: forwarded caller contract.
-        unsafe { cuda_deallocate::<Self>(ptr) }
-    }
-}
+pub use device::{CudaDeviceBackend, CudaGddrBackend, CudaHbmBackend};
+pub use pinned::CudaHostPinnedBackend;
+pub use unified::CudaUnifiedBackend;
 
 /// Returns true if the CUDA unified memory driver was successfully resolved.
 pub fn is_cuda_available() -> bool {
