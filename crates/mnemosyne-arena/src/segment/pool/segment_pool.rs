@@ -64,6 +64,11 @@ impl GlobalSegmentPool {
         let mut refreshed = false;
         #[cfg(feature = "std")]
         std::thread_local! {
+            // clippy 1.97.0 false positive: the initialiser is already
+            // `const { Cell::new(0) }`; the lint misfires because it does not
+            // recognise the `const { .. }` block form. Retire when the pinned
+            // toolchain advances past the regression (ATLAS-MNEMOSYNE-CI-1).
+            #[allow(clippy::missing_const_for_thread_local)]
             static MISS_COUNT: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
         }
         #[cfg(feature = "std")]

@@ -96,14 +96,13 @@ unsafe fn hint_hugepage(ptr: *mut u8, length: usize) {
     // unaffected since `cfg(miri)` never holds outside `cargo miri`.
     #[cfg(all(target_os = "linux", not(miri)))]
     {
-        if length >= SEGMENT_SIZE {
-            if mnemosyne_core::options::ENABLE_HUGEPAGE_HINT
+        if length >= SEGMENT_SIZE
+            && mnemosyne_core::options::ENABLE_HUGEPAGE_HINT
                 .load(core::sync::atomic::Ordering::Relaxed)
-            {
-                // Safety: caller guarantees the mapping covers `length` bytes; madvise
-                // is advisory and never invalidates the mapping on failure.
-                let _ = unsafe { madvise(ptr as *mut c_void, length, MADV_HUGEPAGE) };
-            }
+        {
+            // Safety: caller guarantees the mapping covers `length` bytes; madvise
+            // is advisory and never invalidates the mapping on failure.
+            let _ = unsafe { madvise(ptr as *mut c_void, length, MADV_HUGEPAGE) };
         }
     }
     #[cfg(not(all(target_os = "linux", not(miri))))]
@@ -197,7 +196,7 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
             // active mapping and `size` is a non-zero multiple of the
             // system page size; madvise never invalidates the mapping.
             let res = unsafe { madvise(ptr as *mut c_void, size, MADV_DONTNEED) };
-            return res == 0;
+            res == 0
         }
         #[cfg(all(any(target_os = "macos", target_os = "freebsd"), not(miri)))]
         {
@@ -205,7 +204,7 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
             // MADV_FREE has identical "do not invalidate the mapping"
             // semantics.
             let res = unsafe { madvise(ptr as *mut c_void, size, MADV_FREE) };
-            return res == 0;
+            res == 0
         }
         #[cfg(any(
             miri,
@@ -257,13 +256,13 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
         {
             // Safety: see `page_reset`; madvise never invalidates the mapping.
             let res = unsafe { madvise(ptr as *mut c_void, size, MADV_DONTNEED) };
-            return res == 0;
+            res == 0
         }
         #[cfg(all(any(target_os = "macos", target_os = "freebsd"), not(miri)))]
         {
             // Safety: see `page_reset`.
             let res = unsafe { madvise(ptr as *mut c_void, size, MADV_FREE) };
-            return res == 0;
+            res == 0
         }
         #[cfg(any(
             miri,

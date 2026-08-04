@@ -1,0 +1,19 @@
+# mdBook configuration for the mnemosyne allocator book.
+[book]
+title = "mnemosyne: High-Performance Memory Allocator"
+authors = ["Ryan Clanton"]
+description = "Concurrent user-space memory allocation for the Atlas simulation stack — size classes, NUMA placement, scratch pools, and allocator statistics."
+src = "."
+language = "en"
+
+[build]
+build-dir = "../../target/book/mnemosyne"
+create-missing = false
+
+[output.html]
+no-section-label = false
+mathjax-support = false
+site-url = "/mnemosyne/"
+git-repository-url = "https://github.com/ryancinsight/mnemosyne"
+edit-url-template = "https://github.com/ryancinsight/mnemosyne/edit/main/docs/book/{path}"
+default-theme = "rust"
