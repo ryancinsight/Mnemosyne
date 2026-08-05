@@ -49,29 +49,20 @@ jobs:
       # whose build fails under current host compilers (atlas
       # backlog.md#atlas-mnemosyne-snmalloc-1). Everything else is covered.
       #
-      # Three lints are allowed, each with a removal trigger; every other
-      # lint, including all correctness lints, gates the whole workspace.
-      #
-      # missing_const_for_thread_local: clippy 1.97.0 fires it on initializers
-      # that are ALREADY `const { .. }` -- see
-      # crates/mnemosyne-arena/src/segment/pool/segment_pool.rs:67. Drop when
-      # the pinned toolchain moves past the false positive.
-      #
-      # needless_return, collapsible_if: pre-existing debt in the cfg(unix)
-      # madvise paths (backends/unix.rs:99, :200, :260), which only compile on
-      # Unix. They sit inside mutually exclusive cfg blocks with macOS and
-      # FreeBSD arms, so a fix needs verification on platforms this project
-      # has no runner for. Tracked separately; drop when those sites are
-      # cleaned. Reproduce locally without a Linux box:
-      #   cargo clippy --target x86_64-unknown-linux-gnu -p mnemosyne-backend
+      # No lint allows remain. The three former command-line allows were
+      # retired 2026-08-05 (ATLAS-MNEMOSYNE-CI-1): the workspace passes bare
+      # `-D warnings` under the pinned 1.97.0 toolchain with
+      # `--target x86_64-unknown-linux-gnu` (the runner's cfg(unix) code is
+      # otherwise stripped on Windows hosts). needless_return/collapsible_if
+      # no longer fire anywhere -- the cfg(unix) madvise sites were cleaned --
+      # and the single missing_const_for_thread_local false positive is
+      # already suppressed at its site with its own removal trigger
+      # (crates/mnemosyne-arena/src/segment/pool/segment_pool.rs).
       - name: Lint all affected targets
         run: >-
           cargo clippy --locked --workspace --exclude mnemosyne-benchmarks
           --all-targets --
           -D warnings
-          -A clippy::missing_const_for_thread_local
-          -A clippy::needless_return
-          -A clippy::collapsible_if
 
       # mnemosyne-c-shim is excluded from the test steps: its test binary
       # exits without producing a test list on Linux, so nextest fails at

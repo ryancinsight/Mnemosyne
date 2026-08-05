@@ -9,6 +9,14 @@
 
 ### Changed
 
+- Retire the three command-line Clippy allows from the CI gate
+  (ATLAS-MNEMOSYNE-CI-1). The workspace passes bare `-D warnings` under the
+  pinned 1.97.0 toolchain with `--target x86_64-unknown-linux-gnu` (the
+  runner's cfg(unix) code is otherwise stripped on Windows hosts): the
+  `needless_return`/`collapsible_if` cfg(unix) madvise sites no longer fire,
+  and the `missing_const_for_thread_local` false positive is already
+  suppressed at its site with its own removal trigger.
+
 - Add a GitHub Release workflow that validates crate identity and package
   contents before publishing through crates.io Trusted Publishing.
 - Keep cyclic workspace-only test dependencies path-only so Cargo excludes them
