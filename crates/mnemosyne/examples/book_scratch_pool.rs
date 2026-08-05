@@ -63,4 +63,3 @@ fn main() {
     println!("MAX_POOL_SLOTS = {MAX_POOL_SLOTS} (max concurrent nested borrows)");
     println!("all scratch-pool assertions passed");
 }
-

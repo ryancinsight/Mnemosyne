@@ -16,7 +16,10 @@ fn main() {
     let _ = std::vec::Vec::<u8>::with_capacity(64);
 
     let baseline = memory_stats();
-    println!("baseline: live={}", baseline.current_thread_live_allocations);
+    println!(
+        "baseline: live={}",
+        baseline.current_thread_live_allocations
+    );
 
     // Allocate across several size classes with a Vec<u64>.
     let sizes: &[usize] = &[8, 64, 256, 1024, 4096];
@@ -28,12 +31,10 @@ fn main() {
     let after_alloc = memory_stats();
     println!(
         "after alloc: live={}, mapped={} B",
-        after_alloc.current_thread_live_allocations,
-        after_alloc.current_mapped_bytes,
+        after_alloc.current_thread_live_allocations, after_alloc.current_mapped_bytes,
     );
     assert!(
-        after_alloc.current_thread_live_allocations
-            > baseline.current_thread_live_allocations,
+        after_alloc.current_thread_live_allocations > baseline.current_thread_live_allocations,
         "live count should increase after allocation"
     );
 
@@ -48,8 +49,7 @@ fn main() {
         after_free.retained_free_segments,
     );
     assert!(
-        after_free.current_thread_live_allocations
-            <= after_alloc.current_thread_live_allocations,
+        after_free.current_thread_live_allocations <= after_alloc.current_thread_live_allocations,
         "live count should decrease after free"
     );
     // mapped bytes may remain because free segments are cached for reuse.
@@ -63,8 +63,7 @@ fn main() {
     let after_purge = memory_stats();
     println!(
         "after purge: retained_free_segments={}, purge_calls={}",
-        after_purge.retained_free_segments,
-        after_purge.purge_calls,
+        after_purge.retained_free_segments, after_purge.purge_calls,
     );
     assert!(
         after_purge.purge_calls > after_free.purge_calls,
