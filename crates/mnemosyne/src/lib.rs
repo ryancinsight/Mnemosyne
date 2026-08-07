@@ -13,8 +13,9 @@ pub use mnemosyne_backend::{
     CudaDeviceBackend, CudaGddrBackend, CudaHbmBackend, CudaHostPinnedBackend, CudaUnifiedBackend,
     MemoryBackendWrapper, is_cuda_available,
 };
-pub use mnemosyne_core::{AllocPolicy, StandardPolicy, options::MnemosyneOptions};
-pub use mnemosyne_hardened::{HardenedPolicy, SecurePolicy};
+pub use mnemosyne_core::{
+    AllocPolicy, HardenedPolicy, SecurePolicy, StandardPolicy, options::MnemosyneOptions,
+};
 #[cfg(feature = "branded")]
 pub use mnemosyne_heap::{
     BrandedBlock, BrandedBox, BrandedCell, BrandedVec, Heap, InvariantLifetime, ReallocError,

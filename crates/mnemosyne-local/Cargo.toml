@@ -46,4 +46,3 @@ melinoe = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 mnemosyne-heap = { path = "../mnemosyne-heap" }
-mnemosyne-hardened = { path = "../mnemosyne-hardened" }

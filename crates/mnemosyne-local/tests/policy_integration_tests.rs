@@ -15,7 +15,7 @@
 
 use mnemosyne_backend::MemoryBackendWrapper as Backend;
 use mnemosyne_core::StandardPolicy;
-use mnemosyne_hardened::{HardenedPolicy, SecurePolicy};
+use mnemosyne_core::policy::{HardenedPolicy, SecurePolicy};
 use mnemosyne_local::{thread_alloc, thread_free, thread_realloc, usable_size};
 
 #[test]

@@ -1,5 +1,25 @@
 # Backlog
 
+- [x] [patch] **Internal policy SSOT consolidation — implemented; validation
+  blocked (2026-08-06).** `mnemosyne-core::policy` is the sole implementation
+  and canonical internal import surface for `SecurePolicy` and `HardenedPolicy`.
+  Removed the redundant internal `mnemosyne-hardened` dependency from the
+  `mnemosyne-memory`, `mnemosyne-local`, and `mnemosyne-benchmarks` manifests;
+  migrated the facade and all local policy tests to `mnemosyne-core`; and removed
+  exactly those three stale edges from `Cargo.lock`. The
+  `mnemosyne-hardened` package remains a deliberately thin compatibility
+  re-export for external dependents, so the public historical package identity
+  is preserved without a second implementation. Source audit finds no internal
+  `mnemosyne_hardened` imports outside that compatibility crate; its deliberate
+  `mnemosyne-hardened` workspace/lock entry remains only for that compatibility
+  package. Rustfmt, `git diff --check`, and per-package
+  `cargo metadata --manifest-path ... --locked --offline --no-deps` resolve.
+  Full root-workspace check/Clippy/Nextest/doctest gates remain blocked by the
+  pre-existing workspace overlay:
+  Cargo `--locked` attempts to reconcile stale patch/source metadata, while the
+  unlocked diagnostic run reached unrelated missing-docs failures and then ran
+  out of disk space. No unrelated registry lock refresh was retained.
+
 - [x] [patch] Publish future releases through a pinned GitHub Actions workflow
   using crates.io OIDC Trusted Publishing and no stored registry credential.
 

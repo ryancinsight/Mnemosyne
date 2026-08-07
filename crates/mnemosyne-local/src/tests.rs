@@ -367,7 +367,7 @@ fn thread_alloc_cold_charges_one_defrag_operation_per_page_refill() {
 
 #[test]
 fn hardened_policy_round_trip_alloc_free() {
-    use mnemosyne_hardened::HardenedPolicy;
+    use mnemosyne_core::policy::HardenedPolicy;
 
     let _guard = crate::local_alloc::TEST_LOCK
         .lock()
@@ -398,7 +398,7 @@ fn hardened_policy_round_trip_alloc_free() {
 
 #[test]
 fn hardened_policy_detects_freelist_tamper() {
-    use mnemosyne_hardened::HardenedPolicy;
+    use mnemosyne_core::policy::HardenedPolicy;
 
     let _guard = crate::local_alloc::TEST_LOCK
         .lock()

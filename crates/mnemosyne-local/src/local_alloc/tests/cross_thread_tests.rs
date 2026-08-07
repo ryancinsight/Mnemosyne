@@ -208,7 +208,7 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
     let _guard = TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
-    use mnemosyne_hardened::HardenedPolicy;
+    use mnemosyne_core::policy::HardenedPolicy;
     use std::sync::mpsc;
     use std::thread;
     use std::vec::Vec;
@@ -329,7 +329,7 @@ fn test_orphan_adoption_skips_policy_mismatched_segment() {
     let _guard = TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
-    use mnemosyne_hardened::HardenedPolicy;
+    use mnemosyne_core::policy::HardenedPolicy;
     use std::sync::mpsc;
     use std::thread;
 
@@ -395,7 +395,7 @@ fn test_mixed_policy_free_and_realloc_preserve_segment_encoding() {
     let _guard = TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
-    use mnemosyne_hardened::HardenedPolicy;
+    use mnemosyne_core::policy::HardenedPolicy;
     use std::alloc::Layout;
 
     // Safety: TEST_LOCK is held; no concurrent allocator activity.
