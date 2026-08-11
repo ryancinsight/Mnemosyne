@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- Replace the ten deferred book chapters with API-accurate prose covering the
+  size-class table, allocation policies, the global allocator, scratch pools,
+  segment lifecycle, decay/purge/reset, NUMA placement, hardened/secure
+  policies, profiling and leak detection, and the Atlas stack position.
+
 ### Fixed
 
 - Bind the `themis` crate alias to the renamed `themis-topology` package so

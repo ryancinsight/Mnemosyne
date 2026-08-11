@@ -193,6 +193,8 @@ audit, in priority order:
   canonical provider source. Re-open when crates.io contains `eunomia` and
   `melinoe` at the required versions and Themis has a released source-aligned
   dependency graph. Mnemosyne archive preparation then becomes a local gate.
+  This is an external release blocker, not an allocator implementation gap;
+  the local provider graph and arena guard/page-reset seams are already wired.
 
 - [x] [patch] status=done owner=codex scope=`crates/mnemosyne-benchmarks/benches/allocator/workers.rs` and `crates/mnemosyne-local/src/local_alloc/tests/`; last-update=2026-07-25. Restored workspace rustfmt cleanliness without changing benchmark or allocator behavior. Acceptance met: `cargo fmt --all --check`, `git diff --check`, focused nextest 216/216, and the affected benchmark-target compile pass.
 
