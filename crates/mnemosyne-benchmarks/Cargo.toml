@@ -28,13 +28,13 @@ rpmalloc = "0.2.2"
 snmalloc-rs = { version = "0.3", features = ["win8compat"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 serde_json = "1"
-mnemosyne = { package = "mnemosyne-memory", path = "../mnemosyne", version = "0.6.0", default-features = false }
-mnemosyne-arena = { path = "../mnemosyne-arena", version = "0.3.0" }
+mnemosyne = { package = "mnemosyne-memory", path = "../mnemosyne", version = "0.7.0", default-features = false }
+mnemosyne-arena = { path = "../mnemosyne-arena", version = "0.4.0" }
 mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.5.0" }
 mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.2.0" }
-mnemosyne-local = { path = "../mnemosyne-local", version = "0.3.0" }
-mnemosyne-heap = { path = "../mnemosyne-heap", version = "0.3.0" }
-mnemosyne-decay = { path = "../mnemosyne-decay", version = "0.2.0" }
+mnemosyne-local = { path = "../mnemosyne-local", version = "0.4.0" }
+mnemosyne-heap = { path = "../mnemosyne-heap", version = "0.4.0" }
+mnemosyne-decay = { path = "../mnemosyne-decay", version = "0.3.0" }
 mnemosyne-prof = { path = "../mnemosyne-prof", version = "0.2.0" }
 
 [target.'cfg(not(windows))'.dependencies]
