@@ -458,6 +458,19 @@ impl HasSegmentPool for ResetRecordingBackend {
 
 #[test]
 fn test_reset_segment_pool_propagates_correct_bounds() {
+    use mnemosyne_core::options::{MnemosyneOptions, set_options};
+
+    // This test needs the pool to actually retain the freed segment, so it
+    // establishes retention rather than inheriting whatever the build's
+    // default happens to be. Under Miri that default is deliberately 0
+    // (options.rs suppresses retention to keep leak evidence focused), which
+    // would leave nothing for `reset_segment_pool` to reset and fail the
+    // call-count assertion without any defect being present.
+    set_options(MnemosyneOptions {
+        max_retained_segments: mnemosyne_core::constants::MAX_RETAINED_SEGMENTS_LIMIT,
+        ..Default::default()
+    });
+
     while ResetRecordingBackend::global_segment_pool().pop().is_some() {}
     while ResetRecordingBackend::global_orphan_pool().pop().is_some() {}
     RESET_CALLS.store(0, Ordering::Relaxed);
@@ -498,6 +511,10 @@ fn test_reset_segment_pool_propagates_correct_bounds() {
         .expect("segment must be in the pool");
     let released = unsafe { release_segment_mapping::<ResetRecordingBackend>(popped) };
     assert_eq!(released, SegmentRelease::Released);
+
+    // Restore the build's default so this test leaves no global option state
+    // behind for anything sharing the process.
+    set_options(MnemosyneOptions::default());
 }
 
 #[test]
