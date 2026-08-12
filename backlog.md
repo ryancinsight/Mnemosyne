@@ -174,6 +174,47 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Open
 
+Filed from the 2026-08-12 verification-posture review:
+
+- [ ] [arch] **MN-433 — no concurrency model checking for the lock-free core.**
+  The workspace has no `loom` dependency at all, against 20 `compare_exchange`
+  sites, 316 atomic-ordering sites, and the structures the README advertises as
+  the design's centrepiece: the per-page atomic cross-thread free queue, the
+  lock-free `GLOBAL_ORPHAN_POOL`, and the reclamation-safe tagged pool stack.
+  The existing concurrency evidence is stress tests
+  (`*_concurrent_push_pop_conserves_every_segment`), which sample interleavings
+  rather than enumerate them, so an ordering bug needing a specific interleaving
+  is invisible to them. This is the largest remaining verification gap after the
+  Miri gate: Miri checks aliasing and leaks on the paths it executes, not the
+  happens-before edges these structures depend on.
+  Work: put the atomics behind a `cfg(loom)`-swappable module (`loom::sync::atomic`
+  under the cfg, `core::sync::atomic` otherwise), then model each structure's
+  push/pop and the page free-queue publish/reclaim pair.
+  Acceptance: loom models for those three structures passing under a stated
+  interleaving bound, run as a CI job, with ABA addressed by design and stated
+  rather than assumed. The models must be genuinely bounded-exhaustive — a loom
+  test that merely runs is not evidence.
+
+- [ ] [patch] **MN-434 — audit the 53 `SeqCst` sites against the weakest
+  sufficient ordering.** Each atomic access should name the happens-before edge
+  it needs and use the weakest ordering supplying it; 53 `SeqCst` sites in a hot
+  allocator suggests some exceed their edge, and `SeqCst` is the most expensive
+  ordering on every target. Explicitly sequenced *after* MN-433: retuning
+  orderings without a model checker is how correct-looking code acquires
+  interleaving bugs. Acceptance: each changed site names its edge and the loom
+  models pass unchanged at the relaxed ordering; no site is relaxed on reasoning
+  alone.
+
+- [ ] [patch] **MN-435 — no sanitizer or non-x86 coverage.** CI runs one
+  ubuntu-latest x86-64 job, leaving ThreadSanitizer and AddressSanitizer unused
+  and the platform-specific paths — `cfg(unix)` madvise and hugepage hints,
+  `SEGMENT_ALIGN` assumptions, the Windows backend — untested on any second
+  target. aarch64 has a weaker memory model than x86-64, which is exactly where
+  over-relaxed orderings surface: x86-64 hides acquire/release mistakes that ARM
+  exposes, so MN-434 is materially weaker without it. A native ARM runner is
+  available (`ubuntu-24.04-arm`, already used by hermes). Acceptance: an aarch64
+  job plus a TSan job, or a recorded decision not to.
+
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
 
