@@ -176,6 +176,20 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 Filed from the 2026-08-12 verification-posture review:
 
+- [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
+  deliberately and each exclusion is listed here so none is silent:
+  (a) crates other than `mnemosyne-arena` and `mnemosyne-memory-core` — the
+  segment-alignment and tagged-pointer structures reconstruct pointers from
+  exposed provenance, which Miri reports (gap_audit.md, 2026-07-13); each
+  further crate joins only once it passes;
+  (b) the `*_concurrency` stress binaries, sized for native execution
+  (8 threads x 50,000 iterations for the huge pool) and hopeless under an
+  interpreter that preempts at every atomic — interleaving coverage belongs to
+  MN-433, not to Miri.
+  Acceptance: (a) shrinks as crates are cleaned or the exposed-provenance sites
+  are migrated to strict provenance; (b) is retired by MN-433 landing. Neither
+  should be closed by relaxing the job.
+
 - [ ] [arch] **MN-433 — no concurrency model checking for the lock-free core.**
   The workspace has no `loom` dependency at all, against 20 `compare_exchange`
   sites and 316 atomic-ordering sites. The existing concurrency evidence is

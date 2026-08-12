@@ -119,10 +119,23 @@ jobs:
       # Isolation is disabled because the allocator reads the clock and the OS
       # page size; leak checking stays on, since a leak is precisely what this
       # allocator must never do.
+      #
+      # The `*_concurrency` integration binaries are excluded. They are stress
+      # tests sized for native execution — 8 threads x 50,000 iterations for the
+      # huge pool, 4 x 20,000 for the segment pool — and Miri interprets every
+      # instruction while preempting at every atomic, so the huge-pool one ran
+      # past 600s while the smaller one merely crawled. That is workload size,
+      # not a hang: the two differ by 5x in operations and behaved accordingly.
+      # Raising the bound again would only buy a slower red. The exclusion is a
+      # scope decision, not a suppression — Miri's value here is aliasing and
+      # leak checking over the unit tests, whereas exhaustive interleaving
+      # coverage is loom's job and is tracked as MN-433.
       - name: Miri — arena
         env:
           MIRIFLAGS: -Zmiri-disable-isolation
-        run: cargo +nightly miri nextest run -p mnemosyne-arena --locked --profile miri
+        run: >-
+          cargo +nightly miri nextest run -p mnemosyne-arena --locked
+          --profile miri -E 'not binary(/concurrency/)'
 
       - name: Miri — core
         env:
