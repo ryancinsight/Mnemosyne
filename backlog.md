@@ -174,6 +174,96 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 ## Open
 
+Filed from the 2026-08-12 verification-posture review:
+
+- [ ] [patch] **MN-437 — Miri reports UB in `reclaim_thread_free`'s segment
+  access.** The new Miri gate's first real find, in the cross-thread free
+  reclamation path:
+  `crates/mnemosyne-core/src/types/page/reclaim.rs:49`, reached from
+  `reclaim_thread_free::<P>` → `reclaim_thread_free_dynamic` →
+  `reclaim_thread_free_dynamic_for_segment`:
+  `error: Undefined Behavior: not granting access to tag <wildcard> because
+  that would remove [Unique for <N>] which is strongly protected`.
+  Cause: `reclaim_thread_free_dynamic_for_segment` takes `&mut self` on `Page`,
+  which is a `Unique` borrow *strongly protected for the whole call* because it
+  is a function argument. `Page` lives inside `Segment.pages`, so the
+  `(*segment).cookie_for_dynamic(..)` access — through a pointer carrying
+  wildcard provenance from `parent_segment()` — would have to pop that
+  protected `Unique`. Reordering inside the body cannot help: the receiver
+  borrow is live from function entry.
+  This is the same class as the 2026-07-13 page-metadata aliasing closure, whose
+  gap_audit note asserts "no cross-thread path forms `&mut Page`". This path
+  does, so either that invariant regressed or this instance was never covered —
+  determine which, because the answer decides whether other callers are affected.
+  Likely fix: carry the page as `*mut Page`/`NonNull<Page>` through this seam
+  instead of `&mut self`, so no protected `Unique` is live across the segment
+  access; alternatively compute `cookie` in the caller and pass it in. Both
+  change a `pub unsafe fn` on `Page`, so classify the `mnemosyne-memory-core`
+  semver impact.
+  Verify under **both** Stacked and Tree Borrows, as the 2026-07-13 closure did
+  — this report is Stacked Borrows, which is explicitly experimental, and the
+  fix should not be accepted on one model alone.
+  Acceptance: the UB is gone under both models and `mnemosyne-memory-core`
+  rejoins the Miri job (MN-436a), which is the standing proof it stays gone.
+
+- [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
+  deliberately and each exclusion is listed here so none is silent:
+  (a) crates other than `mnemosyne-arena` and `mnemosyne-memory-core` — the
+  segment-alignment and tagged-pointer structures reconstruct pointers from
+  exposed provenance, which Miri reports (gap_audit.md, 2026-07-13); each
+  further crate joins only once it passes;
+  (b) the `*_concurrency` stress binaries, sized for native execution
+  (8 threads x 50,000 iterations for the huge pool) and hopeless under an
+  interpreter that preempts at every atomic — interleaving coverage belongs to
+  MN-433, not to Miri.
+  Acceptance: (a) shrinks as crates are cleaned or the exposed-provenance sites
+  are migrated to strict provenance; (b) is retired by MN-433 landing. Neither
+  should be closed by relaxing the job.
+
+- [ ] [arch] **MN-433 — no concurrency model checking for the lock-free core.**
+  The workspace has no `loom` dependency at all, against 20 `compare_exchange`
+  sites and 316 atomic-ordering sites. The existing concurrency evidence is
+  stress tests (`*_concurrent_push_pop_conserves_every_segment`), which sample
+  interleavings rather than enumerate them, so an ordering bug needing a
+  specific interleaving is invisible to them. This is the largest remaining
+  verification gap after the Miri gate: Miri checks aliasing and leaks on the
+  paths it executes, not the happens-before edges these structures depend on.
+  Priority order established by reading the structures rather than assuming:
+  `AtomicFreeList` (the page-local cross-thread free queue) is the genuinely
+  lock-free one and comes first, together with the page publish/reclaim pair.
+  `TaggedSegmentStack` — backing both the segment pool and the orphan pool —
+  serializes head mutation under a per-stack lock, and its reclamation argument
+  and Acquire-on-CAS-failure reasoning are already stated explicitly in the
+  module docs, so loom there confirms a written argument rather than probing an
+  unexamined one. That makes it lower priority, not unnecessary.
+  Work: put the atomics behind a `cfg(loom)`-swappable module (`loom::sync::atomic`
+  under the cfg, `core::sync::atomic` otherwise), then model each structure's
+  push/pop and the page free-queue publish/reclaim pair.
+  Acceptance: loom models for those three structures passing under a stated
+  interleaving bound, run as a CI job, with ABA addressed by design and stated
+  rather than assumed. The models must be genuinely bounded-exhaustive — a loom
+  test that merely runs is not evidence.
+
+- [ ] [patch] **MN-434 — audit the 53 `SeqCst` sites against the weakest
+  sufficient ordering.** Each atomic access should name the happens-before edge
+  it needs and use the weakest ordering supplying it; 53 `SeqCst` sites in a hot
+  allocator suggests some exceed their edge, and `SeqCst` is the most expensive
+  ordering on every target. Explicitly sequenced *after* MN-433: retuning
+  orderings without a model checker is how correct-looking code acquires
+  interleaving bugs. Acceptance: each changed site names its edge and the loom
+  models pass unchanged at the relaxed ordering; no site is relaxed on reasoning
+  alone.
+
+- [ ] [patch] **MN-435 — no sanitizer or non-x86 coverage.** CI runs one
+  ubuntu-latest x86-64 job, leaving ThreadSanitizer and AddressSanitizer unused
+  and the platform-specific paths — `cfg(unix)` madvise and hugepage hints,
+  `SEGMENT_ALIGN` assumptions, the Windows backend — untested on any second
+  target. aarch64 has a weaker memory model than x86-64, which is exactly where
+  over-relaxed orderings surface: x86-64 hides acquire/release mistakes that ARM
+  exposes, so MN-434 is materially weaker without it. A native ARM runner is
+  available (`ubuntu-24.04-arm`, already used by hermes). Acceptance: an aarch64
+  job plus a TSan job, or a recorded decision not to.
+
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
 

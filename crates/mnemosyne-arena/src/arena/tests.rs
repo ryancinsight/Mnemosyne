@@ -282,6 +282,22 @@ fn huge_allocation_decommits_tail_slack() {
     let released =
         unsafe { deallocate_large_or_huge::<DecommitRecordingHugeBackend>(user_ptr, recovered) };
     assert!(released);
+
+    // Freeing a huge allocation caches its segment in the global huge pool for
+    // reuse rather than returning the mapping to the backend, so `released`
+    // above means "ownership transferred", not "mapping released". The cached
+    // segment is still live process-wide when the test ends, which leaves
+    // global state dirty for other tests and reads as a leak to any checker
+    // that inspects allocations at exit — Miri's leak detector reported exactly
+    // this mapping. Purging returns it through the backend, so the test is
+    // hermetic and leak checking stays meaningful instead of being switched off.
+    //
+    // SAFETY: this test holds `TEST_LOCK`, so no other test is touching this
+    // backend's pools, and the segment above is the only entry it cached.
+    unsafe {
+        <DecommitRecordingHugeBackend as HasSegmentPool>::global_huge_pool()
+            .purge::<DecommitRecordingHugeBackend>();
+    }
 }
 
 #[test]
