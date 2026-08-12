@@ -176,6 +176,36 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 Filed from the 2026-08-12 verification-posture review:
 
+- [ ] [patch] **MN-437 — Miri reports UB in `reclaim_thread_free`'s segment
+  access.** The new Miri gate's first real find, in the cross-thread free
+  reclamation path:
+  `crates/mnemosyne-core/src/types/page/reclaim.rs:49`, reached from
+  `reclaim_thread_free::<P>` → `reclaim_thread_free_dynamic` →
+  `reclaim_thread_free_dynamic_for_segment`:
+  `error: Undefined Behavior: not granting access to tag <wildcard> because
+  that would remove [Unique for <N>] which is strongly protected`.
+  Cause: `reclaim_thread_free_dynamic_for_segment` takes `&mut self` on `Page`,
+  which is a `Unique` borrow *strongly protected for the whole call* because it
+  is a function argument. `Page` lives inside `Segment.pages`, so the
+  `(*segment).cookie_for_dynamic(..)` access — through a pointer carrying
+  wildcard provenance from `parent_segment()` — would have to pop that
+  protected `Unique`. Reordering inside the body cannot help: the receiver
+  borrow is live from function entry.
+  This is the same class as the 2026-07-13 page-metadata aliasing closure, whose
+  gap_audit note asserts "no cross-thread path forms `&mut Page`". This path
+  does, so either that invariant regressed or this instance was never covered —
+  determine which, because the answer decides whether other callers are affected.
+  Likely fix: carry the page as `*mut Page`/`NonNull<Page>` through this seam
+  instead of `&mut self`, so no protected `Unique` is live across the segment
+  access; alternatively compute `cookie` in the caller and pass it in. Both
+  change a `pub unsafe fn` on `Page`, so classify the `mnemosyne-memory-core`
+  semver impact.
+  Verify under **both** Stacked and Tree Borrows, as the 2026-07-13 closure did
+  — this report is Stacked Borrows, which is explicitly experimental, and the
+  fix should not be accepted on one model alone.
+  Acceptance: the UB is gone under both models and `mnemosyne-memory-core`
+  rejoins the Miri job (MN-436a), which is the standing proof it stays gone.
+
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and each exclusion is listed here so none is silent:
   (a) crates other than `mnemosyne-arena` and `mnemosyne-memory-core` — the
