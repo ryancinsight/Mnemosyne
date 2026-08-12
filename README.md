@@ -29,7 +29,7 @@ Its design incorporates core lessons from modern allocator research (specificall
 *   Reclamation of remote frees is batched and executed strictly after local free lists are exhausted, preserving the hot allocation path while keeping page ownership explicit.
 
 ### 4. Orphaned Segment Adoption & Reuse
-*   When a thread terminates, its active segments are not immediately returned to the OS. Partially occupied segments are pushed to a lock-free `GLOBAL_ORPHAN_POOL`.
+*   When a thread terminates, its active segments are not immediately returned to the OS. Partially occupied segments are pushed to the `GLOBAL_ORPHAN_POOL`, a tagged-pointer intrusive stack (`TaggedSegmentStack`) whose head mutations are serialized by a per-stack lock. The lock is deliberate, not a shortcut: the mutation tag rejects a stale CAS but cannot stop a concurrent decay sweep from releasing the observed mapping before `pop` dereferences its successor link, so the lock — not the tag — is the reclamation-safety mechanism. This pool is therefore *not* lock-free; the page-local cross-thread free queue (`AtomicFreeList`) is.
 *   Active threads seeking new pages scan this pool and adopt orphaned segments, scanning for empty pages to repurpose (recycling them across different size classes) and resuming allocations from partially filled pages, eliminating address-space leaks.
 
 ### 5. Zero-Panic Library Assurance

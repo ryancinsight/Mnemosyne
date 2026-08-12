@@ -178,15 +178,20 @@ Filed from the 2026-08-12 verification-posture review:
 
 - [ ] [arch] **MN-433 — no concurrency model checking for the lock-free core.**
   The workspace has no `loom` dependency at all, against 20 `compare_exchange`
-  sites, 316 atomic-ordering sites, and the structures the README advertises as
-  the design's centrepiece: the per-page atomic cross-thread free queue, the
-  lock-free `GLOBAL_ORPHAN_POOL`, and the reclamation-safe tagged pool stack.
-  The existing concurrency evidence is stress tests
-  (`*_concurrent_push_pop_conserves_every_segment`), which sample interleavings
-  rather than enumerate them, so an ordering bug needing a specific interleaving
-  is invisible to them. This is the largest remaining verification gap after the
-  Miri gate: Miri checks aliasing and leaks on the paths it executes, not the
-  happens-before edges these structures depend on.
+  sites and 316 atomic-ordering sites. The existing concurrency evidence is
+  stress tests (`*_concurrent_push_pop_conserves_every_segment`), which sample
+  interleavings rather than enumerate them, so an ordering bug needing a
+  specific interleaving is invisible to them. This is the largest remaining
+  verification gap after the Miri gate: Miri checks aliasing and leaks on the
+  paths it executes, not the happens-before edges these structures depend on.
+  Priority order established by reading the structures rather than assuming:
+  `AtomicFreeList` (the page-local cross-thread free queue) is the genuinely
+  lock-free one and comes first, together with the page publish/reclaim pair.
+  `TaggedSegmentStack` — backing both the segment pool and the orphan pool —
+  serializes head mutation under a per-stack lock, and its reclamation argument
+  and Acquire-on-CAS-failure reasoning are already stated explicitly in the
+  module docs, so loom there confirms a written argument rather than probing an
+  unexamined one. That makes it lower priority, not unnecessary.
   Work: put the atomics behind a `cfg(loom)`-swappable module (`loom::sync::atomic`
   under the cfg, `core::sync::atomic` otherwise), then model each structure's
   push/pop and the page free-queue publish/reclaim pair.
