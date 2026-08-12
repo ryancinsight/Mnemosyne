@@ -78,3 +78,52 @@ jobs:
         run: >-
           cargo test --locked --workspace
           --exclude mnemosyne-benchmarks --exclude mnemosyne-c-shim --doc
+
+  # Miri has repeatedly been the tool that found real defects here — the
+  # 2026-07-13 page-metadata aliasing violation and the AlignedVec::into_vec
+  # leak were both caught under it (gap_audit.md). Until now it ran only by
+  # hand during those investigations, so nothing stopped that defect class from
+  # returning. This job makes it standing.
+  #
+  # Scope is deliberately per-crate rather than workspace-wide. The allocator's
+  # segment alignment and tagged-pointer structures reconstruct pointers from
+  # exposed provenance, which Miri reports (gap_audit.md, 2026-07-13 closure),
+  # so a blanket run would be red for a known and accepted reason. Crates are
+  # added here only once they actually pass; the excluded ones are tracked
+  # rather than silently absent.
+  miri:
+    name: Miri (aliasing and leak checking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the Miri nightly toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: nightly
+          components: miri
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
+        with:
+          tool: nextest@0.9.140
+
+      # Isolation is disabled because the allocator reads the clock and the OS
+      # page size; leak checking stays on, since a leak is precisely what this
+      # allocator must never do.
+      - name: Miri — arena
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+        run: cargo +nightly miri nextest run -p mnemosyne-arena --locked
+
+      - name: Miri — core
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+        run: cargo +nightly miri nextest run -p mnemosyne-memory-core --locked
