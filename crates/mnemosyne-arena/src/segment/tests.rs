@@ -722,13 +722,17 @@ fn test_arena_stats_report_runtime_retained_cap() {
     let stats = arena_memory_stats::<FailingReleaseBackend>();
     assert_eq!(stats.max_retained_free_segments, 7);
 
-    // Restore the default; the stat must follow (the default option equals
-    // the compile-time limit).
+    // Restore the default; the stat must follow it. Compare against the
+    // default option itself rather than the compile-time limit: the two are
+    // equal in ordinary builds, but under Miri the default is deliberately 0
+    // (options.rs suppresses retention so Miri's leak evidence stays focused
+    // on live allocations). Asserting the constant encoded that build-specific
+    // coincidence and made this test fail under Miri for no defect.
     set_options(MnemosyneOptions::default());
     let stats = arena_memory_stats::<FailingReleaseBackend>();
     assert_eq!(
         stats.max_retained_free_segments,
-        mnemosyne_core::constants::MAX_RETAINED_SEGMENTS_LIMIT
+        MnemosyneOptions::default().max_retained_segments
     );
 }
 

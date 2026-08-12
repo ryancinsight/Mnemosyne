@@ -122,9 +122,9 @@ jobs:
       - name: Miri — arena
         env:
           MIRIFLAGS: -Zmiri-disable-isolation
-        run: cargo +nightly miri nextest run -p mnemosyne-arena --locked
+        run: cargo +nightly miri nextest run -p mnemosyne-arena --locked --profile miri
 
       - name: Miri — core
         env:
           MIRIFLAGS: -Zmiri-disable-isolation
-        run: cargo +nightly miri nextest run -p mnemosyne-memory-core --locked
+        run: cargo +nightly miri nextest run -p mnemosyne-memory-core --locked --profile miri
