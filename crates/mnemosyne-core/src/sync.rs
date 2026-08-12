@@ -31,8 +31,10 @@ pub struct AtomicFreeList {
 /// That holds for mainstream 64-bit userspace targets: x86-64 and AArch64
 /// canonical low-half addresses use at most 48 bits under 4-level paging, and
 /// Linux/Windows keep default `mmap`/`VirtualAlloc` allocations below `2^47`
-/// even when 5-level paging (LA57) or large VAs are enabled. `push`
-/// `debug_assert!`s the invariant. The counter cannot wrap in practice because
+/// even when 5-level paging (LA57) or large VAs are enabled. `push` enforces
+/// the invariant in every build: an address that does not fit aborts through
+/// `abort_on_corruption`, it is not a debug-only assertion that disappears in
+/// release. The counter cannot wrap in practice because
 /// a page holds at most `PAGE_SIZE / MIN_BLOCK_SIZE` (<= 4096) blocks, far
 /// below the counter's `2^(64 - PACKED_PTR_BITS)` capacity. The 32-bit fallback
 /// `impl` below stores a bare `AtomicPtr` and counts in O(k).
