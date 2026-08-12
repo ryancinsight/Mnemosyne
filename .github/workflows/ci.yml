@@ -64,20 +64,21 @@ jobs:
           --all-targets --
           -D warnings
 
-      # mnemosyne-c-shim is excluded from the test steps: its test binary
-      # exits without producing a test list on Linux, so nextest fails at
-      # discovery. That predates this workflow and is not understood yet --
-      # it is a C ABI shim, so the harness may not survive its linkage.
-      # Tracked separately; the crate is still built and linted above.
+      # mnemosyne-c-shim is back in scope. Its test binary used to exit
+      # without producing a test list on Linux: the shim defines malloc,
+      # free and friends as no_mangle, which on ELF interposes libc
+      # process-wide, so the harness's own startup allocations routed
+      # through the shim before it was ready. Those seven symbols are now
+      # exported only outside cfg(test), so the harness links a normal libc.
       - name: Run native tests
         run: >-
           cargo nextest run --locked --workspace
-          --exclude mnemosyne-benchmarks --exclude mnemosyne-c-shim
+          --exclude mnemosyne-benchmarks
 
       - name: Run documentation tests
         run: >-
           cargo test --locked --workspace
-          --exclude mnemosyne-benchmarks --exclude mnemosyne-c-shim --doc
+          --exclude mnemosyne-benchmarks --doc
 
   # Miri has repeatedly been the tool that found real defects here — the
   # 2026-07-13 page-metadata aliasing violation and the AlignedVec::into_vec
