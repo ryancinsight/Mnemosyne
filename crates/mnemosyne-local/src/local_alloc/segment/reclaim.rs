@@ -56,7 +56,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 }
 
                 Segment::set_owner(curr, SegmentOwner::NONE);
-                (*curr).owner_allocator = core::ptr::null_mut();
+                Segment::set_owner_allocator(curr, core::ptr::null_mut());
                 (*curr).is_current = false;
                 (*curr).next_owned_segment = core::ptr::null_mut();
                 (*curr).prev_owned_segment = core::ptr::null_mut();
@@ -312,7 +312,7 @@ unsafe fn detach_and_release_segment<B: HasSegmentPool>(segment: *mut Segment) {
     // access before ownership returns to the pool.
     unsafe {
         Segment::set_owner(segment, SegmentOwner::NONE);
-        (*segment).owner_allocator = core::ptr::null_mut();
+        Segment::set_owner_allocator(segment, core::ptr::null_mut());
         deallocate_segment::<B>(segment);
     }
 }

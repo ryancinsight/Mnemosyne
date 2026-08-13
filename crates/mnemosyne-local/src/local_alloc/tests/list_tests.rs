@@ -32,14 +32,14 @@ fn owned_segment_list_is_doubly_linked_and_unlinks_in_place() {
         unsafe {
             Segment::initialize(ptr, core::ptr::null_mut(), 0);
             assert!(
-                (*ptr).owner_allocator.is_null(),
+                Segment::owner_allocator(ptr).is_null(),
                 "initialized segment owner_allocator must start null"
             );
             alloc.push_owned_segment::<StandardPolicy>(ptr);
         }
         seg[i] = ptr;
         assert_eq!(
-            unsafe { (*ptr).owner_allocator },
+            unsafe { Segment::owner_allocator(ptr) },
             (&mut alloc as *mut ThreadAllocator<DefaultBackend>).cast(),
             "owned segment must cache the owning allocator pointer"
         );

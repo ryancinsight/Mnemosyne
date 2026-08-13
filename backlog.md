@@ -218,33 +218,51 @@ Filed from the 2026-08-12 verification-posture review:
   aliasing UB is eliminated — it now reaches the multithreaded tests, where the
   remaining failures are data races on *segment* metadata, tracked as MN-439.
 
-- [ ] [arch] **MN-439 — shared segment metadata is non-atomic.** Uncovered by
-  MN-438 getting far enough for Miri to reach the cross-thread tests. `Segment`
-  fields are written by the owning thread while remote threads read them during
-  cross-thread free, with no synchronization. Three instances found so far, in
-  the order Miri surfaced them:
-  1. `owner` — **fixed in MN-438's change**: now `AtomicUsize` behind
-     `Segment::owner`/`set_owner` with a documented Release/Acquire pairing.
-     `AtomicUsize` matches `usize`'s size and alignment, so the pinned segment
-     layout is unchanged.
-  2. `owner_allocator` — plain `*mut c_void`, written at
-     `segment/reclaim.rs` while orphaning, read concurrently. Not yet fixed.
-  3. `is_current` — plain `bool`, written at `local_alloc.rs` while another
-     thread reads the segment. Not yet fixed.
-  There is also a structural half: **any `&Segment` retags the whole struct**, so
-  a shared reference races with a concurrent write to *any* field. That is why
-  `Segment::owner` takes a raw pointer rather than `&self` — a `&self` accessor
-  reintroduced the race against `is_current` immediately. `cookie_for_dynamic`
-  and friends still take `&self` and are on the cross-thread free path.
-  Note the `unsafe impl Sync for Segment` comment asserts "all non-atomic fields
-  are mutated solely by the proven owner ... so a shared reference observes no
-  data race". Miri contradicts that: the owner mutates them while remote threads
-  are reading. Either the claim or the code is wrong, and the evidence says the
-  claim.
-  Acceptance: `mnemosyne-local` joins the Miri job clean, which requires every
-  concurrently-read segment field atomic and no `&Segment` on cross-thread
-  paths. Sequence this with MN-433 — loom is the tool that proves the resulting
-  orderings, and this item is the concrete motivation for it.
+- [x] [arch] **MN-439 — shared segment metadata is non-atomic.** Done for the
+  segment header. The cross-thread free path no longer races with the owner:
+  `owner` and `owner_allocator` are atomic with a documented Release/Acquire
+  pairing, and `cookie_for`, `cookie_for_dynamic`, `free_list_encrypted` and
+  `Page::parent_segment_of` take raw pointers so nothing on that path retags a
+  whole `Segment` or `Page`. `AtomicUsize`/`AtomicPtr` match the sizes and
+  alignments they replace, so the pinned layout is unchanged.
+  The structural half was the important one: a *shared* reference is enough to
+  race. `&Segment` retags the entire header, so it conflicts with any concurrent
+  field write regardless of which field the reader wanted — which is why an
+  accessor taking `&self` reintroduced the race immediately after the field
+  itself was made atomic.
+  `Segment`'s `unsafe impl Sync` justification was rewritten. It had claimed
+  "all non-atomic fields are mutated solely by the proven owner ... so a shared
+  reference observes no data race"; both halves were false and Miri contradicted
+  them. A safety comment asserting an invariant the code does not hold is worse
+  than no comment, because it is what a reader checks against.
+  Evidence: `mnemosyne-local` under Miri no longer reports any data race.
+  Remaining failures there are MN-440 and two Miri-on-Windows limitations
+  (subprocess abort tests calling `CompareStringOrdinal`), not defects.
+
+- [ ] [arch] **MN-440 — the re-entrancy guard lives inside the object it
+  guards.** `with_allocator_unguarded` forms `&mut ThreadAllocator` and *then*
+  tests `alloc.is_allocating` to reject re-entry. On a re-entrant call the outer
+  `&mut` is still live and strongly protected, so the second reference is
+  already UB before the check runs — the guard is read through the very aliasing
+  it exists to prevent. Miri reports it from
+  `unguarded_fast_path_rejects_reentrant_borrow`, the test written to prove this
+  path is safe.
+  Reordering to read the flag first is necessary but not sufficient (done, with
+  the residual unsoundness stated at the site): a strongly-protected `&mut`
+  excludes *all* access through other tags, so even a raw read of one field
+  conflicts. The flag cannot work while it lives inside `ThreadAllocator`.
+  Fix: move the re-entry flag out of the allocator — into the TLS slot beside
+  the cached pointer, or a separate thread-local — so testing it touches a
+  different allocation entirely. ~12 call sites across `mnemosyne-local` and
+  `mnemosyne-heap`.
+  Acceptance: `mnemosyne-local` joins the Miri job clean, which is also MN-439's
+  outstanding acceptance and is blocked only by this.
+
+- [ ] [patch] **MN-441 — `is_current` is non-atomic.** Written by the owning
+  thread; not read on any cross-thread path today, so Miri does not flag it, but
+  nothing in the type enforces that and the earlier `&self` accessor experiment
+  raced against exactly this field. Either make it atomic like its neighbours or
+  document why it is owner-only, at the field.
 
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and each exclusion is listed here so none is silent:

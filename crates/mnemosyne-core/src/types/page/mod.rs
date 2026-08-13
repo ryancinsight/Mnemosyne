@@ -123,6 +123,22 @@ impl Page {
         (self_addr & !(crate::constants::SEGMENT_SIZE - 1)) as *mut Segment
     }
 
+    /// Recovers the parent segment from a raw page pointer without retagging
+    /// the page.
+    ///
+    /// The `&self` form above is fine on owner-only paths, but on cross-thread
+    /// paths the reference retags the whole `Page`, which races against the
+    /// owner's concurrent metadata writes. This form takes the address only.
+    ///
+    /// # Safety
+    ///
+    /// `page` must identify a live page inside its segment mapping.
+    #[inline(always)]
+    pub unsafe fn parent_segment_of(page: *const Page) -> *mut Segment {
+        let addr = page as usize;
+        (addr & !(crate::constants::SEGMENT_SIZE - 1)) as *mut Segment
+    }
+
     /// Returns the physical start address of this page in memory.
     #[inline(always)]
     pub fn page_start(&self) -> *mut u8 {

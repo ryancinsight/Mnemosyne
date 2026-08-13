@@ -10,6 +10,7 @@ use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::constants::{MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE};
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::round_up_size;
+use mnemosyne_core::types::Segment;
 use mnemosyne_core::types::{Block, locate_segment};
 
 /// Whether a small reallocation can stay in its current size class.
@@ -203,8 +204,9 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                             // metadata before materializing `page_ref`,
                             // because the exclusive page borrow must not
                             // overlap this shared parent-segment access.
-                            let encrypted = (*segment).free_list_encrypted;
-                            let cookie = (*segment).cookie_for_dynamic(encrypted, page_index);
+                            let encrypted = Segment::free_list_encrypted(segment);
+                            let cookie =
+                                Segment::cookie_for_dynamic(segment, encrypted, page_index);
                             // SAFETY: `page` is the exclusively-borrowed page
                             // owning the old block; reborrowing yields the sole
                             // live `&mut` for the free bookkeeping below.

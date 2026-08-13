@@ -81,15 +81,29 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
     ) -> Option<R> {
         let ptr = S::get_cached_cell(|cell| cell.get());
         if !ptr.is_null() {
+            // The re-entry flag is read through a raw projection, before any
+            // reference exists — forming `&mut` first and then testing the flag
+            // commits the exact aliasing the flag exists to reject.
+            //
+            // This ordering is necessary but NOT sufficient, and the code is
+            // still unsound on the re-entrant path: a strongly-protected `&mut`
+            // excludes *all* access through other tags, so even this read
+            // conflicts with a live outer borrow. Miri reports it from
+            // `unguarded_fast_path_rejects_reentrant_borrow`. The flag cannot
+            // fix this while it lives inside the object it guards; relocating it
+            // out of `ThreadAllocator` is tracked as MN-440.
+            //
             // SAFETY: `ptr` is this thread's own allocator pointer cached in its
-            // thread-local cell; the pointee is exclusive to the current thread.
-            // `is_allocating` gates same-thread re-entry, and the caller of this
-            // `unsafe fn` upholds the no-re-entry contract of
-            // `with_allocator_unguarded`, so no aliasing `&mut` can be formed.
-            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
-            if alloc.is_allocating {
+            // thread-local cell; the pointee is exclusive to the current thread,
+            // so projecting to one field and reading it is valid.
+            let is_allocating = unsafe { (*(ptr as *const ThreadAllocator<B>)).is_allocating };
+            if is_allocating {
                 return None;
             }
+            // SAFETY: the flag read above proves no outer borrow is live, and
+            // the caller of this `unsafe fn` upholds the no-re-entry contract,
+            // so this `&mut` is unaliased.
+            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
             Some(f(alloc))
         } else {
             S::get_slot_standard(|slot| {

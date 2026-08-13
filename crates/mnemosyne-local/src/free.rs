@@ -116,7 +116,7 @@ unsafe fn thread_free_classified<
     let (is_owner, owner_allocator) = {
         let tid = mnemosyne_core::types::current_thread_id();
         if owner.matches_thread_id(tid) {
-            (true, unsafe { (*segment).owner_allocator })
+            (true, unsafe { Segment::owner_allocator(segment) })
         } else {
             (false, core::ptr::null_mut())
         }
@@ -153,8 +153,8 @@ unsafe fn thread_free_classified<
         let page_free = unsafe { (*page_ptr).free };
         // SAFETY: `segment`/`page_index` locate this page's parent header and its
         // key slot, satisfying `cookie_for`'s contract.
-        let encrypted = unsafe { (*segment).free_list_encrypted };
-        let cookie = unsafe { (*segment).cookie_for_dynamic(encrypted, page_index) };
+        let encrypted = unsafe { Segment::free_list_encrypted(segment) };
+        let cookie = unsafe { Segment::cookie_for_dynamic(segment, encrypted, page_index) };
 
         if unsafe { (*page_ptr).list_state } != 2 {
             // Page is active
@@ -244,7 +244,7 @@ unsafe fn thread_free_cold<B: HasSegmentPool + LocalAllocatorSelector<B>>(
     page: *mut Page,
     block: *mut Block,
 ) {
-    let encrypted = unsafe { (*(*page).parent_segment()).free_list_encrypted };
+    let encrypted = unsafe { Segment::free_list_encrypted(Page::parent_segment_of(page)) };
     if B::ENABLE_CPU_CACHE
         && per_cpu::try_free_cpu(ptr, unsafe { (*page).size_class } as usize, encrypted)
     {
@@ -352,8 +352,8 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
     // SAFETY: `segment` is the live segment header owning `page` per the
     // `# Safety` contract and `page_index` is this page's index, satisfying
     // `cookie_for`'s contract.
-    let encrypted = unsafe { (*segment).free_list_encrypted };
-    let cookie = unsafe { (*segment).cookie_for_dynamic(encrypted, page_index) };
+    let encrypted = unsafe { Segment::free_list_encrypted(segment) };
+    let cookie = unsafe { Segment::cookie_for_dynamic(segment, encrypted, page_index) };
     // SAFETY: `block` points to a valid block in `page` per the `# Safety`
     // contract; writing its embedded next pointer reinitializes the free-list
     // link and stays inside the block this caller now owns.

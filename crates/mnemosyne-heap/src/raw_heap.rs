@@ -232,7 +232,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         // SAFETY: exclusive, thread-confined access to the allocator per the
         // `# Safety` contract, so `&mut` from the `UnsafeCell` is sound.
         let alloc = unsafe { &mut *self.allocator.get() };
-        let encrypted = unsafe { (*segment).free_list_encrypted };
+        let encrypted = unsafe { mnemosyne_core::types::Segment::free_list_encrypted(segment) };
         if alloc.is_allocating {
             // SAFETY: re-entrant free while the allocator is mid-operation;
             // `block` is a non-null live block of `page` (allocator
@@ -250,7 +250,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         // SAFETY: `segment` is the live segment owning `page`; `page_index`
         // indexes its `keys` array (sized `PAGES_PER_SEGMENT`) and is the
         // page's own index, so the read is in bounds.
-        let cookie = unsafe { (*segment).cookie_for_dynamic(encrypted, page_index) };
+        let cookie = unsafe { Segment::cookie_for_dynamic(segment, encrypted, page_index) };
         // SAFETY: `(*segment).is_current` reads a flag in the live segment
         // header.
         if page_alloc_count != 1 || unsafe { (*segment).is_current } {

@@ -42,7 +42,7 @@ impl Page {
             // `index_in_segment` is this page's in-range index, satisfying
             // `cookie_for`'s contract.
             let cookie =
-                unsafe { (*self.parent_segment()).cookie_for::<P>(self.index_in_segment()) };
+                unsafe { Segment::cookie_for::<P>(self.parent_segment(), self.index_in_segment()) };
             // SAFETY: `block` came from `self.free`, the page-local free list
             // whose nodes are validated above to lie within the page and be
             // `MIN_BLOCK_SIZE`-aligned, so `block.as_ptr()` is a valid, aligned
@@ -160,7 +160,7 @@ impl Page {
             // SAFETY: `segment` is the valid parent header and `page_index` is
             // in range, satisfying `cookie_for`'s contract. This read shares the
             // page projection's provenance, so neither invalidates the other.
-            let cookie = unsafe { (*segment).cookie_for::<P>(page_index) };
+            let cookie = unsafe { Segment::cookie_for::<P>(segment, page_index) };
 
             // SAFETY: `page` addresses initialized page metadata in `segment`.
             let block_size = unsafe { (*page).block_size };

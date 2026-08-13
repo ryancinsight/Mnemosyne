@@ -1,7 +1,7 @@
 //! Synchronization primitives for the allocator, including lock-free structures.
 
 use crate::loom_shim::Ordering;
-use crate::types::Block;
+use crate::types::{Block, Segment};
 use core::ptr::NonNull;
 
 /// A lock-free, atomic singly-linked list of blocks.
@@ -102,7 +102,7 @@ impl AtomicFreeList {
         // index, satisfying `cookie_for`'s contract.
         let cookie = unsafe {
             let (segment, page_index) = crate::types::locate_segment(block_ptr.cast::<u8>());
-            (*segment.cast_const()).cookie_for_dynamic(encrypted, page_index)
+            Segment::cookie_for_dynamic(segment.cast_const(), encrypted, page_index)
         };
 
         let mut current = self.head.load(Ordering::Relaxed);
