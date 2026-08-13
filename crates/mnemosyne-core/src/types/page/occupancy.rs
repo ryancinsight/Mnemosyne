@@ -8,57 +8,19 @@ use crate::abort::abort_on_corruption;
 use crate::types::{Page, Segment};
 
 impl Page {
-    /// Sets the active allocation count for this page and updates the parent
-    /// segment's hierarchical `page_occupied_mask` bit vector in-place.
+    /// Sets `alloc_count` addressing the page through its containing segment,
+    /// updating the segment's hierarchical `page_occupied_mask` on a
+    /// zero/non-zero transition.
     ///
-    /// # Safety
+    /// # Why these are segment-addressed rather than `&mut self`
     ///
-    /// The caller must guarantee that the parent segment is a valid Segment mapping.
-    #[inline(always)]
-    pub unsafe fn set_alloc_count(&mut self, count: usize) {
-        let old = self.alloc_count;
-        if old == count {
-            return;
-        }
-        if (old == 0) != (count == 0) {
-            let segment = self.parent_segment();
-            let idx = self.page_index as usize;
-            // SAFETY: `parent_segment` returns this page's parent segment header
-            // (every `Page` lives inside its segment's `pages` array), and `idx`
-            // is this page's own `page_index`, so the per-segment precondition of
-            // `set_alloc_count_for_segment` holds.
-            unsafe { self.set_alloc_count_for_segment(segment, idx, count) };
-        } else {
-            self.alloc_count = count;
-        }
-    }
-
-    /// Sets `alloc_count` when the caller already knows the containing segment
-    /// and page index.
-    ///
-    /// # Safety
-    ///
-    /// `segment` must be this page's parent segment, and `page_index` must be
-    /// this page's index in `segment.pages`.
-    #[inline(always)]
-    pub unsafe fn set_alloc_count_for_segment(
-        &mut self,
-        segment: *mut Segment,
-        page_index: usize,
-        count: usize,
-    ) {
-        // SAFETY: the caller's contract supplies the valid parent header and
-        // in-range index this forwards unchanged.
-        unsafe { Self::set_alloc_count_in_segment(segment, page_index, count) }
-    }
-
-    /// Sets `alloc_count` addressing the page through its containing segment.
-    ///
-    /// This is the form reclamation uses. Deriving the page pointer from
-    /// `segment` keeps the page write and the `is_current` / occupancy-mask
-    /// accesses on one provenance; a `&mut self` receiver would put them on two
-    /// and let the segment access invalidate the page borrow (see the
-    /// `reclaim` module's note).
+    /// Every function here writes page metadata *and* reaches the parent
+    /// segment header. With a `&mut self` receiver those two accesses descend
+    /// from different pointers — the page borrow covers only the page's bytes —
+    /// so the segment access invalidates the borrow. Miri reports it as UB (see
+    /// the `reclaim` module's note). Projecting the page out of `segment` puts
+    /// both on one provenance. The page argument is redundant anyway: segment
+    /// plus index determines it.
     ///
     /// # Safety
     ///
@@ -93,104 +55,103 @@ impl Page {
         }
     }
 
-    /// Increments `alloc_count`, updating the segment occupancy bit only on
-    /// the empty-to-occupied transition.
+    /// Increments `alloc_count`, setting the segment occupancy bit only on the
+    /// empty-to-occupied transition.
     ///
     /// # Safety
     ///
-    /// The caller must guarantee that the parent segment is a valid Segment mapping.
+    /// Carries [`Page::set_alloc_count_in_segment`]'s contract.
     #[inline(always)]
-    pub unsafe fn increment_alloc_count(&mut self) {
-        let old = self.alloc_count;
-        self.alloc_count = old + 1;
-        if old == 0 {
-            let segment = self.parent_segment();
-            let idx = self.page_index as usize;
-            // SAFETY: `parent_segment` returns `self`'s parent header and `idx`
-            // is this page's index, satisfying the per-segment precondition of
-            // `set_segment_page_occupied`.
-            unsafe { Self::set_segment_page_occupied(segment, idx, true) };
-        }
-    }
-
-    /// Increments `alloc_count` when the caller already knows the containing
-    /// segment and page index.
-    ///
-    /// # Safety
-    ///
-    /// `segment` must be this page's parent segment, and `page_index` must be
-    /// this page's index in `segment.pages`.
-    #[inline(always)]
-    pub unsafe fn increment_alloc_count_for_segment(
-        &mut self,
-        segment: *mut Segment,
-        page_index: usize,
-    ) {
+    pub unsafe fn increment_alloc_count_in_segment(segment: *mut Segment, page_index: usize) {
         debug_assert!(page_index < crate::constants::PAGES_PER_SEGMENT);
-        let old = self.alloc_count;
-        self.alloc_count = old + 1;
+        // SAFETY: valid header and in-range index, as above.
+        let page = unsafe { &raw mut (*segment).pages[page_index] };
+        // SAFETY: `page` addresses initialized page metadata inside `segment`.
+        let old = unsafe { (*page).alloc_count };
+        // SAFETY: as above.
+        unsafe { (*page).alloc_count = old + 1 };
         if old == 0 {
-            // SAFETY: caller's `# Safety` contract guarantees `segment` is the
-            // parent header and `page_index` is in range (`debug_assert`ed
-            // above), so the occupancy-bit update is valid.
+            // SAFETY: valid parent header and in-range index, so the
+            // occupancy-bit update is valid.
             unsafe { Self::set_segment_page_occupied(segment, page_index, true) };
         }
     }
 
-    /// Decrements `alloc_count`, updating the segment occupancy bit only on
-    /// the occupied-to-empty transition.
+    /// Decrements `alloc_count`, clearing the segment occupancy bit only on the
+    /// occupied-to-empty transition.
     ///
     /// # Safety
     ///
-    /// The caller must guarantee that the parent segment is a valid Segment mapping.
+    /// Carries [`Page::set_alloc_count_in_segment`]'s contract.
     #[inline(always)]
-    pub unsafe fn decrement_alloc_count(&mut self) {
-        if self.alloc_count == 0 {
+    pub unsafe fn decrement_alloc_count_in_segment(segment: *mut Segment, page_index: usize) {
+        debug_assert!(page_index < crate::constants::PAGES_PER_SEGMENT);
+        // SAFETY: valid header and in-range index, as above.
+        let page = unsafe { &raw mut (*segment).pages[page_index] };
+        // SAFETY: `page` addresses initialized page metadata inside `segment`.
+        if unsafe { (*page).alloc_count } == 0 {
             abort_on_corruption("decrement_alloc_count on a page with zero live allocations");
         }
-        let count = self.alloc_count - 1;
-        self.alloc_count = count;
-        if count == 0 {
-            let segment = self.parent_segment();
-            let idx = self.page_index as usize;
-            // SAFETY: `parent_segment` returns `self`'s parent header, so reading
-            // `is_current` is a valid read of initialized metadata.
-            if unsafe { !(*segment).is_current } {
-                // SAFETY: same parent-segment header and in-range `idx`, so the
-                // occupancy-bit clear targets a valid `page_occupied_mask`.
-                unsafe { Self::set_segment_page_occupied(segment, idx, false) };
-            }
+        // SAFETY: as above; the zero case aborted.
+        let count = unsafe { (*page).alloc_count } - 1;
+        // SAFETY: as above.
+        unsafe { (*page).alloc_count = count };
+        // SAFETY: valid parent header, so reading `is_current` is valid.
+        if count == 0 && unsafe { !(*segment).is_current } {
+            // SAFETY: same header and in-range index, so clearing the occupancy
+            // bit is valid.
+            unsafe { Self::set_segment_page_occupied(segment, page_index, false) };
         }
     }
 
-    /// Decrements `alloc_count` when the caller already knows the containing
-    /// segment and page index.
+    /// Receiver-taking forms retained for callers not yet converted to the
+    /// segment-addressed API (`mnemosyne-local`'s page fast path; MN-438).
+    ///
+    /// These recover the segment by masking the receiver's address, which
+    /// produces a pointer with wildcard provenance. The resulting segment
+    /// access invalidates the `&mut self` borrow, so **using the receiver after
+    /// one of these calls is Undefined Behavior**. They exist because removing
+    /// them would require threading `(segment, page_index)` through the
+    /// allocator's page state in one step; prefer the `_in_segment` forms in
+    /// any new code.
     ///
     /// # Safety
     ///
-    /// `segment` must be this page's parent segment, and `page_index` must be
-    /// this page's index in `segment.pages`.
+    /// The caller must guarantee the parent segment is a valid mapping, and
+    /// must not use the receiver after the call.
     #[inline(always)]
-    pub unsafe fn decrement_alloc_count_for_segment(
-        &mut self,
-        segment: *mut Segment,
-        page_index: usize,
-    ) {
-        debug_assert!(page_index < crate::constants::PAGES_PER_SEGMENT);
-        if self.alloc_count == 0 {
-            abort_on_corruption(
-                "decrement_alloc_count_for_segment on a page with zero live allocations",
-            );
-        }
-        let count = self.alloc_count - 1;
-        self.alloc_count = count;
-        // SAFETY: caller's `# Safety` contract guarantees `segment` is the
-        // parent header, so reading `is_current` is valid.
-        if count == 0 && unsafe { !(*segment).is_current } {
-            // SAFETY: same parent header and in-range `page_index`
-            // (`debug_assert`ed above), so clearing the occupancy bit is valid.
-            unsafe { Self::set_segment_page_occupied(segment, page_index, false) };
-        }
+    pub unsafe fn set_alloc_count(&mut self, count: usize) {
+        let segment = self.parent_segment();
+        let idx = self.page_index as usize;
+        // SAFETY: `parent_segment` returns this page's parent header and `idx`
+        // is its own index, satisfying the `_in_segment` contract.
+        unsafe { Self::set_alloc_count_in_segment(segment, idx, count) }
+    }
+
+    /// See [`Page::set_alloc_count`] for the provenance caveat.
+    ///
+    /// # Safety
+    ///
+    /// Carries [`Page::set_alloc_count`]'s contract.
+    #[inline(always)]
+    pub unsafe fn increment_alloc_count(&mut self) {
+        let segment = self.parent_segment();
+        let idx = self.page_index as usize;
+        // SAFETY: as above.
+        unsafe { Self::increment_alloc_count_in_segment(segment, idx) }
+    }
+
+    /// See [`Page::set_alloc_count`] for the provenance caveat.
+    ///
+    /// # Safety
+    ///
+    /// Carries [`Page::set_alloc_count`]'s contract.
+    #[inline(always)]
+    pub unsafe fn decrement_alloc_count(&mut self) {
+        let segment = self.parent_segment();
+        let idx = self.page_index as usize;
+        // SAFETY: as above.
+        unsafe { Self::decrement_alloc_count_in_segment(segment, idx) }
     }
 
     #[inline(always)]

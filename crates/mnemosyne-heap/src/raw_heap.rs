@@ -261,7 +261,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             unsafe {
                 (*block).set_next_dynamic(page_free, encrypted, cookie);
                 page.free = Some(NonNull::new_unchecked(block));
-                page.decrement_alloc_count_for_segment(segment, page_index);
+                mnemosyne_core::types::Page::decrement_alloc_count_in_segment(segment, page_index);
             }
             return;
         }
