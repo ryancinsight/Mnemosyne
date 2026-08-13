@@ -240,23 +240,39 @@ Filed from the 2026-08-12 verification-posture review:
   (subprocess abort tests calling `CompareStringOrdinal`), not defects.
 
 - [ ] [arch] **MN-440 — the re-entrancy guard lives inside the object it
-  guards.** `with_allocator_unguarded` forms `&mut ThreadAllocator` and *then*
-  tests `alloc.is_allocating` to reject re-entry. On a re-entrant call the outer
-  `&mut` is still live and strongly protected, so the second reference is
-  already UB before the check runs — the guard is read through the very aliasing
-  it exists to prevent. Miri reports it from
+  guards.** Attempted and reverted; the design is now fully specified, including
+  the constraint that sank the first attempt.
+  The defect: `with_allocator_unguarded` (and the equivalents in `RawHeap` and
+  every TLS provider) forms `&mut ThreadAllocator` and *then* tests
+  `alloc.is_allocating`. On a re-entrant call the outer `&mut` is live and
+  strongly protected, so the second reference is already UB before the check
+  runs — the guard is read through the very aliasing it exists to reject.
+  Reordering does not help: a protected `&mut` excludes *all* access through
+  other tags, including a raw read of one field. Miri reports it from
   `unguarded_fast_path_rejects_reentrant_borrow`, the test written to prove this
   path is safe.
-  Reordering to read the flag first is necessary but not sufficient (done, with
-  the residual unsoundness stated at the site): a strongly-protected `&mut`
-  excludes *all* access through other tags, so even a raw read of one field
-  conflicts. The flag cannot work while it lives inside `ThreadAllocator`.
-  Fix: move the re-entry flag out of the allocator — into the TLS slot beside
-  the cached pointer, or a separate thread-local — so testing it touches a
-  different allocation entirely. ~12 call sites across `mnemosyne-local` and
-  `mnemosyne-heap`.
-  Acceptance: `mnemosyne-local` joins the Miri job clean, which is also MN-439's
-  outstanding acceptance and is blocked only by this.
+  Established design: the gate must be a sibling of the allocator, not a field
+  inside it — a `Cell<bool>` on `LocalAllocatorSlot` and on `RawHeap`, checked
+  before any borrow is formed. `ThreadAllocator` loses the field; its one
+  internal user (`record_defrag_operation` -> `run_periodic_defragmentation`)
+  takes the state as a parameter, which all three call sites already know
+  because they just set it.
+  **The constraint that killed the first attempt**, and the thing to get right
+  next time: the TLS fast paths cache the *allocator* address, and that address
+  is also the segment **owner token** compared by `SegmentOwner::matches` on
+  every free. The first attempt made TLS cache the slot address instead so the
+  gate was reachable — which silently changed the token, so every self-free
+  would have misrouted as a cross-thread free. Found by chasing compile errors,
+  not by design, which is why it was reverted rather than pushed through.
+  Correct approach: leave `get_allocator_ptr_raw*` returning the allocator token
+  untouched, and add a *parallel* slot accessor used only by the gate paths.
+  Scope: `LocalAllocatorSlot`, `RawHeap`, `ThreadAllocator`, the `TlsProvider`
+  trait and its three implementations, the selector macro, and the alloc/free
+  hot paths. Every `_raw` consumer must be audited for token-versus-slot
+  semantics before landing.
+  Acceptance: `mnemosyne-local` joins the Miri job clean under both borrow
+  models — this is the only blocker left for that, and therefore for MN-439's
+  outstanding acceptance too.
 
 - [ ] [patch] **MN-441 — `is_current` is non-atomic.** Written by the owning
   thread; not read on any cross-thread path today, so Miri does not flag it, but
