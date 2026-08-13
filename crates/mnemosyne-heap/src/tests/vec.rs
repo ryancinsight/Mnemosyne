@@ -274,3 +274,34 @@ fn test_branded_vec_extensions() {
         assert_eq!(vec[3], 40);
     });
 }
+
+/// As for `BrandedBox`: the buffer must return to the heap even when an
+/// element's destructor unwinds out of the slice drop glue. Exactly one
+/// panicking element, because a second would panic during the first's unwind
+/// and abort.
+#[test]
+fn test_branded_vec_frees_buffer_when_element_destructor_panics() {
+    scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+        let before = heap.stats().current_thread_live_allocations;
+
+        let mut vec = BrandedVec::new(&heap);
+        vec.push(&mut token, PanicOnDrop(2))
+            .expect("branded vector push failed");
+        assert_eq!(
+            heap.stats().current_thread_live_allocations,
+            before + 1,
+            "the vector must hold exactly one live buffer"
+        );
+
+        assert!(
+            catch_expected_panic(move || drop(vec)),
+            "the element destructor's panic must propagate"
+        );
+
+        assert_eq!(
+            heap.stats().current_thread_live_allocations,
+            before,
+            "the buffer must return to the heap on the unwind path too"
+        );
+    });
+}

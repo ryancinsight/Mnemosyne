@@ -296,6 +296,49 @@ pub unsafe fn deallocate_segment<B: HasSegmentPool>(segment: *mut Segment) {
     }
 }
 
+/// Returns a segment to the global pool without ever waiting on another
+/// thread's pool critical section.
+///
+/// [`deallocate_segment`] waits for the pool's lifetime lock for as long as its
+/// holder needs. A destructor must not: the standard's rule is that destructors
+/// do not block, and thread teardown stalling behind unrelated pool traffic is
+/// exactly the failure that rule exists to prevent.
+///
+/// The disposal ladder is the blocking function's, with every wait bounded:
+/// offer the segment to the retention cache; failing that — cap reached *or*
+/// lock busy — hand the mapping back to the OS, which waits on the kernel
+/// rather than on a peer thread; failing that, offer it once more. Returns
+/// `false` only when all three decline, in which case the caller still owns
+/// `segment` and must place it.
+///
+/// # Safety
+///
+/// As [`deallocate_segment`]: `segment` must be a valid, initialized `Segment`
+/// exclusively owned by the caller, allocated by backend `B`. Ownership is
+/// given up only when this returns `true`.
+#[inline]
+pub unsafe fn try_deallocate_segment<B: HasSegmentPool>(segment: *mut Segment) -> bool {
+    if segment.is_null() {
+        return true;
+    }
+    // SAFETY: `segment` is a valid, exclusively-owned `Segment` per this
+    // function's contract, which is the pool's push contract.
+    if unsafe { B::global_segment_pool().try_push_retained_without_waiting(segment) } {
+        return true;
+    }
+    // SAFETY: the pool declined, so `segment` is still exclusively owned here
+    // and `B` is the backend that allocated it; releasing the mapping is the
+    // same step `deallocate_segment` takes when the retention cap is reached.
+    match unsafe { release_segment_mapping::<B>(segment) } {
+        SegmentRelease::Released => true,
+        SegmentRelease::RetainedAfterFailure => {
+            // SAFETY: the backend declined to release `segment`, so it remains a
+            // valid, initialized, exclusively-owned `Segment`.
+            unsafe { B::global_segment_pool().try_push_retained_without_waiting(segment) }
+        }
+    }
+}
+
 /// Attempts to release one segment mapping to the backend.
 ///
 /// # Monomorphization and ZST Static Routing

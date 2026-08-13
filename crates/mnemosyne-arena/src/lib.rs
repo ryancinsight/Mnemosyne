@@ -18,5 +18,5 @@ pub use scratch::{AlignedVec, DEFAULT_SCRATCH_ALIGN, ScratchBank, ScratchElement
 pub use segment::{
     ArenaMemoryStats, GlobalHugePool, GlobalSegmentPool, HasSegmentPool, MAX_RETAINED_SEGMENTS,
     SEGMENT_MAPPING_SIZE, allocate_segment, arena_memory_stats, checked_align_up,
-    deallocate_segment, purge_segment_pool, reset_segment_pool,
+    deallocate_segment, purge_segment_pool, reset_segment_pool, try_deallocate_segment,
 };
