@@ -65,7 +65,7 @@ impl Page {
         // range, satisfying `cookie_for_dynamic`'s contract. This read and every
         // page access below descend from the same `segment` pointer, so neither
         // invalidates the other.
-        let cookie = unsafe { (*segment).cookie_for_dynamic(encrypted, page_index) };
+        let cookie = unsafe { Segment::cookie_for_dynamic(segment, encrypted, page_index) };
 
         // SAFETY: `page` points at initialized page metadata inside `segment`.
         let Some((block, count)) = (unsafe { (*page).thread_free.pop_all(encrypted, cookie) })

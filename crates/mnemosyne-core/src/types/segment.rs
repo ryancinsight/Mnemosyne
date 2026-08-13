@@ -22,7 +22,17 @@ pub struct Segment {
     /// [`Segment::set_owner`], which carry the release/acquire pairing.
     pub owner: core::sync::atomic::AtomicUsize,
     /// Raw owner allocator cache pointer used after ownership has been proved.
-    pub owner_allocator: *mut core::ffi::c_void,
+    ///
+    /// Atomic for the same reason as [`Segment::owner`]: the owning thread
+    /// writes it when claiming or orphaning the segment while remote threads
+    /// read it on the cross-thread free path. As a plain pointer that pairing
+    /// was a data race, which Miri reported against the orphaning write in
+    /// `segment::reclaim`. `AtomicPtr` matches a raw pointer's size and
+    /// alignment, so the pinned segment layout is unchanged. Access through
+    /// [`Segment::owner_allocator`] / [`Segment::set_owner_allocator`], which
+    /// carry the same Release/Acquire pairing as the owner token they
+    /// accompany.
+    pub owner_allocator: core::sync::atomic::AtomicPtr<core::ffi::c_void>,
     /// True while this segment is the owner's active page-slicing segment.
     pub is_current: bool,
     /// Pointer to the next segment owned by the same ThreadAllocator.
@@ -66,11 +76,23 @@ pub struct Segment {
 // thread-affine, so transferring ownership of a `Segment` header between
 // threads (`Send`) is sound once the previous owner has released it.
 unsafe impl Send for Segment {}
-// SAFETY: shared `&Segment` access across threads is sound because the only
-// concurrently-mutated state reachable from a shared reference is each page's
-// `AtomicFreeList` (itself `Sync`); all non-atomic fields are mutated solely by
-// the proven owner under the ownership protocol described above, so a shared
-// reference observes no data race.
+// SAFETY: the cross-thread-reachable state is synchronized: each page's
+// `AtomicFreeList`, and the `owner` / `owner_allocator` identity pair, are
+// atomic. `free_list_encrypted` and the per-page `keys` are written only during
+// initialization, before the segment is published to any other thread.
+//
+// The previous justification here claimed that "all non-atomic fields are
+// mutated solely by the proven owner ... so a shared reference observes no data
+// race". That was false in both halves, and Miri contradicted it: the owner
+// mutated `owner`/`owner_allocator`/`is_current` *while* remote threads read
+// the header on the cross-thread free path, and forming a shared reference at
+// all retags the whole `Segment`, so it races with any concurrent field write
+// regardless of which field the reader wanted. That is why the accessors here
+// take `*const Segment` and project to one field rather than taking `&self`.
+//
+// `is_current` remains non-atomic and is still written by the owner. It is not
+// read on any cross-thread path today, but nothing in the type enforces that —
+// tracked as MN-441.
 unsafe impl Sync for Segment {}
 
 /// Recovers the parent segment header and page index for a user pointer.
@@ -129,7 +151,7 @@ impl Segment {
             segment.raw_alloc_ptr = raw_alloc_ptr;
             (*core::ptr::addr_of_mut!(segment.owner)) =
                 core::sync::atomic::AtomicUsize::new(SegmentOwner::NONE.0);
-            segment.owner_allocator = core::ptr::null_mut();
+            segment.owner_allocator = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
             segment.is_current = false;
             segment.next_owned_segment = core::ptr::null_mut();
             segment.prev_owned_segment = core::ptr::null_mut();
@@ -211,12 +233,25 @@ impl Segment {
     /// `self` must be this page's parent segment header and `page_index` must be
     /// a valid index into `keys` (`< PAGES_PER_SEGMENT`).
     #[inline(always)]
-    pub unsafe fn cookie_for_dynamic(&self, encrypted: bool, page_index: usize) -> usize {
+    pub unsafe fn cookie_for_dynamic(
+        segment: *const Segment,
+        encrypted: bool,
+        page_index: usize,
+    ) -> usize {
         if encrypted {
             debug_assert!(page_index < PAGES_PER_SEGMENT);
-            // SAFETY: the caller's contract guarantees `self` is the valid parent
-            // header and `page_index` is in range, so the key read is valid.
-            unsafe { *self.keys.get_unchecked(page_index) }
+            // Projected rather than reached through `&self`: this runs on the
+            // cross-thread free path, where the owning thread may concurrently
+            // write other segment fields. A reference retags the *whole*
+            // `Segment`, which races with those writes — Miri reported exactly
+            // that against `owner_allocator`. Touching only `keys` does not.
+            //
+            // SAFETY: the caller's contract guarantees `segment` is the valid
+            // parent header and `page_index` is in range.
+            let keys = unsafe { &raw const (*segment).keys };
+            // SAFETY: `keys` addresses the initialized per-page key array and
+            // `page_index` is in range.
+            unsafe { *(*keys).get_unchecked(page_index) }
         } else {
             0
         }
@@ -238,14 +273,69 @@ impl Segment {
     ///
     /// Same contract as [`Segment::cookie_for_dynamic`].
     #[inline(always)]
-    pub unsafe fn cookie_for<P: crate::policy::AllocPolicy>(&self, page_index: usize) -> usize {
+    pub unsafe fn cookie_for<P: crate::policy::AllocPolicy>(
+        segment: *const Segment,
+        page_index: usize,
+    ) -> usize {
+        // SAFETY: caller guarantees a valid header; reading one field by
+        // projection avoids retagging the whole segment.
         debug_assert_eq!(
-            self.free_list_encrypted,
+            unsafe { Self::free_list_encrypted(segment) },
             P::ENABLE_FREE_LIST_ENCRYPTION,
             "free-list mode mismatch: policy vs segment (ADR 0001)"
         );
         // SAFETY: forwarded unchanged from this method's `# Safety` contract.
-        unsafe { self.cookie_for_dynamic(P::ENABLE_FREE_LIST_ENCRYPTION, page_index) }
+        unsafe { Self::cookie_for_dynamic(segment, P::ENABLE_FREE_LIST_ENCRYPTION, page_index) }
+    }
+
+    /// Reads the segment's free-list encryption mode.
+    ///
+    /// Raw-pointer form for the same reason as the other accessors here: this
+    /// runs on the cross-thread free path, and a `&Segment` retags the whole
+    /// header, racing with the owner's concurrent writes to unrelated fields.
+    /// The field itself is only written during initialization, before the
+    /// segment is published, so a plain read of it is sound once the retag is
+    /// avoided.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must point to a live segment header.
+    #[inline(always)]
+    pub unsafe fn free_list_encrypted(segment: *const Segment) -> bool {
+        // SAFETY: caller guarantees a live header; the projection touches only
+        // this field.
+        unsafe { (*segment).free_list_encrypted }
+    }
+
+    /// Reads the cached owner-allocator pointer.
+    ///
+    /// Raw-pointer form and `Acquire` for the same reasons as
+    /// [`Segment::owner`]: a `&self` accessor would retag the whole segment,
+    /// and this read must observe the state the owner published.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must point to a live segment header.
+    #[inline(always)]
+    pub unsafe fn owner_allocator(segment: *const Segment) -> *mut core::ffi::c_void {
+        // SAFETY: caller guarantees a live header; the projection touches only
+        // the atomic field.
+        let field = unsafe { &raw const (*segment).owner_allocator };
+        // SAFETY: `field` addresses the initialized atomic slot.
+        unsafe { (*field).load(core::sync::atomic::Ordering::Acquire) }
+    }
+
+    /// Publishes the cached owner-allocator pointer.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must point to a live segment header.
+    #[inline(always)]
+    pub unsafe fn set_owner_allocator(segment: *const Segment, allocator: *mut core::ffi::c_void) {
+        // SAFETY: caller guarantees a live header.
+        let field = unsafe { &raw const (*segment).owner_allocator };
+        // SAFETY: `field` addresses the initialized atomic slot.
+        unsafe { (*field).store(allocator, core::sync::atomic::Ordering::Release) };
     }
 
     /// Reads the segment's owner identity.
