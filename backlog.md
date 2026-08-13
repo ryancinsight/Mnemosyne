@@ -338,6 +338,16 @@ Filed from the 2026-08-12 verification-posture review:
     `allocation_side_reclaim_counts_cross_thread_blocks_exactly` was already
     observed at 235s, so the margin here is thin and the timing-out test may
     simply be a heavier sibling.
+  **Runtime is the other open question, and it is larger than expected.** A
+  full lib-test pass measured 402s under Stacked Borrows and 5,732s (95 min)
+  under Tree Borrows — roughly 14x, not the small multiple assumed when the
+  two-model gate was specified. With the integration binaries on top, a Tree
+  Borrows step on every PR is close to an hour and a half of CI per run. Decide
+  the scoping before wiring it up: Stacked Borrows per PR with Tree Borrows on
+  a schedule or merge-only is the obvious split, and it preserves the property
+  that motivated two models (MN-437's first fix passed Stacked while Tree
+  Borrows still rejected it) as long as the Tree Borrows run gates merges
+  rather than being purely informational.
   Intended job configuration, verified green for the lib tests and ready to
   commit once the two above are resolved: two steps, `Miri — local (Stacked
   Borrows)` and `Miri — local (Tree Borrows)`, running
