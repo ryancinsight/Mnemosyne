@@ -199,20 +199,34 @@ Filed from the 2026-08-12 verification-posture review:
   the reclaim call had disabled the tag). A single-model gate would have
   certified a still-broken fix, which is why the job now runs both.
 
-- [ ] [patch] **MN-438 — the same `&mut Page`-across-segment-access pattern
-  remains in `mnemosyne-local`.** MN-437 fixed `mnemosyne-memory-core` and its
-  call sites now pass a real segment pointer, but `mnemosyne-local` still holds
-  `&mut Page` across operations that reach the segment — `try_reclaim_and_allocate`
-  takes `&mut Page` and has five callers, and the routing/segment-reclaim paths
-  form `&mut (*segment).pages[i]` around calls that read the segment header.
-  Not visible today because `mnemosyne-local` is not in the Miri job; adding it
-  is how this gets found and confirmed, and is the natural next step after
-  MN-436's scope shrinks. Converting that hot path is a larger refactor than
-  MN-437 and is deliberately separate: it touches the allocator's allocation
-  fast path, not just a reclamation seam.
+- [ ] [arch] **MN-438 — convert `mnemosyne-local`'s page fast path to
+  segment-addressed access.** Partially delivered; the remainder is larger than
+  this item was filed as and is reclassified [patch] -> [arch].
+  Delivered: `mnemosyne-core` no longer contains the pattern. `initialize_free_list`
+  and the three `alloc_count` families gained `_in_segment` forms that project
+  the page out of the segment, so page writes and the `is_current` /
+  occupancy-mask / cookie reads share one provenance. `mnemosyne-heap` and the
+  crates' own call sites use them.
+  Not delivered, and why: `mnemosyne-local`'s page API is `&mut Page`-shaped end
+  to end — `try_allocate_page_local`, `pop_page_free_block`,
+  `try_reclaim_and_allocate` and the routing paths all take `&mut Page`, and the
+  allocator's state carries `NonNull<Page>` rather than `(segment, page_index)`.
+  Converting it is not a signature sweep: the segment must be threaded through
+  the allocator's page state, which is an architectural change to the
+  allocation fast path's data flow, not a refactor of one seam. Attempting it in
+  the same increment as the core conversion would have meant a half-converted
+  hot path.
+  The receiver-taking forms are therefore retained as documented compatibility
+  wrappers that delegate to the `_in_segment` forms. They carry an explicit
+  caveat: they recover the segment by masking the receiver's address, so using
+  the receiver after such a call is UB. That is exactly the status quo before
+  this change — nothing regressed — but it is now stated at the API rather than
+  discovered by Miri.
   Acceptance: `mnemosyne-local` joins the Miri job clean under both borrow
-  models, or the residual sites are shown to be sound with the argument written
-  down.
+  models, and the compatibility wrappers are deleted. Adding that crate to the
+  job is how the remaining sites get enumerated; the local reproduction is
+  `cargo +nightly miri test -p mnemosyne-local` (currently reports UB at
+  `occupancy.rs` reached from `alloc_tests`).
 
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and each exclusion is listed here so none is silent:

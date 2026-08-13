@@ -55,7 +55,12 @@ fn test_page_reclaim_thread_free() {
 
     unsafe {
         let page_start = (*page).page_start();
-        (*page).initialize_free_list::<crate::policy::StandardPolicy>(page_start, 0);
+        Page::initialize_free_list_in_segment::<crate::policy::StandardPolicy>(
+            segment_ptr,
+            PAGE_INDEX,
+            page_start,
+            0,
+        );
     }
 
     let first = unsafe { (*page).pop_block::<crate::policy::StandardPolicy>() };
@@ -101,7 +106,12 @@ fn test_page_reclaim_thread_free_hot_path() {
 
     unsafe {
         let page_start = (*page).page_start();
-        (*page).initialize_free_list::<crate::policy::StandardPolicy>(page_start, 0);
+        Page::initialize_free_list_in_segment::<crate::policy::StandardPolicy>(
+            segment_ptr,
+            PAGE_INDEX,
+            page_start,
+            0,
+        );
     }
 
     let b1 = unsafe { (*page).pop_block::<crate::policy::StandardPolicy>() };
@@ -158,25 +168,37 @@ fn randomized_page_free_list_uses_seeded_permutation() {
         "alloc_zeroed failed to allocate segment"
     );
     unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
-    let page = unsafe { &mut (*segment_ptr).pages[1] };
-    page.block_size = 16;
-    page.size_class = 0;
+    // Addressed through the segment: free-list initialization reads the
+    // segment's cookie, and a page borrow held across that access is
+    // invalidated by it.
+    const PAGE_INDEX: usize = 1;
+    let page = unsafe { &raw mut (*segment_ptr).pages[PAGE_INDEX] };
+    unsafe {
+        (*page).block_size = 16;
+        (*page).size_class = 0;
+    }
 
     unsafe {
-        let page_start = page.page_start();
-        page.initialize_free_list::<RandomizedTestPolicy>(page_start, (7 << 16) | 5);
+        let page_start = (*page).page_start();
+        Page::initialize_free_list_in_segment::<RandomizedTestPolicy>(
+            segment_ptr,
+            PAGE_INDEX,
+            page_start,
+            (7 << 16) | 5,
+        );
 
-        let first = page.pop_block::<RandomizedTestPolicy>();
-        let second = page.pop_block::<RandomizedTestPolicy>();
+        let first = (*page).pop_block::<RandomizedTestPolicy>();
+        let second = (*page).pop_block::<RandomizedTestPolicy>();
+        let block_size = (*page).block_size;
 
         assert_eq!(
             first.as_ptr() as usize - page_start as usize,
-            7 * page.block_size,
+            7 * block_size,
             "randomized free list must start at the seed-derived index"
         );
         assert_eq!(
             second.as_ptr() as usize - page_start as usize,
-            12 * page.block_size,
+            12 * block_size,
             "randomized free list must advance by the seed-derived coprime stride"
         );
 

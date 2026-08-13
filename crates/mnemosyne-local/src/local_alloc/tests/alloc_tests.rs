@@ -291,7 +291,7 @@ fn test_segment_occupancy_mask_cleanup_on_replacement() {
         let page = &mut (*current_seg_ptr).pages[page_index];
         (*block).set_next::<StandardPolicy>(page.free, 0);
         page.free = Some(NonNull::new_unchecked(block));
-        page.decrement_alloc_count_for_segment(current_seg_ptr, page_index);
+        mnemosyne_core::types::Page::decrement_alloc_count_in_segment(current_seg_ptr, page_index);
     }
 
     // Assert that the occupancy mask is STILL set because it's the current segment

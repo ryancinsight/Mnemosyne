@@ -6,7 +6,7 @@
 //! type definition by Separation of Concerns.
 
 use crate::abort::abort_on_corruption;
-use crate::types::{Block, Page};
+use crate::types::{Block, Page, Segment};
 use core::ptr::NonNull;
 
 #[inline(always)]
@@ -74,21 +74,71 @@ impl Page {
     ///
     /// The `page_start` pointer must point to the start of the 64KB page
     /// and must be valid for reads and writes of size `PAGE_SIZE`.
+    /// Receiver-taking form retained for callers not yet converted (MN-438).
+    ///
+    /// Recovers the segment by masking the receiver's address, so the segment
+    /// accesses inside invalidate the `&mut self` borrow: **using the receiver
+    /// after this call is Undefined Behavior**. Prefer
+    /// [`Page::initialize_free_list_in_segment`].
+    ///
+    /// # Safety
+    ///
+    /// `page_start` must point to the start of this page and be valid for
+    /// `PAGE_SIZE` reads and writes, and the caller must not use the receiver
+    /// after the call.
     pub unsafe fn initialize_free_list<P: crate::policy::AllocPolicy>(
         &mut self,
         page_start: *mut u8,
         random_value: u64,
     ) {
-        // SAFETY: `set_alloc_count` recovers the parent segment by masking
-        // `self`'s address to `SEGMENT_SIZE`; a `Page` is always embedded in its
-        // segment's `pages` array, so that header is valid — the precondition of
-        // `set_alloc_count` is met.
-        unsafe { self.set_alloc_count(0) };
+        let segment = self.parent_segment();
+        let page_index = self.index_in_segment();
+        // SAFETY: `parent_segment` returns this page's parent header and
+        // `index_in_segment` its own in-range index.
+        unsafe {
+            Self::initialize_free_list_in_segment::<P>(
+                segment,
+                page_index,
+                page_start,
+                random_value,
+            )
+        }
+    }
+
+    /// Builds the page's free list, addressing the page through its segment.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must be a valid segment header, `page_index` must be in range
+    /// of its `pages` array, and `page_start` must point to the start of that
+    /// page and be valid for `PAGE_SIZE` reads and writes.
+    pub unsafe fn initialize_free_list_in_segment<P: crate::policy::AllocPolicy>(
+        segment: *mut Segment,
+        page_index: usize,
+        page_start: *mut u8,
+        random_value: u64,
+    ) {
+        // Addressed by segment rather than `&mut self`: this function resets the
+        // allocation count and reads the segment's free-list cookie, both of
+        // which reach the parent header. A page borrow held across those
+        // accesses is invalidated by them (see the `reclaim` module's note), so
+        // the page is projected out of `segment` and shares its provenance.
+        debug_assert!(page_index < crate::constants::PAGES_PER_SEGMENT);
+        // SAFETY: caller guarantees a valid header and in-range index, so the
+        // projection stays inside the segment allocation.
+        let page = unsafe { &raw mut (*segment).pages[page_index] };
+
+        // SAFETY: valid header and in-range index, forwarded unchanged.
+        unsafe { Self::set_alloc_count_in_segment(segment, page_index, 0) };
         if P::RANDOMIZE_ALLOCATION {
-            let n = self.max_blocks();
+            // SAFETY: `page` addresses initialized page metadata in `segment`.
+            let n = unsafe { (*page).max_blocks() };
             if n == 0 {
-                self.initialized_blocks = 0;
-                self.free = None;
+                // SAFETY: as above.
+                unsafe {
+                    (*page).initialized_blocks = 0;
+                    (*page).free = None;
+                }
                 return;
             }
 
@@ -107,13 +157,13 @@ impl Page {
             // Start index
             let start = (random_value >> 16) as usize % n;
 
-            // SAFETY: `parent_segment` returns `self`'s valid parent header and
-            // `index_in_segment` is this page's in-range index, satisfying
-            // `cookie_for`'s contract.
-            let cookie =
-                unsafe { (*self.parent_segment()).cookie_for::<P>(self.index_in_segment()) };
+            // SAFETY: `segment` is the valid parent header and `page_index` is
+            // in range, satisfying `cookie_for`'s contract. This read shares the
+            // page projection's provenance, so neither invalidates the other.
+            let cookie = unsafe { (*segment).cookie_for::<P>(page_index) };
 
-            let block_size = self.block_size;
+            // SAFETY: `page` addresses initialized page metadata in `segment`.
+            let block_size = unsafe { (*page).block_size };
             let mut prev_block: Option<NonNull<Block>> = None;
             let mut current_idx = start;
             for _ in 0..n {
@@ -135,7 +185,8 @@ impl Page {
                         (*prev.as_ptr()).set_next::<P>(Some(block), cookie);
                     }
                 } else {
-                    self.free = Some(block);
+                    // SAFETY: `page` addresses initialized page metadata.
+                    unsafe { (*page).free = Some(block) };
                 }
                 prev_block = Some(block);
                 current_idx = (current_idx + stride) % n;
@@ -149,10 +200,14 @@ impl Page {
                     (*prev.as_ptr()).set_next::<P>(None, cookie);
                 }
             }
-            self.initialized_blocks = n;
+            // SAFETY: `page` addresses initialized page metadata.
+            unsafe { (*page).initialized_blocks = n };
         } else {
-            self.initialized_blocks = 0;
-            self.free = None;
+            // SAFETY: as above.
+            unsafe {
+                (*page).initialized_blocks = 0;
+                (*page).free = None;
+            }
         }
     }
 }

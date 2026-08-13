@@ -508,7 +508,7 @@ fn test_reclaim_overflow_aborts_process() {
             let page = &mut (*segment).pages[page_index];
 
             // Manually reduce alloc_count to 0 so count (1) > alloc_count (0) during reclaim.
-            page.set_alloc_count_for_segment(segment, page_index, 0);
+            mnemosyne_core::types::Page::set_alloc_count_in_segment(segment, page_index, 0);
 
             // Push the block directly to the thread_free queue.
             let block = ptr as *mut Block;
