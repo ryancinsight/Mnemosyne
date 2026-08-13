@@ -54,58 +54,19 @@ impl TaggedSegmentStack {
         self.state.len()
     }
 
-    /// Pushes `segment` onto the stack and increments the count.
+    /// Splices a pre-linked chain onto the stack and adds `len` to the count.
+    ///
+    /// The single publishing path behind every push form: a lone segment is
+    /// just the `head == tail`, `len == 1` chain, so the tag and ordering
+    /// discipline is written once.
     ///
     /// # Safety
     ///
-    /// `segment` must be a valid, initialized, exclusively-owned `Segment`;
-    /// ownership transfers to the stack.
+    /// The caller must hold this stack's `mutation_lock`, and `head`/`tail`
+    /// must satisfy [`Self::push_chain`]'s contract.
     #[inline]
-    pub(crate) unsafe fn push(&self, segment: *mut Segment) {
-        let _guard = self.mutation_lock.lock();
-        let mut current = self.state.head.load(Ordering::Relaxed);
-        loop {
-            let current_ptr = TaggedHead::ptr(current);
-            // SAFETY: by contract the caller owns `segment` exclusively until the
-            // publishing CAS succeeds, so writing its link first is unobservable
-            // to other threads until then.
-            unsafe {
-                (*segment).next_free_segment = current_ptr;
-            }
-            let next = TaggedHead::tagged_successor(segment, current);
-            match self.state.head.compare_exchange_weak(
-                current,
-                next,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(actual) => current = actual,
-            }
-        }
-        self.state.count.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Pushes a pre-linked chain of `len` segments in a single tagged CAS and
-    /// adds `len` to the count.
-    ///
-    /// The chain becomes the top of the stack in its existing `head → tail`
-    /// link order: after the splice, `pop` returns `head` first, then the
-    /// chain's successors in order, then whatever was on the stack before
-    /// (including nodes pushed concurrently during the CAS loop, which end up
-    /// below `tail`). Cost is one CAS regardless of `len`, versus `len`
-    /// retriable CAS operations for element-wise re-pushing.
-    ///
-    /// # Safety
-    ///
-    /// `head` and `tail` must be non-null, exclusively-owned `Segment`s linked
-    /// through `next_free_segment` such that `tail` is reached from `head` in
-    /// exactly `len - 1` hops (`len >= 1`); no other thread may reach any chain
-    /// node. Ownership of every chain node transfers to the stack.
-    #[inline]
-    pub(crate) unsafe fn push_chain(&self, head: *mut Segment, tail: *mut Segment, len: usize) {
+    unsafe fn splice_locked(&self, head: *mut Segment, tail: *mut Segment, len: usize) {
         debug_assert!(!head.is_null() && !tail.is_null() && len >= 1);
-        let _guard = self.mutation_lock.lock();
         let mut current = self.state.head.load(Ordering::Relaxed);
         loop {
             let current_ptr = TaggedHead::ptr(current);
@@ -120,9 +81,10 @@ impl TaggedSegmentStack {
                 current,
                 next,
                 Ordering::Release,
-                // Relaxed failure is sound for the same reason as `push`: the
-                // failure value is only re-linked into the exclusively-owned
-                // chain tail, never dereferenced.
+                // Relaxed failure ordering is sound because the failure value
+                // is only re-linked into the exclusively-owned chain tail,
+                // never dereferenced. `pop` needs Acquire for the opposite
+                // reason.
                 Ordering::Relaxed,
             ) {
                 Ok(_) => break,
@@ -130,6 +92,85 @@ impl TaggedSegmentStack {
             }
         }
         self.state.count.fetch_add(len, Ordering::Relaxed);
+    }
+
+    /// Pushes `segment` onto the stack and increments the count.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must be a valid, initialized, exclusively-owned `Segment`;
+    /// ownership transfers to the stack.
+    #[inline]
+    pub(crate) unsafe fn push(&self, segment: *mut Segment) {
+        let _guard = self.mutation_lock.lock();
+        // SAFETY: the guard above holds the mutation lock, and a lone
+        // exclusively-owned segment is the one-node chain.
+        unsafe { self.splice_locked(segment, segment, 1) };
+    }
+
+    /// Pushes `segment` unless the lifetime lock is busy, reporting whether it
+    /// was pushed.
+    ///
+    /// For callers that must not wait — see
+    /// [`CacheAlignedSegmentLock::try_lock`]. On `false` the caller retains
+    /// ownership of `segment` and must place it elsewhere.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::push`]; ownership transfers to the stack only when this
+    /// returns `true`.
+    #[inline]
+    pub(crate) unsafe fn try_push(&self, segment: *mut Segment) -> bool {
+        let Some(_guard) = self.mutation_lock.try_lock() else {
+            return false;
+        };
+        // SAFETY: as `push`, with the lock held by the guard above.
+        unsafe { self.splice_locked(segment, segment, 1) };
+        true
+    }
+
+    /// Pushes a pre-linked chain of `len` segments in a single tagged CAS and
+    /// adds `len` to the count.
+    ///
+    /// The chain becomes the top of the stack in its existing `head → tail`
+    /// link order: after the splice, `pop` returns `head` first, then the
+    /// chain's successors in order, then whatever was on the stack before
+    /// (including nodes pushed concurrently during the CAS loop, which end up
+    /// below `tail`). Cost is one CAS and one lock acquisition regardless of
+    /// `len`, versus `len` of each for element-wise re-pushing.
+    ///
+    /// # Safety
+    ///
+    /// `head` and `tail` must be non-null, exclusively-owned `Segment`s linked
+    /// through `next_free_segment` such that `tail` is reached from `head` in
+    /// exactly `len - 1` hops (`len >= 1`); no other thread may reach any chain
+    /// node. Ownership of every chain node transfers to the stack.
+    #[inline]
+    pub(crate) unsafe fn push_chain(&self, head: *mut Segment, tail: *mut Segment, len: usize) {
+        let _guard = self.mutation_lock.lock();
+        // SAFETY: forwarded contract, with the lock held by the guard above.
+        unsafe { self.splice_locked(head, tail, len) };
+    }
+
+    /// Chain form of [`Self::try_push`].
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::push_chain`]; ownership transfers to the stack only when this
+    /// returns `true`.
+    #[inline]
+    pub(crate) unsafe fn try_push_chain(
+        &self,
+        head: *mut Segment,
+        tail: *mut Segment,
+        len: usize,
+    ) -> bool {
+        let Some(_guard) = self.mutation_lock.try_lock() else {
+            return false;
+        };
+        // SAFETY: forwarded contract, with the lock held by the guard above.
+        unsafe { self.splice_locked(head, tail, len) };
+        true
     }
 
     /// Pops the head segment, returning null when empty, decrementing the count
@@ -369,6 +410,88 @@ mod tests {
         for n in originals {
             unsafe {
                 let _ = Box::from_raw(n);
+            }
+        }
+    }
+
+    /// The bounded push exists so a destructor never waits on a peer's critical
+    /// section. It must therefore return — not block — while the lock is held,
+    /// leave the stack untouched, and leave the segment with its caller.
+    #[test]
+    fn try_push_declines_a_held_lock_without_waiting() {
+        let stack = TaggedSegmentStack::new();
+        let resident = boxed(0x1000);
+        let offered = boxed(0x2000);
+        unsafe { stack.push(resident) };
+
+        let held = stack.mutation_lock.lock();
+        // Reaching the assertion at all is half the property: an unbounded
+        // acquisition would hang here, which the runner's budget reports as the
+        // deadlock it is.
+        assert!(
+            !unsafe { stack.try_push(offered) },
+            "a bounded push must decline a held lock rather than wait for it"
+        );
+        assert_eq!(stack.len(), 1, "a declined push must not touch the stack");
+        drop(held);
+
+        // Ownership stayed with the caller, so the segment is still placeable.
+        assert!(unsafe { stack.try_push(offered) });
+        assert_eq!(stack.len(), 2);
+        assert_eq!(stack.pop(), offered);
+        assert_eq!(stack.pop(), resident);
+
+        for p in [resident, offered] {
+            unsafe {
+                let _ = Box::from_raw(p);
+            }
+        }
+    }
+
+    /// The chain form carries the same decline-rather-than-wait contract, and
+    /// on success splices exactly as the blocking `push_chain` does — both now
+    /// route through one `splice_locked`.
+    #[test]
+    fn try_push_chain_declines_a_held_lock_then_splices_in_order() {
+        let stack = TaggedSegmentStack::new();
+        let below = boxed(0x0500);
+        unsafe { stack.push(below) };
+
+        let a = boxed(0x1000);
+        let b = boxed(0x2000);
+        let c = boxed(0x3000);
+        unsafe {
+            (*a).next_free_segment = b;
+            (*b).next_free_segment = c;
+        }
+
+        let held = stack.mutation_lock.lock();
+        assert!(
+            !unsafe { stack.try_push_chain(a, c, 3) },
+            "a bounded chain push must decline a held lock"
+        );
+        assert_eq!(stack.len(), 1, "a declined push must not touch the stack");
+        // The private chain is intact, so the caller can retry it whole.
+        unsafe {
+            assert_eq!((*a).next_free_segment, b);
+            assert_eq!((*b).next_free_segment, c);
+        }
+        drop(held);
+
+        assert!(unsafe { stack.try_push_chain(a, c, 3) });
+        assert_eq!(stack.len(), 4);
+        for expected in [a, b, c, below] {
+            let popped = stack.pop();
+            assert_eq!(popped, expected);
+            unsafe {
+                assert_eq!((*popped).next_free_segment, core::ptr::null_mut());
+            }
+        }
+        assert_eq!(stack.len(), 0);
+
+        for p in [a, b, c, below] {
+            unsafe {
+                let _ = Box::from_raw(p);
             }
         }
     }

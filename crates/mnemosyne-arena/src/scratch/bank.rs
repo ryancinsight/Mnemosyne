@@ -57,6 +57,10 @@ impl<T: ScratchElement, const N: usize> ScratchBank<T, N> {
 
     /// Returns the primary capacity for slot `INDEX`.
     ///
+    /// Forwards to [`ScratchPool::capacity`] and inherits its contract: the
+    /// figure is readable at any time, including from inside a live
+    /// [`Self::with_scratch`] borrow of the same slot.
+    ///
     /// # Panics
     ///
     /// Panics when `INDEX >= N`.

@@ -100,6 +100,58 @@ pub struct Heap<'brand, P: AllocPolicy, B: HasSegmentPool = mnemosyne_backend::M
 // `tiered_heap.rs`.
 unsafe impl<'brand, P: AllocPolicy, B: HasSegmentPool> Send for Heap<'brand, P, B> {}
 
+/// Returns one block to its heap when dropped, on the normal path and on an
+/// unwind alike.
+///
+/// A value's destructor may panic. `drop_in_place` followed by a plain free
+/// call then unwinds past the free and leaks the block — `Vec` frees regardless,
+/// and the branded containers must match that guarantee. Holding the block here
+/// for the duration of the element drop puts the free on both exit paths.
+///
+/// This is the single home for that pairing: every `drop_in_place` + free site
+/// in this crate goes through it rather than repeating the guard.
+pub(crate) struct BlockFreeGuard<'guard, 'brand, P, B>
+where
+    P: AllocPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+{
+    heap: &'guard Heap<'brand, P, B>,
+    ptr: *mut u8,
+}
+
+impl<'guard, 'brand, P, B> BlockFreeGuard<'guard, 'brand, P, B>
+where
+    P: AllocPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+{
+    /// Takes ownership of `ptr` for the guard's scope.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a non-ZST block previously allocated by `heap` and not yet
+    /// freed, and it must not be freed by anything else: the guard frees it
+    /// exactly once when dropped.
+    #[inline(always)]
+    pub(crate) const unsafe fn new(heap: &'guard Heap<'brand, P, B>, ptr: *mut u8) -> Self {
+        Self { heap, ptr }
+    }
+}
+
+impl<P, B> Drop for BlockFreeGuard<'_, '_, P, B>
+where
+    P: AllocPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+{
+    #[inline(always)]
+    fn drop(&mut self) {
+        // SAFETY: `new`'s contract makes `self.ptr` a live non-ZST block of
+        // `self.heap` that nothing else frees, which is exactly `free_raw`'s
+        // requirement. The guard is consumed by this drop, so the free happens
+        // exactly once.
+        unsafe { self.heap.free_raw(self.ptr) };
+    }
+}
+
 impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap<'brand, P, B> {
     /// Allocates a block of memory from this heap.
     ///
@@ -142,6 +194,8 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
     ///
     /// Because the block is branded with the heap's unique `'brand` lifetime,
     /// it is statically guaranteed to have been allocated by this heap.
+    ///
+    /// The block is returned to the heap even if `T`'s destructor panics.
     #[inline(always)]
     pub fn free<T: ?Sized>(
         &self,
@@ -156,12 +210,14 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
         // sized and unsized values; using the pointer after `drop_in_place`
         // would not be. `drop_in_place` runs `T::drop` exactly once; the block
         // is consumed by value so the pointer is never reused. A non-ZST block
-        // was allocated by this same heap, satisfying `free_raw`'s contract.
+        // was allocated by this same heap, satisfying the guard's contract; a
+        // ZST was never allocated, so its branch frees nothing.
         unsafe {
-            let size = core::mem::size_of_val(&*ptr);
-            core::ptr::drop_in_place(ptr);
-            if size != 0 {
-                self.free_raw(ptr as *mut u8);
+            if core::mem::size_of_val(&*ptr) == 0 {
+                core::ptr::drop_in_place(ptr);
+            } else {
+                let _free = BlockFreeGuard::new(self, ptr as *mut u8);
+                core::ptr::drop_in_place(ptr);
             }
         }
     }

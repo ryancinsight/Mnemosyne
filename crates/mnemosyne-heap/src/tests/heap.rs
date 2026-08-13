@@ -276,3 +276,33 @@ fn test_branded_heap_alloc_init_zst_drops_without_allocating() {
         assert_eq!(ZST_DROP_COUNT.with(|c| c.get()), 1);
     });
 }
+
+/// `Heap::free` drops the value before releasing its block, so it carries the
+/// same obligation as the container destructors: a panicking `T::drop` must not
+/// strand the block.
+#[test]
+fn test_heap_free_returns_block_when_destructor_panics() {
+    scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+        let before = heap.stats().current_thread_live_allocations;
+
+        let block = heap
+            .alloc_init(&token, PanicOnDrop(3))
+            .expect("alloc_init failed");
+        assert_eq!(
+            heap.stats().current_thread_live_allocations,
+            before + 1,
+            "alloc_init must hand out exactly one live block"
+        );
+
+        assert!(
+            catch_expected_panic(|| heap.free(&mut token, block)),
+            "the value's destructor panic must propagate out of free"
+        );
+
+        assert_eq!(
+            heap.stats().current_thread_live_allocations,
+            before,
+            "the block must return to the heap on the unwind path too"
+        );
+    });
+}

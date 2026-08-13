@@ -29,12 +29,27 @@ pub const MAX_POOL_SLOTS: usize = 4;
 pub struct ScratchPool<T: ScratchElement> {
     slots: [UnsafeCell<AlignedVec<T>>; MAX_POOL_SLOTS],
     borrow_depth: Cell<u8>,
+    /// Slot 0's capacity, republished by the borrow that grows it.
+    ///
+    /// [`ScratchPool::capacity`] is reachable from inside a live
+    /// [`ScratchPool::with_scratch`] borrow through entirely safe code (both
+    /// take `&self`, and the pool's documented home is a `thread_local!`), so
+    /// the accessor must not derive a reference into a slot that borrow already
+    /// holds exclusively. Mirroring the figure outside the `UnsafeCell` removes
+    /// the aliasing by construction rather than forbidding the call.
+    ///
+    /// Slot 0's capacity changes only where this is written: construction, and
+    /// the grow branch of a depth-0 `with_scratch` (slot index equals borrow
+    /// depth, so only depth 0 touches slot 0). A `debug_assert!` in
+    /// `with_scratch` fails the tests if a future mutation path escapes that
+    /// set.
+    primary_capacity: Cell<usize>,
 }
 
 // SAFETY: a `ScratchPool` uniquely owns its slot buffers (each `AlignedVec` owns
 // its heap storage with no aliasing), so moving the whole pool to another thread
 // is sound. It is deliberately *not* `Sync`: the `UnsafeCell` slots and the
-// `Cell<u8>` borrow-depth counter are guarded only by single-threaded
+// `Cell` borrow-depth and capacity fields are guarded only by single-threaded
 // `borrow_depth` tracking, which assumes one thread at a time (`thread_local!`
 // storage), so it must never be shared by reference across threads.
 unsafe impl<T: ScratchElement> Send for ScratchPool<T> {}
@@ -58,6 +73,7 @@ impl<T: ScratchElement> ScratchPool<T> {
                 UnsafeCell::new(AlignedVec::dangling()),
             ],
             borrow_depth: Cell::new(0),
+            primary_capacity: Cell::new(0),
         }
     }
 
@@ -79,6 +95,9 @@ impl<T: ScratchElement> ScratchPool<T> {
                 UnsafeCell::new(mk()),
             ],
             borrow_depth: Cell::new(0),
+            // `mk()` gives every slot exactly `capacity` (a zero request yields
+            // the zero-capacity dangling sentinel), so slot 0 starts here.
+            primary_capacity: Cell::new(capacity),
         }
     }
 
@@ -117,7 +136,18 @@ impl<T: ScratchElement> ScratchPool<T> {
             // added elements are zeroed by ensure_len).
             if n > vec.len() {
                 vec.ensure_len(n);
+                if depth == 0 {
+                    // Slot index equals borrow depth, so this is the only place
+                    // slot 0's capacity can change after construction. Reading
+                    // it through the live exclusive `vec` is the reborrow the
+                    // accessor itself must not perform.
+                    self.primary_capacity.set(vec.capacity());
+                }
             }
+            debug_assert!(
+                depth != 0 || self.primary_capacity.get() == vec.capacity(),
+                "primary_capacity drifted from slot 0's actual capacity"
+            );
             debug_assert_eq!(
                 vec.as_mut_ptr() as usize % T::ALIGN_BYTES,
                 0,
@@ -142,12 +172,15 @@ impl<T: ScratchElement> ScratchPool<T> {
     }
 
     /// Returns the capacity of the first slot (primary buffer).
+    ///
+    /// Callable at any time, including from inside a live
+    /// [`Self::with_scratch`] borrow of that same slot. The figure is read from
+    /// a mirror maintained outside the slot's `UnsafeCell`, so the accessor
+    /// never derives a reference that could alias the exclusive one the borrow
+    /// holds — the reentrant call is sound rather than merely undetected, and it
+    /// neither panics nor reports a stale value.
     #[inline]
     pub fn capacity(&self) -> usize {
-        // SAFETY: `ScratchPool` is `!Sync`, so there is no concurrent access; this
-        // diagnostic accessor only reads slot 0's `capacity` field and copies out
-        // a `usize` without mutating the buffer, so the transient shared reference
-        // does not alias any live `&mut` from a non-reentrant `with_scratch` call.
-        unsafe { (*self.slots[0].get()).capacity() }
+        self.primary_capacity.get()
     }
 }

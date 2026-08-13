@@ -50,6 +50,64 @@ impl GlobalSegmentPool {
         unsafe { self.nodes[node].try_push_retained(segment) }
     }
 
+    /// Pushes a pre-linked chain back in one lock acquisition, without applying
+    /// a retention limit.
+    ///
+    /// The whole chain lands in the bucket of `head`'s NUMA node. A chain built
+    /// by one thread's teardown is node-homogeneous in practice, and a node
+    /// mismatch costs only locality: [`Self::pop`] steals across buckets, so
+    /// placement never affects correctness.
+    ///
+    /// # Safety
+    ///
+    /// As [`NodeSegmentPool::push_chain_unbounded`].
+    #[inline]
+    pub unsafe fn push_chain_unbounded(&self, head: *mut Segment, tail: *mut Segment, len: usize) {
+        // SAFETY: by contract `head` is a valid, initialized, exclusively-owned
+        // `Segment`, so reading its `numa_node` field is sound.
+        let node = numa_bucket(unsafe { (*head).numa_node });
+        // SAFETY: forwarded contract — an exclusively-owned chain whose
+        // ownership transfers to the node pool.
+        unsafe { self.nodes[node].push_chain_unbounded(head, tail, len) };
+    }
+
+    /// [`Self::push_chain_unbounded`] for a caller that must not wait on the
+    /// pool's lifetime lock, such as a destructor.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::push_chain_unbounded`]; ownership transfers only when this
+    /// returns `true`.
+    #[inline]
+    pub unsafe fn try_push_chain_unbounded(
+        &self,
+        head: *mut Segment,
+        tail: *mut Segment,
+        len: usize,
+    ) -> bool {
+        // SAFETY: as `push_chain_unbounded` — `head` is a live owned `Segment`.
+        let node = numa_bucket(unsafe { (*head).numa_node });
+        // SAFETY: forwarded contract — as `push_chain_unbounded`.
+        unsafe { self.nodes[node].try_push_chain_unbounded(head, tail, len) }
+    }
+
+    /// [`Self::try_push_retained`] for a caller that must not wait on the
+    /// pool's lifetime lock, such as a destructor.
+    ///
+    /// # Safety
+    ///
+    /// The `segment` pointer must be a valid, initialized, and exclusive pointer to a
+    /// `Segment` structure. Ownership transfers only when this returns `true`.
+    #[inline]
+    pub unsafe fn try_push_retained_without_waiting(&self, segment: *mut Segment) -> bool {
+        // SAFETY: by this function's contract `segment` is a valid, initialized,
+        // exclusively-owned `Segment`, so reading its `numa_node` field is sound.
+        let node = numa_bucket(unsafe { (*segment).numa_node });
+        // SAFETY: `segment` is valid, initialized, and exclusively owned per
+        // this function's contract, which is exactly the node pool's contract.
+        unsafe { self.nodes[node].try_push_retained_without_waiting(segment) }
+    }
+
     /// Pops a segment from the calling thread's NUMA node pool, stealing from other nodes if empty.
     #[inline]
     pub fn pop(&self) -> Option<*mut Segment> {

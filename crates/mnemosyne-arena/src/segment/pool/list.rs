@@ -58,6 +58,47 @@ impl NodeSegmentPool {
         unsafe { self.stack.push(segment) };
     }
 
+    /// Pushes a pre-linked chain back to the pool in one lock acquisition,
+    /// without applying a retention limit.
+    ///
+    /// The batched form of [`Self::push_unbounded`]: a caller returning many
+    /// segments at once — thread-exit reclamation is the motivating one — pays
+    /// one acquisition instead of one per segment.
+    ///
+    /// # Safety
+    ///
+    /// As [`super::tagged_stack::TaggedSegmentStack::push_chain`]: `head` and
+    /// `tail` must be exclusively-owned `Segment`s linked through
+    /// `next_free_segment` with `tail` exactly `len - 1` hops from `head`
+    /// (`len >= 1`). Ownership of every chain node transfers to the pool.
+    #[inline]
+    pub unsafe fn push_chain_unbounded(&self, head: *mut Segment, tail: *mut Segment, len: usize) {
+        // SAFETY: forwarded contract — an exclusively-owned chain whose
+        // ownership transfers to the stack.
+        unsafe { self.stack.push_chain(head, tail, len) };
+    }
+
+    /// [`Self::push_chain_unbounded`] for a caller that must not wait on the
+    /// stack's lifetime lock, such as a destructor.
+    ///
+    /// Returns whether the chain was pushed; on `false` the caller retains
+    /// ownership of every node.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::push_chain_unbounded`]; ownership transfers only when this
+    /// returns `true`.
+    #[inline]
+    pub unsafe fn try_push_chain_unbounded(
+        &self,
+        head: *mut Segment,
+        tail: *mut Segment,
+        len: usize,
+    ) -> bool {
+        // SAFETY: forwarded contract — as `push_chain_unbounded`.
+        unsafe { self.stack.try_push_chain(head, tail, len) }
+    }
+
     /// Pushes a segment back to the bounded reusable segment pool.
     ///
     /// Returns `true` if the segment was successfully cached, or `false` if
@@ -82,6 +123,29 @@ impl NodeSegmentPool {
         // exclusively-owned `Segment` transferring ownership to the stack.
         unsafe { self.stack.push(segment) };
         true
+    }
+
+    /// [`Self::try_push_retained`] for a caller that must not wait on the
+    /// stack's lifetime lock, such as a destructor.
+    ///
+    /// Returns `false` both when the retention cap is reached and when the lock
+    /// is busy; the two are indistinguishable to the caller because the
+    /// response is the same — dispose of the segment another way. On `false`
+    /// the caller retains ownership.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::try_push_retained`]; ownership transfers only when this
+    /// returns `true`.
+    #[inline]
+    pub unsafe fn try_push_retained_without_waiting(&self, segment: *mut Segment) -> bool {
+        let retained = self.stack.len();
+        if retained >= mnemosyne_core::options::MAX_RETAINED_SEGMENTS.load(Ordering::Relaxed) {
+            return false;
+        }
+        // SAFETY: same contract as `try_push_retained` — `segment` is an
+        // exclusively-owned `Segment` transferring ownership to the stack.
+        unsafe { self.stack.try_push(segment) }
     }
 
     /// Detaches the entire retained chain in a single atomic swap, returning

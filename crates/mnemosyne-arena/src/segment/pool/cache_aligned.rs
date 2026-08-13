@@ -57,11 +57,46 @@ impl CacheAlignedSegmentLock {
     /// expected handoff without monopolizing a preempted core.
     const SPINS_BEFORE_YIELD: usize = 64;
 
+    /// Acquisition attempts [`Self::try_lock`] makes before giving up.
+    ///
+    /// Derived from the pause window `lock` uses before it yields, so the two
+    /// cannot drift: a holder still in its critical section after one window is
+    /// doing more than the head/link mutation the section is sized for, and a
+    /// caller that has a non-blocking alternative should take it rather than
+    /// keep waiting.
+    const TRY_ATTEMPTS: usize = Self::SPINS_BEFORE_YIELD;
+
     #[inline(always)]
     pub(crate) const fn new() -> Self {
         Self {
             held: AtomicBool::new(false),
         }
+    }
+
+    /// Acquires the lock within a bounded window, or returns `None`.
+    ///
+    /// [`Self::lock`] waits for however long the holder needs. A destructor
+    /// cannot: blocking there stalls thread teardown behind unrelated pool
+    /// traffic, and the standard's rule is that destructors do not block. This
+    /// variant caps the attempt so such a caller can fall back to a sink that
+    /// needs no lock at all.
+    #[inline]
+    pub(crate) fn try_lock(&self) -> Option<SegmentLockGuard<'_>> {
+        for _ in 0..Self::TRY_ATTEMPTS {
+            // Test-and-test-and-set, as in `lock`: reading the line shared
+            // before attempting the exchange keeps a busy lock from being
+            // hammered with failing read-for-ownership traffic.
+            if !self.held.load(Ordering::Relaxed)
+                && self
+                    .held
+                    .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+            {
+                return Some(SegmentLockGuard { lock: self });
+            }
+            core::hint::spin_loop();
+        }
+        None
     }
 
     #[inline]

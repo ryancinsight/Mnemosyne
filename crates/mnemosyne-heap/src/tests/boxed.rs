@@ -131,3 +131,31 @@ fn test_branded_box_from_cell() {
         assert_eq!(counter.load(Ordering::SeqCst), 1);
     });
 }
+
+/// A panicking element destructor must not cost the block: `Vec` frees on both
+/// exit paths and `BrandedBox` matches that. Without a drop guard the unwind
+/// carries straight past the free and the block is leaked.
+#[test]
+fn test_branded_box_frees_block_when_element_destructor_panics() {
+    scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
+        let before = heap.stats().current_thread_live_allocations;
+
+        let bbox = BrandedBox::new(&heap, &token, PanicOnDrop(1)).expect("allocation failed");
+        assert_eq!(
+            heap.stats().current_thread_live_allocations,
+            before + 1,
+            "the box must hold exactly one live block"
+        );
+
+        assert!(
+            catch_expected_panic(move || drop(bbox)),
+            "the element destructor's panic must propagate"
+        );
+
+        assert_eq!(
+            heap.stats().current_thread_live_allocations,
+            before,
+            "the block must return to the heap on the unwind path too"
+        );
+    });
+}

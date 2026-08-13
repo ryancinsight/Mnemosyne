@@ -1,5 +1,6 @@
 use crate::Heap;
 use crate::brand::{BrandedBlock, BrandedCell, ThreadLocalToken};
+use crate::heap::BlockFreeGuard;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
@@ -92,6 +93,11 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     /// are active or will be used.
     #[inline(always)]
     pub unsafe fn from_cell(heap: &'heap Heap<'brand, P, B>, cell: BrandedCell<'brand, T>) -> Self {
+        // SAFETY: a `BrandedCell` wraps a block holding an initialized `T`, and
+        // this function's contract makes `cell` the only live handle to it — so
+        // the block `into_block` yields carries a valid `T` and a single owner,
+        // which is `from_raw`'s requirement. The shared `'brand` proves the block
+        // came from `heap`.
         unsafe { Self::from_raw(heap, cell.into_block()) }
     }
 
@@ -146,16 +152,20 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     fn drop(&mut self) {
         // SAFETY: the `BrandedBox` invariant guarantees `self.ptr` points to an
         // initialized, live `T` (possibly unsized) uniquely owned by this box.
-        // `as_ref` reads the metadata to compute the value's size; `drop_in_place`
-        // runs the value's destructor exactly once (drop is invoked at most once
-        // per box). The block is freed only for non-ZST values (`size != 0`),
-        // because ZST values were never allocated (their pointer is the dangling
-        // sentinel); the live block is freed exactly once back to `self.heap`.
+        // `as_ref` reads the metadata to compute the value's size;
+        // `drop_in_place` runs the value's destructor exactly once (drop is
+        // invoked at most once per box). Only non-ZST values hold a block —
+        // a ZST's pointer is the dangling sentinel and was never allocated — so
+        // only that branch arms the guard, which owns the block for the
+        // destructor's duration and returns it to `self.heap` exactly once. The
+        // guard rather than a trailing call is what keeps the block from leaking
+        // when `T::drop` panics and unwinds out of `drop_in_place`.
         unsafe {
-            let size = core::mem::size_of_val(self.ptr.as_ref());
-            core::ptr::drop_in_place(self.ptr.as_ptr());
-            if size != 0 {
-                self.heap.free_raw(self.ptr.as_ptr() as *mut u8);
+            if core::mem::size_of_val(self.ptr.as_ref()) == 0 {
+                core::ptr::drop_in_place(self.ptr.as_ptr());
+            } else {
+                let _free = BlockFreeGuard::new(self.heap, self.ptr.as_ptr() as *mut u8);
+                core::ptr::drop_in_place(self.ptr.as_ptr());
             }
         }
     }

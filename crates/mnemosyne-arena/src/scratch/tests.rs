@@ -182,6 +182,72 @@ fn scratch_bank_slots_are_independent() {
     assert_eq!(bank.borrow_depth::<1>(), 0);
 }
 
+/// `capacity()` is reachable from inside a live `with_scratch` borrow through
+/// entirely safe code, because both take `&self` and the pool is shared (its
+/// documented home is `thread_local!`). Slot 0 backs both the depth-0 borrow and
+/// the accessor, so the accessor must not derive a reference into the slot the
+/// borrow already holds exclusively.
+#[test]
+fn capacity_is_readable_inside_a_live_borrow() {
+    let pool = ScratchPool::<f64>::new();
+    let capacity = pool.with_scratch(128, |_| pool.capacity());
+    assert_eq!(capacity, 128, "slot 0 grew to exactly the requested length");
+}
+
+/// The same reentrancy, with the scratch slice used *after* the accessor call.
+/// This is the shape a real caller has (read the capacity, then keep writing),
+/// and the one that makes an aliasing violation observable: a shared read that
+/// invalidated the live `&mut` would be caught here on the subsequent write.
+#[test]
+fn scratch_stays_writable_after_a_reentrant_capacity_read() {
+    let pool = ScratchPool::<f64>::new();
+    let (capacity, written) = pool.with_scratch(64, |scratch| {
+        let capacity = pool.capacity();
+        scratch[0] = 7.5;
+        scratch[63] = -1.25;
+        (capacity, scratch[0] + scratch[63])
+    });
+    assert_eq!(capacity, 64);
+    assert_eq!(written, 6.25);
+}
+
+/// Nested borrows report slot 0's capacity, not the inner slot's: the inner
+/// `with_scratch` takes slot 1, so growing it must not move the primary figure.
+#[test]
+fn capacity_tracks_the_primary_slot_across_nested_borrows() {
+    let pool = ScratchPool::<f32>::new();
+    pool.with_scratch(32, |outer| {
+        outer[0] = 1.0;
+        let outer_capacity = pool.capacity();
+        assert_eq!(outer_capacity, 32);
+        pool.with_scratch(256, |inner| {
+            inner[0] = 2.0;
+            assert_eq!(
+                pool.capacity(),
+                32,
+                "the inner borrow uses slot 1, so slot 0's capacity is unchanged"
+            );
+        });
+        assert_eq!(outer[0], 1.0);
+    });
+    assert_eq!(pool.capacity(), 32);
+}
+
+/// The bank accessor forwards to the pool accessor, so it inherits the same
+/// reentrancy: slot `INDEX`'s capacity must be readable from inside that slot's
+/// own live borrow.
+#[test]
+fn bank_capacity_is_readable_inside_a_live_borrow() {
+    let bank = ScratchBank::<f64, 2>::new();
+    let capacity = bank.with_scratch::<1, _>(48, |scratch| {
+        let capacity = bank.capacity::<1>();
+        scratch[0] = 3.0;
+        capacity
+    });
+    assert_eq!(capacity, 48);
+    assert_eq!(bank.capacity::<0>(), 0, "slot 0 was never borrowed");
+}
+
 #[test]
 fn test_scratch_pool_panic_resilience() {
     let pool = ScratchPool::<f64>::new();
