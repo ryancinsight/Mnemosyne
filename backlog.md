@@ -260,29 +260,31 @@ Filed from the 2026-08-12 verification-posture review:
   are migrated to strict provenance; (b) is retired by MN-433 landing. Neither
   should be closed by relaxing the job.
 
-- [ ] [arch] **MN-433 — no concurrency model checking for the lock-free core.**
-  The workspace has no `loom` dependency at all, against 20 `compare_exchange`
-  sites and 316 atomic-ordering sites. The existing concurrency evidence is
-  stress tests (`*_concurrent_push_pop_conserves_every_segment`), which sample
-  interleavings rather than enumerate them, so an ordering bug needing a
-  specific interleaving is invisible to them. This is the largest remaining
-  verification gap after the Miri gate: Miri checks aliasing and leaks on the
-  paths it executes, not the happens-before edges these structures depend on.
-  Priority order established by reading the structures rather than assuming:
-  `AtomicFreeList` (the page-local cross-thread free queue) is the genuinely
-  lock-free one and comes first, together with the page publish/reclaim pair.
-  `TaggedSegmentStack` — backing both the segment pool and the orphan pool —
-  serializes head mutation under a per-stack lock, and its reclamation argument
-  and Acquire-on-CAS-failure reasoning are already stated explicitly in the
-  module docs, so loom there confirms a written argument rather than probing an
-  unexamined one. That makes it lower priority, not unnecessary.
-  Work: put the atomics behind a `cfg(loom)`-swappable module (`loom::sync::atomic`
-  under the cfg, `core::sync::atomic` otherwise), then model each structure's
-  push/pop and the page free-queue publish/reclaim pair.
-  Acceptance: loom models for those three structures passing under a stated
-  interleaving bound, run as a CI job, with ABA addressed by design and stated
-  rather than assumed. The models must be genuinely bounded-exhaustive — a loom
-  test that merely runs is not evidence.
+- [ ] [arch] **MN-433 — concurrency model checking.** First increment landed;
+  the seam and the first models exist and gate in CI.
+  Delivered: `mnemosyne_core::loom_shim` re-exports loom's atomics under
+  `cfg(loom)` and `core`'s otherwise, and `AtomicFreeList` imports through it,
+  so models drive the shipped code rather than a transcription that could drift.
+  `cfg(loom)` rather than a cargo feature on purpose — features are additive and
+  could unify instrumented atomics into a real build; a cfg set only by
+  `RUSTFLAGS` cannot. `Page::new`/`AtomicFreeList::new` keep their `const` form
+  in ordinary builds and gain non-const twins under `cfg(loom)`, because loom's
+  atomics are not const-constructible.
+  Three models for the free queue's head protocol: concurrent pushes are not
+  lost, a push concurrent with a drain is observed exactly once (losing it leaks
+  a block, double-observing it double-frees), and a drain resets both the packed
+  address and the count. A `loom` CI job runs them.
+  **The models were confirmed non-vacuous**: replacing the CAS with a plain
+  store makes loom find the lost-push and swallowed-push interleavings, so the
+  assertions can fail. That check matters — the suite completes in well under a
+  second, which on its own looks indistinguishable from exploring nothing.
+  Remaining: the models cover the head protocol, reduced to a token payload
+  because a full model would have to allocate real `Block`s inside a segment
+  mapping. Still to model — the page publish/reclaim pair, and the segment
+  ownership protocol MN-439 exposed, which is where the known unfixed races are.
+  `TaggedSegmentStack` stays lowest priority: it serializes on a mutation lock
+  and already states its reclamation and Acquire-on-CAS-failure arguments, so
+  loom there confirms a written argument rather than probing an unexamined one.
 
 - [ ] [patch] **MN-434 — audit the 53 `SeqCst` sites against the weakest
   sufficient ordering.** Each atomic access should name the happens-before edge

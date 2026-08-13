@@ -48,7 +48,29 @@ unsafe impl Sync for Page {}
 
 impl Page {
     /// Creates a new uninitialized `Page`.
+    ///
+    /// Non-`const` under `cfg(loom)` only: loom's instrumented atomics cannot be
+    /// built in a const context. The shipped allocator keeps the const form.
+    #[cfg_attr(not(loom), doc = "")]
+    #[cfg(not(loom))]
     pub const fn new() -> Self {
+        Self {
+            free: None,
+            thread_free: AtomicFreeList::new(),
+            block_size: 0,
+            alloc_count: 0,
+            initialized_blocks: 0,
+            next_page: None,
+            prev_page: None,
+            size_class: 0,
+            list_state: 0,
+            page_index: 0,
+        }
+    }
+
+    /// Loom-build constructor. See the `cfg(not(loom))` form above.
+    #[cfg(loom)]
+    pub fn new() -> Self {
         Self {
             free: None,
             thread_free: AtomicFreeList::new(),

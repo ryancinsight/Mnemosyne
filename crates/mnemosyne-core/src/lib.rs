@@ -8,6 +8,7 @@ extern crate std;
 pub(crate) mod abort;
 pub mod constants;
 pub mod kernel_budget;
+pub mod loom_shim;
 pub mod options;
 pub mod policy;
 pub mod size_class;
