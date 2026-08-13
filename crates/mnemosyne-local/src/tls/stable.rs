@@ -6,6 +6,7 @@
 
 use super::traits::{TlsProvider, TlsSlotAccess};
 use crate::ThreadAllocator;
+use crate::tls_slot::LocalAllocatorSlot;
 use mnemosyne_arena::HasSegmentPool;
 
 /// Portable TLS provider using direct standard `std::thread_local!` lookups.
@@ -18,7 +19,8 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for StandardTls<B, S
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
         S::get_slot_standard(|slot| {
             S::arm_thread_exit(slot);
-            slot.with_allocator(f)
+            // SAFETY: `allocator_ptr` returns this slot's own live address.
+            unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
         })
     }
 
@@ -26,7 +28,11 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for StandardTls<B, S
     unsafe fn with_allocator_unguarded<R>(
         f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
     ) -> Option<R> {
-        S::get_slot_standard(|slot| unsafe { slot.with_allocator_unguarded(f) })
+        S::get_slot_standard(|slot| {
+            // SAFETY: `allocator_ptr` returns this slot's own live address, and
+            // the caller's no-re-entry contract is forwarded unchanged.
+            unsafe { LocalAllocatorSlot::<B>::with_allocator_unguarded(slot.allocator_ptr(), f) }
+        })
     }
 
     #[inline(always)]
@@ -57,20 +63,18 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
             // The cell is a thread-local `Cell`, so the pointee is exclusive to
             // the current thread (no cross-thread aliasing); `is_allocating`
             // rejects nested same-thread access before a second `&mut` exists.
-            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
-            if alloc.is_allocating {
-                return None;
-            }
-            alloc.is_allocating = true;
-            let result = f(alloc);
-            alloc.is_allocating = false;
-            Some(result)
+            // The cached value is the slot address, which by the slot's
+            // offset-0 invariant is the same value as the allocator address the
+            // owner token uses — so this reinterpretation changes no token.
+            // SAFETY: `ptr` is this thread's own slot address cached below.
+            unsafe { LocalAllocatorSlot::<B>::with_allocator(ptr, f) }
         } else {
             S::get_slot_standard(|slot| {
                 let alloc_ptr = slot.allocator_ptr();
                 S::get_cached_cell(|cell| cell.set(alloc_ptr));
                 S::arm_thread_exit(slot);
-                slot.with_allocator(f)
+                // SAFETY: `allocator_ptr` returns this slot's own live address.
+                unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
             })
         }
     }
@@ -96,21 +100,15 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
             // SAFETY: `ptr` is this thread's own allocator pointer cached in its
             // thread-local cell; the pointee is exclusive to the current thread,
             // so projecting to one field and reading it is valid.
-            let is_allocating = unsafe { (*(ptr as *const ThreadAllocator<B>)).is_allocating };
-            if is_allocating {
-                return None;
-            }
-            // SAFETY: the flag read above proves no outer borrow is live, and
-            // the caller of this `unsafe fn` upholds the no-re-entry contract,
-            // so this `&mut` is unaliased.
-            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
-            Some(f(alloc))
+            // SAFETY: `ptr` is this thread's own slot address cached below; the
+            // caller upholds `with_allocator_unguarded`'s no-re-entry contract.
+            unsafe { LocalAllocatorSlot::<B>::with_allocator_unguarded(ptr, f) }
         } else {
             S::get_slot_standard(|slot| {
                 let alloc_ptr = slot.allocator_ptr();
                 S::get_cached_cell(|cell| cell.set(alloc_ptr));
                 S::arm_thread_exit(slot);
-                unsafe { slot.with_allocator_unguarded(f) }
+                unsafe { LocalAllocatorSlot::<B>::with_allocator_unguarded(ptr, f) }
             })
         }
     }

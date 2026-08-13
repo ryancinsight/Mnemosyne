@@ -227,11 +227,14 @@ fn reentrant_current_segment_local_free_uses_metadata_fast_path() {
     let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
     let segment = segment_addr as *mut Segment;
     let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-    let page = unsafe { &mut (*segment).pages[page_index] };
+    // Raw, re-derived per assertion: the free below writes this page through
+    // the allocator's own tag, so a `&mut Page` held across it would be
+    // invalidated and every later read through it stale.
+    let page = unsafe { (*segment).pages.as_mut_ptr().add(page_index) };
 
-    assert_eq!(page.alloc_count, 1);
+    assert_eq!(unsafe { (*page).alloc_count }, 1);
     assert!(
-        page.thread_free.is_empty(),
+        unsafe { (*page).thread_free.is_empty() },
         "thread_free list should start empty before reentrant free"
     );
 
@@ -239,12 +242,15 @@ fn reentrant_current_segment_local_free_uses_metadata_fast_path() {
         unsafe { thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr) };
     });
 
-    assert_eq!(page.alloc_count, 0);
+    assert_eq!(unsafe { (*page).alloc_count }, 0);
     assert!(
-        page.thread_free.is_empty(),
+        unsafe { (*page).thread_free.is_empty() },
         "current-segment local free should not enqueue into page-local thread_free"
     );
-    assert_eq!(page.free.map(NonNull::as_ptr), Some(ptr as *mut Block));
+    assert_eq!(
+        unsafe { (*page).free }.map(NonNull::as_ptr),
+        Some(ptr as *mut Block)
+    );
 }
 
 #[test]
@@ -457,6 +463,9 @@ fn test_dealloc_path() {
 }
 
 #[test]
+// Re-executes the test binary to observe the abort; Miri cannot spawn a
+// subprocess, so the assertion is unobservable under it rather than failing.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
 fn test_double_free_aborts_process() {
     use std::env;
     use std::process::Command;
@@ -493,6 +502,9 @@ fn test_double_free_aborts_process() {
 }
 
 #[test]
+// Re-executes the test binary to observe the abort; Miri cannot spawn a
+// subprocess, so the assertion is unobservable under it rather than failing.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
 fn test_reclaim_overflow_aborts_process() {
     use std::env;
     use std::process::Command;
@@ -545,6 +557,9 @@ fn test_reclaim_overflow_aborts_process() {
 }
 
 #[test]
+// Re-executes the test binary to observe the abort; Miri cannot spawn a
+// subprocess, so the assertion is unobservable under it rather than failing.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
 fn test_cross_thread_double_free_aborts_process() {
     use std::env;
     use std::process::Command;
@@ -584,6 +599,9 @@ fn test_cross_thread_double_free_aborts_process() {
 }
 
 #[test]
+// Re-executes the test binary to observe the abort; Miri cannot spawn a
+// subprocess, so the assertion is unobservable under it rather than failing.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
 fn test_local_immediate_double_free_aborts_process() {
     use std::env;
     use std::process::Command;
@@ -621,6 +639,9 @@ fn test_local_immediate_double_free_aborts_process() {
 }
 
 #[test]
+// Re-executes the test binary to observe the abort; Miri cannot spawn a
+// subprocess, so the assertion is unobservable under it rather than failing.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
 fn test_cpu_cache_double_free_aborts_process() {
     use std::env;
     use std::process::Command;
@@ -665,6 +686,9 @@ fn test_cpu_cache_double_free_aborts_process() {
 }
 
 #[test]
+// Re-executes the test binary to observe the abort; Miri cannot spawn a
+// subprocess, so the assertion is unobservable under it rather than failing.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
 fn test_large_alloc_metadata_corruption_aborts_process() {
     use std::env;
     use std::process::Command;
@@ -706,6 +730,9 @@ fn test_large_alloc_metadata_corruption_aborts_process() {
 }
 
 #[test]
+// Re-executes the test binary to observe the abort; Miri cannot spawn a
+// subprocess, so the assertion is unobservable under it rather than failing.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
 fn test_large_alloc_segment_invariant_corruption_aborts_process() {
     use std::env;
     use std::process::Command;
@@ -752,6 +779,9 @@ fn test_large_alloc_segment_invariant_corruption_aborts_process() {
 }
 
 #[test]
+// Re-executes the test binary to observe the abort; Miri cannot spawn a
+// subprocess, so the assertion is unobservable under it rather than failing.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
 fn test_free_list_corruption_out_of_bounds_aborts_process() {
     use std::env;
     use std::process::Command;
@@ -811,6 +841,9 @@ fn test_free_list_corruption_out_of_bounds_aborts_process() {
 }
 
 #[test]
+// Re-executes the test binary to observe the abort; Miri cannot spawn a
+// subprocess, so the assertion is unobservable under it rather than failing.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
 fn test_thread_free_cycle_aborts_process() {
     use mnemosyne_core::policy::AllocPolicy;
     use std::env;

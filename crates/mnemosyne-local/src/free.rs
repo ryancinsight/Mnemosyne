@@ -145,11 +145,14 @@ unsafe fn thread_free_classified<
         if Some(unsafe { NonNull::new_unchecked(block) }) == unsafe { (*page_ptr).free } {
             std::process::abort();
         }
-        // SAFETY: the surrounding `is_owner && !owner_allocator.is_null()`
-        // was just confirmed against `segment.owner`, so `owner_allocator`
-        // is the owning allocator pointer and no concurrent accessors
-        // exist for the current thread.
-        let alloc = unsafe { &mut *(owner_allocator as *mut ThreadAllocator<B>) };
+        // `owner_allocator` is the owner token, which by the slot's offset-0
+        // invariant is also this thread's slot address — so the re-entrancy
+        // gate is reachable from it without borrowing the allocator.
+        // SAFETY: the surrounding `is_owner && !owner_allocator.is_null()` was
+        // just confirmed against `segment.owner`, so this is the current
+        // thread's own live slot and no concurrent accessors exist.
+        let is_allocating =
+            unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::is_allocating(owner_allocator) };
         let page_free = unsafe { (*page_ptr).free };
         // SAFETY: `segment`/`page_index` locate this page's parent header and its
         // key slot, satisfying `cookie_for`'s contract.
@@ -158,7 +161,15 @@ unsafe fn thread_free_classified<
 
         if unsafe { (*page_ptr).list_state } != 2 {
             // Page is active
-            if page_alloc_count > 1 || alloc.is_current_segment(segment) {
+            // Ask the segment, not the allocator. `is_current` is the owner's
+            // own mirror of `current_segment`, maintained by
+            // `set_current_segment`, and this path runs even while the gate is
+            // raised — reading it through the allocator would need a borrow the
+            // gate exists to forbid. Same form as the `is_current` reads in
+            // `occupancy` and the cold path below.
+            // SAFETY: `is_owner` was confirmed above, so `segment` is this
+            // thread's live, owned header.
+            if page_alloc_count > 1 || unsafe { (*segment).is_current } {
                 // Free in-place (either remains active, or is current segment).
                 // SAFETY: `block` is non-null by the alloc_count / page.free
                 // corruption guards above, and `page_alloc_count == page.free`'s
@@ -176,13 +187,22 @@ unsafe fn thread_free_classified<
                 #[cfg(feature = "dealloc-probe")]
                 crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::InPlaceSmall);
                 return;
-            } else if !alloc.is_allocating {
+            } else if !is_allocating {
                 // Page is not the current segment and this free empties it. The
                 // free-list head set, the segment-aware decrement, and the
                 // active→empty page-list transition are the shared commit in
                 // `do_local_free_internal`; the caller adds only the re-entrancy
                 // guard and the sweep-cadence bump around it.
-                alloc.is_allocating = true;
+                unsafe {
+                    crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(owner_allocator, true)
+                };
+                // Borrow only now: the gate was false and is now raised, so no
+                // other `&mut` to this cache is live.
+                // SAFETY: this thread's own slot (offset-0 invariant), gate
+                // checked and raised.
+                let alloc = unsafe {
+                    crate::tls_slot::LocalAllocatorSlot::<B>::allocator_mut(owner_allocator)
+                };
                 // SAFETY: `block`/`page`/`segment`/`page_index` are the validated
                 // free-path inputs (guards above) with `alloc` the owning
                 // allocator — exactly `do_local_free_internal`'s contract.
@@ -191,18 +211,24 @@ unsafe fn thread_free_classified<
                 };
                 // SAFETY: `alloc` is the exclusively-borrowed owning allocator
                 // with `is_allocating` raised, the precondition of the cold sweep.
-                unsafe { alloc.record_defrag_operation::<P>() };
-                alloc.is_allocating = false;
+                unsafe { alloc.record_defrag_operation::<P>(true) };
+                unsafe {
+                    crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(owner_allocator, false)
+                };
                 #[cfg(feature = "dealloc-probe")]
                 crate::dealloc_counters::record(
                     crate::dealloc_counters::DeallocPath::ActiveFreeLastBlock,
                 );
                 return;
             }
-        } else if !alloc.is_allocating {
+        } else if !is_allocating {
             // Page is full, transitions to active (count > 1 is guaranteed since
             // max_blocks >= 8, so it never empties directly). This is the
             // full→active branch of the shared `do_local_free_internal` commit.
+            // SAFETY: this thread's own slot (offset-0 invariant), and the gate
+            // read false, so no other `&mut` to this cache is live.
+            let alloc =
+                unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::allocator_mut(owner_allocator) };
             // SAFETY: as above — validated free-path inputs and the owning
             // `alloc`, satisfying `do_local_free_internal`'s contract.
             let _became_empty =

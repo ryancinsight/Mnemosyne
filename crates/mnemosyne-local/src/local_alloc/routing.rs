@@ -87,7 +87,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// mode matches the mode used by all pages already owned by this allocator.
     #[inline(never)]
     pub unsafe fn alloc_cold<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
-        unsafe { self.record_defrag_operation::<P>() };
+        // The container's gate is raised across this call, so the sweep takes
+        // its guarded branch.
+        unsafe { self.record_defrag_operation::<P>(true) };
         // 1. Move the current active page to full_pages if it is indeed full.
         if let Some(active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
             let active_ptr = refresh_page_pointer(active_ptr);

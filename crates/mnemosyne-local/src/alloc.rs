@@ -111,11 +111,16 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
 
     let slot_ptr = B::get_allocator_ptr_raw_for_policy::<P>();
     if !slot_ptr.is_null() {
-        // SAFETY: `get_allocator_ptr_raw` returns this thread's TLS allocator
-        // slot; the non-null check confirms it is initialized, and the slot is
-        // thread-affine so this `&mut` is the sole live reference.
-        let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
-        if !alloc.is_allocating {
+        // SAFETY: `get_allocator_ptr_raw` returns this thread's TLS slot
+        // address (identical in value to the allocator address, by the slot's
+        // offset-0 invariant); the non-null check confirms it is initialized.
+        // Gate before borrowing: reading it through a `&mut` formed here would
+        // be the aliasing the gate exists to reject.
+        if !unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::is_allocating(slot_ptr) } {
+            // SAFETY: the gate proves no outer borrow of this thread's
+            // allocator is live, and the slot is thread-affine, so this `&mut`
+            // is the sole live reference.
+            let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
             // SAFETY: `class` is a valid size-class index from `small_path_class`
             // (bounded by `NUM_SIZE_CLASSES`), so indexing the fixed-size
             // `active_pages` array unchecked is in bounds.
@@ -152,15 +157,18 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                 }
             }
         }
-        // SAFETY: `alloc` is the live, non-null TLS allocator borrowed above, so
-        // `new_unchecked` produces a valid `NonNull` the cold path reuses
-        // without re-reading the TLS slot.
+        // SAFETY: `slot_ptr` is the live, non-null TLS slot/allocator address,
+        // so `new_unchecked` produces a valid `NonNull` the cold path reuses
+        // without re-reading the TLS slot. Handed over as a pointer, not a
+        // borrow: the cold path re-checks the gate before forming one.
         unsafe {
             thread_alloc_cold::<P, B>(
                 class,
                 adjusted_size,
                 align,
-                Some(core::ptr::NonNull::new_unchecked(alloc as *mut _)),
+                Some(core::ptr::NonNull::new_unchecked(
+                    slot_ptr as *mut ThreadAllocator<B>,
+                )),
             )
         }
     } else {
@@ -184,23 +192,26 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
         }
     }
 
-    let alloc = if let Some(alloc_ptr) = alloc_opt {
-        unsafe { &mut *alloc_ptr.as_ptr() }
-    } else {
-        let slot_ptr = B::get_allocator_ptr_for_policy::<P>();
-        if slot_ptr.is_null() {
-            return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
-        }
-        unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) }
+    let slot_ptr = match alloc_opt {
+        Some(p) => p.as_ptr().cast::<core::ffi::c_void>(),
+        None => B::get_allocator_ptr_for_policy::<P>(),
     };
+    if slot_ptr.is_null() {
+        return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
+    }
+    // SAFETY: this thread's live TLS slot address (== the allocator address).
 
-    if alloc.is_allocating {
+    // Gate before borrowing.
+    if unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::is_allocating(slot_ptr) } {
         return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
     }
 
-    alloc.is_allocating = true;
+    unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(slot_ptr, true) };
+    // SAFETY: the gate proves no other borrow of this thread's allocator is
+    // live, and the slot is thread-affine.
+    let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
     let ptr = unsafe { alloc.alloc_cold::<P>(class) };
-    alloc.is_allocating = false;
+    unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(slot_ptr, false) };
 
     if ptr.is_null() {
         return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };

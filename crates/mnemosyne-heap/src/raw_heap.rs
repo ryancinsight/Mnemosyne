@@ -10,6 +10,11 @@ use mnemosyne_local::internal::{
 
 pub(crate) struct RawHeap<P: AllocPolicy, B: HasSegmentPool> {
     allocator: core::cell::UnsafeCell<ThreadAllocator<B>>,
+    /// Re-entrancy gate for `allocator`, a sibling rather than a field inside
+    /// it: the gate decides whether forming `&mut ThreadAllocator` is legal, so
+    /// it cannot live in the memory that borrow covers. Same reasoning as
+    /// `LocalAllocatorSlot::is_allocating`.
+    is_allocating: core::cell::Cell<bool>,
     _policy: core::marker::PhantomData<P>,
 }
 
@@ -46,6 +51,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
     pub(crate) const fn new() -> Self {
         Self {
             allocator: core::cell::UnsafeCell::new(ThreadAllocator::new()),
+            is_allocating: core::cell::Cell::new(false),
             _policy: core::marker::PhantomData,
         }
     }
@@ -133,24 +139,25 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             }
         };
 
-        // SAFETY: by this function's `# Safety` contract the
-        // `UnsafeCell<ThreadAllocator>` is exclusively borrowable here (no
-        // other live borrow, thread-confined), so forming `&mut` is sound.
-        let alloc = unsafe { &mut *self.allocator.get() };
-        if alloc.is_allocating {
+        // Gate before borrowing: reading it through a `&mut` formed here would
+        // be the aliasing the gate exists to reject.
+        if self.is_allocating.get() {
             // SAFETY: re-entrant alloc (the allocator is mid-operation);
             // serve from the large/huge path with the validated
             // `adjusted_size`/`align`, avoiding re-borrowing the small path.
             return unsafe { Self::alloc_large_or_huge_init(adjusted_size, align) };
         }
 
-        alloc.is_allocating = true;
+        self.is_allocating.set(true);
+        // SAFETY: by this function's `# Safety` contract and the gate above the
+        // `UnsafeCell<ThreadAllocator>` is exclusively borrowable here.
+        let alloc = unsafe { &mut *self.allocator.get() };
         // SAFETY: `class` is a valid small size class produced by
         // `size_to_class_nonzero`; `alloc` is the exclusively-borrowed
         // allocator, and the `is_allocating` flag set above guards against
         // re-entrant small-path use during this call.
         let ptr = unsafe { alloc.alloc_class::<P>(class) };
-        alloc.is_allocating = false;
+        self.is_allocating.set(false);
 
         if !ptr.is_null() {
             // SAFETY: `ptr` is the non-null block just returned by
@@ -229,11 +236,9 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         segment: *mut Segment,
         page_index: usize,
     ) {
-        // SAFETY: exclusive, thread-confined access to the allocator per the
-        // `# Safety` contract, so `&mut` from the `UnsafeCell` is sound.
-        let alloc = unsafe { &mut *self.allocator.get() };
         let encrypted = unsafe { mnemosyne_core::types::Segment::free_list_encrypted(segment) };
-        if alloc.is_allocating {
+        // Gate before borrowing, as in `alloc_small`.
+        if self.is_allocating.get() {
             // SAFETY: re-entrant free while the allocator is mid-operation;
             // `block` is a non-null live block of `page` (allocator
             // invariant), so `new_unchecked` is sound and the page-local
@@ -266,7 +271,10 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             return;
         }
 
-        alloc.is_allocating = true;
+        self.is_allocating.set(true);
+        // SAFETY: exclusive, thread-confined access per the `# Safety` contract
+        // and the gate above.
+        let alloc = unsafe { &mut *self.allocator.get() };
         // SAFETY: the matching `block`/`page`/`segment`/`page_index` triple
         // from the `# Safety` contract is passed to the internal free, which
         // runs under the exclusive `alloc` borrow with the `is_allocating`
@@ -277,10 +285,10 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         if became_empty {
             // SAFETY: `alloc` is the exclusively-borrowed allocator; recording
             // a defrag operation only mutates its own bookkeeping.
-            unsafe { alloc.record_defrag_operation::<P>() };
+            unsafe { alloc.record_defrag_operation::<P>(true) };
         }
 
-        alloc.is_allocating = false;
+        self.is_allocating.set(false);
     }
 
     /// # Safety

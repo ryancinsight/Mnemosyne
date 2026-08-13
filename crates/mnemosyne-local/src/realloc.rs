@@ -169,18 +169,23 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     if is_old_small && let Some(class) = new_class {
         let slot_ptr = B::get_allocator_ptr_raw_for_policy::<P>();
         if !slot_ptr.is_null() {
-            // SAFETY: `get_allocator_ptr_raw` returns this thread's TLS
-            // allocator slot; the non-null check confirms initialization and
-            // the slot is thread-affine, so this `&mut` is the sole reference.
-            let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
-            if !alloc.is_allocating {
+            // SAFETY: `get_allocator_ptr_raw` returns this thread's TLS slot
+            // address (identical in value to the allocator address by the
+            // slot's offset-0 invariant); the non-null check confirms
+            // initialization and the slot is thread-affine.
+            // Gate before borrowing.
+            if !unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::is_allocating(slot_ptr) } {
+                // SAFETY: as above; the gate permits this borrow.
+                let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
                 // SAFETY: `segment` is the live header recovered from `ptr`;
                 // `is_owned_by` reads its owner field and compares against the
                 // current thread's allocator pointer.
                 let is_owner = unsafe { (*segment).is_owned_by(|| slot_ptr) };
 
                 if is_owner {
-                    alloc.is_allocating = true;
+                    unsafe {
+                        crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(slot_ptr, true)
+                    };
                     // SAFETY: `alloc` is the exclusively-borrowed owning
                     // allocator and `is_allocating` is set to guard re-entry;
                     // `class` is a valid size class from `small_path_class`.
@@ -257,7 +262,9 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                         }
                         local_free_done = true;
                     }
-                    alloc.is_allocating = false;
+                    unsafe {
+                        crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(slot_ptr, false)
+                    };
                 }
             }
         }

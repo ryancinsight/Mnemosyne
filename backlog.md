@@ -239,46 +239,81 @@ Filed from the 2026-08-12 verification-posture review:
   Remaining failures there are MN-440 and two Miri-on-Windows limitations
   (subprocess abort tests calling `CompareStringOrdinal`), not defects.
 
-- [ ] [arch] **MN-440 — the re-entrancy guard lives inside the object it
-  guards.** Attempted and reverted; the design is now fully specified, including
-  the constraint that sank the first attempt.
-  The defect: `with_allocator_unguarded` (and the equivalents in `RawHeap` and
-  every TLS provider) forms `&mut ThreadAllocator` and *then* tests
-  `alloc.is_allocating`. On a re-entrant call the outer `&mut` is live and
-  strongly protected, so the second reference is already UB before the check
-  runs — the guard is read through the very aliasing it exists to reject.
-  Reordering does not help: a protected `&mut` excludes *all* access through
-  other tags, including a raw read of one field. Miri reports it from
-  `unguarded_fast_path_rejects_reentrant_borrow`, the test written to prove this
-  path is safe.
-  Established design: the gate must be a sibling of the allocator, not a field
-  inside it — a `Cell<bool>` on `LocalAllocatorSlot` and on `RawHeap`, checked
-  before any borrow is formed. `ThreadAllocator` loses the field; its one
-  internal user (`record_defrag_operation` -> `run_periodic_defragmentation`)
-  takes the state as a parameter, which all three call sites already know
-  because they just set it.
-  **The constraint that killed the first attempt**, and the thing to get right
-  next time: the TLS fast paths cache the *allocator* address, and that address
-  is also the segment **owner token** compared by `SegmentOwner::matches` on
-  every free. The first attempt made TLS cache the slot address instead so the
-  gate was reachable — which silently changed the token, so every self-free
-  would have misrouted as a cross-thread free. Found by chasing compile errors,
-  not by design, which is why it was reverted rather than pushed through.
-  Correct approach: leave `get_allocator_ptr_raw*` returning the allocator token
-  untouched, and add a *parallel* slot accessor used only by the gate paths.
-  Scope: `LocalAllocatorSlot`, `RawHeap`, `ThreadAllocator`, the `TlsProvider`
-  trait and its three implementations, the selector macro, and the alloc/free
-  hot paths. Every `_raw` consumer must be audited for token-versus-slot
-  semantics before landing.
-  Acceptance: `mnemosyne-local` joins the Miri job clean under both borrow
-  models — this is the only blocker left for that, and therefore for MN-439's
-  outstanding acceptance too.
+- [x] [arch] **MN-440 — the re-entrancy guard lives inside the object it
+  guards.** Done. The gate is now a `Cell<bool>` sibling of the allocator on
+  `LocalAllocatorSlot` and `RawHeap`, checked before any `&mut ThreadAllocator`
+  is formed; `ThreadAllocator` lost the field and
+  `record_defrag_operation`/`run_periodic_defragmentation` take the state as a
+  parameter.
+  The token constraint that sank the first attempt was resolved by construction
+  rather than by a parallel accessor: `LocalAllocatorSlot` is `#[repr(C)]` with
+  `allocator` at offset 0, so the slot address and the allocator address are the
+  *same value*. One cached pointer therefore serves as both the segment owner
+  token and the gate handle — every `SegmentOwner::matches` comparison sees the
+  value it saw before. A const assertion (`SLOT_ALLOCATOR_AT_OFFSET_ZERO`) fails
+  the build if that layout invariant ever lapses, so the silent misrouting the
+  first attempt would have shipped is now a compile error.
+  Two further constraints only Miri surfaced, both worth keeping in mind for any
+  similar guard:
+  - *Provenance, not just address.* `allocator_ptr` had to be re-derived from the
+    slot rather than from `UnsafeCell::get()`. Both produce the same address, but
+    a pointer whose provenance covers only the allocator cannot legally reach a
+    sibling field past it.
+  - *Field projection, not slot reference.* The gate is read through
+    `&raw const (*slot).is_allocating`, never through a reconstructed `&Self`.
+    Forming the reference would retag the whole slot including the allocator,
+    which is precisely the aliasing the gate must be able to run *during*.
+  `free.rs`'s owner fast path also stopped consulting `alloc.is_current_segment`
+  and now reads `(*segment).is_current` — the owner's own mirror of the same
+  fact, already the established form in `occupancy` and the cold free path. That
+  path runs with the gate raised, so answering the question through the allocator
+  required a borrow the gate exists to forbid.
+  Evidence: `unguarded_fast_path_rejects_reentrant_borrow` and
+  `reentrant_current_segment_local_free_uses_metadata_fast_path` pass under Miri;
+  workspace 282/282; clippy `-D warnings` clean.
+  Acceptance **not yet met**: `mnemosyne-local` still cannot join the Miri job,
+  but no longer because of this item. With the gate fixed the run gets far enough
+  to reach two pre-existing defects that previously hid behind it (MN-442,
+  MN-443). Those are now the blockers for this acceptance and for MN-439's.
+
+- [ ] [major] **MN-442 — the huge-allocation classifier reads uninitialized
+  page metadata.** Stacked Borrows, from
+  `usable_size_does_not_over_report_past_mapping_end_for_huge_allocations`:
+  `usable_size` (`usable_size.rs:42`) and the free-path classifier
+  (`free.rs:78`) both branch on `pages[page_index].block_size` to decide whether
+  an allocation is huge — but for a huge allocation `locate_segment` rounds the
+  user pointer down to `SEGMENT_SIZE`, which need not land on a real `Segment`
+  header. The classifier is therefore reading mapping bytes that were never
+  written as page metadata. It works today because fresh OS mappings read as
+  zero and zero is the "huge" answer, but that is an accident of the allocation
+  path, not an invariant: a recycled mapping can carry a non-zero byte there and
+  misclassify a huge allocation as small, which frees it down the small path.
+  The fix has to give huge allocations a discriminator that does not depend on
+  reading a header that may not exist. Not caused by MN-440 — Miri simply could
+  not reach this test before the gate was fixed.
+  Acceptance: the classifier reads only memory it initialized, the test passes
+  under Stacked Borrows, and a recycled-mapping case covers the misclassification
+  directly.
+
+- [ ] [major] **MN-443 — forbidden wildcard write in page occupancy under Tree
+  Borrows.** `occupancy.rs:46` (reached from `occupancy.rs:128`, exercised by
+  `alloc_tests.rs:81`) performs a write through wildcard provenance that Tree
+  Borrows rejects. Stacked Borrows accepts it, so this is one of the cases the
+  both-models requirement exists to catch. The segment-addressed occupancy
+  helpers introduced by MN-439 reach their target through exposed provenance;
+  under Tree Borrows the resulting write is not permitted at that location.
+  Needs the access re-derived from a pointer with real provenance rather than an
+  exposed round-trip. Not caused by MN-440.
+  Acceptance: `mnemosyne-local` and `mnemosyne-core` pass under
+  `-Zmiri-tree-borrows` without wildcard writes.
 
 - [ ] [patch] **MN-441 — `is_current` is non-atomic.** Written by the owning
   thread; not read on any cross-thread path today, so Miri does not flag it, but
   nothing in the type enforces that and the earlier `&self` accessor experiment
   raced against exactly this field. Either make it atomic like its neighbours or
-  document why it is owner-only, at the field.
+  document why it is owner-only, at the field. MN-440 added one more owner-side
+  read of it (the `free.rs` fast path), so the owner-only claim now carries more
+  weight and should be settled rather than left implicit.
 
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and each exclusion is listed here so none is silent:

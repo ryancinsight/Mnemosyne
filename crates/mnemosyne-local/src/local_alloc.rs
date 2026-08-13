@@ -77,8 +77,6 @@ pub struct ThreadAllocator<B: HasSegmentPool = DefaultBackend> {
     /// this field plus the global fold point; `Drop` folds this field into that
     /// global exactly once so a later reader still counts this thread's work.
     pub cross_thread_reclaimed: usize,
-    /// Indicates whether an allocation or deallocation operation is currently active on this thread-local cache.
-    pub is_allocating: bool,
     /// Thread-local pseudo-random number generator state for allocation randomization.
     pub rng_state: u64,
     /// Counter used to trigger periodic online defragmentation sweeps.
@@ -112,7 +110,6 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             orphan_segments_adopted: 0,
             recycle_sweeps: 0,
             cross_thread_reclaimed: 0,
-            is_allocating: false,
             rng_state: 0x123456789abcdefu64,
             defrag_counter: 0,
             _phantom: PhantomData,
@@ -174,20 +171,26 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// The caller must hold exclusive access to this thread allocator.
     #[inline(always)]
-    pub unsafe fn record_defrag_operation<P: mnemosyne_core::AllocPolicy>(&mut self) {
+    pub unsafe fn record_defrag_operation<P: mnemosyne_core::AllocPolicy>(
+        &mut self,
+        is_allocating: bool,
+    ) {
         self.defrag_counter += 1;
         if self.defrag_counter >= 64 {
             // SAFETY: the caller holds exclusive access to this allocator per the
             // `# Safety` contract, which is the precondition the cold sweep needs.
-            unsafe { self.run_periodic_defragmentation::<P>() };
+            unsafe { self.run_periodic_defragmentation::<P>(is_allocating) };
         }
     }
 
     #[cold]
     #[inline(never)]
-    unsafe fn run_periodic_defragmentation<P: mnemosyne_core::AllocPolicy>(&mut self) {
+    unsafe fn run_periodic_defragmentation<P: mnemosyne_core::AllocPolicy>(
+        &mut self,
+        is_allocating: bool,
+    ) {
         self.defrag_counter = 0;
-        if self.is_allocating {
+        if is_allocating {
             // SAFETY: `&mut self` is the exclusive borrow of this thread-affine
             // allocator; the sweep walks only this allocator's own page/segment
             // lists. The early return preserves the in-progress `is_allocating`
@@ -196,12 +199,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             return;
         }
 
-        self.is_allocating = true;
+        // Reached only when the caller's gate is lowered, so there is no
+        // re-entrancy window to bracket here: the gate now lives on the
+        // container that owns this allocator (`LocalAllocatorSlot`/`RawHeap`)
+        // and cannot be raised from inside the borrow it guards.
+        //
         // SAFETY: as above, `&mut self` grants exclusive access to this
-        // allocator's lists; `is_allocating` is raised across the sweep to bar
-        // re-entrant fast-path mutation and lowered immediately after.
+        // allocator's lists.
         unsafe { self.periodic_defragmentation_sweep::<P>() };
-        self.is_allocating = false;
     }
 
     /// Updates the active slicing segment marker.

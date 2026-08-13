@@ -9,6 +9,7 @@ use super::os_helpers::{get_os_tls_key, get_os_tls_value, set_os_tls_value};
 use super::os_helpers::{get_teb_tls_slot, set_teb_tls_slot};
 use super::traits::{TlsProvider, TlsSlotAccess};
 use crate::ThreadAllocator;
+use crate::tls_slot::LocalAllocatorSlot;
 use mnemosyne_arena::HasSegmentPool;
 
 /// Platform-native TLS provider using OS-level slots (`TlsGetValue` / `pthread_getspecific`).
@@ -22,7 +23,8 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
         let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
             return S::get_slot_standard(|slot| {
                 S::arm_thread_exit(slot);
-                slot.with_allocator(f)
+                // SAFETY: `allocator_ptr` returns this slot's own live address.
+                unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
             });
         };
         let ptr = get_os_tls_value(key);
@@ -33,21 +35,17 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
             // pointee is exclusively owned by the current thread and no other
             // thread aliases it. `is_allocating` rejects nested same-thread
             // access before a second `&mut` is created.
-            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
-            if alloc.is_allocating {
-                return None;
-            }
-            alloc.is_allocating = true;
-            let result = f(alloc);
-            alloc.is_allocating = false;
-            Some(result)
+            // SAFETY: `ptr` is this thread's own slot address (== the allocator
+            // address, by the slot's offset-0 invariant) written below.
+            unsafe { LocalAllocatorSlot::<B>::with_allocator(ptr, f) }
         } else {
             S::get_slot_standard(|slot| {
                 let alloc_ptr = slot.allocator_ptr();
                 set_os_tls_value(key, alloc_ptr);
                 slot.os_key.set(key);
                 S::arm_thread_exit(slot);
-                slot.with_allocator(f)
+                // SAFETY: `allocator_ptr` returns this slot's own live address.
+                unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
             })
         }
     }
@@ -59,7 +57,11 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
         let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
             return S::get_slot_standard(|slot| {
                 S::arm_thread_exit(slot);
-                unsafe { slot.with_allocator_unguarded(f) }
+                // SAFETY: `allocator_ptr` returns this slot's own live address,
+                // and the caller's no-re-entry contract is forwarded unchanged.
+                unsafe {
+                    LocalAllocatorSlot::<B>::with_allocator_unguarded(slot.allocator_ptr(), f)
+                }
             });
         };
         let ptr = get_os_tls_value(key);
@@ -71,18 +73,19 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
             // live `&mut` to the cache can be created. The caller of this
             // `unsafe fn` upholds the no-re-entry contract documented on
             // `with_allocator_unguarded`.
-            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
-            if alloc.is_allocating {
-                return None;
-            }
-            Some(f(alloc))
+            // SAFETY: as above; the caller upholds the no-re-entry contract.
+            unsafe { LocalAllocatorSlot::<B>::with_allocator_unguarded(ptr, f) }
         } else {
             S::get_slot_standard(|slot| {
                 let alloc_ptr = slot.allocator_ptr();
                 set_os_tls_value(key, alloc_ptr);
                 slot.os_key.set(key);
                 S::arm_thread_exit(slot);
-                unsafe { slot.with_allocator_unguarded(f) }
+                // SAFETY: `allocator_ptr` returns this slot's own live address,
+                // and the caller's no-re-entry contract is forwarded unchanged.
+                unsafe {
+                    LocalAllocatorSlot::<B>::with_allocator_unguarded(slot.allocator_ptr(), f)
+                }
             })
         }
     }
@@ -125,7 +128,8 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
         let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
             return S::get_slot_standard(|slot| {
                 S::arm_thread_exit(slot);
-                slot.with_allocator(f)
+                // SAFETY: `allocator_ptr` returns this slot's own live address.
+                unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
             });
         };
         // SAFETY: `key` is a `TlsAlloc`-allocated key (`get_os_tls_key`), the
@@ -138,14 +142,9 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
             // below. The TEB slot is per-thread, so the pointee is exclusive to
             // the current thread; `is_allocating` rejects nested same-thread
             // access before a second `&mut` is formed.
-            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
-            if alloc.is_allocating {
-                return None;
-            }
-            alloc.is_allocating = true;
-            let result = f(alloc);
-            alloc.is_allocating = false;
-            Some(result)
+            // SAFETY: `ptr` is this thread's own slot address (== the allocator
+            // address, by the slot's offset-0 invariant) written below.
+            unsafe { LocalAllocatorSlot::<B>::with_allocator(ptr, f) }
         } else {
             S::get_slot_standard(|slot| {
                 let alloc_ptr = slot.allocator_ptr();
@@ -155,7 +154,8 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
                 unsafe { set_teb_tls_slot(key, alloc_ptr) };
                 slot.os_key.set(key);
                 S::arm_thread_exit(slot);
-                slot.with_allocator(f)
+                // SAFETY: `allocator_ptr` returns this slot's own live address.
+                unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
             })
         }
     }
@@ -167,7 +167,11 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
         let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
             return S::get_slot_standard(|slot| {
                 S::arm_thread_exit(slot);
-                unsafe { slot.with_allocator_unguarded(f) }
+                // SAFETY: `allocator_ptr` returns this slot's own live address,
+                // and the caller's no-re-entry contract is forwarded unchanged.
+                unsafe {
+                    LocalAllocatorSlot::<B>::with_allocator_unguarded(slot.allocator_ptr(), f)
+                }
             });
         };
         // SAFETY: `key` is a `TlsAlloc`-allocated key, satisfying
@@ -179,11 +183,8 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
             // gates same-thread re-entry, and the caller of this `unsafe fn`
             // upholds the no-re-entry contract of `with_allocator_unguarded`,
             // so no second live `&mut` to the cache can exist.
-            let alloc = unsafe { &mut *(ptr as *mut ThreadAllocator<B>) };
-            if alloc.is_allocating {
-                return None;
-            }
-            Some(f(alloc))
+            // SAFETY: as above; the caller upholds the no-re-entry contract.
+            unsafe { LocalAllocatorSlot::<B>::with_allocator_unguarded(ptr, f) }
         } else {
             S::get_slot_standard(|slot| {
                 let alloc_ptr = slot.allocator_ptr();
@@ -192,7 +193,11 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
                 unsafe { set_teb_tls_slot(key, alloc_ptr) };
                 slot.os_key.set(key);
                 S::arm_thread_exit(slot);
-                unsafe { slot.with_allocator_unguarded(f) }
+                // SAFETY: `allocator_ptr` returns this slot's own live address,
+                // and the caller's no-re-entry contract is forwarded unchanged.
+                unsafe {
+                    LocalAllocatorSlot::<B>::with_allocator_unguarded(slot.allocator_ptr(), f)
+                }
             })
         }
     }
