@@ -129,7 +129,6 @@ fn usable_size_returns_payload_remainder_for_huge_allocations() {
     // and cross-thread tests already follow.
     // SAFETY: the test lock is held, so no other test mutates the pool.
     unsafe { mnemosyne_arena::purge_segment_pool::<MemoryBackendWrapper>() };
-
 }
 
 #[test]
@@ -184,7 +183,6 @@ fn usable_size_does_not_over_report_past_mapping_end_for_huge_allocations() {
     // and cross-thread tests already follow.
     // SAFETY: the test lock is held, so no other test mutates the pool.
     unsafe { mnemosyne_arena::purge_segment_pool::<MemoryBackendWrapper>() };
-
 }
 
 #[test]
@@ -242,7 +240,6 @@ fn usable_size_ignores_payload_bytes_at_a_segment_aligned_huge_pointer() {
     // and cross-thread tests already follow.
     // SAFETY: the test lock is held, so no other test mutates the pool.
     unsafe { mnemosyne_arena::purge_segment_pool::<MemoryBackendWrapper>() };
-
 }
 
 #[test]
