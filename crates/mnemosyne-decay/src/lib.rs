@@ -19,7 +19,7 @@
 use core::sync::atomic::Ordering;
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::options::PURGE_CADENCE_MS;
-use mnemosyne_core::types::SegmentOwner;
+use mnemosyne_core::types::{Page, SegmentOwner};
 use std::thread;
 use std::time::Duration;
 
@@ -163,13 +163,16 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
             if i == 0 {
                 continue;
             }
-            let page = unsafe { &mut (*segment).pages[i] };
+            // Addressed through `segment` rather than a `&mut Page`: reclaim
+            // reads the segment header for the free-list cookie, and a page
+            // borrow held across that access sits on a different provenance.
+            let page = unsafe { &raw mut (*segment).pages[i] };
             // Reclaim any cross-thread frees to update the alloc_count, using
             // the segment-aware variant to avoid redundant segment-address masking.
             unsafe {
-                page.reclaim_thread_free_if_present_for_segment(dynamic_encrypted, segment, i);
+                Page::reclaim_thread_free_if_present_in_segment(segment, i, dynamic_encrypted);
             }
-            total_allocations += page.alloc_count;
+            total_allocations += unsafe { (*page).alloc_count };
         }
 
         if total_allocations == 0 {
