@@ -47,12 +47,41 @@ impl Page {
         page_index: usize,
         count: usize,
     ) {
+        // SAFETY: the caller's contract supplies the valid parent header and
+        // in-range index this forwards unchanged.
+        unsafe { Self::set_alloc_count_in_segment(segment, page_index, count) }
+    }
+
+    /// Sets `alloc_count` addressing the page through its containing segment.
+    ///
+    /// This is the form reclamation uses. Deriving the page pointer from
+    /// `segment` keeps the page write and the `is_current` / occupancy-mask
+    /// accesses on one provenance; a `&mut self` receiver would put them on two
+    /// and let the segment access invalidate the page borrow (see the
+    /// `reclaim` module's note).
+    ///
+    /// # Safety
+    ///
+    /// `segment` must be a valid segment header and `page_index` must be in
+    /// range of its `pages` array.
+    #[inline(always)]
+    pub unsafe fn set_alloc_count_in_segment(
+        segment: *mut Segment,
+        page_index: usize,
+        count: usize,
+    ) {
         debug_assert!(page_index < crate::constants::PAGES_PER_SEGMENT);
-        let old = self.alloc_count;
+        // SAFETY: valid header and in-range index per this function's contract,
+        // so the projection stays inside the segment and inherits its
+        // provenance.
+        let page = unsafe { &raw mut (*segment).pages[page_index] };
+        // SAFETY: `page` addresses initialized page metadata inside `segment`.
+        let old = unsafe { (*page).alloc_count };
         if old == count {
             return;
         }
-        self.alloc_count = count;
+        // SAFETY: as above.
+        unsafe { (*page).alloc_count = count };
         // SAFETY: the caller's `# Safety` contract guarantees `segment` is this
         // page's parent segment header, so dereferencing it to read
         // `is_current` is a valid read of initialized segment metadata.

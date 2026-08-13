@@ -516,7 +516,9 @@ fn test_reclaim_overflow_aborts_process() {
                 .push::<StandardPolicy>(NonNull::new_unchecked(block));
 
             // Run reclaim, which should detect count (1) > alloc_count (0) and abort.
-            page.reclaim_thread_free::<StandardPolicy>();
+            let seg = page.parent_segment();
+            let idx = page.index_in_segment();
+            mnemosyne_core::types::Page::reclaim_thread_free_for_policy::<StandardPolicy>(seg, idx);
         }
         return;
     }
@@ -843,7 +845,9 @@ fn test_thread_free_cycle_aborts_process() {
             (*block2).set_next::<StandardPolicy>(NonNull::new(block1), cookie);
 
             // Run reclaim, which should walk the cycle, detect visited (3) > count (2), and abort.
-            page.reclaim_thread_free::<StandardPolicy>();
+            let seg = page.parent_segment();
+            let idx = page.index_in_segment();
+            mnemosyne_core::types::Page::reclaim_thread_free_for_policy::<StandardPolicy>(seg, idx);
         }
         return;
     }

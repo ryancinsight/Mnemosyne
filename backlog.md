@@ -176,35 +176,43 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 Filed from the 2026-08-12 verification-posture review:
 
-- [ ] [patch] **MN-437 — Miri reports UB in `reclaim_thread_free`'s segment
-  access.** The new Miri gate's first real find, in the cross-thread free
-  reclamation path:
-  `crates/mnemosyne-core/src/types/page/reclaim.rs:49`, reached from
-  `reclaim_thread_free::<P>` → `reclaim_thread_free_dynamic` →
-  `reclaim_thread_free_dynamic_for_segment`:
-  `error: Undefined Behavior: not granting access to tag <wildcard> because
-  that would remove [Unique for <N>] which is strongly protected`.
-  Cause: `reclaim_thread_free_dynamic_for_segment` takes `&mut self` on `Page`,
-  which is a `Unique` borrow *strongly protected for the whole call* because it
-  is a function argument. `Page` lives inside `Segment.pages`, so the
-  `(*segment).cookie_for_dynamic(..)` access — through a pointer carrying
-  wildcard provenance from `parent_segment()` — would have to pop that
-  protected `Unique`. Reordering inside the body cannot help: the receiver
-  borrow is live from function entry.
-  This is the same class as the 2026-07-13 page-metadata aliasing closure, whose
-  gap_audit note asserts "no cross-thread path forms `&mut Page`". This path
-  does, so either that invariant regressed or this instance was never covered —
-  determine which, because the answer decides whether other callers are affected.
-  Likely fix: carry the page as `*mut Page`/`NonNull<Page>` through this seam
-  instead of `&mut self`, so no protected `Unique` is live across the segment
-  access; alternatively compute `cookie` in the caller and pass it in. Both
-  change a `pub unsafe fn` on `Page`, so classify the `mnemosyne-memory-core`
-  semver impact.
-  Verify under **both** Stacked and Tree Borrows, as the 2026-07-13 closure did
-  — this report is Stacked Borrows, which is explicitly experimental, and the
-  fix should not be accepted on one model alone.
-  Acceptance: the UB is gone under both models and `mnemosyne-memory-core`
-  rejoins the Miri job (MN-436a), which is the standing proof it stays gone.
+- [x] [patch] **MN-437 — Miri-reported UB in the reclamation seam.** Fixed.
+  Cause: reclamation took `&mut Page` while reaching the parent `Segment`
+  through a separately-derived pointer, so the page borrow and the segment
+  access sat on different provenances and the segment access invalidated the
+  borrow. Stacked Borrows reported it two ways — a wildcard read removing the
+  strongly-protected `&mut Page` argument, and a failed two-phase retag of a
+  page borrow already popped.
+  Fix: the seam is now addressed by `(segment, page_index)` and derives the page
+  pointer from the segment, so every access in the module shares one
+  provenance. `reclaim_thread_free_in_segment`,
+  `reclaim_thread_free_if_present_in_segment` and
+  `reclaim_thread_free_for_policy` replace the `&mut self` methods, and
+  `set_alloc_count_in_segment` does the same for the occupancy write. The page
+  argument was redundant all along — segment plus index determines it, and
+  accepting it separately is what let the provenances diverge.
+  Evidence: `mnemosyne-memory-core` 18/18 clean under **both** Stacked Borrows
+  and Tree Borrows, workspace 282/282, warning-denied Clippy, rustfmt. The crate
+  is back in the Miri job under both models.
+  Worth recording: the first version of this fix passed Stacked Borrows while
+  Tree Borrows still rejected it (the hot-path test used its `&mut Page` after
+  the reclaim call had disabled the tag). A single-model gate would have
+  certified a still-broken fix, which is why the job now runs both.
+
+- [ ] [patch] **MN-438 — the same `&mut Page`-across-segment-access pattern
+  remains in `mnemosyne-local`.** MN-437 fixed `mnemosyne-memory-core` and its
+  call sites now pass a real segment pointer, but `mnemosyne-local` still holds
+  `&mut Page` across operations that reach the segment — `try_reclaim_and_allocate`
+  takes `&mut Page` and has five callers, and the routing/segment-reclaim paths
+  form `&mut (*segment).pages[i]` around calls that read the segment header.
+  Not visible today because `mnemosyne-local` is not in the Miri job; adding it
+  is how this gets found and confirmed, and is the natural next step after
+  MN-436's scope shrinks. Converting that hot path is a larger refactor than
+  MN-437 and is deliberately separate: it touches the allocator's allocation
+  fast path, not just a reclamation seam.
+  Acceptance: `mnemosyne-local` joins the Miri job clean under both borrow
+  models, or the residual sites are shown to be sound with the argument written
+  down.
 
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and each exclusion is listed here so none is silent:

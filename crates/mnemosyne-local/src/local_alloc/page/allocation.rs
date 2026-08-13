@@ -62,11 +62,7 @@ pub(crate) unsafe fn try_reclaim_and_allocate<P: AllocPolicy>(
     let page_index = page.index_in_segment();
 
     let reclaimed = unsafe {
-        page.reclaim_thread_free_dynamic_for_segment(
-            P::ENABLE_FREE_LIST_ENCRYPTION,
-            segment,
-            page_index,
-        )
+        Page::reclaim_thread_free_in_segment(segment, page_index, P::ENABLE_FREE_LIST_ENCRYPTION)
     };
     if reclaimed == 0 {
         return None;

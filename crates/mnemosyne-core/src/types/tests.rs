@@ -42,28 +42,38 @@ fn test_page_reclaim_thread_free() {
         "alloc_zeroed failed to allocate segment"
     );
     unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
-    let page = unsafe { &mut (*segment_ptr).pages[1] };
-    page.block_size = 16;
+    // The page is addressed through `segment_ptr` for the whole test rather
+    // than through a long-lived `&mut Page`. Pushing to `thread_free` and
+    // reclaiming both reach the segment header (for the free-list cookie), and
+    // a page borrow held across those calls sits on a different provenance than
+    // the segment access, which invalidates it. In production those pushes come
+    // from a *remote* thread that holds no page borrow at all, so addressing by
+    // segment is also the faithful shape.
+    const PAGE_INDEX: usize = 1;
+    let page = unsafe { &raw mut (*segment_ptr).pages[PAGE_INDEX] };
+    unsafe { (*page).block_size = 16 };
 
     unsafe {
-        let page_start = page.page_start();
-        page.initialize_free_list::<crate::policy::StandardPolicy>(page_start, 0);
+        let page_start = (*page).page_start();
+        (*page).initialize_free_list::<crate::policy::StandardPolicy>(page_start, 0);
     }
 
-    let first = unsafe { page.pop_block::<crate::policy::StandardPolicy>() };
-    page.alloc_count = 1;
-    page.thread_free
-        .push::<crate::policy::StandardPolicy>(first);
-
-    let reclaimed = unsafe {
-        page.reclaim_thread_free_if_present_for_segment(false, segment_ptr, page.index_in_segment())
+    let first = unsafe { (*page).pop_block::<crate::policy::StandardPolicy>() };
+    unsafe { (*page).alloc_count = 1 };
+    unsafe {
+        (*page)
+            .thread_free
+            .push::<crate::policy::StandardPolicy>(first)
     };
 
+    let reclaimed =
+        unsafe { Page::reclaim_thread_free_if_present_in_segment(segment_ptr, PAGE_INDEX, false) };
+
     assert_eq!(reclaimed, 1);
-    assert_eq!(page.alloc_count, 0);
-    assert_eq!(page.free, Some(first));
+    assert_eq!(unsafe { (*page).alloc_count }, 0);
+    assert_eq!(unsafe { (*page).free }, Some(first));
     assert!(
-        page.thread_free.is_empty(),
+        unsafe { (*page).thread_free.is_empty() },
         "thread_free list was not empty after reclaim"
     );
 
@@ -81,30 +91,45 @@ fn test_page_reclaim_thread_free_hot_path() {
         "alloc_zeroed failed to allocate segment"
     );
     unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
-    let page = unsafe { &mut (*segment_ptr).pages[1] };
-    page.block_size = 16;
+    // Addressed through `segment_ptr` throughout: pushing to `thread_free` and
+    // reclaiming both read the segment header for the free-list cookie, and a
+    // `&mut Page` held across those accesses is invalidated by them — Tree
+    // Borrows disables the page tag, Stacked Borrows pops it.
+    const PAGE_INDEX: usize = 1;
+    let page = unsafe { &raw mut (*segment_ptr).pages[PAGE_INDEX] };
+    unsafe { (*page).block_size = 16 };
 
     unsafe {
-        let page_start = page.page_start();
-        page.initialize_free_list::<crate::policy::StandardPolicy>(page_start, 0);
+        let page_start = (*page).page_start();
+        (*page).initialize_free_list::<crate::policy::StandardPolicy>(page_start, 0);
     }
 
-    let b1 = unsafe { page.pop_block::<crate::policy::StandardPolicy>() };
-    let b2 = unsafe { page.pop_block::<crate::policy::StandardPolicy>() };
+    let b1 = unsafe { (*page).pop_block::<crate::policy::StandardPolicy>() };
+    let b2 = unsafe { (*page).pop_block::<crate::policy::StandardPolicy>() };
 
     // Simulate all other blocks allocated / empty free list
-    page.free = None;
-    page.alloc_count = 2;
-
-    page.thread_free.push::<crate::policy::StandardPolicy>(b1);
-    page.thread_free.push::<crate::policy::StandardPolicy>(b2);
+    unsafe {
+        (*page).free = None;
+        (*page).alloc_count = 2;
+        (*page)
+            .thread_free
+            .push::<crate::policy::StandardPolicy>(b1);
+        (*page)
+            .thread_free
+            .push::<crate::policy::StandardPolicy>(b2);
+    }
 
     // Reclaim thread_free. Since page.free is None, this triggers O(1) swap.
-    let reclaimed = unsafe { page.reclaim_thread_free::<crate::policy::StandardPolicy>() };
+    let reclaimed = unsafe {
+        Page::reclaim_thread_free_for_policy::<crate::policy::StandardPolicy>(
+            segment_ptr,
+            PAGE_INDEX,
+        )
+    };
 
     assert_eq!(reclaimed, 2);
-    assert_eq!(page.alloc_count, 0);
-    assert_eq!(page.free, Some(b2));
+    assert_eq!(unsafe { (*page).alloc_count }, 0);
+    assert_eq!(unsafe { (*page).free }, Some(b2));
 
     unsafe {
         let next_node = (*b2.as_ptr()).get_next::<crate::policy::StandardPolicy>(0);
@@ -115,7 +140,7 @@ fn test_page_reclaim_thread_free_hot_path() {
         );
     }
     assert!(
-        page.thread_free.is_empty(),
+        unsafe { (*page).thread_free.is_empty() },
         "thread_free list was not empty after reclaim"
     );
 
