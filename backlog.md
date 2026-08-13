@@ -199,34 +199,52 @@ Filed from the 2026-08-12 verification-posture review:
   the reclaim call had disabled the tag). A single-model gate would have
   certified a still-broken fix, which is why the job now runs both.
 
-- [ ] [arch] **MN-438 — convert `mnemosyne-local`'s page fast path to
-  segment-addressed access.** Partially delivered; the remainder is larger than
-  this item was filed as and is reclassified [patch] -> [arch].
-  Delivered: `mnemosyne-core` no longer contains the pattern. `initialize_free_list`
-  and the three `alloc_count` families gained `_in_segment` forms that project
-  the page out of the segment, so page writes and the `is_current` /
-  occupancy-mask / cookie reads share one provenance. `mnemosyne-heap` and the
-  crates' own call sites use them.
-  Not delivered, and why: `mnemosyne-local`'s page API is `&mut Page`-shaped end
-  to end — `try_allocate_page_local`, `pop_page_free_block`,
-  `try_reclaim_and_allocate` and the routing paths all take `&mut Page`, and the
-  allocator's state carries `NonNull<Page>` rather than `(segment, page_index)`.
-  Converting it is not a signature sweep: the segment must be threaded through
-  the allocator's page state, which is an architectural change to the
-  allocation fast path's data flow, not a refactor of one seam. Attempting it in
-  the same increment as the core conversion would have meant a half-converted
-  hot path.
-  The receiver-taking forms are therefore retained as documented compatibility
-  wrappers that delegate to the `_in_segment` forms. They carry an explicit
-  caveat: they recover the segment by masking the receiver's address, so using
-  the receiver after such a call is UB. That is exactly the status quo before
-  this change — nothing regressed — but it is now stated at the API rather than
-  discovered by Miri.
-  Acceptance: `mnemosyne-local` joins the Miri job clean under both borrow
-  models, and the compatibility wrappers are deleted. Adding that crate to the
-  job is how the remaining sites get enumerated; the local reproduction is
-  `cargo +nightly miri test -p mnemosyne-local` (currently reports UB at
-  `occupancy.rs` reached from `alloc_tests`).
+- [x] [arch] **MN-438 — segment-addressed page access.** Complete. The
+  `&mut Page`-across-segment-access pattern is gone from `mnemosyne-core`,
+  `mnemosyne-local`, `mnemosyne-heap` and `mnemosyne-decay`: the reclamation
+  seam, `initialize_free_list`, and the three `alloc_count` families are
+  segment-addressed, and the allocator's page paths carry `*mut Page` instead of
+  minting references.
+  The finding that justifies the whole item: `&mut Page` was not merely a
+  provenance technicality, it was an **exclusivity claim the allocator does not
+  have**. Miri's data-race detector reported the retag at
+  `segment/reclaim.rs` — creating `&mut (*curr).pages[i]` — against a concurrent
+  non-atomic read of `block_size` in `free.rs` on another thread. Remote threads
+  read page metadata during cross-thread free *by design*, so no page there can
+  ever be exclusively borrowed. The raw-pointer conversion is correctness, not
+  appeasement.
+  Evidence: workspace 282/282; `mnemosyne-memory-core` clean under Stacked and
+  Tree Borrows; warning-denied Clippy; rustfmt; doctests. `mnemosyne-local`'s
+  aliasing UB is eliminated — it now reaches the multithreaded tests, where the
+  remaining failures are data races on *segment* metadata, tracked as MN-439.
+
+- [ ] [arch] **MN-439 — shared segment metadata is non-atomic.** Uncovered by
+  MN-438 getting far enough for Miri to reach the cross-thread tests. `Segment`
+  fields are written by the owning thread while remote threads read them during
+  cross-thread free, with no synchronization. Three instances found so far, in
+  the order Miri surfaced them:
+  1. `owner` — **fixed in MN-438's change**: now `AtomicUsize` behind
+     `Segment::owner`/`set_owner` with a documented Release/Acquire pairing.
+     `AtomicUsize` matches `usize`'s size and alignment, so the pinned segment
+     layout is unchanged.
+  2. `owner_allocator` — plain `*mut c_void`, written at
+     `segment/reclaim.rs` while orphaning, read concurrently. Not yet fixed.
+  3. `is_current` — plain `bool`, written at `local_alloc.rs` while another
+     thread reads the segment. Not yet fixed.
+  There is also a structural half: **any `&Segment` retags the whole struct**, so
+  a shared reference races with a concurrent write to *any* field. That is why
+  `Segment::owner` takes a raw pointer rather than `&self` — a `&self` accessor
+  reintroduced the race against `is_current` immediately. `cookie_for_dynamic`
+  and friends still take `&self` and are on the cross-thread free path.
+  Note the `unsafe impl Sync for Segment` comment asserts "all non-atomic fields
+  are mutated solely by the proven owner ... so a shared reference observes no
+  data race". Miri contradicts that: the owner mutates them while remote threads
+  are reading. Either the claim or the code is wrong, and the evidence says the
+  claim.
+  Acceptance: `mnemosyne-local` joins the Miri job clean, which requires every
+  concurrently-read segment field atomic and no `&Segment` on cross-thread
+  paths. Sequence this with MN-433 — loom is the tool that proves the resulting
+  orderings, and this item is the concrete motivation for it.
 
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and each exclusion is listed here so none is silent:

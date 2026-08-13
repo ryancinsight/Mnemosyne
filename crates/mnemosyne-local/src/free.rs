@@ -110,7 +110,7 @@ unsafe fn thread_free_classified<
     }
 
     let block = ptr as *mut Block;
-    let owner = unsafe { (*segment).owner };
+    let owner = unsafe { Segment::owner(segment) };
 
     #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
     let (is_owner, owner_allocator) = {

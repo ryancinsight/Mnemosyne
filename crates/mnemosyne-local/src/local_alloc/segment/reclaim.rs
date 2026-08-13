@@ -41,16 +41,21 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     if i == 0 {
                         continue;
                     }
-                    let page = &mut (*curr).pages[i];
+                    // Raw pointer, never `&mut`: remote threads read this
+                    // page's metadata concurrently during cross-thread frees,
+                    // so a `&mut` here would assert an exclusivity the design
+                    // does not have — Miri reports the retag as a data race
+                    // against those reads.
+                    let page = &raw mut (*curr).pages[i];
                     let reclaimed =
                         Page::reclaim_thread_free_if_present_in_segment(curr, i, dynamic_encrypted);
                     if reclaimed > 0 {
                         self.record_cross_thread_reclaimed(reclaimed);
                     }
-                    total_allocations += page.alloc_count;
+                    total_allocations += (*page).alloc_count;
                 }
 
-                (*curr).owner = SegmentOwner::NONE;
+                Segment::set_owner(curr, SegmentOwner::NONE);
                 (*curr).owner_allocator = core::ptr::null_mut();
                 (*curr).is_current = false;
                 (*curr).next_owned_segment = core::ptr::null_mut();
@@ -104,8 +109,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 if i == 0 {
                     continue;
                 }
-                let pg = &mut (*segment).pages[i];
-                if pg.alloc_count > 0 {
+                let pg = &raw mut (*segment).pages[i];
+                if (*pg).alloc_count > 0 {
                     let reclaimed = Page::reclaim_thread_free_if_present_in_segment(
                         segment,
                         i,
@@ -114,7 +119,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     if reclaimed > 0 {
                         self.record_cross_thread_reclaimed(reclaimed);
                     }
-                    if pg.alloc_count > 0 {
+                    if (*pg).alloc_count > 0 {
                         return false;
                     }
                 }
@@ -179,7 +184,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                             if i == 0 {
                                 continue;
                             }
-                            let pg = &mut (*segment).pages[i];
+                            let pg = &raw mut (*segment).pages[i];
                             let reclaimed = Page::reclaim_thread_free_if_present_in_segment(
                                 segment,
                                 i,
@@ -188,10 +193,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                             if reclaimed > 0 {
                                 self.record_cross_thread_reclaimed(reclaimed);
                             }
-                            total_allocations += pg.alloc_count;
+                            total_allocations += (*pg).alloc_count;
 
-                            if pg.alloc_count == 0 && (pg.list_state == 1 || pg.list_state == 2) {
-                                let class = pg.size_class as usize;
+                            if (*pg).alloc_count == 0
+                                && ((*pg).list_state == 1 || (*pg).list_state == 2)
+                            {
+                                let class = (*pg).size_class as usize;
                                 // SAFETY: `active_pages[class]` is this thread's
                                 // own active-list head and `pg` is a live,
                                 // owner-exclusive page of this segment, so the
@@ -199,9 +206,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                 let is_only_active =
                                     crate::free::is_sole_active_page(self.active_pages[class], pg);
                                 if !is_only_active {
-                                    let pg_ptr = NonNull::new_unchecked(pg as *mut Page);
+                                    let pg_ptr = NonNull::new_unchecked(pg);
                                     let branded_page = token.page(pg_ptr);
-                                    if pg.list_state == 1 {
+                                    if (*pg).list_state == 1 {
                                         unlink_page_from_list(
                                             &mut token,
                                             self.active_pages.get_unchecked_mut(class),
@@ -264,18 +271,20 @@ unsafe fn unlink_segment_pages<B: HasSegmentPool>(
         // SAFETY: `i` is a set bit of `page_linked_mask`, indexing a valid page
         // of `segment`; the segment is exclusive to `alloc`, so `&mut pages[i]`
         // is unaliased.
-        let pg = unsafe { &mut (*segment).pages[i] };
-        let state = pg.list_state;
+        let pg = unsafe { &raw mut (*segment).pages[i] };
+        // SAFETY: `pg` addresses a live page of `segment`.
+        let state = unsafe { (*pg).list_state };
         if state == 1 || state == 2 {
-            let class = pg.size_class as usize;
+            // SAFETY: as above.
+            let class = unsafe { (*pg).size_class } as usize;
             // SAFETY: `list_state` 1/2 means `pg` is linked into the active/full
             // list for `class`; unlinking it from that list is the matching
             // operation on `alloc`'s own structures.
-            unsafe { alloc.unlink_page(pg as *mut Page, class) };
+            unsafe { alloc.unlink_page(pg, class) };
         } else if state == 3 {
             // SAFETY: `list_state == 3` means `pg` is linked into `alloc`'s
             // empty-page list, the list this unlink operates on.
-            unsafe { alloc.unlink_empty_page(pg as *mut Page) };
+            unsafe { alloc.unlink_empty_page(pg) };
         }
     }
 }
@@ -302,7 +311,7 @@ unsafe fn detach_and_release_segment<B: HasSegmentPool>(segment: *mut Segment) {
     // writing its owner identity and releasing it is a valid, exclusive final
     // access before ownership returns to the pool.
     unsafe {
-        (*segment).owner = SegmentOwner::NONE;
+        Segment::set_owner(segment, SegmentOwner::NONE);
         (*segment).owner_allocator = core::ptr::null_mut();
         deallocate_segment::<B>(segment);
     }

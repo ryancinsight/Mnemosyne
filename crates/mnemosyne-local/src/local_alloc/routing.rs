@@ -24,9 +24,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline(always)]
     pub unsafe fn alloc_class<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
         if let Some(page_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
-            let mut page_ptr = refresh_page_pointer(page_ptr);
-            // Safety: page_ptr points to a valid Page structure inside an active segment owned by us.
-            let page = unsafe { page_ptr.as_mut() };
+            let page_ptr = refresh_page_pointer(page_ptr);
+            // Raw pointer, not `&mut`: these paths reach the parent segment, and
+            // a `Unique` tag minted here would have to be popped by that access.
+            let page = page_ptr.as_ptr();
 
             // 1. Check thread-local free list or lazy bump allocation.
             if let Some(block) = unsafe { try_allocate_page_local::<P>(page) } {
@@ -89,11 +90,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         unsafe { self.record_defrag_operation::<P>() };
         // 1. Move the current active page to full_pages if it is indeed full.
         if let Some(active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
-            let mut active_ptr = refresh_page_pointer(active_ptr);
+            let active_ptr = refresh_page_pointer(active_ptr);
             // Safety: `active_ptr` came from this allocator's own active list,
-            // so the page is live and exclusively owned by this thread.
-            let active_page = unsafe { active_ptr.as_mut() };
-            // Safety: `active_page` is owned by this allocator.
+            // so the page is live and exclusively owned by this thread. Kept as
+            // a raw pointer so no `Unique` tag is minted (see `page::access`).
+            let active_page = active_ptr.as_ptr();
             if let Some(block) = unsafe {
                 try_reclaim_and_allocate::<P>(active_page, &mut self.cross_thread_reclaimed)
             } {
@@ -108,10 +109,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // 1b. Check if the new head of active_pages can satisfy the allocation.
         if let Some(active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
-            let mut active_ptr = refresh_page_pointer(active_ptr);
-            // Safety: `active_ptr` came from this allocator's own active list,
-            // so the page is live and exclusively owned by this thread.
-            let active_page = unsafe { active_ptr.as_mut() };
+            let active_ptr = refresh_page_pointer(active_ptr);
+            // Safety: as above; raw pointer keeps this off a `Unique` tag.
+            let active_page = active_ptr.as_ptr();
             if let Some(block) = unsafe { try_allocate_page_local::<P>(active_page) } {
                 return block.as_ptr() as *mut u8;
             }
@@ -127,7 +127,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let mut curr_opt = unsafe { *self.full_pages.get_unchecked(class) };
         let mut checked = 0;
         while let Some(page_ptr) = curr_opt {
-            let mut page_ptr = refresh_page_pointer(page_ptr);
+            let page_ptr = refresh_page_pointer(page_ptr);
             if checked >= 128 {
                 break;
             }
@@ -135,13 +135,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // Safety: `page_ptr` was walked from this allocator's own
             // `full_pages[class]` list, so the page is live and exclusively
             // owned by this thread.
-            let page = unsafe { page_ptr.as_mut() };
+            let page = page_ptr.as_ptr();
             // Safety: `page` is owned by this allocator. Since it is in full_pages,
             // we know it has no local free blocks. We only need to check for cross-thread frees to reclaim.
             let block_opt =
                 unsafe { try_reclaim_and_allocate::<P>(page, &mut self.cross_thread_reclaimed) };
             if let Some(block) = block_opt {
-                if page.alloc_count < page.max_blocks() {
+                if unsafe { (*page).alloc_count < (*page).max_blocks() } {
                     // Page is no longer full! Move it back to active list.
                     // SAFETY: `page_ptr` is a live `Page` owned by this
                     // allocator (just walked from `full_pages[class]`), and
@@ -153,7 +153,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 }
                 return block.as_ptr() as *mut u8;
             }
-            curr_opt = page.next_page;
+            curr_opt = unsafe { (*page).next_page };
         }
 
         // 3. Allocate a brand new page
@@ -169,18 +169,22 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // SAFETY: `new_page_ptr` is the non-null pointer just returned by
         // `get_new_page`, pointing to a freshly initialized `Page` inside a
         // segment owned exclusively by this thread, so the `&mut` is unaliased.
-        let new_page_ptr = unsafe { refresh_raw_page_pointer(new_page_ptr) };
-        let page = unsafe { &mut *new_page_ptr };
+        let page = unsafe { refresh_raw_page_pointer(new_page_ptr) };
         // Safety: `get_new_page` guarantees a freshly initialized page whose
-        // `initialize_free_list` populated `free` with at least one block.
+        // free list holds at least one block.
         let block = unsafe { pop_page_free_block::<P>(page) };
 
         // Safety: `page` is the freshly allocated page above with one block
         // just popped, so the count increment matches an actual allocation.
-        unsafe { page.increment_alloc_count() };
+        // Addressed by segment so no page reference is minted.
+        unsafe {
+            let segment = (*page).parent_segment();
+            let page_index = (*page).index_in_segment();
+            Page::increment_alloc_count_in_segment(segment, page_index);
+        }
 
         // If it becomes full immediately, move to full list
-        if page.alloc_count == page.max_blocks() {
+        if unsafe { (*page).alloc_count == (*page).max_blocks() } {
             // SAFETY: `new_page_ptr` is the non-null page from `get_new_page`,
             // so `NonNull::new_unchecked` is valid; `class` is the
             // caller-validated size class the page was installed under, keeping
@@ -204,19 +208,28 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // Check if there is an empty page in the defragmentation list first.
         if let Some(page_ptr) = unsafe { self.pop_best_empty_page() } {
-            let mut page_ptr = refresh_page_pointer(page_ptr);
+            let page_ptr = refresh_page_pointer(page_ptr);
             unsafe {
                 let random_value = if P::RANDOMIZE_ALLOCATION {
                     self.next_random() ^ page_ptr.as_ptr() as u64 ^ (class as u64).rotate_left(17)
                 } else {
                     0
                 };
-                let page = page_ptr.as_mut();
+                let page = page_ptr.as_ptr();
 
-                let page_start = page.page_start();
-                page.block_size = block_size;
-                page.size_class = class as u8;
-                page.initialize_free_list::<P>(page_start, random_value);
+                let page_start = (*page).page_start();
+                (*page).block_size = block_size;
+                (*page).size_class = class as u8;
+                // Segment-addressed: free-list init reads the segment cookie, so
+                // no page reference may be live across it.
+                let segment = (*page).parent_segment();
+                let page_index = (*page).index_in_segment();
+                Page::initialize_free_list_in_segment::<P>(
+                    segment,
+                    page_index,
+                    page_start,
+                    random_value,
+                );
 
                 self.push_active_page(page_ptr, class);
                 self.recycled_pages += 1;
@@ -311,10 +324,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                             0
                         };
                         let found_page = unsafe { refresh_raw_page_pointer(found_page) };
-                        let page = unsafe { &mut *found_page };
-                        page.block_size = block_size;
-                        page.size_class = class as u8;
-                        let page_start = page.page_start();
+                        let page_start = unsafe {
+                            (*found_page).block_size = block_size;
+                            (*found_page).size_class = class as u8;
+                            (*found_page).page_start()
+                        };
                         // SAFETY: `found_page` is a non-null interior pointer
                         // into this segment's page array (set in the scan loop
                         // above); `page_start` is its mapped backing region, so
@@ -322,7 +336,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         // `NonNull::new_unchecked(found_page)` is valid for the
                         // active-list insertion under the just-set `class`.
                         unsafe {
-                            page.initialize_free_list::<P>(page_start, random_value);
+                            let segment = (*found_page).parent_segment();
+                            let page_index = (*found_page).index_in_segment();
+                            Page::initialize_free_list_in_segment::<P>(
+                                segment,
+                                page_index,
+                                page_start,
+                                random_value,
+                            );
                             self.push_active_page(NonNull::new_unchecked(found_page), class);
                         }
                         return found_page;
@@ -356,18 +377,25 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // Safety: page_ptr points to a valid Page inside the segment.
         let page_ptr = unsafe { refresh_raw_page_pointer(page_ptr) };
-        let page = unsafe { &mut *page_ptr };
-        page.block_size = block_size;
-        page.size_class = class as u8;
-
-        let page_start = page.page_start();
+        let page_start = unsafe {
+            (*page_ptr).block_size = block_size;
+            (*page_ptr).size_class = class as u8;
+            (*page_ptr).page_start()
+        };
         let random_value = if P::RANDOMIZE_ALLOCATION {
             self.next_random() ^ page_ptr as u64 ^ (class as u64).rotate_left(17)
         } else {
             0
         };
         unsafe {
-            page.initialize_free_list::<P>(page_start, random_value);
+            let segment = (*page_ptr).parent_segment();
+            let page_index = (*page_ptr).index_in_segment();
+            Page::initialize_free_list_in_segment::<P>(
+                segment,
+                page_index,
+                page_start,
+                random_value,
+            );
         }
 
         // Prepend to the size class active pages list.
