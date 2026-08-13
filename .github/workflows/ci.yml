@@ -112,7 +112,9 @@ jobs:
       - name: Loom models
         env:
           RUSTFLAGS: "--cfg loom"
-        run: cargo test -p mnemosyne-memory-core --test loom_atomic_free_list --release
+        run: >-
+          cargo test --locked -p mnemosyne-memory-core
+          --test loom_atomic_free_list --release
 
   # Miri has repeatedly been the tool that found real defects here — the
   # 2026-07-13 page-metadata aliasing violation and the AlignedVec::into_vec
