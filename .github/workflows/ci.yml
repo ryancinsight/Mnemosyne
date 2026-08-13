@@ -80,6 +80,40 @@ jobs:
           cargo test --locked --workspace
           --exclude mnemosyne-benchmarks --doc
 
+  # Loom enumerates thread interleavings rather than sampling them, which is
+  # what the `*_concurrent_push_pop` stress tests do. It is the tool for the
+  # happens-before edges Miri does not check: Miri validates aliasing and leaks
+  # on the schedule it happens to run.
+  #
+  # `cfg(loom)` is set only here. It is deliberately not a cargo feature —
+  # features are additive and could unify loom's instrumented atomics into an
+  # ordinary build of the shipped allocator; a cfg cannot.
+  loom:
+    name: Loom (bounded-exhaustive interleavings)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+
+      # Release profile: loom explores a large state space and a debug build
+      # makes that needlessly slow. The models assert behaviour, not timing, so
+      # the profile does not affect what they prove.
+      - name: Loom models
+        env:
+          RUSTFLAGS: "--cfg loom"
+        run: cargo test -p mnemosyne-memory-core --test loom_atomic_free_list --release
+
   # Miri has repeatedly been the tool that found real defects here — the
   # 2026-07-13 page-metadata aliasing violation and the AlignedVec::into_vec
   # leak were both caught under it (gap_audit.md). Until now it ran only by

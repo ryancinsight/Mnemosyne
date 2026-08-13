@@ -1,8 +1,8 @@
 //! Synchronization primitives for the allocator, including lock-free structures.
 
+use crate::loom_shim::Ordering;
 use crate::types::Block;
 use core::ptr::NonNull;
-use core::sync::atomic::Ordering;
 
 /// A lock-free, atomic singly-linked list of blocks.
 ///
@@ -10,12 +10,12 @@ use core::sync::atomic::Ordering;
 /// queue pattern from mimalloc.
 #[cfg(target_pointer_width = "64")]
 pub struct AtomicFreeList {
-    head: core::sync::atomic::AtomicUsize,
+    head: crate::loom_shim::AtomicUsize,
 }
 
 #[cfg(not(target_pointer_width = "64"))]
 pub struct AtomicFreeList {
-    head: core::sync::atomic::AtomicPtr<Block>,
+    head: crate::loom_shim::AtomicPtr<Block>,
 }
 
 /// On 64-bit targets the head is a single `AtomicUsize` that packs the list
@@ -48,9 +48,22 @@ impl AtomicFreeList {
     const COUNT_WRAP_MASK: usize = (1usize << (usize::BITS - Self::PACKED_PTR_BITS)) - 1;
 
     /// Creates a new empty `AtomicFreeList`.
+    ///
+    /// `const` in ordinary builds so `Page::new()` can stay const. Loom's
+    /// instrumented atomics are not const-constructible, so the model build
+    /// gets a non-const form; nothing in the shipped allocator changes.
+    #[cfg(not(loom))]
     pub const fn new() -> Self {
         Self {
-            head: core::sync::atomic::AtomicUsize::new(0),
+            head: crate::loom_shim::AtomicUsize::new(0),
+        }
+    }
+
+    /// Loom-build constructor. See the `cfg(not(loom))` form above.
+    #[cfg(loom)]
+    pub fn new() -> Self {
+        Self {
+            head: crate::loom_shim::AtomicUsize::new(0),
         }
     }
 
@@ -145,7 +158,7 @@ impl AtomicFreeList {
     /// Creates a new empty `AtomicFreeList`.
     pub const fn new() -> Self {
         Self {
-            head: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            head: crate::loom_shim::AtomicPtr::new(core::ptr::null_mut()),
         }
     }
 

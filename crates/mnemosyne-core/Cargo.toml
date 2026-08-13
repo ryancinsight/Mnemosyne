@@ -15,3 +15,16 @@ default = ["std"]
 std = []
 
 [dependencies]
+
+# Loom is a model checker, not a runtime dependency: it is pulled in only under
+# `cfg(loom)`, which is set exclusively by the dedicated model runs
+# (`RUSTFLAGS="--cfg loom"`). A cargo feature would be additive and could unify
+# into an ordinary build, linking instrumented atomics into the shipped
+# allocator; a cfg cannot.
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+[lints.rust]
+# `loom` is a cfg set only by the model runs, never by cargo, so declare it or
+# every build warns about an unexpected condition name.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
