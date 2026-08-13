@@ -1,5 +1,17 @@
 # Gap Audit
 
+## WGPU 30 and Melinoe 0.9 closure (2026-08-12)
+
+The WGPU 30 staging-ownership decision and the Melinoe 0.9 provider refresh
+are complete on the current default `6b0ca43`. The WGPU callback backend and
+raw-pointer contract were removed under ADR 0003; `mnemosyne-local` resolves
+Melinoe `0.9.0` and the workspace Themis dependency through the published
+Git-source contract. Hosted Rust verification `31664380226` passed both Rust
+and Miri jobs, and Pages deployment `31664379802` passed at the same head.
+The remaining device-memory branded-buffer work is explicitly blocked on a
+provider-owned Hephaestus consumer contract and remains open; it is not part
+of these two completed items.
+
 ## 2026-07-15 provider default-source convergence
 
 - [closed] Mnemosyne carried revision-qualified Eunomia and Melinoe

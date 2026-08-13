@@ -463,7 +463,7 @@ version increments.
 - [x] Pin RITK to the verified provider revision; merged RITK PR #33 has green
   Rust, wheel-smoke, Python 3.9–3.13, audit, and CodeRabbit checks.
 
-## In progress — WGPU 30 staging ownership [major]
+## Verified — WGPU 30 staging ownership [major]
 
 - [x] Record the WGPU 30 incompatibility and deletion decision in ADR 0003.
 - [x] Delete the raw-pointer WGPU callback registry, backend, facade exports,
@@ -472,6 +472,8 @@ version increments.
   and semver analysis.
 - [x] Publish the verified Mnemosyne 0.4.0 provider commit. Hephaestus migration
   continues under the Atlas WGPU-030 cross-repo item.
+- [x] Re-verify the current default `6b0ca43` through hosted Rust verification
+  `31664380226` (including Miri) and Pages deployment `31664379802`.
 
 ## Rejected — RITK 0.2 page provenance
 
@@ -536,11 +538,13 @@ version increments.
 - [x] [patch] Synchronize `backlog.md`, `gap_audit.md`, and `CHANGELOG.md`; commit
   and push the verified increment.
 
-## In progress — Melinoe 0.9 provider refresh
+## Verified — Melinoe 0.9 provider refresh
 
 - [x] [patch] Update `mnemosyne-local`'s Melinoe contract from 0.8.0 to 0.9.0.
 - [x] Refresh the Melinoe/Themis lock and pass `mnemosyne-local` formatting,
   Clippy, 66/66 nextest, doctests, and rustdoc before default-branch publication.
+- [x] Re-verify the published dependency contract at default `6b0ca43` through
+  hosted Rust verification `31664380226` and Pages deployment `31664379802`.
 
 ## Verified — 2026-07-07 Atlas provider graph refresh
 
