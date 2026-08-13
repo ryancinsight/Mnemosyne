@@ -315,14 +315,64 @@ Filed from the 2026-08-12 verification-posture review:
   where before MN-440 it aborted at the first UB. Each Tree Borrows rejection
   was observed and fixed in turn — deleting the wrappers moved the failure off
   `occupancy.rs:46` onto the `as_mut_ptr` sites, which then moved off those —
-  and the confirming full Tree Borrows pass is still running at commit time
-  (that model is several times slower than Stacked on this crate). Adding
-  `mnemosyne-local` to the Miri job waits on that pass.
+  and the confirming Tree Borrows pass has since come back clean: no Undefined
+  Behavior reported under either model. Adding `mnemosyne-local` to the Miri job
+  is now blocked only by MN-445 (two integration tests), not by aliasing.
   Also drained the global huge pool at the end of the three tests that allocate
   huge mappings directly. The pool retains released mappings for reuse by
   design, which Miri's leak checker reports at exit; the arena and cross-thread
   tests already purge for the same reason, so leak checking stays on rather than
   being suppressed for the new job.
+
+- [ ] [patch] **MN-445 — two integration tests block the mnemosyne-local Miri
+  job.** The aliasing work is done (MN-440/442/443) and the lib tests are clean
+  under both borrow models, but `cargo miri nextest run -p mnemosyne-local` also
+  runs the integration binaries, which the earlier lib-only runs never covered.
+  Measured under Stacked Borrows with `-Zmiri-ignore-leaks`: 73 run, 71 passed,
+  1 failed, 1 timed out, in 669s total.
+  - `topology_tests::test_per_cpu_cache` fails. Cause not yet diagnosed — the
+    detail was lost to output filtering and the re-run could not build (below).
+  - One test exceeds the `miri` profile's 600s bound (`300s` slow, terminate
+    after 2). Its identity was not captured. Per the test-budget rule a
+    termination is a hang to root-cause, not a bound to raise; note that
+    `allocation_side_reclaim_counts_cross_thread_blocks_exactly` was already
+    observed at 235s, so the margin here is thin and the timing-out test may
+    simply be a heavier sibling.
+  Intended job configuration, verified green for the lib tests and ready to
+  commit once the two above are resolved: two steps, `Miri — local (Stacked
+  Borrows)` and `Miri — local (Tree Borrows)`, running
+  `cargo +nightly miri nextest run -p mnemosyne-local --locked --profile miri`
+  with `MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-ignore-leaks` and that plus
+  `-Zmiri-tree-borrows`. The workflow edit was written and then withdrawn rather
+  than committed unverified.
+  Blocked on: the shared tree currently does not compile. A peer's in-flight
+  uncommitted work in `mnemosyne-arena` calls
+  `GlobalSegmentPool::try_push_chain_unbounded` / `push_chain_unbounded` from
+  `local_alloc/segment/reclaim.rs`, and neither method exists yet. This is
+  transient peer state, not a defect in the committed tree — HEAD (154097f) was
+  green at commit time.
+  Re-open trigger: the peer's segment-pool chain-push work lands and the
+  workspace compiles again.
+
+- [ ] [patch] **MN-444 — narrow the Miri leak exclusion on mnemosyne-local.**
+  The `Miri — local` jobs run with `-Zmiri-ignore-leaks` because the segment
+  pool retains freed segment mappings for reuse and Miri reports each retained
+  mapping (4 MiB + 4 KiB, one segment's raw allocation) as leaked at process
+  exit. Nearly every test in the crate leaves pool residue, so leak checking as
+  written asserts that a cache must be empty.
+  The exclusion is scoped — arena and core keep leak checking on, and they cover
+  the release paths — but it is broader than the reason for it, and it would
+  hide a genuine leak in this crate's own free paths.
+  Direction: a test-only drain, so leak checking can come back on. The three
+  tests that allocate huge mappings directly already purge (MN-442's commit);
+  the general case needs the *segment* pool drained too, and doing it per-test
+  is churn. Under `cargo miri nextest` each test is its own process, so a
+  harness-level teardown that purges both pools would cover every test at one
+  site. Confirm that draining does not change what the pool-behaviour tests
+  measure before adopting it.
+  Acceptance: `-Zmiri-ignore-leaks` is removed from both `Miri — local` steps
+  and they stay green, or the residual exclusion is narrowed to the specific
+  tests that require it with the reason recorded at that site.
 
 - [ ] [patch] **MN-441 — `is_current` is non-atomic.** Written by the owning
   thread; not read on any cross-thread path today, so Miri does not flag it, but
