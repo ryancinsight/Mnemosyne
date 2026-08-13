@@ -11,7 +11,16 @@ pub struct Segment {
     /// the original unaligned pointer.
     pub raw_alloc_ptr: *mut u8,
     /// Permission identity for the owner ThreadAllocator cache.
-    pub owner: SegmentOwner,
+    ///
+    /// Atomic because it is genuinely shared: the owning thread writes it when
+    /// it claims or orphans the segment, while *remote* threads read it during
+    /// cross-thread free to decide routing. As a plain `usize` that pairing was
+    /// a data race — Miri's detector reported the orphaning write in
+    /// `segment::reclaim` against the concurrent read in `free`. `AtomicUsize`
+    /// has `usize`'s size and alignment, so the pinned segment layout is
+    /// unchanged. Access it through [`Segment::owner`] and
+    /// [`Segment::set_owner`], which carry the release/acquire pairing.
+    pub owner: core::sync::atomic::AtomicUsize,
     /// Raw owner allocator cache pointer used after ownership has been proved.
     pub owner_allocator: *mut core::ffi::c_void,
     /// True while this segment is the owner's active page-slicing segment.
@@ -118,7 +127,8 @@ impl Segment {
         unsafe {
             let segment = &mut *aligned_ptr;
             segment.raw_alloc_ptr = raw_alloc_ptr;
-            segment.owner = SegmentOwner::NONE;
+            (*core::ptr::addr_of_mut!(segment.owner)) =
+                core::sync::atomic::AtomicUsize::new(SegmentOwner::NONE.0);
             segment.owner_allocator = core::ptr::null_mut();
             segment.is_current = false;
             segment.next_owned_segment = core::ptr::null_mut();
@@ -238,6 +248,47 @@ impl Segment {
         unsafe { self.cookie_for_dynamic(P::ENABLE_FREE_LIST_ENCRYPTION, page_index) }
     }
 
+    /// Reads the segment's owner identity.
+    ///
+    /// Takes a raw pointer rather than `&self` on purpose: a reference retags
+    /// the *whole* `Segment`, which races against any concurrent write to any
+    /// other field (Miri caught exactly that against `is_current`). Projecting
+    /// to the single atomic field touches only that field.
+    ///
+    /// `Acquire`: a remote thread reading this to route a cross-thread free must
+    /// see the segment state published by the owner's `Release` write in
+    /// [`Segment::set_owner`].
+    ///
+    /// # Safety
+    ///
+    /// `segment` must point to a live segment header.
+    #[inline(always)]
+    pub unsafe fn owner(segment: *const Segment) -> SegmentOwner {
+        // SAFETY: caller guarantees a live header; the projection touches only
+        // the `owner` field.
+        let field = unsafe { &raw const (*segment).owner };
+        // SAFETY: `field` addresses the initialized atomic owner slot.
+        SegmentOwner(unsafe { (*field).load(core::sync::atomic::Ordering::Acquire) })
+    }
+
+    /// Publishes a new owner identity for this segment.
+    ///
+    /// `Release`: pairs with [`Segment::owner`]'s `Acquire` so everything the
+    /// owner wrote before claiming or orphaning the segment is visible to the
+    /// remote thread that observes the new identity. Raw-pointer form for the
+    /// same whole-struct-retag reason as the reader.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must point to a live segment header.
+    #[inline(always)]
+    pub unsafe fn set_owner(segment: *const Segment, owner: SegmentOwner) {
+        // SAFETY: caller guarantees a live header.
+        let field = unsafe { &raw const (*segment).owner };
+        // SAFETY: `field` addresses the initialized atomic owner slot.
+        unsafe { (*field).store(owner.0, core::sync::atomic::Ordering::Release) };
+    }
+
     /// Returns true if this segment is owned by the allocator represented by the given raw slot pointer.
     ///
     /// # Safety
@@ -248,7 +299,8 @@ impl Segment {
         &self,
         get_slot_ptr: impl FnOnce() -> *mut core::ffi::c_void,
     ) -> bool {
-        let owner = self.owner;
+        // SAFETY: `self` is a live segment header.
+        let owner = unsafe { Self::owner(self as *const Segment) };
         #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
         {
             let _ = get_slot_ptr;

@@ -19,7 +19,7 @@
 use core::sync::atomic::Ordering;
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::options::PURGE_CADENCE_MS;
-use mnemosyne_core::types::{Page, SegmentOwner};
+use mnemosyne_core::types::{Page, Segment, SegmentOwner};
 use std::thread;
 use std::time::Duration;
 
@@ -178,7 +178,7 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
         if total_allocations == 0 {
             // No allocations left! Deallocate segment mapping completely back to OS
             unsafe {
-                (*segment).owner = SegmentOwner::NONE;
+                Segment::set_owner(segment, SegmentOwner::NONE);
                 (*segment).next_owned_segment = core::ptr::null_mut();
                 (*segment).prev_owned_segment = core::ptr::null_mut();
                 mnemosyne_arena::deallocate_segment::<B>(segment);

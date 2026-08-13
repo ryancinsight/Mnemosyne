@@ -140,14 +140,17 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // `self` is the owning allocator. The writes are not
             // aliased by any concurrent thread-and-permission accessor.
             unsafe {
-                (*segment).owner = SegmentOwner::from_thread_id(tid);
+                Segment::set_owner(segment, SegmentOwner::from_thread_id(tid));
                 (*segment).owner_allocator = (self as *mut ThreadAllocator<B>).cast();
             }
         }
         #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
         {
             unsafe {
-                (*segment).owner = SegmentOwner::from_ptr(self as *mut ThreadAllocator<B>);
+                Segment::set_owner(
+                    segment,
+                    SegmentOwner::from_ptr(self as *mut ThreadAllocator<B>),
+                );
                 (*segment).owner_allocator = (self as *mut ThreadAllocator<B>).cast();
             }
         }
