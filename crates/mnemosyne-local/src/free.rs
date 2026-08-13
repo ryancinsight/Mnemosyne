@@ -75,7 +75,12 @@ unsafe fn thread_free_classified<
         unsafe { record_free_profile(ptr, page_ptr, page_index) };
     }
 
-    if !LAYOUT_PROVES_SMALL && unsafe { (*page_ptr).block_size } == 0 {
+    // `page_index == 0` short-circuits before the metadata read: page 0 is
+    // never allocated from, so a zero index means `ptr` is segment-aligned and
+    // the address `locate_segment` masked to is payload rather than a header.
+    // Reading `block_size` from it would interpret user bytes as page metadata.
+    // See `usable_size` for the full argument.
+    if !LAYOUT_PROVES_SMALL && (page_index == 0 || unsafe { (*page_ptr).block_size } == 0) {
         // SAFETY: huge-allocation metadata layout. `segment` is recovered
         // from the metadata slot one pointer slot directly preceding the
         // user payload (`(ptr as *mut *mut Segment) - 1`); every huge

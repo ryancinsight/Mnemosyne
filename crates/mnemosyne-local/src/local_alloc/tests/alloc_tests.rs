@@ -70,17 +70,20 @@ fn stats_snapshot_counts_active_and_empty_page_lists() {
     let segment_addr = ptr_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
     let segment = segment_addr as *mut Segment;
     let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-    let page = unsafe { &mut (*segment).pages[page_index] };
+    // Raw: the segment-addressed helpers below write this page through the
+    // segment's own provenance, which invalidates any `&mut Page` held across
+    // them — the reason those helpers are segment-addressed in the first place.
+    let page = unsafe { &raw mut (*segment).pages[page_index] };
 
     // Move the page from active to empty using the same intrusive list helpers
     // the allocator uses when a non-current page becomes empty.
     unsafe {
         let block = ptr as *mut Block;
-        (*block).set_next::<StandardPolicy>(page.free, 0);
-        page.free = Some(NonNull::new_unchecked(block));
-        page.set_alloc_count(0);
-        alloc.unlink_page(page as *mut Page, class);
-        alloc.push_empty_page(NonNull::new_unchecked(page as *mut Page));
+        (*block).set_next::<StandardPolicy>((*page).free, 0);
+        (*page).free = Some(NonNull::new_unchecked(block));
+        Page::set_alloc_count_in_segment(segment, page_index, 0);
+        alloc.unlink_page(page, class);
+        alloc.push_empty_page(NonNull::new_unchecked(page));
     }
 
     let empty_stats = alloc.stats();
@@ -119,20 +122,22 @@ fn test_page_recycling_different_classes() {
     let segment = segment_addr as *mut Segment;
     let page_index = (ptr1_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
 
+    // Raw for the same reason as the site above: the segment-addressed write
+    // below invalidates any `&mut Page` held across it.
     // Safety: segment points to a valid segment containing pages.
-    let page = unsafe { &mut (*segment).pages[page_index] };
+    let page = unsafe { &raw mut (*segment).pages[page_index] };
 
     // 2. Free the block locally by modifying metadata as thread_free would.
     // Since we are not running through thread_free routing, we manually perform a local free.
     // Safety: block ptr is valid and exclusive. We set up page free list.
     unsafe {
         let block = ptr1 as *mut Block;
-        (*block).set_next::<StandardPolicy>(page.free, 0);
-        page.free = Some(NonNull::new_unchecked(block));
-        page.set_alloc_count(0); // Page is now empty
-        let class = page.size_class as usize;
-        alloc.unlink_page(page as *mut Page, class);
-        alloc.push_empty_page(NonNull::new_unchecked(page as *mut Page));
+        (*block).set_next::<StandardPolicy>((*page).free, 0);
+        (*page).free = Some(NonNull::new_unchecked(block));
+        Page::set_alloc_count_in_segment(segment, page_index, 0); // Page is now empty
+        let class = (*page).size_class as usize;
+        alloc.unlink_page(page, class);
+        alloc.push_empty_page(NonNull::new_unchecked(page));
     }
 
     // 3. Now allocate a block of a DIFFERENT size class, say class 1 (32 bytes).

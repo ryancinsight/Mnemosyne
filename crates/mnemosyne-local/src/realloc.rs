@@ -158,7 +158,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     // block has been replaced: `alloc_class` may read the same segment while
     // selecting its fresh page, and an outstanding `&mut Page` would violate
     // Stacked Borrows before the replacement free begins.
-    let page = unsafe { (*segment).pages.as_mut_ptr().add(page_index) };
+    let page = unsafe { &raw mut (*segment).pages[page_index] };
     // SAFETY: `page` is the live page recovered from the allocator-owned
     // segment and `block_size` is initialized for every allocated small block.
     let is_old_small = page_index > 0 && unsafe { (*page).block_size > 0 };

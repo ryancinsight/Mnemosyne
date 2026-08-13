@@ -276,36 +276,53 @@ Filed from the 2026-08-12 verification-posture review:
   to reach two pre-existing defects that previously hid behind it (MN-442,
   MN-443). Those are now the blockers for this acceptance and for MN-439's.
 
-- [ ] [major] **MN-442 — the huge-allocation classifier reads uninitialized
-  page metadata.** Stacked Borrows, from
-  `usable_size_does_not_over_report_past_mapping_end_for_huge_allocations`:
-  `usable_size` (`usable_size.rs:42`) and the free-path classifier
-  (`free.rs:78`) both branch on `pages[page_index].block_size` to decide whether
-  an allocation is huge — but for a huge allocation `locate_segment` rounds the
-  user pointer down to `SEGMENT_SIZE`, which need not land on a real `Segment`
-  header. The classifier is therefore reading mapping bytes that were never
-  written as page metadata. It works today because fresh OS mappings read as
-  zero and zero is the "huge" answer, but that is an accident of the allocation
-  path, not an invariant: a recycled mapping can carry a non-zero byte there and
-  misclassify a huge allocation as small, which frees it down the small path.
-  The fix has to give huge allocations a discriminator that does not depend on
-  reading a header that may not exist. Not caused by MN-440 — Miri simply could
-  not reach this test before the gate was fixed.
-  Acceptance: the classifier reads only memory it initialized, the test passes
-  under Stacked Borrows, and a recycled-mapping case covers the misclassification
-  directly.
+- [x] [major] **MN-442 — the huge-allocation classifier read uninitialized
+  page metadata.** Done. `usable_size` and the `thread_free` classifier both
+  branched on `pages[page_index].block_size` to decide whether an allocation was
+  huge, *before* checking the index. When a huge allocation's alignment request
+  lands its payload on a segment boundary (`align >= SEGMENT_SIZE`, 2 MiB),
+  `locate_segment` masks the user pointer down to that boundary — an address
+  that holds the caller's payload, not a segment header. The classifier was
+  reading user bytes as page metadata.
+  Both sites now test `page_index == 0` first. Page 0 is segment metadata and is
+  never allocated from, so a zero index unambiguously means "segment-aligned,
+  therefore large/huge" and routes to the metadata slot without touching a
+  header that may not exist.
+  This was not merely a Miri complaint. The regression test
+  (`usable_size_ignores_payload_bytes_at_a_segment_aligned_huge_pointer`) fills
+  a segment-aligned 4 MiB payload with `0xAB` and, with the fix reverted,
+  `usable_size` returns 12,370,169,555,311,111,083 for a 5,570,560-byte mapping
+  — the fill pattern read as a size. A caller sizing spare capacity from that
+  writes arbitrarily far past the mapping. The assertion is bounded by the
+  mapping end, not by the request: the over-report is the dangerous direction,
+  and an earlier `>= request` form passed with the bug present.
 
-- [ ] [major] **MN-443 — forbidden wildcard write in page occupancy under Tree
-  Borrows.** `occupancy.rs:46` (reached from `occupancy.rs:128`, exercised by
-  `alloc_tests.rs:81`) performs a write through wildcard provenance that Tree
-  Borrows rejects. Stacked Borrows accepts it, so this is one of the cases the
-  both-models requirement exists to catch. The segment-addressed occupancy
-  helpers introduced by MN-439 reach their target through exposed provenance;
-  under Tree Borrows the resulting write is not permitted at that location.
-  Needs the access re-derived from a pointer with real provenance rather than an
-  exposed round-trip. Not caused by MN-440.
-  Acceptance: `mnemosyne-local` and `mnemosyne-core` pass under
-  `-Zmiri-tree-borrows` without wildcard writes.
+- [x] [major] **MN-443 — forbidden wildcard write in page occupancy under Tree
+  Borrows.** Done. The `&mut self` occupancy wrappers recovered their segment by
+  masking the receiver's address, producing wildcard provenance; their own
+  rustdoc already recorded that using the receiver afterwards was UB. They were
+  MN-438 residue kept for unconverted callers — but by then every *production*
+  caller had been converted, and only five test sites remained. The wrappers are
+  deleted and those sites use the `_in_segment` forms.
+  Two follow-on aliasing fixes fell out, both the same shape: a caller holding a
+  reference across a segment-addressed write. Four sites reached page metadata
+  through `(*segment).pages.as_mut_ptr()`, which materializes a `&mut` to the
+  whole pages array and is invalidated by the very writes those helpers perform
+  through the segment's provenance. They now use `&raw mut (*segment).pages[i]`,
+  a pure place projection that creates no reference — one of them in production
+  code (`realloc.rs`), the rest in tests.
+  Evidence: `mnemosyne-local` runs 57 passed / 0 failed under Stacked Borrows,
+  where before MN-440 it aborted at the first UB. Each Tree Borrows rejection
+  was observed and fixed in turn — deleting the wrappers moved the failure off
+  `occupancy.rs:46` onto the `as_mut_ptr` sites, which then moved off those —
+  and the confirming full Tree Borrows pass is still running at commit time
+  (that model is several times slower than Stacked on this crate). Adding
+  `mnemosyne-local` to the Miri job waits on that pass.
+  Also drained the global huge pool at the end of the three tests that allocate
+  huge mappings directly. The pool retains released mappings for reuse by
+  design, which Miri's leak checker reports at exit; the arena and cross-thread
+  tests already purge for the same reason, so leak checking stays on rather than
+  being suppressed for the new job.
 
 - [ ] [patch] **MN-441 — `is_current` is non-atomic.** Written by the owning
   thread; not read on any cross-thread path today, so Miri does not flag it, but

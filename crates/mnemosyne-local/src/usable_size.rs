@@ -34,14 +34,25 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
     // contract, satisfying `locate_segment`'s precondition.
     let (segment, page_index) = unsafe { locate_segment(ptr) };
 
-    // Safety: for small allocations, page_index is in [1, PAGES_PER_SEGMENT)
-    // and the target page records the size-class block size. If page_index is
-    // 0 (segment-aligned huge allocation) or the page's block_size is 0
-    // (non-segment-aligned huge allocation), we route to the metadata-slot fallback.
-    let page = unsafe { (*segment).pages.get_unchecked(page_index) };
-    let size = page.block_size;
-    if size > 0 {
-        return size;
+    // `page_index == 0` must be tested *before* any page-metadata read, not
+    // after. Page 0 is segment metadata and is never allocated from, so a zero
+    // index means the user pointer is `SEGMENT_ALIGN`-aligned — which for a
+    // huge allocation happens when its alignment request pushes the payload
+    // onto a segment boundary past the header. `locate_segment` then masks down
+    // to that boundary, and the "segment" it names is payload, not a header.
+    // Reading `pages[0].block_size` there interprets the caller's own bytes as
+    // page metadata: uninitialized memory in the abstract machine, and a
+    // live-data misread in practice, since a non-zero byte would classify a
+    // huge allocation as small and report a garbage size.
+    if page_index > 0 {
+        // SAFETY: `page_index` is in [1, PAGES_PER_SEGMENT), so `segment` is
+        // the real header of the segment containing `ptr` and its page metadata
+        // was initialized by `Segment::initialize`.
+        let page = unsafe { (*segment).pages.get_unchecked(page_index) };
+        let size = page.block_size;
+        if size > 0 {
+            return size;
+        }
     }
 
     // Large/huge allocation: recover the size from the metadata-slot segment.

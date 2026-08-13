@@ -485,14 +485,14 @@ fn test_online_defragmentation_page_prioritization() {
 
     // Make seg1 dirty by setting alloc_count on page 1
     unsafe {
-        (*seg1).pages[1].set_alloc_count(1);
-        (*seg1).pages[2].set_alloc_count(0);
+        Page::set_alloc_count_in_segment(seg1, 1, 1);
+        Page::set_alloc_count_in_segment(seg1, 2, 0);
     }
 
     // Make seg2 clean by setting alloc_count on all pages to 0
     unsafe {
         for i in 1..mnemosyne_core::constants::PAGES_PER_SEGMENT {
-            (*seg2).pages[i].set_alloc_count(0);
+            Page::set_alloc_count_in_segment(seg2, i, 0);
         }
     }
 
