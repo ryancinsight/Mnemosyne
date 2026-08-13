@@ -6,6 +6,10 @@ edition = "2024"
 rust-version = "1.95"
 repository.workspace = true
 description = "Hardened allocation policies for Mnemosyne"
+homepage.workspace = true
+readme = "README.md"
+keywords = ["allocator", "memory", "hardening", "security", "no-std"]
+categories.workspace = true
 
 [features]
 default = []

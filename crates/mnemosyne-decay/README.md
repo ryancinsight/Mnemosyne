@@ -1,0 +1,23 @@
+# mnemosyne-decay
+
+Background decay and reclamation for
+[Mnemosyne](https://github.com/ryancinsight/mnemosyne) arenas.
+
+```toml
+[dependencies]
+mnemosyne-decay = "0.3"
+```
+
+Segments freed by the allocator are not returned to the operating system
+immediately: holding them lets a later allocation of the same size class reuse
+the mapping instead of paying another syscall. This crate owns the other side of
+that trade — it periodically purges segments that have gone cold, so a burst of
+allocation does not pin resident memory indefinitely.
+
+`init_decay_engine` lazily spawns the worker thread, gated on the
+`MNEMOSYNE_PURGE_CADENCE_MS` cadence; a cadence of zero disables decay entirely
+and spawns no thread. `decay_step` performs one sweep across the active
+segments and is callable directly when a caller wants to drive reclamation
+without the background worker.
+
+Licensed under MIT OR Apache-2.0.

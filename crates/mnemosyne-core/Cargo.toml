@@ -6,6 +6,10 @@ edition = "2024"
 rust-version = "1.95"
 repository.workspace = true
 description = "Core allocator types, policies, and validation for Mnemosyne"
+homepage.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
 
 [lib]
 name = "mnemosyne_core"

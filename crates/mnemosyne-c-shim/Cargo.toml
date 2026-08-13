@@ -6,6 +6,10 @@ edition = "2024"
 rust-version = "1.95"
 repository.workspace = true
 description = "C ABI bindings for the Mnemosyne allocator"
+homepage.workspace = true
+readme = "README.md"
+keywords = ["allocator", "malloc", "ffi", "c-api", "ld-preload"]
+categories = ["memory-management", "external-ffi-bindings", "no-std"]
 
 [lib]
 # `lib` keeps the crate usable from Rust tests and downstream Rust code;

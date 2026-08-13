@@ -32,8 +32,12 @@ Its design incorporates core lessons from modern allocator research (specificall
 *   When a thread terminates, its active segments are not immediately returned to the OS. Partially occupied segments are pushed to the `GLOBAL_ORPHAN_POOL`, a tagged-pointer intrusive stack (`TaggedSegmentStack`) whose head mutations are serialized by a per-stack lock. The lock is deliberate, not a shortcut: the mutation tag rejects a stale CAS but cannot stop a concurrent decay sweep from releasing the observed mapping before `pop` dereferences its successor link, so the lock — not the tag — is the reclamation-safety mechanism. This pool is therefore *not* lock-free; the page-local cross-thread free queue (`AtomicFreeList`) is.
 *   Active threads seeking new pages scan this pool and adopt orphaned segments, scanning for empty pages to repurpose (recycling them across different size classes) and resuming allocations from partially filled pages, eliminating address-space leaks.
 
-### 5. Zero-Panic Library Assurance
-*   The production library crates (`mnemosyne-core`, `mnemosyne-arena`, `mnemosyne-backend`, `mnemosyne-local`) are completely free of `.unwrap()`, `.expect()`, and explicit `panic!` pathways, ensuring absolute runtime stability under memory constraints.
+### 5. Panic-Path Discipline
+*   No allocation path in `mnemosyne-core`, `mnemosyne-arena`, `mnemosyne-backend`, or `mnemosyne-local` panics on an allocation request it cannot satisfy: failure is returned, never raised. `.unwrap()` does not appear in production code in any of the four crates, and `mnemosyne-backend` has no panicking site in production code at all.
+*   The remaining panicking sites are corruption sinks and invariant assertions, not error handling. They are enumerated here rather than claimed away:
+    *   `mnemosyne_core::abort::abort_on_corruption` is the single authoritative corruption sink — every guard (double-free detection, out-of-bounds free-list links, address-packing violations, thread-free cycle detection) routes here. Under `std` it calls `std::process::abort()` with no unwinding; the `panic!` arm exists only so a pure `no_std` build preserves the corruption reason in the panic payload.
+    *   `mnemosyne-arena` repeats that abort-under-`std` / panic-under-`no_std` shape at three guards: corrupt segment pointer and corrupt segment header in [`arena`](crates/mnemosyne-arena/src/arena.rs), and the address-packing check in [`segment::pool::cache_aligned`](crates/mnemosyne-arena/src/segment/pool/cache_aligned.rs).
+    *   Two `expect` sites carry their invariant in the message. [`local_alloc::page::allocation`](crates/mnemosyne-local/src/local_alloc/page/allocation.rs) asserts that a nonzero remote-free reclaim count leaves the page-local free list populated. `AlignedVec::layout_for` ([`scratch::aligned_vec`](crates/mnemosyne-arena/src/scratch/aligned_vec.rs)) asserts layout validity; it is reachable only if a requested scratch capacity times the element size exceeds `Layout`'s `isize::MAX` size bound.
 *   Structurally guaranteed invariants in `ThreadAllocator::alloc`, `alloc_cold`, `get_new_page`, and `try_recycle_page` compile down to `debug_assert!` + `core::hint::unreachable_unchecked()`, keeping the release-mode hot path branch-free while preserving full debug-build validation.
 
 ### 6. Centralized Allocation Request Validation
@@ -76,7 +80,8 @@ Its design incorporates core lessons from modern allocator research (specificall
 ### 14. C ABI Shim (`mnemosyne-c-shim`)
 *   The `mnemosyne-c-shim` crate exposes `malloc`, `free`, `calloc`, `realloc`, `aligned_alloc`, `posix_memalign`, and `malloc_usable_size` as `#[no_mangle] extern "C"` functions. Built as both `lib` (for Rust consumers) and `cdylib` (for `LD_PRELOAD` on Unix / DLL injection on Windows), it lets C/C++ code or whole processes use Mnemosyne without a Rust `#[global_allocator]`.
 *   C `free`/`realloc`/`malloc_usable_size` are pointer-only — no `Layout` is threaded through — which Mnemosyne supports natively because the page/segment owner is recovered by address rounding. The shim's `realloc` copies `min(usable_size, new_size)` to honor C semantics (where the caller may have written the entire usable region), deliberately distinct from the Rust `GlobalAlloc::realloc` path's `layout.size()` bound.
-*   A matching C declaration header ships at [`crates/mnemosyne-c-shim/include/mnemosyne.h`](file:///d:/Mnemosyne/crates/mnemosyne-c-shim/include/mnemosyne.h) for C/C++ consumers, documenting the per-function null/zero/overflow/alignment contracts.
+*   A matching C declaration header ships at [`crates/mnemosyne-c-shim/include/mnemosyne.h`](crates/mnemosyne-c-shim/include/mnemosyne.h) for C/C++ consumers, documenting the per-function null/zero/overflow/alignment contracts.
+*   Root workspace defaults are Rust-only: `cargo build` / `cargo test` from the repo root target `default-members` and do not build `mnemosyne-c-shim` or `mnemosyne-benchmarks` unless explicitly requested (for example `cargo build -p mnemosyne-c-shim`).
 
 ### 15. Scratch Pool Element Contract
 *   `mnemosyne-arena::scratch::ScratchPool<T>` and the top-level `mnemosyne::scratch` re-export support `f32`, `f64`, and `u8` unconditionally.
@@ -112,7 +117,7 @@ derives from, so the codebase can be read against its sources.
 | Guard regions (`PROT_NONE` / `PAGE_NOACCESS`) for OOB-write trapping | hardened_malloc, Scudo, PartitionAlloc | `MemoryBackend::make_guard`, segment-tail guard |
 | Compile-time policy ZSTs for zero-cost secure-vs-standard selection | mimalloc-secure build flag, lifted to the Rust type system | `AllocPolicy`, `SecurePolicy`, `StandardPolicy` |
 
-The external gap analysis in [`gap_analysis_external.md`](file:///d:/Mnemosyne/gap_analysis_external.md)
+The external gap analysis in [`gap_analysis_external.md`](gap_analysis_external.md)
 tracks which further research techniques (free-list pointer encryption,
 NUMA-aware arenas, per-CPU caching via `rseq`, Mesh-style compaction) are
 candidates and which are deliberately out of scope, with each row carrying
@@ -153,21 +158,55 @@ targets, is gated on the same quiescent benchmark environment noted above.
 
 The project resides in a deep vertical module hierarchy:
 
+All twelve `[workspace] members` are listed below. The `crates/<dir>` directory
+name and the crates.io package name differ for two of them, so both are given.
+
+Normal (non-dev, non-build) dependency edges, foundation at the bottom:
+
 ```mermaid
 graph TD
+    Shim[mnemosyne-c-shim] --> Local
+    Bench[mnemosyne-benchmarks] --> Shell
     Shell[mnemosyne] --> Local[mnemosyne-local]
+    Shell --> Heap[mnemosyne-heap]
+    Shell --> Decay[mnemosyne-decay]
+    Shell --> Prof[mnemosyne-prof]
+    Heap --> Local
+    Local --> Decay
+    Local --> Prof
     Local --> Arena[mnemosyne-arena]
-    Arena --> Core[mnemosyne-core]
+    Heap --> Arena
+    Decay --> Arena
     Arena --> Backend[mnemosyne-backend]
-    Backend --> Core
+    Backend --> Core[mnemosyne-core]
+    Prof --> Core
+    Hardened[mnemosyne-hardened] --> Core
+    BuildUtil[mnemosyne-build-util]
 ```
 
-*   **[mnemosyne](file:///d:/Mnemosyne/crates/mnemosyne)**: The public shell global allocator interface and telemetry endpoints.
-*   **[mnemosyne-local](file:///d:/Mnemosyne/crates/mnemosyne-local)**: Thread-local cache (`ThreadAllocator`) and size-class fast-path routing.
-*   **[mnemosyne-arena](file:///d:/Mnemosyne/crates/mnemosyne-arena)**: Global aligned segment management, page slicing, and orphan pools.
-*   **[mnemosyne-backend](file:///d:/Mnemosyne/crates/mnemosyne-backend)**: Page allocation adapter mapping to virtual memory primitives (`VirtualAlloc`/`VirtualFree` on Windows; `mmap`/`munmap` on Unix).
-*   **[mnemosyne-core](file:///d:/Mnemosyne/crates/mnemosyne-core)**: Shared size-class logic, atomic collections, constants, and compile-time policies.
-*   **[mnemosyne-benchmarks](file:///d:/Mnemosyne/crates/mnemosyne-benchmarks)**: Criterion performance harness and memory usage report utilities.
+`mnemosyne-hardened` is a leaf re-export that nothing in the workspace depends
+on; it exists for downstream manifests that still name it.
+`mnemosyne-build-util` is reached only through `[build-dependencies]`, so it has
+no edge in the normal graph. Every crate above also depends transitively on
+`mnemosyne-core`; those edges are omitted for legibility.
+
+Allocation path, foundation upward:
+
+*   **[mnemosyne-core](crates/mnemosyne-core)** (`mnemosyne-memory-core`, lib `mnemosyne_core`): shared size-class logic, atomic collections, constants, validation predicates, and the compile-time `AllocPolicy` ZSTs.
+*   **[mnemosyne-backend](crates/mnemosyne-backend)**: page allocation adapter over virtual-memory primitives (`VirtualAlloc`/`VirtualFree` on Windows, `mmap`/`munmap` on Unix), plus the CUDA backends and the telemetry recorders.
+*   **[mnemosyne-arena](crates/mnemosyne-arena)**: global aligned segment management, page slicing, orphan pools, and the `ScratchPool`/`AlignedVec` scratch lanes.
+*   **[mnemosyne-local](crates/mnemosyne-local)**: thread-local cache (`ThreadAllocator`) and size-class fast-path routing.
+*   **[mnemosyne](crates/mnemosyne)** (`mnemosyne-memory`, lib `mnemosyne`): the public shell — global allocator, policy types, telemetry endpoints, and the branded ownership re-exports.
+
+Optional and adjacent concerns:
+
+*   **[mnemosyne-heap](crates/mnemosyne-heap)**: explicit `Heap` handles, `TieredHeap` placement across memory tiers, and the branded (`BrandedBox`/`BrandedVec`/`BrandedBlock`) scope family.
+*   **[mnemosyne-decay](crates/mnemosyne-decay)**: background decay worker that purges cold retained segments so a burst does not pin resident memory.
+*   **[mnemosyne-prof](crates/mnemosyne-prof)**: heap profiling runtime — alloc/free trace hooks, a Poisson heap sampler, and a leak detector behind the `on_alloc`/`on_free` entry points.
+*   **[mnemosyne-hardened](crates/mnemosyne-hardened)**: re-export of `SecurePolicy` and `HardenedPolicy` under their historical path. It holds no logic; the policies live in `mnemosyne_core::policy`.
+*   **[mnemosyne-c-shim](crates/mnemosyne-c-shim)**: C ABI surface (`malloc`, `free`, `calloc`, `realloc`, `aligned_alloc`, `posix_memalign`, `malloc_usable_size`) built as `lib` and `cdylib`. Not a root default member.
+*   **[mnemosyne-build-util](crates/mnemosyne-build-util)**: internal `[build-dependencies]`-only nightly-rustc detection probe for the `nightly_tls` gate.
+*   **[mnemosyne-benchmarks](crates/mnemosyne-benchmarks)**: Criterion performance harness and memory-report utilities. `publish = false`; not a root default member.
 
 ---
 

@@ -14,10 +14,25 @@ members = [
     "crates/mnemosyne-benchmarks",
     "crates/mnemosyne-build-util",
 ]
+default-members = [
+    "crates/mnemosyne-core",
+    "crates/mnemosyne-backend",
+    "crates/mnemosyne-arena",
+    "crates/mnemosyne-local",
+    "crates/mnemosyne-heap",
+    "crates/mnemosyne-decay",
+    "crates/mnemosyne-prof",
+    "crates/mnemosyne-hardened",
+    "crates/mnemosyne",
+    "crates/mnemosyne-build-util",
+]
 exclude = ["fuzz"]
 
 [workspace.package]
 repository = "https://github.com/ryancinsight/mnemosyne"
+homepage = "https://github.com/ryancinsight/mnemosyne"
+keywords = ["allocator", "malloc", "memory", "no-std", "performance"]
+categories = ["memory-management", "no-std", "concurrency"]
 
 [workspace.dependencies]
 themis = { package = "themis-topology", git = "https://github.com/ryancinsight/themis", version = "0.10.1", default-features = false, features = ["std"] }

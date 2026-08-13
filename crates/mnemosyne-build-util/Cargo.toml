@@ -6,3 +6,7 @@ edition = "2024"
 rust-version = "1.95"
 repository.workspace = true
 description = "Build-time platform probes for Mnemosyne crates"
+homepage.workspace = true
+readme = "README.md"
+keywords = ["build-dependencies", "allocator", "nightly", "probe", "cfg"]
+categories = ["development-tools::build-utils"]
