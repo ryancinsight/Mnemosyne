@@ -54,3 +54,6 @@ harness = false
 [[bench]]
 name = "tls_bench"
 harness = false
+
+[lints]
+workspace = true

@@ -160,9 +160,10 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 - [x] [major] WGPU callback registration publishes one immutable
   allocate/deallocate pair and rejects conflicting pairs. Concurrent readers
-  observe only absent or one complete permanent pair. ADR:
-  `docs/adr/0002-immutable-wgpu-callback-pair.md`. ADR 0003 subsequently
-  removes this backend because WGPU 30 invalidates its pointer contract.
+  observe only absent or one complete permanent pair. ADR 0003 subsequently
+  removes this backend because WGPU 30 invalidates its pointer contract, so
+  the former ADR 0002 record is absorbed into
+  `docs/adr/0003-remove-wgpu-raw-pointer-backend.md`.
 
 - [x] [minor] Replace the always-resident 720,896-byte per-CPU cache table with
   a `OnceLock<Box<PerCpuCache>>` handle. The production static now stores only
@@ -324,45 +325,74 @@ Filed from the 2026-08-12 verification-posture review:
   tests already purge for the same reason, so leak checking stays on rather than
   being suppressed for the new job.
 
-- [ ] [patch] **MN-445 — two integration tests block the mnemosyne-local Miri
-  job.** The aliasing work is done (MN-440/442/443) and the lib tests are clean
-  under both borrow models, but `cargo miri nextest run -p mnemosyne-local` also
-  runs the integration binaries, which the earlier lib-only runs never covered.
-  Measured under Stacked Borrows with `-Zmiri-ignore-leaks`: 73 run, 71 passed,
-  1 failed, 1 timed out, in 669s total.
-  - `topology_tests::test_per_cpu_cache` fails. Cause not yet diagnosed — the
-    detail was lost to output filtering and the re-run could not build (below).
-  - One test exceeds the `miri` profile's 600s bound (`300s` slow, terminate
-    after 2). Its identity was not captured. Per the test-budget rule a
-    termination is a hang to root-cause, not a bound to raise; note that
-    `allocation_side_reclaim_counts_cross_thread_blocks_exactly` was already
-    observed at 235s, so the margin here is thin and the timing-out test may
-    simply be a heavier sibling.
-  **Runtime is the other open question, and it is larger than expected.** A
-  full lib-test pass measured 402s under Stacked Borrows and 5,732s (95 min)
-  under Tree Borrows — roughly 14x, not the small multiple assumed when the
-  two-model gate was specified. With the integration binaries on top, a Tree
-  Borrows step on every PR is close to an hour and a half of CI per run. Decide
-  the scoping before wiring it up: Stacked Borrows per PR with Tree Borrows on
-  a schedule or merge-only is the obvious split, and it preserves the property
-  that motivated two models (MN-437's first fix passed Stacked while Tree
-  Borrows still rejected it) as long as the Tree Borrows run gates merges
-  rather than being purely informational.
-  Intended job configuration, verified green for the lib tests and ready to
-  commit once the two above are resolved: two steps, `Miri — local (Stacked
-  Borrows)` and `Miri — local (Tree Borrows)`, running
-  `cargo +nightly miri nextest run -p mnemosyne-local --locked --profile miri`
-  with `MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-ignore-leaks` and that plus
-  `-Zmiri-tree-borrows`. The workflow edit was written and then withdrawn rather
-  than committed unverified.
-  Blocked on: the shared tree currently does not compile. A peer's in-flight
-  uncommitted work in `mnemosyne-arena` calls
-  `GlobalSegmentPool::try_push_chain_unbounded` / `push_chain_unbounded` from
-  `local_alloc/segment/reclaim.rs`, and neither method exists yet. This is
-  transient peer state, not a defect in the committed tree — HEAD (154097f) was
-  green at commit time.
-  Re-open trigger: the peer's segment-pool chain-push work lands and the
-  workspace compiles again.
+- [x] [patch] **MN-445 — mnemosyne-local joins the Miri job.** Done. Both
+  blockers turned out to be real defects rather than environment.
+  The failure was `topology_tests::test_per_cpu_cache`, and the cause was a
+  genuine bug: `try_free_cpu` and `try_alloc_cpu` ran `compare_exchange_weak`
+  inside a two-round loop whose budget exists for CPU migration, so a spurious
+  failure spent that budget and reported the cache unavailable when it was
+  empty and uncontended. Live on aarch64; invisible natively because x86 lowers
+  weak and strong alike. Both use a strong exchange now.
+  The timeout was `test_per_cpu_cache_contention_bounds` — a spinner thread
+  against a thousand allocation attempts, sized for native execution, now
+  skipped under Miri with the progress-under-contention property left to loom
+  (MN-433).
+  Three further Tree Borrows timeouts surfaced once those cleared, each fixed at
+  its cause rather than by shrinking coverage: byte-at-a-time verification
+  replaced with bulk fill/compare (keeping the byte walk for failure offsets);
+  an orphan-adoption test re-sized to a large small-class, since preserved
+  per-page keys decode identically in every class; and a 2000-round churn test
+  Miri-scoped to one full lcm(8, 19) = 152 cycle. That last one exposed MN-447.
+  Final cost, which also settles the scoping question this item carried: 36s
+  Stacked and 463s Tree Borrows, both per PR, no schedule split needed. The
+  earlier "14x, about ninety minutes" figure came from `cargo miri test`, which
+  runs serially; CI uses nextest, and the fixes removed the cost problem
+  outright.
+  `smallest_class_page_saturates_without_duplicate_or_early_refill` still
+  crosses the 300s slow mark under Tree Borrows and cannot shrink — saturating a
+  page is 4096 allocations and that count is the property. Margin against the
+  600s bound is real but not generous; recorded at the job.
+  Both steps run with `-Zmiri-ignore-leaks`, tracked as MN-444.
+
+- [ ] [patch] **MN-446 — two decay purger tests fail intermittently.**
+  Reported, not claimed: this sits inside the live
+  `codex/mnemosyne-decay-event-sync` scope, whose two most recent commits are
+  `test(mnemosyne): Synchronize decay completion` and the pedantic-floor change.
+  Observed while verifying MN-441 in a disjoint scope; nothing in that diff
+  touches `mnemosyne-decay`.
+  `decay_tests::decay_purger_reaches_steady_state` and
+  `decay_tests::test_decay_purger_spawns_and_cleans_orphans` both fail, each in
+  about 5.9s. One earlier full workspace run passed 292/292, so they are
+  intermittent rather than broken outright.
+  The near-identical ~5.9s time on both is the useful signal: these fail on a
+  bounded wait expiring, not on a hang — the nextest default budget would
+  terminate a hang at 60s, and these return well inside that. That points at a
+  completion signal the test can miss and then wait out, rather than a deadlock.
+  (An earlier note here called it a hang on the strength of a ten-minute
+  non-return; that observation was confounded by a full rebuild and an
+  unrelated cross-repo manifest error in the same command, and the timing above
+  supersedes it.)
+
+- [ ] [patch] **MN-447 — no test drives page recycling or segment
+  reclamation.** Found while fixing MN-445's Tree Borrows timeouts.
+  `alloc_free_churn_preserves_block_integrity` documented itself as driving
+  "page recycling and segment reclamation"; instrumenting it shows otherwise —
+  after 2,000 rounds: `recycled_pages: 0`, `recycle_sweeps: 0`,
+  `fresh_pages: 11`, `fresh_segments: 1`, one owned segment. Eight live blocks
+  spread over nineteen size classes never fill a page, so each class settles on
+  one active page and no page is ever emptied and re-taken for another class.
+  Its docstring now says what it actually covers (block reuse), so the gap is
+  no longer hidden behind a claim — but the gap is real, and it is exactly the
+  region MN-437, MN-439 and MN-440 all turned out to live in: page-list
+  transitions, the empty/recycle lists, and segment reclamation.
+  Needs a workload holding enough simultaneous live blocks to fill a page, then
+  releasing them so the page empties, is recycled into another size class, and
+  ultimately lets its segment be reclaimed — asserting `recycled_pages`,
+  `recycle_sweeps` and `fresh_segments` rather than assuming them. Both the
+  standard and hardened policies, since the encoded free chain is re-keyed on
+  those transitions.
+  Acceptance: a test that fails if `recycled_pages` or `recycle_sweeps` stays
+  zero, and that passes under both borrow models inside the Miri budget.
 
 - [ ] [patch] **MN-444 — narrow the Miri leak exclusion on mnemosyne-local.**
   The `Miri — local` jobs run with `-Zmiri-ignore-leaks` because the segment
@@ -384,13 +414,43 @@ Filed from the 2026-08-12 verification-posture review:
   and they stay green, or the residual exclusion is narrowed to the specific
   tests that require it with the reason recorded at that site.
 
-- [ ] [patch] **MN-441 — `is_current` is non-atomic.** Written by the owning
-  thread; not read on any cross-thread path today, so Miri does not flag it, but
-  nothing in the type enforces that and the earlier `&self` accessor experiment
-  raced against exactly this field. Either make it atomic like its neighbours or
-  document why it is owner-only, at the field. MN-440 added one more owner-side
-  read of it (the `free.rs` fast path), so the owner-only claim now carries more
-  weight and should be settled rather than left implicit.
+- [ ] [patch] status=in-progress owner=claude scope=`crates/mnemosyne-core/src/types/segment.rs`, `crates/mnemosyne-core/src/types/page/occupancy.rs`, `crates/mnemosyne-local/src/{free.rs,local_alloc.rs,local_alloc/segment/reclaim.rs,tests.rs}`, `crates/mnemosyne-heap/src/raw_heap.rs`; last-update=2026-08-14. **MN-441 — `is_current` is non-atomic.** Done, by the second of the two
+  options: documented and *enforced* as owner-only rather than made atomic.
+  The audit settles the question the item left open. The only remote-thread
+  path into a segment is `thread_free_cold`, which pushes into the page's
+  `AtomicFreeList` and touches nothing else in the header. Every reader of the
+  flag — the occupancy transitions, the local free fast path, the
+  defragmentation sweep — runs on the owning thread, most already holding
+  `&mut ThreadAllocator`. So the flag needed enforcement, not synchronization:
+  an atomic would sit on the small-free fast path and advertise a cross-thread
+  contract that does not exist, inviting the very access the protocol forbids.
+  The field is now private, reached only through `Segment::is_current` /
+  `Segment::set_current`, which take raw pointers and project to the single
+  byte — the same shape MN-439 gave `owner`/`owner_allocator`, and for the same
+  reason: a `&self` accessor retags the whole header and races with concurrent
+  writes to any other field, which is exactly what Miri caught against this
+  flag before.
+  Enforcement is structural, not a runtime ownership check. Having the
+  accessors `debug_assert!` the caller's owner token was considered and
+  rejected: `mnemosyne-core` cannot see TLS owner identity without inverting the
+  layering, and `occupancy.rs` holds no token to pass.
+  Also recorded the invariant the flag carries at a pool boundary, which the
+  item did not name: a segment must never reach a global pool with the flag set,
+  or the next thread to claim it inherits a stale "currently being sliced" state
+  and skips occupancy bookkeeping. `reclaim_owned_segments` upholds it by
+  clearing the current segment before walking the owned chain and clearing the
+  flag again on every orphaned node; the defragmentation sweep skips the current
+  segment outright.
+  Privatizing the field caught five test sites building `Segment` by struct
+  literal with `..zeroed()`, bypassing `Segment::initialize` entirely — so their
+  page array and key schedule stayed zeroed, and `..zeroed()` would silently
+  absorb any field added later. They now run the real initializer.
+  Evidence: workspace 292/292 and clippy `-D warnings` clean at the
+  code-complete revision; `cargo fmt --all --check` clean; Miri on
+  `mnemosyne-memory-core` 18/18 under both Stacked and Tree Borrows, which is
+  the package the accessors and the occupancy readers live in. A later workspace
+  run showed the two `mnemosyne-decay` failures tracked as MN-446, in a scope
+  this diff does not touch.
 
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and each exclusion is listed here so none is silent:

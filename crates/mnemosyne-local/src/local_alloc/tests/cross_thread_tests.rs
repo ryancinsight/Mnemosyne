@@ -45,6 +45,7 @@ fn test_snmalloc_message_passing() {
     let segment = segment_addr as *mut Segment;
     let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
     let max_blocks = unsafe { (*segment).pages[page_index].max_blocks() };
+    let mut probe_allocations = std::vec::Vec::with_capacity(max_blocks);
     for _ in 0..max_blocks {
         // Safety: alloc_a is valid.
         let ptr2 = unsafe { alloc_a.alloc::<StandardPolicy>(32) };
@@ -52,6 +53,7 @@ fn test_snmalloc_message_passing() {
             !ptr2.is_null(),
             "reclaim probe allocation failed before reclaiming remote free"
         );
+        probe_allocations.push(ptr2);
         if ptr2 == ptr {
             reclaimed_remote_free = true;
             break;
@@ -63,6 +65,16 @@ fn test_snmalloc_message_passing() {
         "cross-thread freed block was not reclaimed after {} small allocations",
         max_blocks
     );
+
+    // The probe owns every address it observed, including the reclaimed one.
+    // Release the complete set so allocator teardown tests pool retention
+    // rather than treating the intentionally retained probes as live memory.
+    unsafe {
+        for probe in probe_allocations {
+            crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(probe);
+        }
+    }
+    alloc_a.reclaim_owned_segments();
 }
 
 #[test]
@@ -111,6 +123,7 @@ fn cross_thread_free_does_not_charge_non_owner_defrag_counter() {
     let segment = segment_addr as *mut Segment;
     let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
     let max_blocks = unsafe { (*segment).pages[page_index].max_blocks() };
+    let mut probe_allocations = std::vec::Vec::with_capacity(max_blocks);
     for _ in 0..max_blocks {
         // Safety: owner is valid.
         let ptr2 = unsafe { owner.alloc::<StandardPolicy>(32) };
@@ -118,6 +131,7 @@ fn cross_thread_free_does_not_charge_non_owner_defrag_counter() {
             !ptr2.is_null(),
             "reclaim probe allocation failed before reclaiming remote free"
         );
+        probe_allocations.push(ptr2);
         if ptr2 == ptr {
             reclaimed_remote_free = true;
             break;
@@ -129,6 +143,13 @@ fn cross_thread_free_does_not_charge_non_owner_defrag_counter() {
         "cross-thread freed block was not reclaimed after {} small allocations",
         max_blocks
     );
+
+    unsafe {
+        for probe in probe_allocations {
+            crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(probe);
+        }
+    }
+    owner.reclaim_owned_segments();
 }
 
 #[test]
@@ -208,6 +229,15 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
     let _guard = TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
+    // The consumer has to exhaust the page adoption hands it before it reaches
+    // the producer's encoded chain, so the block size sets the cost of the
+    // whole test: a page holds `PAGE_SIZE / BLOCK` blocks. The property here —
+    // that adoption preserves the producer's per-page keys, so the encoded
+    // `page.free` chain still decodes — is the same in every small class, so
+    // this uses a large one. At 32 bytes the sweep was 2048 allocations per
+    // page and the test could not finish inside the Miri budget; at 2048 it is
+    // 32, with identical coverage.
+    const BLOCK: usize = 2048;
     use mnemosyne_core::policy::HardenedPolicy;
     use std::sync::mpsc;
     use std::thread;
@@ -225,8 +255,8 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
     thread::spawn(move || {
         let mut alloc_a = ThreadAllocator::<DefaultBackend>::new();
         let ptrs: Vec<*mut u8> = (0..4)
-            // Safety: alloc_a is valid; 32 is a small size class.
-            .map(|_| unsafe { alloc_a.alloc::<HardenedPolicy>(32) })
+            // Safety: alloc_a is valid; BLOCK is a small size class.
+            .map(|_| unsafe { alloc_a.alloc::<HardenedPolicy>(BLOCK) })
             .collect();
         assert!(
             ptrs.iter().all(|p| !p.is_null()),
@@ -255,8 +285,8 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
     // with this thread's seed, so popping the producer-encoded `page.free`
     // chain decoded garbage and aborted on the free-list bounds check.
     let mut alloc_b = ThreadAllocator::<DefaultBackend>::new();
-    // Safety: alloc_b is valid; 32 is a small size class.
-    let first = unsafe { alloc_b.alloc::<HardenedPolicy>(32) };
+    // Safety: alloc_b is valid; BLOCK is a small size class.
+    let first = unsafe { alloc_b.alloc::<HardenedPolicy>(BLOCK) };
     assert!(
         !first.is_null(),
         "hardened orphan consumer allocation failed"
@@ -270,7 +300,7 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
 
     // Allocate until the adopted page's producer-encoded free chain is popped:
     // the freshly initialized page the adoption returned holds
-    // PAGE_SIZE / 32 blocks, after which the producer's active page (whose
+    // PAGE_SIZE / BLOCK blocks, after which the producer's active page (whose
     // `free` chain carries the two freed blocks) becomes the allocation
     // source. Reusing one of the freed addresses is the value-semantic proof
     // that the preserved keys decode the chain correctly.
@@ -280,13 +310,13 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
     // addresses is what proves the chain decodes correctly end-to-end (under
     // the re-keying bug the second pop aborts on the bounds check or yields a
     // garbage address outside the freed set).
-    let cap = 3 * (mnemosyne_core::constants::PAGE_SIZE / 32);
+    let cap = 3 * (mnemosyne_core::constants::PAGE_SIZE / BLOCK);
     let mut reused = 0usize;
     let mut consumer_ptrs = Vec::with_capacity(cap + 1);
     consumer_ptrs.push(first);
     for _ in 0..cap {
-        // Safety: alloc_b is valid; 32 is a small size class.
-        let p = unsafe { alloc_b.alloc::<HardenedPolicy>(32) };
+        // Safety: alloc_b is valid; BLOCK is a small size class.
+        let p = unsafe { alloc_b.alloc::<HardenedPolicy>(BLOCK) };
         assert!(
             !p.is_null(),
             "hardened consumer allocation failed mid-sweep"
@@ -296,9 +326,9 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
             // Safety: `p` was just returned by the allocator; 32 bytes are
             // writable block payload.
             unsafe {
-                core::ptr::write_bytes(p, 0xAB, 32);
+                core::ptr::write_bytes(p, 0xAB, BLOCK);
                 assert_eq!(*p, 0xAB);
-                assert_eq!(*p.add(31), 0xAB);
+                assert_eq!(*p.add(BLOCK - 1), 0xAB);
             }
             reused += 1;
             if reused == freed.len() {
@@ -741,6 +771,11 @@ fn allocation_side_reclaim_counts_cross_thread_blocks_exactly() {
         stats_before + max_blocks,
         "stats() must report the exact cross-thread reclaimed delta"
     );
+
+    unsafe {
+        crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(reclaimed_ptr);
+    }
+    owner.reclaim_owned_segments();
 }
 
 /// Multi-thread producer-consumer stress: allocators across N threads allocate

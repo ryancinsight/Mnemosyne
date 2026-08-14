@@ -174,7 +174,7 @@ unsafe fn thread_free_classified<
             // `occupancy` and the cold path below.
             // SAFETY: `is_owner` was confirmed above, so `segment` is this
             // thread's live, owned header.
-            if page_alloc_count > 1 || unsafe { (*segment).is_current } {
+            if page_alloc_count > 1 || unsafe { Segment::is_current(segment) } {
                 // Free in-place (either remains active, or is current segment).
                 // SAFETY: `block` is non-null by the alloc_count / page.free
                 // corruption guards above, and `page_alloc_count == page.free`'s
@@ -401,7 +401,7 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
     let becomes_empty = unsafe {
         let count = (*page).alloc_count - 1;
         (*page).alloc_count = count;
-        if count == 0 && !(*segment).is_current {
+        if count == 0 && !Segment::is_current(segment) {
             (*segment).page_occupied_mask &= !(1 << page_index);
         }
         count == 0

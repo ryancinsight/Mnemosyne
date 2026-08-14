@@ -43,10 +43,23 @@ pub(crate) unsafe fn try_allocate_page_local<P: AllocPolicy>(
         if (*page).free.is_none() && (*page).initialized_blocks >= (*page).max_blocks() {
             return None;
         }
-        let block = (*page).pop_block::<P>();
-        let segment = (*page).parent_segment();
-        let page_index = (*page).index_in_segment();
-        Page::increment_alloc_count_in_segment(segment, page_index);
+        let block = if let Some(block) = Page::try_pop_bump_block(page) {
+            block
+        } else if (*page).free.is_some() {
+            (*page).pop_block::<P>()
+        } else {
+            return None;
+        };
+        // Most allocations keep the page occupied. Avoid reconstructing the
+        // parent segment on that hot path; only the empty-to-occupied
+        // transition needs the segment occupancy mask.
+        if (*page).alloc_count == 0 {
+            let segment = (*page).parent_segment();
+            let page_index = (*page).index_in_segment();
+            Page::increment_alloc_count_in_segment(segment, page_index);
+        } else {
+            (*page).alloc_count += 1;
+        }
         Some(block)
     }
 }

@@ -19,12 +19,13 @@ use std::thread;
 fn boxed_segment(raw: usize) -> *mut Segment {
     // SAFETY: `Segment` is composed of pointers/integers/bools/arrays, so an
     // all-zero bit pattern is a valid empty instance.
-    Box::into_raw(Box::new(Segment {
-        raw_alloc_ptr: raw as *mut u8,
-        next_free_segment: core::ptr::null_mut(),
-        numa_node: 0,
-        ..unsafe { core::mem::zeroed() }
-    }))
+    // SAFETY: `Segment` is pointers, integers, bools and arrays of the same, so
+    // an all-zero bit pattern is a valid starting value for the initializer to
+    // overwrite.
+    let segment: *mut Segment = Box::into_raw(Box::new(unsafe { core::mem::zeroed() }));
+    // SAFETY: `segment` is the live, uniquely-owned Box allocation just created.
+    unsafe { Segment::initialize(segment, raw as *mut u8, 0) };
+    segment
 }
 
 #[test]

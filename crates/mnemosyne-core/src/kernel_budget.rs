@@ -9,6 +9,13 @@
 //! `shared_mem_per_unit_bytes`, `max_threads_per_unit`) to derive launch
 //! shapes. This module is `no_std`, dependency-free, and fully `const`:
 //! every limiter resolves at compile time when the budget is a constant.
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        reason = "test scope: an unmet precondition in a test is a test failure"
+    )
+)]
 
 /// A kernel's per-launch resource requirements.
 ///

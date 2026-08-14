@@ -256,9 +256,9 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         // indexes its `keys` array (sized `PAGES_PER_SEGMENT`) and is the
         // page's own index, so the read is in bounds.
         let cookie = unsafe { Segment::cookie_for_dynamic(segment, encrypted, page_index) };
-        // SAFETY: `(*segment).is_current` reads a flag in the live segment
-        // header.
-        if page_alloc_count != 1 || unsafe { (*segment).is_current } {
+        // SAFETY: `segment` is the live header and this heap is its owner, which
+        // is `Segment::is_current`'s owner-only contract.
+        if page_alloc_count != 1 || unsafe { Segment::is_current(segment) } {
             // SAFETY: `block` is a live non-null block of `page` (allocator
             // invariant); writing its `next` link, publishing it as the
             // free-list head, and decrementing the page/segment occupancy all

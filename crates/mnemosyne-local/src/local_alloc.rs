@@ -227,7 +227,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // Each `i` comes from the live mask so `pages[i]` is in bounds.
             unsafe {
                 let seg_ptr = current.as_ptr();
-                (*seg_ptr).is_current = false;
+                Segment::set_current(seg_ptr, false);
                 let mut mask = (*seg_ptr).page_occupied_mask;
                 while mask != 0 {
                     let i = mask.trailing_zeros() as usize;
@@ -242,7 +242,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // SAFETY: `next` is a segment exclusively owned by this allocator per
             // the `# Safety` contract; marking it current writes only its header.
             unsafe {
-                (*next.as_ptr()).is_current = true;
+                Segment::set_current(next.as_ptr(), true);
             }
         }
         self.current_segment = segment;
@@ -277,7 +277,47 @@ impl<B: HasSegmentPool> Drop for ThreadAllocator<B> {
 unsafe impl<B: HasSegmentPool> Send for ThreadAllocator<B> {}
 
 #[cfg(test)]
-pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) struct TestLock {
+    inner: std::sync::Mutex<()>,
+}
+
+#[cfg(test)]
+impl TestLock {
+    pub(crate) const fn new() -> Self {
+        Self {
+            inner: std::sync::Mutex::new(()),
+        }
+    }
+
+    pub(crate) fn lock(&self) -> std::sync::LockResult<TestLockGuard<'_>> {
+        match self.inner.lock() {
+            Ok(guard) => Ok(TestLockGuard { guard }),
+            Err(error) => Err(std::sync::PoisonError::new(TestLockGuard {
+                guard: error.into_inner(),
+            })),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct TestLockGuard<'lock> {
+    guard: std::sync::MutexGuard<'lock, ()>,
+}
+
+#[cfg(test)]
+impl Drop for TestLockGuard<'_> {
+    fn drop(&mut self) {
+        let _ = &self.guard;
+        #[cfg(miri)]
+        unsafe {
+            crate::miri_cleanup_pools::<mnemosyne_backend::DefaultBackend>();
+            crate::miri_cleanup_pools::<mnemosyne_backend::MemoryBackendWrapper>();
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) static TEST_LOCK: TestLock = TestLock::new();
 
 pub(crate) mod page;
 pub(crate) mod routing;

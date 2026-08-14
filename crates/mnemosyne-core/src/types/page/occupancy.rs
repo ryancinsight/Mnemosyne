@@ -47,7 +47,7 @@ impl Page {
         // SAFETY: the caller's `# Safety` contract guarantees `segment` is this
         // page's parent segment header, so dereferencing it to read
         // `is_current` is a valid read of initialized segment metadata.
-        if (old == 0) != (count == 0) && (count > 0 || unsafe { !(*segment).is_current }) {
+        if (old == 0) != (count == 0) && (count > 0 || unsafe { !Segment::is_current(segment) }) {
             // SAFETY: same precondition — `segment` is the valid parent segment
             // and `page_index` is in range (`debug_assert`ed above), so the
             // occupancy-bit update targets a valid `page_occupied_mask`.
@@ -97,7 +97,7 @@ impl Page {
         // SAFETY: as above.
         unsafe { (*page).alloc_count = count };
         // SAFETY: valid parent header, so reading `is_current` is valid.
-        if count == 0 && unsafe { !(*segment).is_current } {
+        if count == 0 && unsafe { !Segment::is_current(segment) } {
             // SAFETY: same header and in-range index, so clearing the occupancy
             // bit is valid.
             unsafe { Self::set_segment_page_occupied(segment, page_index, false) };

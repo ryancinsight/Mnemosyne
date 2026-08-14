@@ -303,11 +303,11 @@ fn test_concurrent_aba_safeness() {
     let mut segments = std::vec::Vec::new();
     for i in 0..10 {
         let raw = (0x10000 + i * 0x1000) as *mut u8;
-        let seg_ptr = Box::into_raw(Box::new(Segment {
-            raw_alloc_ptr: raw,
-            next_free_segment: core::ptr::null_mut(),
-            ..unsafe { core::mem::zeroed() }
-        }));
+        // SAFETY: an all-zero bit pattern is a valid starting value for the
+        // initializer to overwrite.
+        let seg_ptr: *mut Segment = Box::into_raw(Box::new(unsafe { core::mem::zeroed() }));
+        // SAFETY: `seg_ptr` is the live Box allocation just created.
+        unsafe { Segment::initialize(seg_ptr, raw, 0) };
         segments.push(seg_ptr);
     }
 
@@ -588,13 +588,11 @@ fn test_huge_bucket_block_cap_bounds_retained_bytes() {
 /// The zeroed remainder is never exposed to allocator code that relies on the
 /// full production `Segment::initialize` invariant.
 fn boxed_huge_segment(raw: usize, block_size: usize) -> *mut Segment {
-    let segment = Box::into_raw(Box::new(Segment {
-        raw_alloc_ptr: raw as *mut u8,
-        next_free_segment: core::ptr::null_mut(),
-        // SAFETY: zeroed metadata is immediately overwritten where read (the
-        // page-0 `block_size` below) and otherwise never interpreted.
-        ..unsafe { core::mem::zeroed() }
-    }));
+    // SAFETY: an all-zero bit pattern is a valid starting value for the
+    // initializer to overwrite.
+    let segment: *mut Segment = Box::into_raw(Box::new(unsafe { core::mem::zeroed() }));
+    // SAFETY: `segment` is the live Box allocation just created.
+    unsafe { Segment::initialize(segment, raw as *mut u8, 0) };
     // SAFETY: `segment` is the live Box allocation just created above, so
     // mutating its page-0 size metadata through the raw pointer is exclusive.
     unsafe {

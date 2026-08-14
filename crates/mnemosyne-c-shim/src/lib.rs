@@ -297,11 +297,7 @@ pub extern "C" fn mnemosyne_disable_profiling() {
 /// Returns whether the built-in heap sampler is currently active.
 #[unsafe(no_mangle)]
 pub extern "C" fn mnemosyne_is_profiling_enabled() -> i32 {
-    if mnemosyne_prof::is_profiling_enabled() {
-        1
-    } else {
-        0
-    }
+    i32::from(mnemosyne_prof::is_profiling_enabled())
 }
 
 /// Dumps a folded stack profile of active memory allocations to a file.
@@ -348,11 +344,7 @@ pub extern "C" fn mnemosyne_disable_leak_detector() {
 /// Returns whether the memory leak detector is currently active (1 if active, 0 if inactive).
 #[unsafe(no_mangle)]
 pub extern "C" fn mnemosyne_is_leak_detector_enabled() -> i32 {
-    if mnemosyne_prof::is_leak_detector_enabled() {
-        1
-    } else {
-        0
-    }
+    i32::from(mnemosyne_prof::is_leak_detector_enabled())
 }
 
 /// Dumps a report of all active memory allocations (leaks) to the specified file path.

@@ -152,7 +152,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                 Segment::set_owner(curr, SegmentOwner::NONE);
                 Segment::set_owner_allocator(curr, core::ptr::null_mut());
-                (*curr).is_current = false;
+                Segment::set_current(curr, false);
                 (*curr).next_owned_segment = core::ptr::null_mut();
                 (*curr).prev_owned_segment = core::ptr::null_mut();
 

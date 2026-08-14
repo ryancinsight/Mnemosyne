@@ -50,3 +50,6 @@ melinoe = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 mnemosyne-heap = { path = "../mnemosyne-heap" }
+
+[lints]
+workspace = true

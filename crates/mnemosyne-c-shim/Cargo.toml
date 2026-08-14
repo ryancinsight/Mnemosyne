@@ -25,3 +25,6 @@ mnemosyne-prof = { path = "../mnemosyne-prof", version = "0.2.0" }
 
 [features]
 nightly_tls = ["mnemosyne-prof/nightly_tls"]
+
+[lints]
+workspace = true

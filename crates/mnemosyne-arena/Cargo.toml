@@ -23,3 +23,6 @@ mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core"
 mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.5.0" }
 eunomia = { workspace = true, optional = true }
 themis = { workspace = true }
+
+[lints]
+workspace = true
