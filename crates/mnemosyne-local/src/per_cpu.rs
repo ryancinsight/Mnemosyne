@@ -233,7 +233,10 @@ pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
             return core::ptr::null_mut();
         };
 
-        match slot.blocks[class][idx].compare_exchange_weak(
+        // Strong, for the reason given on the matching exchange in
+        // `try_free_cpu`: the retry budget here is for CPU migration, and a
+        // spurious failure would spend it while reporting an empty cache.
+        match slot.blocks[class][idx].compare_exchange(
             block_ptr_val,
             0,
             Ordering::Acquire,
@@ -312,7 +315,16 @@ pub fn try_free_cpu(ptr: *mut u8, class: usize, encrypted: bool) -> bool {
             return false;
         };
 
-        match slot.blocks[class][idx].compare_exchange_weak(
+        // Strong, not weak. The two-round budget in this loop exists for
+        // *CPU migration* — the retry re-reads the processor id and moves
+        // to the new core's slot. A weak exchange may fail spuriously with
+        // the slot empty and uncontended, which spends that budget on a
+        // non-event and then reports "cache unavailable" for a cache that
+        // was in fact available. Miri models spurious failure deliberately
+        // and caught exactly that; real LL/SC targets do it too. A strong
+        // failure means the slot genuinely changed under us, which is the
+        // condition the retry is written for.
+        match slot.blocks[class][idx].compare_exchange(
             0,
             ptr as usize,
             Ordering::Release,

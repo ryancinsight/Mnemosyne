@@ -69,6 +69,18 @@ fn test_numa_node_segment_retention() {
 }
 
 #[test]
+// Sized for native execution: a spinner thread mutates the slot as fast as it
+// can while this thread runs a thousand `try_alloc_cpu` calls. Miri interprets
+// every instruction and preempts at every atomic, so the pair exceeds even the
+// 300s Miri budget — workload size, not a hang, the same reason the Miri job
+// already skips the arena's concurrency binaries. What this test asserts
+// (progress under contention) is an interleaving property, which is loom's job
+// per MN-433; Miri's value on this crate is aliasing checking, and the sibling
+// `test_per_cpu_cache` still exercises the same CAS paths under it.
+#[cfg_attr(
+    miri,
+    ignore = "native-sized contention stress; see MN-433 for the interleaving gate"
+)]
 fn test_per_cpu_cache_contention_bounds() {
     let _guard = TEST_LOCK
         .lock()
