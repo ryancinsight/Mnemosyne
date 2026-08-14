@@ -373,26 +373,51 @@ Filed from the 2026-08-12 verification-posture review:
   unrelated cross-repo manifest error in the same command, and the timing above
   supersedes it.)
 
-- [ ] [patch] **MN-447 — no test drives page recycling or segment
-  reclamation.** Found while fixing MN-445's Tree Borrows timeouts.
-  `alloc_free_churn_preserves_block_integrity` documented itself as driving
-  "page recycling and segment reclamation"; instrumenting it shows otherwise —
-  after 2,000 rounds: `recycled_pages: 0`, `recycle_sweeps: 0`,
-  `fresh_pages: 11`, `fresh_segments: 1`, one owned segment. Eight live blocks
-  spread over nineteen size classes never fill a page, so each class settles on
-  one active page and no page is ever emptied and re-taken for another class.
-  Its docstring now says what it actually covers (block reuse), so the gap is
-  no longer hidden behind a claim — but the gap is real, and it is exactly the
-  region MN-437, MN-439 and MN-440 all turned out to live in: page-list
-  transitions, the empty/recycle lists, and segment reclamation.
-  Needs a workload holding enough simultaneous live blocks to fill a page, then
-  releasing them so the page empties, is recycled into another size class, and
-  ultimately lets its segment be reclaimed — asserting `recycled_pages`,
-  `recycle_sweeps` and `fresh_segments` rather than assuming them. Both the
-  standard and hardened policies, since the encoded free chain is re-keyed on
-  those transitions.
-  Acceptance: a test that fails if `recycled_pages` or `recycle_sweeps` stays
-  zero, and that passes under both borrow models inside the Miri budget.
+- [x] [patch] **MN-447 — no test drove page recycling.** Done.
+  `emptied_page_is_recycled_into_another_size_class` and its hardened sibling
+  now fill pages until the allocator moves to a second segment, empty the first
+  segment, and allocate a *different* size class — which can only be served by
+  popping one of the emptied pages and re-initializing it.
+  Two things had to be right for the test to reach the transition at all. A page
+  only leaves the active list once its segment is no longer being sliced
+  (`free.rs` keeps it in place while `Segment::is_current` holds), which is
+  exactly why ordinary churn never got there: eight live blocks never leave the
+  first segment. And filling a page had to be cheap, so it uses the largest
+  small class — eight blocks per page instead of the 4096 a 16-byte class needs
+  — which is what keeps the whole thing inside the Miri budget.
+  Recycling is proven by address as well as by counter: a fresh page would come
+  from the *current* segment, so a block landing back in the first segment can
+  only have come from a page emptied there, and the fill loop's own bound fails
+  the test if the allocator never left that segment. That argument needs no
+  stats, which is what makes the hardened case testable (see MN-448).
+  Verified non-vacuous by disabling the empty-list branch in `get_new_page`:
+  both tests fail, including the hardened one that rests solely on the address
+  argument. Counter deltas (`recycled_pages`, `recycle_sweeps`,
+  `fresh_segments`) are asserted as deltas rather than absolutes, so a sibling
+  test dirtying the thread's allocator cannot satisfy them accidentally.
+  Segment *reclamation* is still uncovered — that is `reclaim_owned_segments` on
+  allocator drop, which happens after any assertion could observe it. Recorded
+  as the remaining half of this area rather than claimed.
+
+- [ ] [major] **MN-448 — allocator stats ignore the policy and report the wrong
+  allocator.** `thread_allocator_stats::<B>()` calls `B::with_allocator`, the
+  policy-blind selector, so it always reads the standard TLS slot. Each
+  `(backend, encryption mode)` pair has its own allocator cache — that is the
+  point of `with_allocator_for_policy` — so an application running
+  `HardenedPolicy` asks for its allocator's counters and silently receives a
+  different allocator's, near-zero because nothing allocated there. The public
+  `memory_stats` surface inherits this through
+  `mnemosyne::stats::memory_stats_generic<B>`, which is policy-blind for the
+  same reason.
+  Found while writing MN-447's hardened test, which consequently cannot assert
+  counters at all and proves recycling by address instead.
+  The fix is a policy parameter on both functions rather than a second
+  differently-named entry point — variation belongs in the generics, and a
+  `_for_policy` twin would be the parallel-API defect. That breaks the public
+  signature of both, so it is `[major]` and takes an ADR first.
+  Acceptance: one generic entry point per surface; a hardened-policy caller
+  observes its own allocator's counters; MN-447's hardened test asserts the same
+  counter deltas as its standard sibling.
 
 - [ ] [patch] **MN-444 — narrow the Miri leak exclusion on mnemosyne-local.**
   The `Miri — local` jobs run with `-Zmiri-ignore-leaks` because the segment
