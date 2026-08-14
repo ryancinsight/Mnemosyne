@@ -62,3 +62,68 @@ strip = "symbols"
 inherits = "release"
 debug = true
 strip = "none"
+
+[workspace.lints.rust]
+# `loom` is a cfg set only by the model runs, never by cargo, so declare it or
+# every build warns about an unexpected condition name. Declared workspace-wide
+# because member crates inherit `[workspace.lints]` wholesale: a member cannot
+# carry its own `[lints.rust]` table alongside `lints.workspace = true`.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
+[workspace.lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+
+# Pedantic floor ratchet: every class listed below already fires in this
+# workspace and is allowed at its measured baseline; every class NOT listed
+# is a hard error. Counts are `cargo clippy --all-targets` hits at the time
+# the floor was established (total / production, production excluding
+# `#[cfg(test)]` modules and test, bench and example targets). Burn a class
+# down to zero, then delete its line -- the floor tightens, never loosens.
+
+# --- Documentation debt (102 sites, 96 in production) ---
+must_use_candidate = "allow" # 70 (70 prod)
+doc_markdown = "allow" # 28 (22 prod)
+missing_errors_doc = "allow" # 3 (3 prod)
+missing_panics_doc = "allow" # 1 (1 prod)
+
+# --- Numeric conversion debt (82 sites, 44 in production) ---
+cast_possible_truncation = "allow" # 41 (20 prod)
+unreadable_literal = "allow" # 23 (15 prod)
+cast_precision_loss = "allow" # 9 (3 prod)
+cast_lossless = "allow" # 3 (2 prod)
+cast_possible_wrap = "allow" # 3 (1 prod)
+cast_sign_loss = "allow" # 2 (2 prod)
+float_cmp = "allow" # 1 (1 prod)
+
+# --- Raw-pointer / layout debt (151 sites, 86 in production) ---
+ptr_as_ptr = "allow" # 83 (53 prod)
+cast_ptr_alignment = "allow" # 39 (16 prod)
+borrow_as_ptr = "allow" # 17 (8 prod)
+ref_as_ptr = "allow" # 9 (6 prod)
+large_stack_arrays = "allow" # 2 (2 prod)
+ptr_cast_constness = "allow" # 1 (1 prod)
+
+# --- Style debt (467 sites, 354 in production) ---
+inline_always = "allow" # 240 (236 prod)
+items_after_statements = "allow" # 62 (5 prod)
+elidable_lifetime_names = "allow" # 44 (43 prod)
+redundant_closure_for_method_calls = "allow" # 32 (17 prod)
+uninlined_format_args = "allow" # 29 (4 prod)
+semicolon_if_nothing_returned = "allow" # 16 (14 prod)
+if_not_else = "allow" # 13 (13 prod)
+manual_let_else = "allow" # 10 (7 prod)
+needless_pass_by_value = "allow" # 4 (4 prod)
+explicit_iter_loop = "allow" # 3 (0 prod)
+single_match_else = "allow" # 3 (3 prod)
+too_many_lines = "allow" # 3 (3 prod)
+unused_self = "allow" # 3 (3 prod)
+explicit_into_iter_loop = "allow" # 2 (0 prod)
+ignored_unit_patterns = "allow" # 1 (1 prod)
+manual_assert_eq = "allow" # 1 (0 prod)
+redundant_else = "allow" # 1 (1 prod)
+
+# --- Restriction floor ---
+# `unwrap_used` is denied outright: no workspace-wide allow. The 24 existing
+# sites (0 in production) are pinned per file by `#![expect(..., reason = "MNEM-UNWRAP-1")]`,
+# which self-expires the moment a file's last unwrap goes.
+unwrap_used = "deny"

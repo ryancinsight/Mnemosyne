@@ -33,3 +33,6 @@ std_tls = ["mnemosyne-local/std_tls", "mnemosyne-prof/std_tls"]
 eunomia = ["dep:eunomia", "mnemosyne-arena/eunomia"]
 segment-tail-guards = ["mnemosyne-arena/segment-tail-guards"]
 segment-header-guards = ["mnemosyne-arena/segment-header-guards"]
+
+[lints]
+workspace = true

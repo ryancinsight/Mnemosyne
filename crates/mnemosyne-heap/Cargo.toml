@@ -38,3 +38,6 @@ themis = { workspace = true }
 
 [dev-dependencies]
 mnemosyne = { package = "mnemosyne-memory", path = "../mnemosyne" }
+
+[lints]
+workspace = true

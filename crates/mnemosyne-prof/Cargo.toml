@@ -27,3 +27,6 @@ mnemosyne = { package = "mnemosyne-memory", path = "../mnemosyne" }
 mnemosyne-local = { path = "../mnemosyne-local" }
 mnemosyne-heap = { path = "../mnemosyne-heap" }
 mnemosyne-backend = { path = "../mnemosyne-backend" }
+
+[lints]
+workspace = true

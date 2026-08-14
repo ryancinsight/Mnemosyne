@@ -10,3 +10,6 @@ homepage.workspace = true
 readme = "README.md"
 keywords = ["build-dependencies", "allocator", "nightly", "probe", "cfg"]
 categories = ["development-tools::build-utils"]
+
+[lints]
+workspace = true

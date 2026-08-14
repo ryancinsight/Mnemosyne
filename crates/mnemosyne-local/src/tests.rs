@@ -1,3 +1,11 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        reason = "test scope: an unmet precondition in a test is a test failure"
+    )
+)]
+
 use super::*;
 use core::ptr::NonNull;
 use mnemosyne_backend::MemoryBackendWrapper;

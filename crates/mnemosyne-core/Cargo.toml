@@ -28,7 +28,5 @@ std = []
 [target.'cfg(loom)'.dependencies]
 loom = "0.7"
 
-[lints.rust]
-# `loom` is a cfg set only by the model runs, never by cargo, so declare it or
-# every build warns about an unexpected condition name.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+[lints]
+workspace = true
