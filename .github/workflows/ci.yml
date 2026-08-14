@@ -214,21 +214,20 @@ jobs:
       # runner tips it over, the answer is a faster allocation path, not a
       # bigger number.
       #
-      # `-Zmiri-ignore-leaks` here only, and it is a scope decision rather than
-      # a suppression: the segment pool retains freed mappings for reuse, which
-      # is the pool's purpose, and Miri reports each retained mapping as leaked
-      # at exit. Arena and core keep leak checking on and cover the release
-      # paths. Narrowing this to a test-only drain is MN-444.
+      # The serialized TEST_LOCK guard drains empty reusable and orphan
+      # mappings after each test-owned allocator has been dropped. It preserves
+      # orphan segments with live blocks, so a real allocator leak remains a
+      # failing Miri leak report.
       - name: Miri — local (Stacked Borrows)
         env:
-          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-ignore-leaks
+          MIRIFLAGS: -Zmiri-disable-isolation
         run: >-
           cargo +nightly miri nextest run -p mnemosyne-local --locked
           --profile miri
 
       - name: Miri — local (Tree Borrows)
         env:
-          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-ignore-leaks -Zmiri-tree-borrows
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-tree-borrows
         run: >-
           cargo +nightly miri nextest run -p mnemosyne-local --locked
           --profile miri

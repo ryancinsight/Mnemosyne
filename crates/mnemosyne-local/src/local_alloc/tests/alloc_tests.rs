@@ -216,6 +216,9 @@ fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
         "16-byte page capacity should equal PAGE_SIZE / MIN_BLOCK_SIZE"
     );
 
+    let mut allocations = std::vec::Vec::with_capacity(max_blocks + 1);
+    allocations.push(first);
+
     // Drain the remainder of this exact page.
     let mut count = 1usize;
     let mut last = first;
@@ -236,6 +239,7 @@ fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
             "allocator returned a duplicate pointer at {count}"
         );
         last = ptr;
+        allocations.push(ptr);
         count += 1;
     }
 
@@ -262,6 +266,14 @@ fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
         overflow_seg != segment_addr || overflow_page != page_index,
         "post-saturation allocation reused the full page"
     );
+    allocations.push(overflow);
+
+    unsafe {
+        for ptr in allocations {
+            crate::thread_free::<StandardPolicy, DefaultBackend>(ptr);
+        }
+    }
+    alloc.reclaim_owned_segments();
 }
 
 #[test]

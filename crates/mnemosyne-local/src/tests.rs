@@ -513,8 +513,8 @@ fn hardened_policy_detects_freelist_tamper() {
     // Let's tamper with the encrypted next pointer in `ptr2`.
     // The block metadata stores the encrypted pointer in the first `Option<NonNull<Block>>` slot of the block.
     let val2 = ptr2 as *mut usize;
+    let original_val = unsafe { *val2 };
     unsafe {
-        let original_val = *val2;
         // Corrupt the pointer (e.g. flip a bit in the address portion)
         *val2 = original_val ^ 0x08;
     }
@@ -538,6 +538,14 @@ fn hardened_policy_detects_freelist_tamper() {
         Some(ptr1 as usize),
         "HardenedPolicy failed to obscure/randomize the tampered pointer"
     );
+
+    // Restore the intentionally corrupted metadata before allocator teardown;
+    // the test asserts detection, while cleanup must still exercise the real
+    // deallocation path rather than retain a deliberately malformed page.
+    unsafe {
+        *val2 = original_val;
+        thread_free::<HardenedPolicy, MemoryBackendWrapper>(ptr3);
+    }
 }
 
 #[test]
