@@ -384,7 +384,7 @@ Filed from the 2026-08-12 verification-posture review:
   and they stay green, or the residual exclusion is narrowed to the specific
   tests that require it with the reason recorded at that site.
 
-- [ ] [patch] **MN-441 — `is_current` is non-atomic.** Written by the owning
+- [ ] [patch] status=in-progress owner=claude scope=`crates/mnemosyne-core/src/types/segment.rs`, `crates/mnemosyne-core/src/types/page/occupancy.rs`, `crates/mnemosyne-local/src/{free.rs,local_alloc.rs,local_alloc/segment/reclaim.rs,tests.rs}`, `crates/mnemosyne-heap/src/raw_heap.rs`; last-update=2026-08-14. **MN-441 — `is_current` is non-atomic.** Written by the owning
   thread; not read on any cross-thread path today, so Miri does not flag it, but
   nothing in the type enforces that and the earlier `&self` accessor experiment
   raced against exactly this field. Either make it atomic like its neighbours or
