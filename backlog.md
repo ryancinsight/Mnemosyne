@@ -325,45 +325,34 @@ Filed from the 2026-08-12 verification-posture review:
   tests already purge for the same reason, so leak checking stays on rather than
   being suppressed for the new job.
 
-- [ ] [patch] **MN-445 — two integration tests block the mnemosyne-local Miri
-  job.** The aliasing work is done (MN-440/442/443) and the lib tests are clean
-  under both borrow models, but `cargo miri nextest run -p mnemosyne-local` also
-  runs the integration binaries, which the earlier lib-only runs never covered.
-  Measured under Stacked Borrows with `-Zmiri-ignore-leaks`: 73 run, 71 passed,
-  1 failed, 1 timed out, in 669s total.
-  - `topology_tests::test_per_cpu_cache` fails. Cause not yet diagnosed — the
-    detail was lost to output filtering and the re-run could not build (below).
-  - One test exceeds the `miri` profile's 600s bound (`300s` slow, terminate
-    after 2). Its identity was not captured. Per the test-budget rule a
-    termination is a hang to root-cause, not a bound to raise; note that
-    `allocation_side_reclaim_counts_cross_thread_blocks_exactly` was already
-    observed at 235s, so the margin here is thin and the timing-out test may
-    simply be a heavier sibling.
-  **Runtime is the other open question, and it is larger than expected.** A
-  full lib-test pass measured 402s under Stacked Borrows and 5,732s (95 min)
-  under Tree Borrows — roughly 14x, not the small multiple assumed when the
-  two-model gate was specified. With the integration binaries on top, a Tree
-  Borrows step on every PR is close to an hour and a half of CI per run. Decide
-  the scoping before wiring it up: Stacked Borrows per PR with Tree Borrows on
-  a schedule or merge-only is the obvious split, and it preserves the property
-  that motivated two models (MN-437's first fix passed Stacked while Tree
-  Borrows still rejected it) as long as the Tree Borrows run gates merges
-  rather than being purely informational.
-  Intended job configuration, verified green for the lib tests and ready to
-  commit once the two above are resolved: two steps, `Miri — local (Stacked
-  Borrows)` and `Miri — local (Tree Borrows)`, running
-  `cargo +nightly miri nextest run -p mnemosyne-local --locked --profile miri`
-  with `MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-ignore-leaks` and that plus
-  `-Zmiri-tree-borrows`. The workflow edit was written and then withdrawn rather
-  than committed unverified.
-  Blocked on: the shared tree currently does not compile. A peer's in-flight
-  uncommitted work in `mnemosyne-arena` calls
-  `GlobalSegmentPool::try_push_chain_unbounded` / `push_chain_unbounded` from
-  `local_alloc/segment/reclaim.rs`, and neither method exists yet. This is
-  transient peer state, not a defect in the committed tree — HEAD (154097f) was
-  green at commit time.
-  Re-open trigger: the peer's segment-pool chain-push work lands and the
-  workspace compiles again.
+- [x] [patch] **MN-445 — mnemosyne-local joins the Miri job.** Done. Both
+  blockers turned out to be real defects rather than environment.
+  The failure was `topology_tests::test_per_cpu_cache`, and the cause was a
+  genuine bug: `try_free_cpu` and `try_alloc_cpu` ran `compare_exchange_weak`
+  inside a two-round loop whose budget exists for CPU migration, so a spurious
+  failure spent that budget and reported the cache unavailable when it was
+  empty and uncontended. Live on aarch64; invisible natively because x86 lowers
+  weak and strong alike. Both use a strong exchange now.
+  The timeout was `test_per_cpu_cache_contention_bounds` — a spinner thread
+  against a thousand allocation attempts, sized for native execution, now
+  skipped under Miri with the progress-under-contention property left to loom
+  (MN-433).
+  Three further Tree Borrows timeouts surfaced once those cleared, each fixed at
+  its cause rather than by shrinking coverage: byte-at-a-time verification
+  replaced with bulk fill/compare (keeping the byte walk for failure offsets);
+  an orphan-adoption test re-sized to a large small-class, since preserved
+  per-page keys decode identically in every class; and a 2000-round churn test
+  Miri-scoped to one full lcm(8, 19) = 152 cycle. That last one exposed MN-447.
+  Final cost, which also settles the scoping question this item carried: 36s
+  Stacked and 463s Tree Borrows, both per PR, no schedule split needed. The
+  earlier "14x, about ninety minutes" figure came from `cargo miri test`, which
+  runs serially; CI uses nextest, and the fixes removed the cost problem
+  outright.
+  `smallest_class_page_saturates_without_duplicate_or_early_refill` still
+  crosses the 300s slow mark under Tree Borrows and cannot shrink — saturating a
+  page is 4096 allocations and that count is the property. Margin against the
+  600s bound is real but not generous; recorded at the job.
+  Both steps run with `-Zmiri-ignore-leaks`, tracked as MN-444.
 
 - [ ] [patch] **MN-446 — two decay purger tests fail intermittently.**
   Reported, not claimed: this sits inside the live

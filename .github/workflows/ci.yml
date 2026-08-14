@@ -194,3 +194,41 @@ jobs:
         run: >-
           cargo +nightly miri nextest run -p mnemosyne-memory-core --locked
           --profile miri
+
+      # mnemosyne-local joins now that MN-440, MN-442, MN-443 and MN-445 are
+      # fixed. It is the crate the aliasing defects actually lived in: the
+      # re-entrancy gate read through the aliasing it existed to reject, the
+      # huge classifier that read user payload as page metadata, and the
+      # wildcard occupancy writes. It also earned its place immediately — the
+      # per-CPU cache's weak compare-exchange in a bounded retry loop was live
+      # on aarch64 and invisible to the native suite, because x86 lowers weak
+      # and strong alike.
+      #
+      # Both models, and affordably: 36s Stacked, 463s Tree Borrows. Those were
+      # 388s and "three tests over the 600s budget" until the three offending
+      # tests were fixed at their causes (MN-445). One test,
+      # `smallest_class_page_saturates_without_duplicate_or_early_refill`, still
+      # crosses the 300s slow mark under Tree Borrows: saturating a 16 KiB-block
+      # page is 4096 allocations and that count *is* the property, so it cannot
+      # shrink. It has margin against the 600s bound but not a lot; if a slower
+      # runner tips it over, the answer is a faster allocation path, not a
+      # bigger number.
+      #
+      # `-Zmiri-ignore-leaks` here only, and it is a scope decision rather than
+      # a suppression: the segment pool retains freed mappings for reuse, which
+      # is the pool's purpose, and Miri reports each retained mapping as leaked
+      # at exit. Arena and core keep leak checking on and cover the release
+      # paths. Narrowing this to a test-only drain is MN-444.
+      - name: Miri — local (Stacked Borrows)
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-ignore-leaks
+        run: >-
+          cargo +nightly miri nextest run -p mnemosyne-local --locked
+          --profile miri
+
+      - name: Miri — local (Tree Borrows)
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-ignore-leaks -Zmiri-tree-borrows
+        run: >-
+          cargo +nightly miri nextest run -p mnemosyne-local --locked
+          --profile miri
