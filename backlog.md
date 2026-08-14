@@ -436,8 +436,11 @@ Filed from the 2026-08-12 verification-posture review:
   page array and key schedule stayed zeroed, and `..zeroed()` would silently
   absorb any field added later. They now run the real initializer.
   Evidence: workspace 292/292 and clippy `-D warnings` clean at the
-  code-complete revision; `cargo fmt --all --check` clean after the final doc
-  addition. Miri re-confirmation is pending on the blockers below.
+  code-complete revision; `cargo fmt --all --check` clean; Miri on
+  `mnemosyne-memory-core` 18/18 under both Stacked and Tree Borrows, which is
+  the package the accessors and the occupancy readers live in. A later workspace
+  run showed the two `mnemosyne-decay` failures tracked as MN-446, in a scope
+  this diff does not touch.
 
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and each exclusion is listed here so none is silent:
