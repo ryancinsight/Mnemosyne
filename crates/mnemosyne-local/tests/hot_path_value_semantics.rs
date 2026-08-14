@@ -204,7 +204,7 @@ fn alloc_free_churn_preserves_block_integrity() {
     // The point of this test is metadata surviving *recycling*, which it never
     // actually confirmed happened. Assert it, so the round count is backed by
     // evidence rather than by assumption.
-    let stats = thread_allocator_stats::<Backend>();
+    let stats = thread_allocator_stats::<Policy, Backend>();
     // Accounting must survive the churn exactly: eight slots stay live.
     assert_eq!(
         stats.current_thread_live_allocations,
@@ -325,10 +325,10 @@ unsafe fn drive_page_recycling<P: AllocPolicy>() {
 
 #[test]
 fn emptied_page_is_recycled_into_another_size_class() {
-    let before = thread_allocator_stats::<Backend>();
+    let before = thread_allocator_stats::<Policy, Backend>();
     // Safety: no blocks of another policy are live in this test binary's thread.
     unsafe { drive_page_recycling::<Policy>() };
-    let after = thread_allocator_stats::<Backend>();
+    let after = thread_allocator_stats::<Policy, Backend>();
 
     // Counter evidence, on top of the address check inside the helper. Deltas,
     // not absolutes, so a sibling test having already dirtied this thread's
@@ -353,11 +353,67 @@ fn emptied_page_is_recycled_into_another_size_class() {
 
 #[test]
 fn emptied_page_is_recycled_under_the_hardened_policy() {
-    // The hardened free list is XOR-encoded with per-page keys, and re-initializing
-    // a page for a new class re-keys it. Counters are unavailable here —
-    // `thread_allocator_stats` reads the standard TLS slot whatever policy is
-    // asked for, tracked as MN-448 — so this leans on the address check and on
-    // the recycled block round-tripping, which is what a mis-keyed chain breaks.
+    // The hardened free list is XOR-encoded with per-page keys, and
+    // re-initializing a page for a new class re-keys it, so a mis-keyed chain
+    // shows up as a bad block here. Since ADR 0008 the counters are reachable
+    // for this policy too, so this asserts the same deltas as its standard
+    // sibling rather than resting on the address argument alone.
+    let before = thread_allocator_stats::<HardenedPolicy, Backend>();
     // Safety: no blocks of another policy are live in this test binary's thread.
     unsafe { drive_page_recycling::<HardenedPolicy>() };
+    let after = thread_allocator_stats::<HardenedPolicy, Backend>();
+
+    assert!(
+        after.recycled_pages > before.recycled_pages,
+        "no page was recycled under the hardened policy: {} -> {}",
+        before.recycled_pages,
+        after.recycled_pages
+    );
+    assert!(
+        after.recycle_sweeps > before.recycle_sweeps,
+        "the empty-page list was never swept under the hardened policy: {} -> {}",
+        before.recycle_sweeps,
+        after.recycle_sweeps
+    );
+}
+
+#[test]
+fn allocator_stats_report_the_policy_the_caller_asks_for() {
+    // Each (backend, encryption mode) pair owns a separate allocator cache
+    // (ADR 0001). The stats surface used to reach the standard slot whatever
+    // policy was named, so a hardened caller received a near-empty snapshot of
+    // an allocator they had never allocated through — plausible enough to be
+    // read as real. ADR 0008 keys the surface by policy; this pins it.
+    const N: usize = 16;
+    let standard_before = thread_allocator_stats::<Policy, Backend>();
+    let hardened_before = thread_allocator_stats::<HardenedPolicy, Backend>();
+
+    let mut blocks = std::vec::Vec::with_capacity(N);
+    for i in 0..N {
+        // Safety: 64 is a valid small request and ALIGN is a power of two.
+        let p = unsafe { thread_alloc::<HardenedPolicy, Backend>(64, ALIGN) };
+        assert!(!p.is_null(), "hardened allocation {i} failed");
+        blocks.push(p);
+    }
+
+    let standard_after = thread_allocator_stats::<Policy, Backend>();
+    let hardened_after = thread_allocator_stats::<HardenedPolicy, Backend>();
+
+    assert_eq!(
+        hardened_after
+            .current_thread_live_allocations
+            .wrapping_sub(hardened_before.current_thread_live_allocations),
+        N,
+        "the hardened allocator's live count must track the hardened allocations"
+    );
+    assert_eq!(
+        standard_after.current_thread_live_allocations,
+        standard_before.current_thread_live_allocations,
+        "allocating under the hardened policy moved the standard allocator's          counters, so the snapshot is reporting the wrong cache"
+    );
+
+    for p in blocks {
+        // Safety: allocated above under the hardened policy, freed once.
+        unsafe { thread_free::<HardenedPolicy, Backend>(p) };
+    }
 }

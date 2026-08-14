@@ -117,12 +117,21 @@ impl Default for MemoryStats {
     }
 }
 
-/// Returns current Mnemosyne allocator memory counters for a specific backend.
-pub fn memory_stats_generic<B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>>()
--> MemoryStats {
+/// Returns current Mnemosyne allocator memory counters for a specific policy
+/// and backend.
+///
+/// `P` must be the policy the caller allocates with — an application using
+/// `MnemosyneAllocator<HardenedPolicy>` passes `HardenedPolicy` here. Each
+/// `(backend, encryption mode)` pair owns a separate thread allocator cache
+/// (ADR 0001), so naming the wrong policy reports a different allocator's
+/// counters rather than failing (ADR 0008).
+pub fn memory_stats_generic<
+    P: crate::AllocPolicy,
+    B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>,
+>() -> MemoryStats {
     let backend = mnemosyne_backend::backend_memory_stats();
     let arena = mnemosyne_arena::arena_memory_stats::<B>();
-    let local = mnemosyne_local::thread_allocator_stats::<B>();
+    let local = mnemosyne_local::thread_allocator_stats::<P, B>();
     MemoryStats {
         current_mapped_bytes: backend.current_mapped_bytes,
         peak_mapped_bytes: backend.peak_mapped_bytes,
@@ -155,9 +164,15 @@ pub fn memory_stats_generic<B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
     }
 }
 
-/// Returns current Mnemosyne allocator memory counters.
+/// Returns current Mnemosyne allocator memory counters for the default
+/// `Mnemosyne` allocator.
+///
+/// `Mnemosyne` is `MnemosyneAllocator<StandardPolicy>`'s shorthand, and this is
+/// `memory_stats_generic::<StandardPolicy, _>`'s. A process installing any
+/// other policy calls the generic form with that policy, or it reads a
+/// different allocator's counters.
 pub fn memory_stats() -> MemoryStats {
-    memory_stats_generic::<mnemosyne_backend::MemoryBackendWrapper>()
+    memory_stats_generic::<crate::StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>()
 }
 
 /// Purges the global segment pool for a specific backend, releasing all retained/cached segments back to the OS.

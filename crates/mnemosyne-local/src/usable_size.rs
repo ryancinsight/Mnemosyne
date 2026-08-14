@@ -1,5 +1,6 @@
 use crate::{LocalAllocatorSelector, ThreadAllocator, ThreadAllocatorStats};
 use mnemosyne_arena::HasSegmentPool;
+use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::types::{Segment, locate_segment};
 
 /// Returns the actual usable byte count of the allocation at `ptr`.
@@ -91,11 +92,21 @@ pub(crate) unsafe fn huge_allocation_size(ptr: *mut u8) -> usize {
     }
 }
 
-/// Returns a statistics snapshot for the current thread allocator.
-pub fn thread_allocator_stats<B: HasSegmentPool + LocalAllocatorSelector<B>>()
+/// Returns a statistics snapshot for the current thread's allocator under
+/// policy `P`.
+///
+/// `P` selects which allocator is reported, and is not decoration. ADR 0001
+/// gives every `(backend, encryption mode)` pair its own `ThreadAllocator`
+/// cache, so a process allocating through `HardenedPolicy` and a process
+/// allocating through `StandardPolicy` have separate counters. Passing the
+/// policy the caller actually allocates with is what makes the snapshot
+/// describe their allocator rather than a neighbouring one (ADR 0008).
+pub fn thread_allocator_stats<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>()
 -> ThreadAllocatorStats {
-    B::with_allocator(|alloc| alloc.stats()).unwrap_or_else(|| ThreadAllocatorStats {
-        cross_thread_reclaimed_blocks: ThreadAllocator::<B>::cross_thread_reclaimed_blocks(),
-        ..ThreadAllocatorStats::default()
+    B::with_allocator_for_policy::<P, _>(|alloc| alloc.stats()).unwrap_or_else(|| {
+        ThreadAllocatorStats {
+            cross_thread_reclaimed_blocks: ThreadAllocator::<B>::cross_thread_reclaimed_blocks(),
+            ..ThreadAllocatorStats::default()
+        }
     })
 }

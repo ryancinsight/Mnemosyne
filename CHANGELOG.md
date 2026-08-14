@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- **Breaking.** Key the allocator statistics surface by policy:
+  `mnemosyne_local::thread_allocator_stats` and
+  `mnemosyne::memory_stats_generic` now take the allocation policy as their
+  first generic parameter. Both previously routed through the policy-blind TLS
+  selector and always reported the standard allocator, so an application
+  running `MnemosyneAllocator<HardenedPolicy>` received a near-empty snapshot
+  of a cache it had never allocated through — a wrong answer rather than a
+  missing one, since each `(backend, encryption mode)` pair owns its own
+  allocator (ADR 0001). Callers name the policy they allocate with;
+  `mnemosyne::memory_stats()` is unchanged and supplies `StandardPolicy`, as
+  the shorthand for `MnemosyneAllocator<StandardPolicy>`'s statistics. See
+  ADR 0008.
+
 - Replace sleep-synchronized decay tests with a generation/condition-variable
   completion seam, retaining background-worker coverage without polling.
 

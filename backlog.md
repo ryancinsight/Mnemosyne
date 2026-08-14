@@ -399,25 +399,46 @@ Filed from the 2026-08-12 verification-posture review:
   allocator drop, which happens after any assertion could observe it. Recorded
   as the remaining half of this area rather than claimed.
 
-- [ ] [major] **MN-448 — allocator stats ignore the policy and report the wrong
-  allocator.** `thread_allocator_stats::<B>()` calls `B::with_allocator`, the
-  policy-blind selector, so it always reads the standard TLS slot. Each
-  `(backend, encryption mode)` pair has its own allocator cache — that is the
-  point of `with_allocator_for_policy` — so an application running
-  `HardenedPolicy` asks for its allocator's counters and silently receives a
-  different allocator's, near-zero because nothing allocated there. The public
-  `memory_stats` surface inherits this through
-  `mnemosyne::stats::memory_stats_generic<B>`, which is policy-blind for the
-  same reason.
-  Found while writing MN-447's hardened test, which consequently cannot assert
-  counters at all and proves recycling by address instead.
-  The fix is a policy parameter on both functions rather than a second
-  differently-named entry point — variation belongs in the generics, and a
-  `_for_policy` twin would be the parallel-API defect. That breaks the public
-  signature of both, so it is `[major]` and takes an ADR first.
-  Acceptance: one generic entry point per surface; a hardened-policy caller
-  observes its own allocator's counters; MN-447's hardened test asserts the same
-  counter deltas as its standard sibling.
+- [x] [major] **MN-448 — allocator stats ignored the policy and reported the
+  wrong allocator.** Done, per ADR 0008.
+  `thread_allocator_stats` and `memory_stats_generic` now take the allocation
+  policy as a generic parameter and route through
+  `with_allocator_for_policy`. Previously both used the policy-blind selector
+  and always read the standard TLS slot, so an application running
+  `MnemosyneAllocator<HardenedPolicy>` received a near-empty snapshot of a
+  cache it had never allocated through — plausible enough to be read as real.
+  `memory_stats()` keeps its signature and supplies `StandardPolicy`, mirroring
+  `Mnemosyne` being `MnemosyneAllocator<StandardPolicy>`'s shorthand.
+  Rejected a `_for_policy` twin beside each existing function: that is the
+  parallel-API defect, and it would have left the original names still
+  answering for the wrong allocator behind better documentation.
+  Checked that the neighbours do not share the bug — `purge_generic`,
+  `reset_generic` and `decay` act on the per-backend segment pool and the decay
+  thread, neither keyed by policy, so they stay policy-blind correctly.
+  `cargo-semver-checks` confirms the `[major]` classification rather than it
+  being asserted: `function_requires_different_generic_type_params` on both
+  entry points, "semver requires new major version".
+  Non-vacuity: reverting the selector to the policy-blind form fails both
+  `allocator_stats_report_the_policy_the_caller_asks_for` (hardened allocations
+  must move the hardened counters and leave the standard ones alone) and
+  MN-447's hardened recycling test, which can now assert the same counter
+  deltas as its standard sibling — this item's stated acceptance.
+
+- [ ] [patch] **MN-449 — `mnemosyne-local` ships no doctests.** The crate has
+  zero `///` examples: `grep '/// ```' crates/mnemosyne-local/src` returns
+  nothing, against 18 fences in `mnemosyne-heap`. Its public surface is the
+  allocator entry points a consumer actually calls — `thread_alloc`,
+  `thread_free`, `thread_realloc`, `usable_size`, `thread_allocator_stats` —
+  and every one of them is `unsafe` with a contract that a runnable example
+  would make concrete. `#![deny(missing_docs)]` does not catch this: prose
+  exists, examples do not.
+  Noticed while verifying MN-448, where a `cargo test --doc` result of
+  "0 passed" for this crate initially read as a regression and turned out to be
+  the steady state. That ambiguity is itself the argument — a package with no
+  doctests cannot distinguish "examples all pass" from "there are none".
+  Acceptance: each public entry point carries a runnable doctest exercising its
+  documented contract, with `# Safety` preconditions visible in the example
+  rather than only in prose.
 
 - [ ] [patch] **MN-444 — narrow the Miri leak exclusion on mnemosyne-local.**
   The `Miri — local` jobs run with `-Zmiri-ignore-leaks` because the segment
