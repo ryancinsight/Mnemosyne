@@ -350,7 +350,7 @@ fn current_segment_free_keeps_occupancy_mask_conservative() {
     let mask = 1u32 << page_index;
 
     assert!(
-        unsafe { (*segment).is_current },
+        unsafe { Segment::is_current(segment) },
         "test allocation must come from the current slicing segment"
     );
     assert_ne!(

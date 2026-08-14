@@ -241,12 +241,23 @@ impl TaggedSegmentStack {
 mod tests {
     use super::*;
 
-    fn boxed(seed: usize) -> *mut Segment {
-        Box::into_raw(Box::new(Segment {
-            raw_alloc_ptr: seed as *mut u8,
-            next_free_segment: core::ptr::null_mut(),
-            ..unsafe { core::mem::zeroed() }
-        }))
+    /// Allocates a boxed `Segment` through the production initializer.
+    ///
+    /// Boxing a zeroed value and filling a few fields by struct literal was the
+    /// previous form; it bypassed `Segment::initialize`, so the page array and key
+    /// schedule stayed zeroed, and `..zeroed()` silently absorbed every field added
+    /// later. Running the real initializer costs one loop over the page array in a
+    /// test and yields a segment whose invariants actually hold.
+    fn boxed(raw: usize) -> *mut Segment {
+        // SAFETY: `Segment` is pointers, integers, bools and arrays of the same, so
+        // an all-zero bit pattern is a valid starting value for the initializer to
+        // overwrite.
+        let segment: *mut Segment = Box::into_raw(Box::new(unsafe { core::mem::zeroed() }));
+        // SAFETY: `segment` is the live, uniquely-owned Box allocation just created,
+        // and `Segment` requires only that the target be valid for writes here — the
+        // pool tests never depend on `SEGMENT_ALIGN` addressing.
+        unsafe { Segment::initialize(segment, raw as *mut u8, 0) };
+        segment
     }
 
     #[test]

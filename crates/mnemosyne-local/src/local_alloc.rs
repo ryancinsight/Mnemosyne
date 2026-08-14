@@ -227,7 +227,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // Each `i` comes from the live mask so `pages[i]` is in bounds.
             unsafe {
                 let seg_ptr = current.as_ptr();
-                (*seg_ptr).is_current = false;
+                Segment::set_current(seg_ptr, false);
                 let mut mask = (*seg_ptr).page_occupied_mask;
                 while mask != 0 {
                     let i = mask.trailing_zeros() as usize;
@@ -242,7 +242,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // SAFETY: `next` is a segment exclusively owned by this allocator per
             // the `# Safety` contract; marking it current writes only its header.
             unsafe {
-                (*next.as_ptr()).is_current = true;
+                Segment::set_current(next.as_ptr(), true);
             }
         }
         self.current_segment = segment;

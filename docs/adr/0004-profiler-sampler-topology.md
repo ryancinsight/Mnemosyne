@@ -1,6 +1,6 @@
 # ADR 0004: Profiler Sampler Vertical Topology
 
-Status: Accepted
+Status: accepted
 
 ## Context
 

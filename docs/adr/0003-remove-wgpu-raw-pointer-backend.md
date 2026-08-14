@@ -1,12 +1,8 @@
 # ADR 0003: Remove the WGPU raw-pointer backend
 
-- Status: Accepted
+- Status: accepted
 - Date: 2026-07-13
 - Change class: major
-- Revision (2026-08-14): absorbs the former ADR 0002, which made the
-  process-global WGPU callback pair immutable behind one `AtomicPtr`. This
-  decision deletes that registry outright, so 0002's subject no longer exists
-  and its record was removed rather than left as a second current record.
 
 ## Context
 

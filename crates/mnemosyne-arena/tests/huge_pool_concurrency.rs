@@ -23,12 +23,11 @@ use std::thread;
 /// stand-in without touching the OS backend.
 fn boxed_huge_segment(raw: usize, block_size: usize) -> *mut Segment {
     // SAFETY: `Segment` is composed entirely of pointers, integers, bools, and
-    // arrays thereof, so an all-zero bit pattern is a valid empty instance.
-    let segment = Box::into_raw(Box::new(Segment {
-        raw_alloc_ptr: raw as *mut u8,
-        next_free_segment: core::ptr::null_mut(),
-        ..unsafe { core::mem::zeroed() }
-    }));
+    // arrays thereof, so an all-zero bit pattern is a valid starting value for
+    // the initializer to overwrite.
+    let segment: *mut Segment = Box::into_raw(Box::new(unsafe { core::mem::zeroed() }));
+    // SAFETY: `segment` was just allocated and is exclusively owned here.
+    unsafe { Segment::initialize(segment, raw as *mut u8, 0) };
     // SAFETY: `segment` was just allocated and is exclusively owned here.
     unsafe {
         (*segment).pages[0].block_size = block_size;

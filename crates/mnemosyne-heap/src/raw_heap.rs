@@ -258,7 +258,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         let cookie = unsafe { Segment::cookie_for_dynamic(segment, encrypted, page_index) };
         // SAFETY: `(*segment).is_current` reads a flag in the live segment
         // header.
-        if page_alloc_count != 1 || unsafe { (*segment).is_current } {
+        if page_alloc_count != 1 || unsafe { Segment::is_current(segment) } {
             // SAFETY: `block` is a live non-null block of `page` (allocator
             // invariant); writing its `next` link, publishing it as the
             // free-list head, and decrementing the page/segment occupancy all

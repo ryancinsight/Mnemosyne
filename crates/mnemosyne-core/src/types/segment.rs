@@ -34,7 +34,31 @@ pub struct Segment {
     /// accompany.
     pub owner_allocator: core::sync::atomic::AtomicPtr<core::ffi::c_void>,
     /// True while this segment is the owner's active page-slicing segment.
-    pub is_current: bool,
+    ///
+    /// Deliberately non-atomic, and private so that stays true: this is the one
+    /// header field written after publication that no remote thread reads. The
+    /// cross-thread free path (`thread_free_cold`) pushes into the page's
+    /// `AtomicFreeList` and touches nothing else in the header, and every
+    /// reader of this flag — the occupancy transitions, the local free fast
+    /// path, the defragmentation sweep — runs on the owning thread, most of
+    /// them already holding `&mut ThreadAllocator`.
+    ///
+    /// Making it atomic would buy nothing and cost something: it sits on the
+    /// small-free fast path, and an atomic here would advertise a cross-thread
+    /// contract that does not exist, inviting exactly the remote access the
+    /// protocol forbids. What was missing was enforcement rather than
+    /// synchronization, so the field is private and reached only through
+    /// [`Segment::is_current`] / [`Segment::set_current`], whose `# Safety`
+    /// contracts state the owner-only requirement.
+    ///
+    /// The flag must be false whenever a segment crosses back to a global pool,
+    /// or the next thread to claim it would inherit a stale "currently being
+    /// sliced" state and skip occupancy bookkeeping for it. `reclaim_owned_segments`
+    /// upholds this by clearing the allocator's current segment before it walks
+    /// the owned chain and clearing the flag again on every node it orphans;
+    /// the defragmentation sweep upholds it by skipping the current segment
+    /// entirely.
+    is_current: bool,
     /// Pointer to the next segment owned by the same ThreadAllocator.
     pub next_owned_segment: *mut Segment,
     /// Pointer to the previous segment owned by the same ThreadAllocator.
@@ -90,9 +114,10 @@ unsafe impl Send for Segment {}
 // regardless of which field the reader wanted. That is why the accessors here
 // take `*const Segment` and project to one field rather than taking `&self`.
 //
-// `is_current` remains non-atomic and is still written by the owner. It is not
-// read on any cross-thread path today, but nothing in the type enforces that —
-// tracked as MN-441.
+// `is_current` remains non-atomic and is still written only by the owner. That
+// is now enforced rather than asserted: the field is private and its accessors
+// carry an owner-only `# Safety` contract, so no site outside this module can
+// reach it and no reader can acquire it through a whole-header reference.
 unsafe impl Sync for Segment {}
 
 /// Recovers the parent segment header and page index for a user pointer.
@@ -336,6 +361,41 @@ impl Segment {
         let field = unsafe { &raw const (*segment).owner_allocator };
         // SAFETY: `field` addresses the initialized atomic slot.
         unsafe { (*field).store(allocator, core::sync::atomic::Ordering::Release) };
+    }
+
+    /// Reads the active-slicing flag.
+    ///
+    /// Takes a raw pointer for the same reason as [`Segment::owner`]: a `&self`
+    /// would retag the whole header and race with any concurrent write to any
+    /// other field. The projection touches this one byte.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must point to a live segment header, and the caller must be
+    /// that segment's owning thread. This field is not synchronized; reading it
+    /// from a non-owner thread is a data race.
+    #[inline(always)]
+    pub unsafe fn is_current(segment: *const Segment) -> bool {
+        // SAFETY: caller guarantees a live header owned by this thread; the
+        // projection reads only the `is_current` byte.
+        let field = unsafe { &raw const (*segment).is_current };
+        // SAFETY: `field` addresses the initialized flag.
+        unsafe { field.read() }
+    }
+
+    /// Sets or clears the active-slicing flag.
+    ///
+    /// # Safety
+    ///
+    /// Carries [`Segment::is_current`]'s contract: live header, owning thread.
+    /// Writing from a non-owner thread is a data race.
+    #[inline(always)]
+    pub unsafe fn set_current(segment: *mut Segment, value: bool) {
+        // SAFETY: caller guarantees a live header owned by this thread; the
+        // projection writes only the `is_current` byte.
+        let field = unsafe { &raw mut (*segment).is_current };
+        // SAFETY: `field` addresses the initialized flag.
+        unsafe { field.write(value) };
     }
 
     /// Reads the segment's owner identity.
