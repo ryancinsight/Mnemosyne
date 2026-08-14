@@ -20,10 +20,14 @@ use core::sync::atomic::Ordering;
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::options::PURGE_CADENCE_MS;
 use mnemosyne_core::types::{Page, Segment, SegmentOwner};
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
 static SPAWNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static DECAY_STEP_GENERATION: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+static DECAY_STEP_EVENT: OnceLock<(Mutex<()>, Condvar)> = OnceLock::new();
 
 /// Triggers background decay thread initialization.
 ///
@@ -104,6 +108,40 @@ fn decay_thread_loop(mut cadence: usize) {
     }
 }
 
+fn decay_step_event() -> &'static (Mutex<()>, Condvar) {
+    DECAY_STEP_EVENT.get_or_init(|| (Mutex::new(()), Condvar::new()))
+}
+
+/// Returns the number of completed decay sweeps observed by this process.
+#[must_use]
+pub fn decay_step_generation() -> usize {
+    DECAY_STEP_GENERATION.load(Ordering::Acquire)
+}
+
+/// Waits for a decay sweep after a previously observed generation.
+///
+/// The wait is signaled by the background worker after it completes a sweep;
+/// it does not poll the segment pools. A `false` result means the supplied
+/// timeout elapsed before a later generation was observed.
+#[must_use]
+pub fn wait_for_decay_step(previous: usize, timeout: Duration) -> bool {
+    let (lock, event) = decay_step_event();
+    let guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (_guard, _timeout) = event
+        .wait_timeout_while(guard, timeout, |_| {
+            DECAY_STEP_GENERATION.load(Ordering::Acquire) <= previous
+        })
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    DECAY_STEP_GENERATION.load(Ordering::Acquire) > previous
+}
+
+fn publish_decay_step() {
+    let (lock, event) = decay_step_event();
+    let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    DECAY_STEP_GENERATION.fetch_add(1, Ordering::Release);
+    event.notify_all();
+}
+
 /// Executes a single decay cycle across all active memory backends.
 ///
 /// Sweeps the global orphan pool for each backend, draining cross-thread
@@ -137,6 +175,7 @@ pub fn decay_step() {
     decay_step_for_backend::<mnemosyne_backend::CudaHbmBackend>();
     decay_step_for_backend::<mnemosyne_backend::CudaGddrBackend>();
     decay_step_for_backend::<mnemosyne_backend::CudaHostPinnedBackend>();
+    publish_decay_step();
 }
 
 fn decay_step_for_backend<B: HasSegmentPool>() {
