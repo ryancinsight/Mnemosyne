@@ -18,6 +18,8 @@ allocation does not pin resident memory indefinitely.
 `MNEMOSYNE_PURGE_CADENCE_MS` cadence; a cadence of zero disables decay entirely
 and spawns no thread. `decay_step` performs one sweep across the active
 segments and is callable directly when a caller wants to drive reclamation
-without the background worker.
+without the background worker. `decay_step_generation` and
+`wait_for_decay_step` provide a bounded event seam for callers that need to
+observe completed background sweeps without polling.
 
 Licensed under MIT OR Apache-2.0.

@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Replace sleep-synchronized decay tests with a generation/condition-variable
+  completion seam, retaining background-worker coverage without polling.
+
 - Bind the `themis` crate alias to the renamed `themis-topology` package so
   fresh Git dependency resolution follows the provider identity.
 
