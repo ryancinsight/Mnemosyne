@@ -268,10 +268,26 @@ fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
     );
     allocations.push(overflow);
 
+    // This test owns the allocator directly rather than through the TLS
+    // facade. Rebuild the page-local free chain in one owner-side operation so
+    // the saturation assertion is not coupled to the cross-thread classifier
+    // and one atomic publication per block under Miri.
     unsafe {
+        let overflow = allocations
+            .pop()
+            .expect("invariant: overflow allocation is retained last");
+        let page = &raw mut (*segment).pages[page_index];
+        let cookie =
+            mnemosyne_core::types::Segment::cookie_for::<StandardPolicy>(segment, page_index);
+        let mut free = None;
         for ptr in allocations {
-            crate::thread_free::<StandardPolicy, DefaultBackend>(ptr);
+            let block = NonNull::new_unchecked(ptr.cast::<Block>());
+            (*block.as_ptr()).set_next::<StandardPolicy>(free, cookie);
+            free = Some(block);
         }
+        (*page).free = free;
+        mnemosyne_core::types::Page::set_alloc_count_in_segment(segment, page_index, 0);
+        crate::thread_free::<StandardPolicy, DefaultBackend>(overflow);
     }
     alloc.reclaim_owned_segments();
 }
