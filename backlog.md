@@ -365,18 +365,24 @@ Filed from the 2026-08-12 verification-posture review:
   Re-open trigger: the peer's segment-pool chain-push work lands and the
   workspace compiles again.
 
-- [ ] [patch] **MN-446 — `decay_tests::test_decay_purger_spawns_and_cleans_orphans`
-  hangs intermittently.** Reported, not claimed: this sits inside the live
+- [ ] [patch] **MN-446 — two decay purger tests fail intermittently.**
+  Reported, not claimed: this sits inside the live
   `codex/mnemosyne-decay-event-sync` scope, whose two most recent commits are
   `test(mnemosyne): Synchronize decay completion` and the pedantic-floor change.
-  Observed while verifying MN-441 in a disjoint scope. One full workspace run
-  passed 292/292; a second run minutes later failed the test, and an isolated
-  re-run of just that test did not return within ten minutes. That pattern is a
-  hang rather than a failed assertion, so per the test-budget rule it is a
-  defect to root-cause and not something to re-run past. The purger spawns a
-  thread; the likely shape is a completion signal that can be missed rather than
-  waited on.
-  Nothing in MN-441's diff touches `mnemosyne-decay`.
+  Observed while verifying MN-441 in a disjoint scope; nothing in that diff
+  touches `mnemosyne-decay`.
+  `decay_tests::decay_purger_reaches_steady_state` and
+  `decay_tests::test_decay_purger_spawns_and_cleans_orphans` both fail, each in
+  about 5.9s. One earlier full workspace run passed 292/292, so they are
+  intermittent rather than broken outright.
+  The near-identical ~5.9s time on both is the useful signal: these fail on a
+  bounded wait expiring, not on a hang — the nextest default budget would
+  terminate a hang at 60s, and these return well inside that. That points at a
+  completion signal the test can miss and then wait out, rather than a deadlock.
+  (An earlier note here called it a hang on the strength of a ten-minute
+  non-return; that observation was confounded by a full rebuild and an
+  unrelated cross-repo manifest error in the same command, and the timing above
+  supersedes it.)
 
 - [ ] [patch] **MN-444 — narrow the Miri leak exclusion on mnemosyne-local.**
   The `Miri — local` jobs run with `-Zmiri-ignore-leaks` because the segment
