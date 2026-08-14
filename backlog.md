@@ -384,6 +384,27 @@ Filed from the 2026-08-12 verification-posture review:
   unrelated cross-repo manifest error in the same command, and the timing above
   supersedes it.)
 
+- [ ] [patch] **MN-447 — no test drives page recycling or segment
+  reclamation.** Found while fixing MN-445's Tree Borrows timeouts.
+  `alloc_free_churn_preserves_block_integrity` documented itself as driving
+  "page recycling and segment reclamation"; instrumenting it shows otherwise —
+  after 2,000 rounds: `recycled_pages: 0`, `recycle_sweeps: 0`,
+  `fresh_pages: 11`, `fresh_segments: 1`, one owned segment. Eight live blocks
+  spread over nineteen size classes never fill a page, so each class settles on
+  one active page and no page is ever emptied and re-taken for another class.
+  Its docstring now says what it actually covers (block reuse), so the gap is
+  no longer hidden behind a claim — but the gap is real, and it is exactly the
+  region MN-437, MN-439 and MN-440 all turned out to live in: page-list
+  transitions, the empty/recycle lists, and segment reclamation.
+  Needs a workload holding enough simultaneous live blocks to fill a page, then
+  releasing them so the page empties, is recycled into another size class, and
+  ultimately lets its segment be reclaimed — asserting `recycled_pages`,
+  `recycle_sweeps` and `fresh_segments` rather than assuming them. Both the
+  standard and hardened policies, since the encoded free chain is re-keyed on
+  those transitions.
+  Acceptance: a test that fails if `recycled_pages` or `recycle_sweeps` stays
+  zero, and that passes under both borrow models inside the Miri budget.
+
 - [ ] [patch] **MN-444 — narrow the Miri leak exclusion on mnemosyne-local.**
   The `Miri — local` jobs run with `-Zmiri-ignore-leaks` because the segment
   pool retains freed segment mappings for reuse and Miri reports each retained
