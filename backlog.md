@@ -160,9 +160,10 @@ needs a first-class device-memory story beyond the current dlopen `CudaUnifiedBa
 
 - [x] [major] WGPU callback registration publishes one immutable
   allocate/deallocate pair and rejects conflicting pairs. Concurrent readers
-  observe only absent or one complete permanent pair. ADR:
-  `docs/adr/0002-immutable-wgpu-callback-pair.md`. ADR 0003 subsequently
-  removes this backend because WGPU 30 invalidates its pointer contract.
+  observe only absent or one complete permanent pair. ADR 0003 subsequently
+  removes this backend because WGPU 30 invalidates its pointer contract, so
+  the former ADR 0002 record is absorbed into
+  `docs/adr/0003-remove-wgpu-raw-pointer-backend.md`.
 
 - [x] [minor] Replace the always-resident 720,896-byte per-CPU cache table with
   a `OnceLock<Box<PerCpuCache>>` handle. The production static now stores only
@@ -384,13 +385,40 @@ Filed from the 2026-08-12 verification-posture review:
   and they stay green, or the residual exclusion is narrowed to the specific
   tests that require it with the reason recorded at that site.
 
-- [ ] [patch] status=in-progress owner=claude scope=`crates/mnemosyne-core/src/types/segment.rs`, `crates/mnemosyne-core/src/types/page/occupancy.rs`, `crates/mnemosyne-local/src/{free.rs,local_alloc.rs,local_alloc/segment/reclaim.rs,tests.rs}`, `crates/mnemosyne-heap/src/raw_heap.rs`; last-update=2026-08-14. **MN-441 — `is_current` is non-atomic.** Written by the owning
-  thread; not read on any cross-thread path today, so Miri does not flag it, but
-  nothing in the type enforces that and the earlier `&self` accessor experiment
-  raced against exactly this field. Either make it atomic like its neighbours or
-  document why it is owner-only, at the field. MN-440 added one more owner-side
-  read of it (the `free.rs` fast path), so the owner-only claim now carries more
-  weight and should be settled rather than left implicit.
+- [ ] [patch] status=in-progress owner=claude scope=`crates/mnemosyne-core/src/types/segment.rs`, `crates/mnemosyne-core/src/types/page/occupancy.rs`, `crates/mnemosyne-local/src/{free.rs,local_alloc.rs,local_alloc/segment/reclaim.rs,tests.rs}`, `crates/mnemosyne-heap/src/raw_heap.rs`; last-update=2026-08-14. **MN-441 — `is_current` is non-atomic.** Done, by the second of the two
+  options: documented and *enforced* as owner-only rather than made atomic.
+  The audit settles the question the item left open. The only remote-thread
+  path into a segment is `thread_free_cold`, which pushes into the page's
+  `AtomicFreeList` and touches nothing else in the header. Every reader of the
+  flag — the occupancy transitions, the local free fast path, the
+  defragmentation sweep — runs on the owning thread, most already holding
+  `&mut ThreadAllocator`. So the flag needed enforcement, not synchronization:
+  an atomic would sit on the small-free fast path and advertise a cross-thread
+  contract that does not exist, inviting the very access the protocol forbids.
+  The field is now private, reached only through `Segment::is_current` /
+  `Segment::set_current`, which take raw pointers and project to the single
+  byte — the same shape MN-439 gave `owner`/`owner_allocator`, and for the same
+  reason: a `&self` accessor retags the whole header and races with concurrent
+  writes to any other field, which is exactly what Miri caught against this
+  flag before.
+  Enforcement is structural, not a runtime ownership check. Having the
+  accessors `debug_assert!` the caller's owner token was considered and
+  rejected: `mnemosyne-core` cannot see TLS owner identity without inverting the
+  layering, and `occupancy.rs` holds no token to pass.
+  Also recorded the invariant the flag carries at a pool boundary, which the
+  item did not name: a segment must never reach a global pool with the flag set,
+  or the next thread to claim it inherits a stale "currently being sliced" state
+  and skips occupancy bookkeeping. `reclaim_owned_segments` upholds it by
+  clearing the current segment before walking the owned chain and clearing the
+  flag again on every orphaned node; the defragmentation sweep skips the current
+  segment outright.
+  Privatizing the field caught five test sites building `Segment` by struct
+  literal with `..zeroed()`, bypassing `Segment::initialize` entirely — so their
+  page array and key schedule stayed zeroed, and `..zeroed()` would silently
+  absorb any field added later. They now run the real initializer.
+  Evidence: workspace 292/292 and clippy `-D warnings` clean at the
+  code-complete revision; `cargo fmt --all --check` clean after the final doc
+  addition. Miri re-confirmation is pending on the blockers below.
 
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and each exclusion is listed here so none is silent:

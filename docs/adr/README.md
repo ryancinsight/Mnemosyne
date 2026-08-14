@@ -7,9 +7,8 @@
 | ADR | Title | Status |
 | --- | ----- | ------ |
 | [0001](0001-free-list-encryption-mode-binding.md) | Binding free-list encryption mode to avoid mixed-policy corruption | Accepted |
-| [0002](0002-immutable-wgpu-callback-pair.md) | Immutable WGPU callback pair | superseded |
-| [0003](0003-remove-wgpu-raw-pointer-backend.md) | Remove the WGPU raw-pointer backend | accepted |
-| [0004](0004-profiler-sampler-topology.md) | Profiler Sampler Vertical Topology | accepted |
-| [0005](0005-sharded-sample-occupancy.md) | Sharded Active-Sample Occupancy | accepted |
-| [0006](0006-provider-default-msrv.md) | Provider-default MSRV alignment | accepted |
+| [0003](0003-remove-wgpu-raw-pointer-backend.md) | Remove the WGPU raw-pointer backend | Accepted |
+| [0004](0004-profiler-sampler-topology.md) | Profiler Sampler Vertical Topology | Accepted |
+| [0005](0005-sharded-sample-occupancy.md) | Sharded Active-Sample Occupancy | Accepted |
+| [0006](0006-provider-default-msrv.md) | Provider-default MSRV alignment | Accepted |
 | [0007](0007-crates-io-package-identities.md) | crates.io package identities | Accepted |
