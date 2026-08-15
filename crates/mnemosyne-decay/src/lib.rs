@@ -25,6 +25,10 @@ use std::thread;
 use std::time::Duration;
 
 static SPAWNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static DECAY_WORKER_GENERATION: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+static DECAY_FINAL_EXIT_GENERATION: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
 static DECAY_STEP_GENERATION: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 static DECAY_EVENT: OnceLock<(Mutex<()>, Condvar)> = OnceLock::new();
@@ -47,16 +51,17 @@ pub fn init_decay_engine() {
     // exists to close. `init_decay_engine` is a cold configuration path, so
     // the RMW cost is irrelevant.
     if cadence > 0 && !SPAWNED.swap(true, Ordering::AcqRel) {
+        let worker_generation = DECAY_WORKER_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
         thread::Builder::new()
             .name("mnemosyne-decay".to_string())
             .spawn(move || {
-                decay_thread_loop(cadence);
+                decay_thread_loop(cadence, worker_generation);
             })
             .expect("Failed to spawn mnemosyne-decay thread");
     }
 }
 
-fn decay_thread_loop(mut cadence: usize) {
+fn decay_thread_loop(mut cadence: usize, worker_generation: usize) {
     loop {
         thread::sleep(Duration::from_millis(cadence as u64));
 
@@ -107,7 +112,7 @@ fn decay_thread_loop(mut cadence: usize) {
         break;
     }
 
-    publish_decay_worker_exit();
+    publish_decay_worker_exit(worker_generation);
 }
 
 fn decay_step_event() -> &'static (Mutex<()>, Condvar) {
@@ -139,20 +144,24 @@ pub fn wait_for_decay_step(previous: usize, timeout: Duration) -> bool {
 
 /// Waits for the background worker to stop after cadence reaches zero.
 ///
-/// A `true` result means no decay worker owns the process-wide worker claim
-/// when the wait returns. A `false` result means the supplied timeout elapsed
-/// while a worker was still active. The function returns immediately when no
-/// worker is running.
+/// A `true` result means no decay worker is active and the current worker
+/// generation has published its final exit. A `false` result means the
+/// supplied timeout elapsed before that publication. The function returns
+/// immediately when no worker generation is outstanding.
 #[must_use]
 pub fn wait_for_decay_shutdown(timeout: Duration) -> bool {
     let (lock, event) = decay_step_event();
     let guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let (_guard, _timeout) = event
-        .wait_timeout_while(guard, timeout, |_| {
-            SPAWNED.load(core::sync::atomic::Ordering::Acquire)
-        })
+        .wait_timeout_while(guard, timeout, |_| !decay_shutdown_published())
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    !SPAWNED.load(core::sync::atomic::Ordering::Acquire)
+    decay_shutdown_published()
+}
+
+fn decay_shutdown_published() -> bool {
+    let worker_generation = DECAY_WORKER_GENERATION.load(Ordering::Acquire);
+    let final_exit_generation = DECAY_FINAL_EXIT_GENERATION.load(Ordering::Acquire);
+    !SPAWNED.load(Ordering::Acquire) && final_exit_generation >= worker_generation
 }
 
 fn publish_decay_step() {
@@ -162,9 +171,10 @@ fn publish_decay_step() {
     event.notify_all();
 }
 
-fn publish_decay_worker_exit() {
+fn publish_decay_worker_exit(worker_generation: usize) {
     let (lock, event) = decay_step_event();
     let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    DECAY_FINAL_EXIT_GENERATION.fetch_max(worker_generation, Ordering::Release);
     event.notify_all();
 }
 

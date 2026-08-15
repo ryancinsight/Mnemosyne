@@ -355,14 +355,13 @@ Filed from the 2026-08-12 verification-posture review:
   Both steps run with `-Zmiri-ignore-leaks`, tracked as MN-444.
 
 - [x] [patch] **MN-446 — decay purger lifecycle synchronization.** Closed
-  2026-08-15. The tests previously used a completed-sweep generation as a proxy
-  for worker shutdown, which could expire even though the worker lifecycle was
-  the actual contract under test. `mnemosyne-decay` now signals worker exit on
-  the same condition variable as completed sweeps and exposes a bounded
-  shutdown wait; both purge tests assert that lifecycle event while retaining
-  their value-semantic reclamation assertions. The focused decay suite passed
-  4/4, including 20 complete repeated runs, with format, clippy, and doctests
-  clean.
+  2026-08-15. The shutdown wait now tracks a monotonically increasing worker
+  generation and the generation's final-exit publication; releasing the
+  `SPAWNED` claim during the cancellation/restart handshake is not sufficient
+  evidence of shutdown. The focused decay regressions cover value-semantic
+  timeout behavior and concurrent restart progress, while the purge tests
+  retain their reclamation assertions. Exact-head verification for this
+  closure is recorded in the delivery report.
 
 - [x] [patch] **MN-447 — no test drove page recycling.** Done.
   `emptied_page_is_recycled_into_another_size_class` and its hardened sibling

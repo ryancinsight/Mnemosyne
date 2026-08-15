@@ -84,6 +84,60 @@ fn test_decay_engine_no_spawn_if_zero_cadence() {
 }
 
 #[test]
+fn decay_shutdown_timeout_does_not_report_running_worker_as_stopped() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    reset_options_for_testing();
+
+    // Keep the worker asleep long enough that a zero-duration wait observes
+    // the active worker rather than its eventual final-exit publication.
+    PURGE_CADENCE_MS.store(1_000, Ordering::Release);
+    mnemosyne_decay::init_decay_engine();
+    assert!(
+        !mnemosyne_decay::wait_for_decay_shutdown(Duration::ZERO),
+        "shutdown wait must report its timeout while the worker is active"
+    );
+
+    PURGE_CADENCE_MS.store(0, Ordering::Release);
+    assert!(mnemosyne_decay::wait_for_decay_shutdown(
+        BACKGROUND_DECAY_TIMEOUT
+    ));
+    reset_options_for_testing();
+}
+
+#[test]
+fn decay_purger_concurrent_restart_preserves_value_progress() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    reset_options_for_testing();
+
+    PURGE_CADENCE_MS.store(1, Ordering::Release);
+    mnemosyne_decay::init_decay_engine();
+    let generation_before_restart = mnemosyne_decay::decay_step_generation();
+
+    let restart = thread::spawn(|| {
+        for _ in 0..32 {
+            PURGE_CADENCE_MS.store(1, Ordering::Release);
+            mnemosyne_decay::init_decay_engine();
+            thread::yield_now();
+            PURGE_CADENCE_MS.store(0, Ordering::Release);
+        }
+    });
+    restart.join().expect("concurrent decay restart panicked");
+
+    PURGE_CADENCE_MS.store(1, Ordering::Release);
+    mnemosyne_decay::init_decay_engine();
+    assert!(
+        mnemosyne_decay::wait_for_decay_step(generation_before_restart, BACKGROUND_DECAY_TIMEOUT),
+        "a concurrent restart must preserve completed decay progress"
+    );
+
+    PURGE_CADENCE_MS.store(0, Ordering::Release);
+    assert!(mnemosyne_decay::wait_for_decay_shutdown(
+        BACKGROUND_DECAY_TIMEOUT
+    ));
+    reset_options_for_testing();
+}
+
+#[test]
 fn decay_purger_reaches_steady_state() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     reset_options_for_testing();
