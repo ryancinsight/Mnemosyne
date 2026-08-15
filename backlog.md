@@ -354,24 +354,15 @@ Filed from the 2026-08-12 verification-posture review:
   600s bound is real but not generous; recorded at the job.
   Both steps run with `-Zmiri-ignore-leaks`, tracked as MN-444.
 
-- [ ] [patch] **MN-446 — two decay purger tests fail intermittently.**
-  Reported, not claimed: this sits inside the live
-  `codex/mnemosyne-decay-event-sync` scope, whose two most recent commits are
-  `test(mnemosyne): Synchronize decay completion` and the pedantic-floor change.
-  Observed while verifying MN-441 in a disjoint scope; nothing in that diff
-  touches `mnemosyne-decay`.
-  `decay_tests::decay_purger_reaches_steady_state` and
-  `decay_tests::test_decay_purger_spawns_and_cleans_orphans` both fail, each in
-  about 5.9s. One earlier full workspace run passed 292/292, so they are
-  intermittent rather than broken outright.
-  The near-identical ~5.9s time on both is the useful signal: these fail on a
-  bounded wait expiring, not on a hang — the nextest default budget would
-  terminate a hang at 60s, and these return well inside that. That points at a
-  completion signal the test can miss and then wait out, rather than a deadlock.
-  (An earlier note here called it a hang on the strength of a ten-minute
-  non-return; that observation was confounded by a full rebuild and an
-  unrelated cross-repo manifest error in the same command, and the timing above
-  supersedes it.)
+- [x] [patch] **MN-446 — decay purger lifecycle synchronization.** Closed
+  2026-08-15. The tests previously used a completed-sweep generation as a proxy
+  for worker shutdown, which could expire even though the worker lifecycle was
+  the actual contract under test. `mnemosyne-decay` now signals worker exit on
+  the same condition variable as completed sweeps and exposes a bounded
+  shutdown wait; both purge tests assert that lifecycle event while retaining
+  their value-semantic reclamation assertions. The focused decay suite passed
+  4/4, including 20 complete repeated runs, with format, clippy, and doctests
+  clean.
 
 - [x] [patch] **MN-447 — no test drove page recycling.** Done.
   `emptied_page_is_recycled_into_another_size_class` and its hardened sibling
@@ -503,9 +494,8 @@ Filed from the 2026-08-12 verification-posture review:
   Evidence: workspace 292/292 and clippy `-D warnings` clean at the
   code-complete revision; `cargo fmt --all --check` clean; Miri on
   `mnemosyne-memory-core` 18/18 under both Stacked and Tree Borrows, which is
-  the package the accessors and the occupancy readers live in. A later workspace
-  run showed the two `mnemosyne-decay` failures tracked as MN-446, in a scope
-  this diff does not touch.
+  the package the accessors and the occupancy readers live in. The later
+  `mnemosyne-decay` lifecycle failure was tracked and closed as MN-446.
 
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and each exclusion is listed here so none is silent:
