@@ -27,7 +27,7 @@ use std::time::Duration;
 static SPAWNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 static DECAY_STEP_GENERATION: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
-static DECAY_STEP_EVENT: OnceLock<(Mutex<()>, Condvar)> = OnceLock::new();
+static DECAY_EVENT: OnceLock<(Mutex<()>, Condvar)> = OnceLock::new();
 
 /// Triggers background decay thread initialization.
 ///
@@ -106,10 +106,12 @@ fn decay_thread_loop(mut cadence: usize) {
         }
         break;
     }
+
+    publish_decay_worker_exit();
 }
 
 fn decay_step_event() -> &'static (Mutex<()>, Condvar) {
-    DECAY_STEP_EVENT.get_or_init(|| (Mutex::new(()), Condvar::new()))
+    DECAY_EVENT.get_or_init(|| (Mutex::new(()), Condvar::new()))
 }
 
 /// Returns the number of completed decay sweeps observed by this process.
@@ -135,10 +137,34 @@ pub fn wait_for_decay_step(previous: usize, timeout: Duration) -> bool {
     DECAY_STEP_GENERATION.load(Ordering::Acquire) > previous
 }
 
+/// Waits for the background worker to stop after cadence reaches zero.
+///
+/// A `true` result means no decay worker owns the process-wide worker claim
+/// when the wait returns. A `false` result means the supplied timeout elapsed
+/// while a worker was still active. The function returns immediately when no
+/// worker is running.
+#[must_use]
+pub fn wait_for_decay_shutdown(timeout: Duration) -> bool {
+    let (lock, event) = decay_step_event();
+    let guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (_guard, _timeout) = event
+        .wait_timeout_while(guard, timeout, |_| {
+            SPAWNED.load(core::sync::atomic::Ordering::Acquire)
+        })
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    !SPAWNED.load(core::sync::atomic::Ordering::Acquire)
+}
+
 fn publish_decay_step() {
     let (lock, event) = decay_step_event();
     let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     DECAY_STEP_GENERATION.fetch_add(1, Ordering::Release);
+    event.notify_all();
+}
+
+fn publish_decay_worker_exit() {
+    let (lock, event) = decay_step_event();
+    let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     event.notify_all();
 }
 
