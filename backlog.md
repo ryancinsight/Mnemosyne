@@ -360,8 +360,12 @@ Filed from the 2026-08-12 verification-posture review:
   `SPAWNED` claim during the cancellation/restart handshake is not sufficient
   evidence of shutdown. The focused decay regressions cover value-semantic
   timeout behavior and concurrent restart progress, while the purge tests
-  retain their reclamation assertions. Exact-head verification for this
-  closure is recorded in the delivery report.
+  retain their reclamation assertions. Exact head `dce730789a22adc4e39c513015c0a3b36ad1934b`
+  passed [PR #54 CI run 31870326847](https://github.com/ryancinsight/Mnemosyne/actions/runs/31870326847):
+  Rust verification (formatting, strict Clippy, workspace nextest, and
+  doctests), Loom, and Miri all passed. Local `--locked` Cargo gates remained
+  blocked by the preserved Atlas-overlay-derived peer `Cargo.lock`; the
+  lockfile and ADR 0003-0006 were not part of the provider change.
 
 - [x] [patch] **MN-447 — no test drove page recycling.** Done.
   `emptied_page_is_recycled_into_another_size_class` and its hardened sibling
