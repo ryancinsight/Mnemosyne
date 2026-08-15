@@ -120,7 +120,7 @@ where
         allocator.dealloc(ptr, layout);
     }
 
-    let stats = memory_stats_generic::<B>();
+    let stats = memory_stats_generic::<StandardPolicy, B>();
     assert_eq!(
         stats.current_thread_live_allocations, 0,
         "CUDA {name} backend retained a live allocation"
