@@ -516,8 +516,8 @@ fn hardened_policy_detects_freelist_tamper() {
     // Let's tamper with the encrypted next pointer in `ptr2`.
     // The block metadata stores the encrypted pointer in the first `Option<NonNull<Block>>` slot of the block.
     let val2 = ptr2 as *mut usize;
+    let original_val = unsafe { *val2 };
     unsafe {
-        let original_val = *val2;
         // Corrupt the pointer (e.g. flip a bit in the address portion)
         *val2 = original_val ^ 0x08;
     }

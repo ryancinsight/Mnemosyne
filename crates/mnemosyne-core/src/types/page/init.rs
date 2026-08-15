@@ -20,6 +20,56 @@ const fn gcd(mut a: usize, mut b: usize) -> usize {
 }
 
 impl Page {
+    /// Tries to carve the next block from a page's uninitialized bump range.
+    ///
+    /// Keeping this raw-pointer operation in the core page owner lets local
+    /// allocators use the same lazy-allocation contract without reconstructing
+    /// a `Page` reference or calling the free-list path for every block.
+    ///
+    /// # Safety
+    ///
+    /// `page` must identify a live, exclusively owned page whose metadata has
+    /// been initialized. The page's `block_size`, `size_class`, `page_index`,
+    /// and `initialized_blocks` fields must describe a valid page layout.
+    #[inline(always)]
+    pub unsafe fn try_pop_bump_block(page: *mut Page) -> Option<NonNull<Block>> {
+        // SAFETY: the caller guarantees that `page` is a live initialized page
+        // exclusively owned by this allocation path.
+        let (free, initialized, block_size, size_class, page_index) = unsafe {
+            (
+                (*page).free,
+                (*page).initialized_blocks,
+                (*page).block_size,
+                (*page).size_class,
+                (*page).page_index as usize,
+            )
+        };
+        if free.is_some() {
+            return None;
+        }
+
+        let max_blocks = crate::size_class::class_to_max_blocks(size_class as usize);
+        if initialized >= max_blocks {
+            return None;
+        }
+
+        // SAFETY: `initialized < max_blocks` means the next block remains
+        // inside this page, and the page metadata is exclusively owned here.
+        unsafe { (*page).initialized_blocks = initialized + 1 };
+
+        let segment_addr = (page as usize) & !(crate::constants::SEGMENT_SIZE - 1);
+        let page_offset = page_index << crate::constants::PAGE_SHIFT;
+        // SAFETY: `page` is embedded in a segment-aligned mapping and its
+        // validated page index selects a page wholly inside that mapping.
+        let page_start = unsafe { (segment_addr as *mut u8).add(page_offset) };
+        // SAFETY: the bump-range invariant established above bounds this block
+        // offset within the page and preserves the block's required alignment.
+        let block_ptr = unsafe { page_start.add(initialized * block_size) } as *mut Block;
+        // SAFETY: `page_start` is non-null and the in-bounds offset keeps the
+        // returned block pointer non-null.
+        Some(unsafe { NonNull::new_unchecked(block_ptr) })
+    }
+
     /// Pops a block from the page's local free list, using lazy/bump allocation if necessary.
     ///
     /// # Safety
@@ -27,7 +77,9 @@ impl Page {
     /// The page must have free blocks or uninitialized blocks remaining.
     #[inline(always)]
     pub unsafe fn pop_block<P: crate::policy::AllocPolicy>(&mut self) -> NonNull<Block> {
-        if let Some(block) = self.free {
+        if let Some(block) = unsafe { Self::try_pop_bump_block(self) } {
+            block
+        } else if let Some(block) = self.free {
             let block_addr = block.as_ptr() as usize;
             let page_start = self.page_start() as usize;
             if block_addr < page_start
@@ -50,19 +102,6 @@ impl Page {
             // next-link with the matching `cookie` is sound.
             self.free = unsafe { (*block.as_ptr()).get_next::<P>(cookie) };
             block
-        } else if self.initialized_blocks < self.max_blocks() {
-            let idx = self.initialized_blocks;
-            self.initialized_blocks += 1;
-            let page_start = self.page_start();
-            // SAFETY: bump path — `idx = initialized_blocks < max_blocks()`, so
-            // `idx * block_size` is a byte offset of a block that fits entirely
-            // within this page's `PAGE_SIZE` region starting at `page_start`,
-            // hence in bounds of the page object.
-            let block_ptr = unsafe { page_start.add(idx * self.block_size) } as *mut Block;
-            // SAFETY: `page_start` is a non-null page base and the in-bounds
-            // offset above keeps `block_ptr` non-null, so the `NonNull`
-            // invariant (pointer is non-null) holds.
-            unsafe { NonNull::new_unchecked(block_ptr) }
         } else {
             abort_on_corruption("pop_block called on an exhausted page");
         }

@@ -220,6 +220,10 @@ jobs:
       # did (MN-444). Those six now drain the pools through a `PoolDrain` guard,
       # and the one test that deliberately poisons a free list repairs it after
       # asserting, so its segment can be reclaimed like any other test's.
+      # The serialized TEST_LOCK guard drains empty reusable and orphan
+      # mappings after each test-owned allocator has been dropped. It preserves
+      # orphan segments with live blocks, so a real allocator leak remains a
+      # failing Miri leak report.
       - name: Miri — local (Stacked Borrows)
         env:
           MIRIFLAGS: -Zmiri-disable-isolation

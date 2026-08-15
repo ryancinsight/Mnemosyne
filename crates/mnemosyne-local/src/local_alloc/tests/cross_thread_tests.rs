@@ -48,6 +48,7 @@ fn test_snmalloc_message_passing() {
     let segment = segment_addr as *mut Segment;
     let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
     let max_blocks = unsafe { (*segment).pages[page_index].max_blocks() };
+    let mut probe_allocations = std::vec::Vec::with_capacity(max_blocks);
     for _ in 0..max_blocks {
         // Safety: alloc_a is valid.
         let ptr2 = unsafe { alloc_a.alloc::<StandardPolicy>(32) };
@@ -55,6 +56,7 @@ fn test_snmalloc_message_passing() {
             !ptr2.is_null(),
             "reclaim probe allocation failed before reclaiming remote free"
         );
+        probe_allocations.push(ptr2);
         if ptr2 == ptr {
             reclaimed_remote_free = true;
             break;
@@ -66,6 +68,16 @@ fn test_snmalloc_message_passing() {
         "cross-thread freed block was not reclaimed after {} small allocations",
         max_blocks
     );
+
+    // The probe owns every address it observed, including the reclaimed one.
+    // Release the complete set so allocator teardown tests pool retention
+    // rather than treating the intentionally retained probes as live memory.
+    unsafe {
+        for probe in probe_allocations {
+            crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(probe);
+        }
+    }
+    alloc_a.reclaim_owned_segments();
 }
 
 #[test]
@@ -117,6 +129,7 @@ fn cross_thread_free_does_not_charge_non_owner_defrag_counter() {
     let segment = segment_addr as *mut Segment;
     let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
     let max_blocks = unsafe { (*segment).pages[page_index].max_blocks() };
+    let mut probe_allocations = std::vec::Vec::with_capacity(max_blocks);
     for _ in 0..max_blocks {
         // Safety: owner is valid.
         let ptr2 = unsafe { owner.alloc::<StandardPolicy>(32) };
@@ -124,6 +137,7 @@ fn cross_thread_free_does_not_charge_non_owner_defrag_counter() {
             !ptr2.is_null(),
             "reclaim probe allocation failed before reclaiming remote free"
         );
+        probe_allocations.push(ptr2);
         if ptr2 == ptr {
             reclaimed_remote_free = true;
             break;
@@ -135,6 +149,13 @@ fn cross_thread_free_does_not_charge_non_owner_defrag_counter() {
         "cross-thread freed block was not reclaimed after {} small allocations",
         max_blocks
     );
+
+    unsafe {
+        for probe in probe_allocations {
+            crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(probe);
+        }
+    }
+    owner.reclaim_owned_segments();
 }
 
 #[test]
@@ -743,6 +764,11 @@ fn allocation_side_reclaim_counts_cross_thread_blocks_exactly() {
         stats_before + max_blocks,
         "stats() must report the exact cross-thread reclaimed delta"
     );
+
+    unsafe {
+        crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(reclaimed_ptr);
+    }
+    owner.reclaim_owned_segments();
 }
 
 /// Multi-thread producer-consumer stress: allocators across N threads allocate

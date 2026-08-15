@@ -277,7 +277,47 @@ impl<B: HasSegmentPool> Drop for ThreadAllocator<B> {
 unsafe impl<B: HasSegmentPool> Send for ThreadAllocator<B> {}
 
 #[cfg(test)]
-pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) struct TestLock {
+    inner: std::sync::Mutex<()>,
+}
+
+#[cfg(test)]
+impl TestLock {
+    pub(crate) const fn new() -> Self {
+        Self {
+            inner: std::sync::Mutex::new(()),
+        }
+    }
+
+    pub(crate) fn lock(&self) -> std::sync::LockResult<TestLockGuard<'_>> {
+        match self.inner.lock() {
+            Ok(guard) => Ok(TestLockGuard { guard }),
+            Err(error) => Err(std::sync::PoisonError::new(TestLockGuard {
+                guard: error.into_inner(),
+            })),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct TestLockGuard<'lock> {
+    guard: std::sync::MutexGuard<'lock, ()>,
+}
+
+#[cfg(test)]
+impl Drop for TestLockGuard<'_> {
+    fn drop(&mut self) {
+        let _ = &self.guard;
+        #[cfg(miri)]
+        unsafe {
+            crate::miri_cleanup_pools::<mnemosyne_backend::DefaultBackend>();
+            crate::miri_cleanup_pools::<mnemosyne_backend::MemoryBackendWrapper>();
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) static TEST_LOCK: TestLock = TestLock::new();
 
 pub(crate) mod page;
 pub(crate) mod routing;
