@@ -20,6 +20,7 @@
 
 use mnemosyne_backend::MemoryBackendWrapper as Backend;
 use mnemosyne_core::StandardPolicy as Policy;
+use mnemosyne_core::policy::{AllocPolicy, HardenedPolicy};
 use mnemosyne_local::{thread_alloc, thread_allocator_stats, thread_free, usable_size};
 
 const ALIGN: usize = 16;
@@ -203,7 +204,7 @@ fn alloc_free_churn_preserves_block_integrity() {
     // The point of this test is metadata surviving *recycling*, which it never
     // actually confirmed happened. Assert it, so the round count is backed by
     // evidence rather than by assumption.
-    let stats = thread_allocator_stats::<Backend>();
+    let stats = thread_allocator_stats::<Policy, Backend>();
     // Accounting must survive the churn exactly: eight slots stay live.
     assert_eq!(
         stats.current_thread_live_allocations,
@@ -227,4 +228,192 @@ fn zero_size_request_returns_null_without_panicking() {
     // Safety: zero size is rejected by validation; ALIGN is valid.
     let p = unsafe { alloc(0) };
     assert!(p.is_null(), "zero-size allocation must return null");
+}
+
+/// Address of the segment header owning `p`.
+fn segment_of(p: *mut u8) -> usize {
+    p as usize & !(mnemosyne_core::constants::SEGMENT_SIZE - 1)
+}
+
+/// Drives one page from full, to empty, to recycled into a *different* size
+/// class, and checks the recycled page hands out a correct block.
+///
+/// This is the transition MN-437, MN-439 and MN-440 all turned out to live in,
+/// and nothing covered it (MN-447). Reaching it needs two things that ordinary
+/// churn does not do. A page only leaves the active list when its segment is no
+/// longer the one being sliced — `free.rs` keeps a page in place while
+/// `Segment::is_current` holds — so the test allocates until the allocator
+/// moves on to a second segment. And filling a page has to be cheap, so it uses
+/// the largest small class: eight blocks per page rather than the 4096 a
+/// 16-byte class needs.
+///
+/// Recycling is proven by address rather than by counter: a fresh page would
+/// come from the *current* segment, so a block landing back in the first
+/// segment can only have come from one of the pages emptied there. That holds
+/// for every policy, which matters because the hardened free list is re-keyed
+/// when a page is re-initialized for a new class.
+///
+/// # Safety
+///
+/// Runs allocator entry points; the caller must not hold live blocks whose
+/// policy differs from `P`.
+unsafe fn drive_page_recycling<P: AllocPolicy>() {
+    /// Largest small class: `PAGE_SIZE / 8192` = 8 blocks per page.
+    const BIG: usize = 8192;
+    /// A different class, so the emptied page must be re-initialized to serve it.
+    const OTHER: usize = 4096;
+    /// 31 usable pages x 8 blocks, plus slack.
+    const LIMIT: usize = 512;
+
+    // Safety: BIG is a valid small request and ALIGN is a power of two.
+    let first = unsafe { thread_alloc::<P, Backend>(BIG, ALIGN) };
+    assert!(!first.is_null(), "initial fill allocation failed");
+    let seg0 = segment_of(first);
+
+    let mut filled = std::vec![first];
+    loop {
+        // Safety: as above.
+        let p = unsafe { thread_alloc::<P, Backend>(BIG, ALIGN) };
+        assert!(!p.is_null(), "fill allocation {} failed", filled.len());
+        filled.push(p);
+        if segment_of(p) != seg0 {
+            break;
+        }
+        assert!(
+            filled.len() < LIMIT,
+            "allocator never left its first segment in {LIMIT} allocations, so no              page can reach the empty list"
+        );
+    }
+
+    // Empty every page of the first segment. Its blocks are the only ones there.
+    for &p in &filled {
+        if segment_of(p) == seg0 {
+            // Safety: allocated above under `P`, freed exactly once.
+            unsafe { thread_free::<P, Backend>(p) };
+        }
+    }
+
+    // A different class cannot reuse those pages as they stand, so serving this
+    // request means popping one off the empty list and re-initializing it.
+    // Safety: OTHER is a valid small request.
+    let recycled = unsafe { thread_alloc::<P, Backend>(OTHER, ALIGN) };
+    assert!(
+        !recycled.is_null(),
+        "allocation after emptying a segment failed"
+    );
+    assert_eq!(
+        segment_of(recycled),
+        seg0,
+        "a different size class was served from the current segment instead of          recycling one of the pages emptied in the first"
+    );
+
+    // The recycled page must hand out a block that is actually usable: a stale
+    // free-list link or a mis-keyed encoded chain shows up right here.
+    // Safety: `recycled` is live and OTHER bytes are writable payload.
+    unsafe { core::ptr::write_bytes(recycled, 0x5C, OTHER) };
+    // Safety: same block, still live.
+    unsafe { assert_span_stamped(recycled, OTHER, 0x5C, "block from a recycled page") };
+
+    // Safety: each pointer below was allocated under `P` and is freed once.
+    unsafe { thread_free::<P, Backend>(recycled) };
+    for &p in &filled {
+        if segment_of(p) != seg0 {
+            unsafe { thread_free::<P, Backend>(p) };
+        }
+    }
+}
+
+#[test]
+fn emptied_page_is_recycled_into_another_size_class() {
+    let before = thread_allocator_stats::<Policy, Backend>();
+    // Safety: no blocks of another policy are live in this test binary's thread.
+    unsafe { drive_page_recycling::<Policy>() };
+    let after = thread_allocator_stats::<Policy, Backend>();
+
+    // Counter evidence, on top of the address check inside the helper. Deltas,
+    // not absolutes, so a sibling test having already dirtied this thread's
+    // allocator cannot make the assertion pass for the wrong reason.
+    assert!(
+        after.recycled_pages > before.recycled_pages,
+        "no page was recycled: {} -> {}",
+        before.recycled_pages,
+        after.recycled_pages
+    );
+    assert!(
+        after.recycle_sweeps > before.recycle_sweeps,
+        "the empty-page list was never swept: {} -> {}",
+        before.recycle_sweeps,
+        after.recycle_sweeps
+    );
+    assert!(
+        after.fresh_segments > before.fresh_segments,
+        "the allocator never left its first segment, so nothing could empty"
+    );
+}
+
+#[test]
+fn emptied_page_is_recycled_under_the_hardened_policy() {
+    // The hardened free list is XOR-encoded with per-page keys, and
+    // re-initializing a page for a new class re-keys it, so a mis-keyed chain
+    // shows up as a bad block here. Since ADR 0008 the counters are reachable
+    // for this policy too, so this asserts the same deltas as its standard
+    // sibling rather than resting on the address argument alone.
+    let before = thread_allocator_stats::<HardenedPolicy, Backend>();
+    // Safety: no blocks of another policy are live in this test binary's thread.
+    unsafe { drive_page_recycling::<HardenedPolicy>() };
+    let after = thread_allocator_stats::<HardenedPolicy, Backend>();
+
+    assert!(
+        after.recycled_pages > before.recycled_pages,
+        "no page was recycled under the hardened policy: {} -> {}",
+        before.recycled_pages,
+        after.recycled_pages
+    );
+    assert!(
+        after.recycle_sweeps > before.recycle_sweeps,
+        "the empty-page list was never swept under the hardened policy: {} -> {}",
+        before.recycle_sweeps,
+        after.recycle_sweeps
+    );
+}
+
+#[test]
+fn allocator_stats_report_the_policy_the_caller_asks_for() {
+    // Each (backend, encryption mode) pair owns a separate allocator cache
+    // (ADR 0001). The stats surface used to reach the standard slot whatever
+    // policy was named, so a hardened caller received a near-empty snapshot of
+    // an allocator they had never allocated through — plausible enough to be
+    // read as real. ADR 0008 keys the surface by policy; this pins it.
+    const N: usize = 16;
+    let standard_before = thread_allocator_stats::<Policy, Backend>();
+    let hardened_before = thread_allocator_stats::<HardenedPolicy, Backend>();
+
+    let mut blocks = std::vec::Vec::with_capacity(N);
+    for i in 0..N {
+        // Safety: 64 is a valid small request and ALIGN is a power of two.
+        let p = unsafe { thread_alloc::<HardenedPolicy, Backend>(64, ALIGN) };
+        assert!(!p.is_null(), "hardened allocation {i} failed");
+        blocks.push(p);
+    }
+
+    let standard_after = thread_allocator_stats::<Policy, Backend>();
+    let hardened_after = thread_allocator_stats::<HardenedPolicy, Backend>();
+
+    assert_eq!(
+        hardened_after
+            .current_thread_live_allocations
+            .wrapping_sub(hardened_before.current_thread_live_allocations),
+        N,
+        "the hardened allocator's live count must track the hardened allocations"
+    );
+    assert_eq!(
+        standard_after.current_thread_live_allocations,
+        standard_before.current_thread_live_allocations,
+        "allocating under the hardened policy moved the standard allocator's          counters, so the snapshot is reporting the wrong cache"
+    );
+
+    for p in blocks {
+        // Safety: allocated above under the hardened policy, freed once.
+        unsafe { thread_free::<HardenedPolicy, Backend>(p) };
+    }
 }

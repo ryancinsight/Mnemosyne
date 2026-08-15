@@ -214,6 +214,12 @@ jobs:
       # runner tips it over, the answer is a faster allocation path, not a
       # bigger number.
       #
+      # Leak checking is on, as in every other Miri step here. An earlier version
+      # of this job disabled it, on the assumption that nearly every test in the
+      # crate ends with segments retained in a pool. Measuring it showed 6 of 75
+      # did (MN-444). Those six now drain the pools through a `PoolDrain` guard,
+      # and the one test that deliberately poisons a free list repairs it after
+      # asserting, so its segment can be reclaimed like any other test's.
       # The serialized TEST_LOCK guard drains empty reusable and orphan
       # mappings after each test-owned allocator has been dropped. It preserves
       # orphan segments with live blocks, so a real allocator leak remains a

@@ -324,4 +324,4 @@ pub(crate) mod routing;
 pub(crate) mod segment;
 mod stats;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

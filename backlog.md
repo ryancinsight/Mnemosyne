@@ -354,65 +354,111 @@ Filed from the 2026-08-12 verification-posture review:
   600s bound is real but not generous; recorded at the job.
   Both steps run with `-Zmiri-ignore-leaks`, tracked as MN-444.
 
-- [ ] [patch] **MN-446 — two decay purger tests fail intermittently.**
-  Reported, not claimed: this sits inside the live
-  `codex/mnemosyne-decay-event-sync` scope, whose two most recent commits are
-  `test(mnemosyne): Synchronize decay completion` and the pedantic-floor change.
-  Observed while verifying MN-441 in a disjoint scope; nothing in that diff
-  touches `mnemosyne-decay`.
-  `decay_tests::decay_purger_reaches_steady_state` and
-  `decay_tests::test_decay_purger_spawns_and_cleans_orphans` both fail, each in
-  about 5.9s. One earlier full workspace run passed 292/292, so they are
-  intermittent rather than broken outright.
-  The near-identical ~5.9s time on both is the useful signal: these fail on a
-  bounded wait expiring, not on a hang — the nextest default budget would
-  terminate a hang at 60s, and these return well inside that. That points at a
-  completion signal the test can miss and then wait out, rather than a deadlock.
-  (An earlier note here called it a hang on the strength of a ten-minute
-  non-return; that observation was confounded by a full rebuild and an
-  unrelated cross-repo manifest error in the same command, and the timing above
-  supersedes it.)
+- [x] [patch] **MN-446 — decay purger lifecycle synchronization.** Closed
+  2026-08-15. The tests previously used a completed-sweep generation as a proxy
+  for worker shutdown, which could expire even though the worker lifecycle was
+  the actual contract under test. `mnemosyne-decay` now signals worker exit on
+  the same condition variable as completed sweeps and exposes a bounded
+  shutdown wait; both purge tests assert that lifecycle event while retaining
+  their value-semantic reclamation assertions. The focused decay suite passed
+  4/4, including 20 complete repeated runs, with format, clippy, and doctests
+  clean.
 
-- [ ] [patch] **MN-447 — no test drives page recycling or segment
-  reclamation.** Found while fixing MN-445's Tree Borrows timeouts.
-  `alloc_free_churn_preserves_block_integrity` documented itself as driving
-  "page recycling and segment reclamation"; instrumenting it shows otherwise —
-  after 2,000 rounds: `recycled_pages: 0`, `recycle_sweeps: 0`,
-  `fresh_pages: 11`, `fresh_segments: 1`, one owned segment. Eight live blocks
-  spread over nineteen size classes never fill a page, so each class settles on
-  one active page and no page is ever emptied and re-taken for another class.
-  Its docstring now says what it actually covers (block reuse), so the gap is
-  no longer hidden behind a claim — but the gap is real, and it is exactly the
-  region MN-437, MN-439 and MN-440 all turned out to live in: page-list
-  transitions, the empty/recycle lists, and segment reclamation.
-  Needs a workload holding enough simultaneous live blocks to fill a page, then
-  releasing them so the page empties, is recycled into another size class, and
-  ultimately lets its segment be reclaimed — asserting `recycled_pages`,
-  `recycle_sweeps` and `fresh_segments` rather than assuming them. Both the
-  standard and hardened policies, since the encoded free chain is re-keyed on
-  those transitions.
-  Acceptance: a test that fails if `recycled_pages` or `recycle_sweeps` stays
-  zero, and that passes under both borrow models inside the Miri budget.
+- [x] [patch] **MN-447 — no test drove page recycling.** Done.
+  `emptied_page_is_recycled_into_another_size_class` and its hardened sibling
+  now fill pages until the allocator moves to a second segment, empty the first
+  segment, and allocate a *different* size class — which can only be served by
+  popping one of the emptied pages and re-initializing it.
+  Two things had to be right for the test to reach the transition at all. A page
+  only leaves the active list once its segment is no longer being sliced
+  (`free.rs` keeps it in place while `Segment::is_current` holds), which is
+  exactly why ordinary churn never got there: eight live blocks never leave the
+  first segment. And filling a page had to be cheap, so it uses the largest
+  small class — eight blocks per page instead of the 4096 a 16-byte class needs
+  — which is what keeps the whole thing inside the Miri budget.
+  Recycling is proven by address as well as by counter: a fresh page would come
+  from the *current* segment, so a block landing back in the first segment can
+  only have come from a page emptied there, and the fill loop's own bound fails
+  the test if the allocator never left that segment. That argument needs no
+  stats, which is what makes the hardened case testable (see MN-448).
+  Verified non-vacuous by disabling the empty-list branch in `get_new_page`:
+  both tests fail, including the hardened one that rests solely on the address
+  argument. Counter deltas (`recycled_pages`, `recycle_sweeps`,
+  `fresh_segments`) are asserted as deltas rather than absolutes, so a sibling
+  test dirtying the thread's allocator cannot satisfy them accidentally.
+  Segment *reclamation* is still uncovered — that is `reclaim_owned_segments` on
+  allocator drop, which happens after any assertion could observe it. Recorded
+  as the remaining half of this area rather than claimed.
 
-- [ ] [patch] **MN-444 — narrow the Miri leak exclusion on mnemosyne-local.**
-  The `Miri — local` jobs run with `-Zmiri-ignore-leaks` because the segment
-  pool retains freed segment mappings for reuse and Miri reports each retained
-  mapping (4 MiB + 4 KiB, one segment's raw allocation) as leaked at process
-  exit. Nearly every test in the crate leaves pool residue, so leak checking as
-  written asserts that a cache must be empty.
-  The exclusion is scoped — arena and core keep leak checking on, and they cover
-  the release paths — but it is broader than the reason for it, and it would
-  hide a genuine leak in this crate's own free paths.
-  Direction: a test-only drain, so leak checking can come back on. The three
-  tests that allocate huge mappings directly already purge (MN-442's commit);
-  the general case needs the *segment* pool drained too, and doing it per-test
-  is churn. Under `cargo miri nextest` each test is its own process, so a
-  harness-level teardown that purges both pools would cover every test at one
-  site. Confirm that draining does not change what the pool-behaviour tests
-  measure before adopting it.
-  Acceptance: `-Zmiri-ignore-leaks` is removed from both `Miri — local` steps
-  and they stay green, or the residual exclusion is narrowed to the specific
-  tests that require it with the reason recorded at that site.
+- [x] [major] **MN-448 — allocator stats ignored the policy and reported the
+  wrong allocator.** Done, per ADR 0008.
+  `thread_allocator_stats` and `memory_stats_generic` now take the allocation
+  policy as a generic parameter and route through
+  `with_allocator_for_policy`. Previously both used the policy-blind selector
+  and always read the standard TLS slot, so an application running
+  `MnemosyneAllocator<HardenedPolicy>` received a near-empty snapshot of a
+  cache it had never allocated through — plausible enough to be read as real.
+  `memory_stats()` keeps its signature and supplies `StandardPolicy`, mirroring
+  `Mnemosyne` being `MnemosyneAllocator<StandardPolicy>`'s shorthand.
+  Rejected a `_for_policy` twin beside each existing function: that is the
+  parallel-API defect, and it would have left the original names still
+  answering for the wrong allocator behind better documentation.
+  Checked that the neighbours do not share the bug — `purge_generic`,
+  `reset_generic` and `decay` act on the per-backend segment pool and the decay
+  thread, neither keyed by policy, so they stay policy-blind correctly.
+  `cargo-semver-checks` confirms the `[major]` classification rather than it
+  being asserted: `function_requires_different_generic_type_params` on both
+  entry points, "semver requires new major version".
+  Non-vacuity: reverting the selector to the policy-blind form fails both
+  `allocator_stats_report_the_policy_the_caller_asks_for` (hardened allocations
+  must move the hardened counters and leave the standard ones alone) and
+  MN-447's hardened recycling test, which can now assert the same counter
+  deltas as its standard sibling — this item's stated acceptance.
+
+- [ ] [patch] **MN-449 — `mnemosyne-local` ships no doctests.** The crate has
+  zero `///` examples: `grep '/// ```' crates/mnemosyne-local/src` returns
+  nothing, against 18 fences in `mnemosyne-heap`. Its public surface is the
+  allocator entry points a consumer actually calls — `thread_alloc`,
+  `thread_free`, `thread_realloc`, `usable_size`, `thread_allocator_stats` —
+  and every one of them is `unsafe` with a contract that a runnable example
+  would make concrete. `#![deny(missing_docs)]` does not catch this: prose
+  exists, examples do not.
+  Noticed while verifying MN-448, where a `cargo test --doc` result of
+  "0 passed" for this crate initially read as a regression and turned out to be
+  the steady state. That ambiguity is itself the argument — a package with no
+  doctests cannot distinguish "examples all pass" from "there are none".
+  Acceptance: each public entry point carries a runnable doctest exercising its
+  documented contract, with `# Safety` preconditions visible in the example
+  rather than only in prose.
+
+- [x] [patch] **MN-444 — Miri leak checking is on for mnemosyne-local.** Done,
+  and by removing the exclusion rather than narrowing it.
+  The premise the exclusion rested on was wrong. Both this item and the CI
+  comment claimed nearly every test in the crate leaves segments retained, so
+  leak checking would amount to asserting that a cache must be empty. Running
+  Miri without `-Zmiri-ignore-leaks` showed 6 of 75 tests leaking; the other 69
+  already passed the leak gate. The claim was never measured before it was
+  written down.
+  Five of the six were cross-thread or local-`ThreadAllocator` tests ending with
+  segments in a pool. `drain_orphan_pools_for_test` already did exactly the
+  right drain — orphan pools for both backends, then both segment pools, which
+  also purges the huge pools — but it was only ever called at the *start* of
+  three tests, for a clean slate, never at the end. It now lives in the shared
+  `fixtures` module as `drain_all_pools`, behind a `PoolDrain` RAII guard that
+  the six tests declare right after their `TEST_LOCK` guard, so locals drop
+  first (returning segments to the pools), the drain runs, and only then is the
+  lock released.
+  The sixth, `hardened_policy_detects_freelist_tamper`, was a genuine case: it
+  deliberately poisons a page's free list, so the allocator can neither serve
+  from that page nor reclaim its segment, and the segment was still held at
+  exit. It now repairs the free-list head and frees its outstanding block
+  *after* the assertion, which changes nothing it measures — every observation
+  is made against the tampered state — and lets the ordinary reclaim path
+  release the segment.
+  Both `Miri — local` steps now run with the same flags as the arena and core
+  steps; nothing in the job is exempt from leak checking. 75/75 under both
+  borrow models: 40s Stacked, 287s Tree Borrows, the latter down from 482s
+  because the drained memory is no longer tracked to exit.
 
 - [ ] [patch] status=in-progress owner=claude scope=`crates/mnemosyne-core/src/types/segment.rs`, `crates/mnemosyne-core/src/types/page/occupancy.rs`, `crates/mnemosyne-local/src/{free.rs,local_alloc.rs,local_alloc/segment/reclaim.rs,tests.rs}`, `crates/mnemosyne-heap/src/raw_heap.rs`; last-update=2026-08-14. **MN-441 — `is_current` is non-atomic.** Done, by the second of the two
   options: documented and *enforced* as owner-only rather than made atomic.
@@ -448,9 +494,8 @@ Filed from the 2026-08-12 verification-posture review:
   Evidence: workspace 292/292 and clippy `-D warnings` clean at the
   code-complete revision; `cargo fmt --all --check` clean; Miri on
   `mnemosyne-memory-core` 18/18 under both Stacked and Tree Borrows, which is
-  the package the accessors and the occupancy readers live in. A later workspace
-  run showed the two `mnemosyne-decay` failures tracked as MN-446, in a scope
-  this diff does not touch.
+  the package the accessors and the occupancy readers live in. The later
+  `mnemosyne-decay` lifecycle failure was tracked and closed as MN-446.
 
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and each exclusion is listed here so none is silent:

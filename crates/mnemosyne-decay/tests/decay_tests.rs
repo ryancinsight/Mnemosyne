@@ -63,12 +63,11 @@ fn test_decay_purger_spawns_and_cleans_orphans() {
         "Orphaned segment was not cleaned up and deallocated by decay engine"
     );
 
-    let generation_before_shutdown = mnemosyne_decay::decay_step_generation();
     PURGE_CADENCE_MS.store(0, Ordering::Release);
-    assert!(mnemosyne_decay::wait_for_decay_step(
-        generation_before_shutdown,
-        BACKGROUND_DECAY_TIMEOUT,
-    ));
+    assert!(
+        mnemosyne_decay::wait_for_decay_shutdown(BACKGROUND_DECAY_TIMEOUT),
+        "background decay worker did not shut down"
+    );
     reset_options_for_testing();
 }
 
@@ -79,6 +78,9 @@ fn test_decay_engine_no_spawn_if_zero_cadence() {
     // Leave PURGE_CADENCE_MS at 0
     mnemosyne_decay::init_decay_engine();
     assert_eq!(PURGE_CADENCE_MS.load(Ordering::Acquire), 0);
+    assert!(mnemosyne_decay::wait_for_decay_shutdown(
+        BACKGROUND_DECAY_TIMEOUT
+    ));
 }
 
 #[test]
@@ -124,12 +126,11 @@ fn decay_purger_reaches_steady_state() {
     );
 
     // 4. Shutdown purger by setting cadence to 0
-    let shutdown_generation = mnemosyne_decay::decay_step_generation();
     PURGE_CADENCE_MS.store(0, Ordering::Release);
-    assert!(mnemosyne_decay::wait_for_decay_step(
-        shutdown_generation,
-        BACKGROUND_DECAY_TIMEOUT,
-    ));
+    assert!(
+        mnemosyne_decay::wait_for_decay_shutdown(BACKGROUND_DECAY_TIMEOUT),
+        "background decay worker did not shut down"
+    );
 
     // 5. Prepare a second retained-segment workload while the worker is
     // disabled, then restart it and verify restartability.
@@ -162,12 +163,11 @@ fn decay_purger_reaches_steady_state() {
     );
 
     // Reset options
-    let final_generation = mnemosyne_decay::decay_step_generation();
     PURGE_CADENCE_MS.store(0, Ordering::Release);
-    assert!(mnemosyne_decay::wait_for_decay_step(
-        final_generation,
-        BACKGROUND_DECAY_TIMEOUT,
-    ));
+    assert!(
+        mnemosyne_decay::wait_for_decay_shutdown(BACKGROUND_DECAY_TIMEOUT),
+        "background decay worker did not shut down after restart"
+    );
     reset_options_for_testing();
 }
 
