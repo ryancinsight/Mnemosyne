@@ -25,6 +25,33 @@ use mnemosyne_core::types::{Segment, locate_segment};
 /// originated from a different allocator is undefined behavior; the
 /// function uses the same segment-rounding classification as
 /// `thread_free` and dereferences the resulting segment header.
+/// # Examples
+///
+/// ```
+/// use mnemosyne_local::{thread_alloc, thread_free, usable_size};
+/// use mnemosyne_core::StandardPolicy;
+/// use mnemosyne_backend::MemoryBackendWrapper as Backend;
+///
+/// // SAFETY: `p` is a live block from this allocator, which is exactly what
+/// // `usable_size` requires; passing a foreign pointer is undefined behaviour.
+/// unsafe {
+///     let p = thread_alloc::<StandardPolicy, Backend>(100, 8);
+///     assert!(!p.is_null());
+///
+///     // The answer is what the caller may dereference, not what it asked
+///     // for: requests round up to a size class, so this is >= 100 and the
+///     // whole reported span is writable.
+///     let usable = usable_size(p);
+///     assert!(usable >= 100);
+///     p.write_bytes(0xFF, usable);
+///
+///     thread_free::<StandardPolicy, Backend>(p);
+/// }
+///
+/// // Null reports zero rather than faulting.
+/// // SAFETY: null is explicitly accepted by the contract.
+/// assert_eq!(unsafe { usable_size(core::ptr::null_mut()) }, 0);
+/// ```
 #[inline(always)]
 pub unsafe fn usable_size(ptr: *mut u8) -> usize {
     if ptr.is_null() {
@@ -101,6 +128,34 @@ pub(crate) unsafe fn huge_allocation_size(ptr: *mut u8) -> usize {
 /// allocating through `StandardPolicy` have separate counters. Passing the
 /// policy the caller actually allocates with is what makes the snapshot
 /// describe their allocator rather than a neighbouring one (ADR 0008).
+/// # Examples
+///
+/// ```
+/// use mnemosyne_local::{thread_alloc, thread_allocator_stats, thread_free};
+/// use mnemosyne_core::{StandardPolicy, policy::HardenedPolicy};
+/// use mnemosyne_backend::MemoryBackendWrapper as Backend;
+///
+/// let before = thread_allocator_stats::<StandardPolicy, Backend>();
+///
+/// // SAFETY: allocated and freed once, under the policy named below.
+/// let p = unsafe { thread_alloc::<StandardPolicy, Backend>(48, 8) };
+/// assert!(!p.is_null());
+///
+/// let during = thread_allocator_stats::<StandardPolicy, Backend>();
+/// assert_eq!(
+///     during.current_thread_live_allocations,
+///     before.current_thread_live_allocations + 1,
+/// );
+///
+/// // `P` selects which allocator is reported. Each (backend, encryption mode)
+/// // pair owns a separate cache, so asking under a policy you did not
+/// // allocate with describes a different allocator — not this one.
+/// let other = thread_allocator_stats::<HardenedPolicy, Backend>();
+/// assert_eq!(other.current_thread_live_allocations, 0);
+///
+/// // SAFETY: `p` came from the allocation above and is freed exactly once.
+/// unsafe { thread_free::<StandardPolicy, Backend>(p) };
+/// ```
 pub fn thread_allocator_stats<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>()
 -> ThreadAllocatorStats {
     B::with_allocator_for_policy::<P, _>(|alloc| alloc.stats()).unwrap_or_else(|| {

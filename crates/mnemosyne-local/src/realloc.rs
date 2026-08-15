@@ -47,6 +47,35 @@ pub fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> boo
 /// # Safety
 ///
 /// Same contract as `GlobalAlloc::realloc`.
+/// # Examples
+///
+/// ```
+/// use core::alloc::Layout;
+/// use mnemosyne_local::{thread_alloc_layout, thread_free, thread_realloc};
+/// use mnemosyne_core::StandardPolicy;
+/// use mnemosyne_backend::MemoryBackendWrapper as Backend;
+///
+/// let layout = Layout::from_size_align(64, 8).expect("64/8 is a valid layout");
+///
+/// // SAFETY: `layout` describes the live allocation being resized, and the
+/// // returned pointer replaces it — the old one must not be used or freed
+/// // again once `thread_realloc` returns non-null.
+/// unsafe {
+///     let p = thread_alloc_layout::<StandardPolicy, Backend>(layout.size(), layout.align());
+///     assert!(!p.is_null());
+///     p.write_bytes(0x3C, layout.size());
+///
+///     let grown = thread_realloc::<StandardPolicy, Backend>(p, layout, 256);
+///     assert!(!grown.is_null());
+///
+///     // Growing preserves every byte of the original contents.
+///     for off in 0..layout.size() {
+///         assert_eq!(*grown.add(off), 0x3C, "byte {off} did not survive the move");
+///     }
+///
+///     thread_free::<StandardPolicy, Backend>(grown);
+/// }
+/// ```
 #[inline]
 pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
     ptr: *mut u8,

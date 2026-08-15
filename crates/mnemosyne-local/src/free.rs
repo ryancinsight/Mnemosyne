@@ -14,6 +14,27 @@ use mnemosyne_core::types::{Block, Page, Segment, locate_page, locate_segment};
 /// # Safety
 ///
 /// The ptr must be valid and must have been returned by a previous allocation.
+/// A null pointer is ignored, matching `free(NULL)`.
+///
+/// # Examples
+///
+/// ```
+/// use mnemosyne_local::{thread_alloc, thread_free};
+/// use mnemosyne_core::StandardPolicy;
+/// use mnemosyne_backend::MemoryBackendWrapper as Backend;
+///
+/// // SAFETY: `p` comes from `thread_alloc` and is freed exactly once. Freeing
+/// // it twice, or freeing a pointer this allocator did not return, is
+/// // undefined behaviour that the allocator aborts on when it detects it.
+/// unsafe {
+///     let p = thread_alloc::<StandardPolicy, Backend>(32, 8);
+///     assert!(!p.is_null());
+///     thread_free::<StandardPolicy, Backend>(p);
+///
+///     // Freeing null is a no-op, so callers need no guard of their own.
+///     thread_free::<StandardPolicy, Backend>(core::ptr::null_mut());
+/// }
+/// ```
 #[inline(always)]
 pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
     ptr: *mut u8,
@@ -31,6 +52,24 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
 ///
 /// Same contract as [`thread_free`], and `size`/`align` must come from the
 /// original allocation layout.
+/// # Examples
+///
+/// ```
+/// use core::alloc::Layout;
+/// use mnemosyne_local::{thread_alloc_layout, thread_free_layout};
+/// use mnemosyne_core::StandardPolicy;
+/// use mnemosyne_backend::MemoryBackendWrapper as Backend;
+///
+/// let layout = Layout::from_size_align(96, 16).expect("96/16 is a valid layout");
+///
+/// // SAFETY: the `size`/`align` passed to the free are the ones the
+/// // allocation was made with; a mismatched layout would misroute the free.
+/// unsafe {
+///     let p = thread_alloc_layout::<StandardPolicy, Backend>(layout.size(), layout.align());
+///     assert!(!p.is_null());
+///     thread_free_layout::<StandardPolicy, Backend>(p, layout.size(), layout.align());
+/// }
+/// ```
 #[inline(always)]
 pub unsafe fn thread_free_layout<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
     ptr: *mut u8,

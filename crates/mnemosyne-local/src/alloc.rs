@@ -17,6 +17,37 @@ use mnemosyne_core::validation::{is_valid_alloc_request, is_valid_layout_alloc_r
 /// list. Free and realloc operations still derive link encoding from the
 /// owning segment because their caller policy may differ from the policy that
 /// created the allocation.
+/// Returns a null pointer rather than panicking when `size` is zero or `align`
+/// is not a power of two, so callers check the result.
+///
+/// # Examples
+///
+/// ```
+/// use mnemosyne_local::{thread_alloc, thread_free};
+/// use mnemosyne_core::StandardPolicy;
+/// use mnemosyne_backend::MemoryBackendWrapper as Backend;
+///
+/// // SAFETY: 64 is nonzero, 16 is a power of two, and the block is freed
+/// // exactly once below under the same policy and backend it was taken from.
+/// unsafe {
+///     let p = thread_alloc::<StandardPolicy, Backend>(64, 16);
+///     assert!(!p.is_null());
+///     assert_eq!(p as usize % 16, 0, "the returned block honours `align`");
+///
+///     p.write_bytes(0xA5, 64);
+///     assert_eq!(*p, 0xA5);
+///     assert_eq!(*p.add(63), 0xA5);
+///
+///     thread_free::<StandardPolicy, Backend>(p);
+/// }
+///
+/// // An invalid request is reported, not raised.
+/// // SAFETY: no allocation is produced, so nothing needs freeing.
+/// unsafe {
+///     assert!(thread_alloc::<StandardPolicy, Backend>(0, 16).is_null());
+///     assert!(thread_alloc::<StandardPolicy, Backend>(64, 3).is_null());
+/// }
+/// ```
 #[inline(always)]
 pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
     size: usize,
@@ -42,6 +73,29 @@ pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
 /// # Safety
 ///
 /// `size` must be nonzero and `align` must come from a valid `Layout`.
+/// # Examples
+///
+/// ```
+/// use core::alloc::Layout;
+/// use mnemosyne_local::{thread_alloc_layout, thread_free_layout};
+/// use mnemosyne_core::StandardPolicy;
+/// use mnemosyne_backend::MemoryBackendWrapper as Backend;
+///
+/// let layout = Layout::new::<[u64; 8]>();
+///
+/// // SAFETY: `size`/`align` come from a `Layout`, so the alignment contract
+/// // holds, and the same layout is handed back to the matching free below.
+/// unsafe {
+///     let p = thread_alloc_layout::<StandardPolicy, Backend>(layout.size(), layout.align());
+///     assert!(!p.is_null());
+///     assert_eq!(p as usize % layout.align(), 0);
+///
+///     p.cast::<[u64; 8]>().write([7; 8]);
+///     assert_eq!(p.cast::<[u64; 8]>().read(), [7; 8]);
+///
+///     thread_free_layout::<StandardPolicy, Backend>(p, layout.size(), layout.align());
+/// }
+/// ```
 #[inline(always)]
 pub unsafe fn thread_alloc_layout<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
     size: usize,

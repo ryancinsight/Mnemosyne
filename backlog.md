@@ -352,7 +352,8 @@ Filed from the 2026-08-12 verification-posture review:
   crosses the 300s slow mark under Tree Borrows and cannot shrink — saturating a
   page is 4096 allocations and that count is the property. Margin against the
   600s bound is real but not generous; recorded at the job.
-  Both steps run with `-Zmiri-ignore-leaks`, tracked as MN-444.
+  Both steps ran with `-Zmiri-ignore-leaks` at first; MN-444 removed it, so
+  they now carry the same flags as the arena and core steps.
 
 - [x] [patch] **MN-446 — decay purger lifecycle synchronization.** Closed
   2026-08-15. The shutdown wait now tracks a monotonically increasing worker
@@ -418,21 +419,45 @@ Filed from the 2026-08-12 verification-posture review:
   MN-447's hardened recycling test, which can now assert the same counter
   deltas as its standard sibling — this item's stated acceptance.
 
-- [ ] [patch] **MN-449 — `mnemosyne-local` ships no doctests.** The crate has
-  zero `///` examples: `grep '/// ```' crates/mnemosyne-local/src` returns
-  nothing, against 18 fences in `mnemosyne-heap`. Its public surface is the
-  allocator entry points a consumer actually calls — `thread_alloc`,
-  `thread_free`, `thread_realloc`, `usable_size`, `thread_allocator_stats` —
-  and every one of them is `unsafe` with a contract that a runnable example
-  would make concrete. `#![deny(missing_docs)]` does not catch this: prose
-  exists, examples do not.
-  Noticed while verifying MN-448, where a `cargo test --doc` result of
-  "0 passed" for this crate initially read as a regression and turned out to be
-  the steady state. That ambiguity is itself the argument — a package with no
-  doctests cannot distinguish "examples all pass" from "there are none".
-  Acceptance: each public entry point carries a runnable doctest exercising its
-  documented contract, with `# Safety` preconditions visible in the example
-  rather than only in prose.
+- [ ] [major] **MN-450 — `reset_options_for_testing` is public solely for
+  tests.** `mnemosyne-local` re-exports it from `lib.rs` beside the real entry
+  points, so it sits in the crate's semver surface and in its rendered docs as
+  though a consumer might call it. The standards name this one directly: no
+  public API exists solely for tests — test through the public contract, or use
+  a `#[cfg(test)]` helper or `pub(crate)` visibility.
+  Found while enumerating the public surface for MN-449. It was the single
+  export that could not be given a meaningful consumer-facing example, which is
+  the tell — a doctest has no story to write for an item consumers should never
+  call.
+  Integration tests live in a separate crate, so `pub(crate)` alone will not
+  serve; check who actually needs the reset seam before choosing between a
+  `#[cfg(test)]` helper, `#[doc(hidden)]`, or restructuring those tests to not
+  need it. Removing a `pub` export is a breaking change.
+  Acceptance: the public surface contains no item existing only to serve tests,
+  or the residual one is `#[doc(hidden)]` with its reason recorded at the
+  definition and `cargo-semver-checks` run on the change.
+
+- [x] [patch] **MN-449 — `mnemosyne-local` ships doctests.** Done for the
+  consumer entry points: `thread_alloc`, `thread_alloc_layout`, `thread_free`,
+  `thread_free_layout`, `thread_realloc`, `usable_size` and
+  `thread_allocator_stats` each carry a runnable example. Seven doctests where
+  the crate had none.
+  They exercise contracts rather than demonstrate syntax, and each `# Safety`
+  precondition appears as a `// SAFETY:` note on the example's own unsafe
+  block, so a reader meets the obligation where they would have to discharge
+  it: an invalid request returns null instead of panicking; a block is freed
+  exactly once and freeing null is a no-op; a layout-taking free must be given
+  the allocation's own layout; growing preserves every byte; and `usable_size`
+  reports what may be dereferenced rather than what was asked for, with the
+  whole reported span writable.
+  The `thread_allocator_stats` example is load-bearing rather than
+  illustrative: it asserts that asking under a policy you did not allocate with
+  reports zero, which is ADR 0008's contract in executable form. Reverting the
+  selector to its policy-blind version fails that doctest, so it guards the fix.
+  Not covered, deliberately: `LocalAllocatorSelector` / `LocalAllocatorSlot`
+  are the backend seam, implemented through the selector macro rather than
+  called, and `ensure_options_initialized` / `mark_options_initialized` are
+  initialization plumbing. Neither is something a consumer writes against.
 
 - [x] [patch] **MN-444 — Miri leak checking is on for mnemosyne-local.** Done,
   and by removing the exclusion rather than narrowing it.
