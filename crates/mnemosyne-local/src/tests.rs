@@ -494,6 +494,9 @@ fn hardened_policy_detects_freelist_tamper() {
     let _guard = crate::local_alloc::TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
+    // Drains the pools when this test ends: it finishes with segments still
+    // retained, which Miri's leak checker cannot tell from a leak.
+    let _drain = crate::local_alloc::tests::fixtures::PoolDrain;
 
     // We want to verify that tamper detection works under HardenedPolicy.
     // Let's allocate two blocks on a fresh page of class 0 (16 bytes).
@@ -538,6 +541,24 @@ fn hardened_policy_detects_freelist_tamper() {
         Some(ptr1 as usize),
         "HardenedPolicy failed to obscure/randomize the tampered pointer"
     );
+
+    // The claim is proven; now put the page back in a consistent state. The
+    // tampering left `page.free` holding a decrypted garbage address, so the
+    // allocator can neither hand out another block from this page nor reclaim
+    // its segment, and the segment would still be held at process exit — which
+    // Miri reports as a leak. Clearing the head restores an empty free list,
+    // after which freeing the outstanding block lets the ordinary reclaim path
+    // release the segment like any other test's.
+    //
+    // Repairing after the assertion changes nothing the test measures: every
+    // observation above has already been made against the tampered state.
+    // SAFETY: `segment`/`page_index` locate this thread's own live page, and
+    // the raw place projection avoids retagging the enclosing segment.
+    unsafe {
+        let page = &raw mut (*segment).pages[page_index];
+        (*page).free = None;
+        thread_free::<HardenedPolicy, MemoryBackendWrapper>(ptr3);
+    }
 }
 
 #[test]

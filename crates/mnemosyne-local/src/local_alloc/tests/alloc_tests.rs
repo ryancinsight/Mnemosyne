@@ -196,6 +196,9 @@ fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
     let _guard = TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
+    // Drains the pools when this test ends: it finishes with segments still
+    // retained, which Miri's leak checker cannot tell from a leak.
+    let _drain = super::fixtures::PoolDrain;
     let mut alloc = ThreadAllocator::<DefaultBackend>::new();
 
     // Allocate the first 16-byte block to materialize the page and learn

@@ -440,25 +440,34 @@ Filed from the 2026-08-12 verification-posture review:
   documented contract, with `# Safety` preconditions visible in the example
   rather than only in prose.
 
-- [ ] [patch] **MN-444 — narrow the Miri leak exclusion on mnemosyne-local.**
-  The `Miri — local` jobs run with `-Zmiri-ignore-leaks` because the segment
-  pool retains freed segment mappings for reuse and Miri reports each retained
-  mapping (4 MiB + 4 KiB, one segment's raw allocation) as leaked at process
-  exit. Nearly every test in the crate leaves pool residue, so leak checking as
-  written asserts that a cache must be empty.
-  The exclusion is scoped — arena and core keep leak checking on, and they cover
-  the release paths — but it is broader than the reason for it, and it would
-  hide a genuine leak in this crate's own free paths.
-  Direction: a test-only drain, so leak checking can come back on. The three
-  tests that allocate huge mappings directly already purge (MN-442's commit);
-  the general case needs the *segment* pool drained too, and doing it per-test
-  is churn. Under `cargo miri nextest` each test is its own process, so a
-  harness-level teardown that purges both pools would cover every test at one
-  site. Confirm that draining does not change what the pool-behaviour tests
-  measure before adopting it.
-  Acceptance: `-Zmiri-ignore-leaks` is removed from both `Miri — local` steps
-  and they stay green, or the residual exclusion is narrowed to the specific
-  tests that require it with the reason recorded at that site.
+- [x] [patch] **MN-444 — Miri leak checking is on for mnemosyne-local.** Done,
+  and by removing the exclusion rather than narrowing it.
+  The premise the exclusion rested on was wrong. Both this item and the CI
+  comment claimed nearly every test in the crate leaves segments retained, so
+  leak checking would amount to asserting that a cache must be empty. Running
+  Miri without `-Zmiri-ignore-leaks` showed 6 of 75 tests leaking; the other 69
+  already passed the leak gate. The claim was never measured before it was
+  written down.
+  Five of the six were cross-thread or local-`ThreadAllocator` tests ending with
+  segments in a pool. `drain_orphan_pools_for_test` already did exactly the
+  right drain — orphan pools for both backends, then both segment pools, which
+  also purges the huge pools — but it was only ever called at the *start* of
+  three tests, for a clean slate, never at the end. It now lives in the shared
+  `fixtures` module as `drain_all_pools`, behind a `PoolDrain` RAII guard that
+  the six tests declare right after their `TEST_LOCK` guard, so locals drop
+  first (returning segments to the pools), the drain runs, and only then is the
+  lock released.
+  The sixth, `hardened_policy_detects_freelist_tamper`, was a genuine case: it
+  deliberately poisons a page's free list, so the allocator can neither serve
+  from that page nor reclaim its segment, and the segment was still held at
+  exit. It now repairs the free-list head and frees its outstanding block
+  *after* the assertion, which changes nothing it measures — every observation
+  is made against the tampered state — and lets the ordinary reclaim path
+  release the segment.
+  Both `Miri — local` steps now run with the same flags as the arena and core
+  steps; nothing in the job is exempt from leak checking. 75/75 under both
+  borrow models: 40s Stacked, 287s Tree Borrows, the latter down from 482s
+  because the drained memory is no longer tracked to exit.
 
 - [ ] [patch] status=in-progress owner=claude scope=`crates/mnemosyne-core/src/types/segment.rs`, `crates/mnemosyne-core/src/types/page/occupancy.rs`, `crates/mnemosyne-local/src/{free.rs,local_alloc.rs,local_alloc/segment/reclaim.rs,tests.rs}`, `crates/mnemosyne-heap/src/raw_heap.rs`; last-update=2026-08-14. **MN-441 — `is_current` is non-atomic.** Done, by the second of the two
   options: documented and *enforced* as owner-only rather than made atomic.

@@ -10,6 +10,9 @@ fn test_snmalloc_message_passing() {
     let _guard = TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
+    // Drains the pools when this test ends: it finishes with segments still
+    // retained, which Miri's leak checker cannot tell from a leak.
+    let _drain = super::fixtures::PoolDrain;
     use std::thread;
 
     // Purge global segment pool to ensure we must allocate from the OS.
@@ -70,6 +73,9 @@ fn cross_thread_free_does_not_charge_non_owner_defrag_counter() {
     let _guard = TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
+    // Drains the pools when this test ends: it finishes with segments still
+    // retained, which Miri's leak checker cannot tell from a leak.
+    let _drain = super::fixtures::PoolDrain;
     use std::thread;
 
     let mut owner = ThreadAllocator::<DefaultBackend>::new();
@@ -186,22 +192,6 @@ fn test_orphan_segment_reuse() {
 /// # Safety
 ///
 /// Callers must hold `TEST_LOCK` so no concurrent allocator activity races the
-/// drain.
-unsafe fn drain_orphan_pools_for_test() {
-    use mnemosyne_arena::HasSegmentPool;
-    unsafe {
-        while let Some(seg) = <DefaultBackend as HasSegmentPool>::global_orphan_pool().pop() {
-            deallocate_segment::<DefaultBackend>(seg);
-        }
-        while let Some(seg) =
-            <mnemosyne_backend::MemoryBackendWrapper as HasSegmentPool>::global_orphan_pool().pop()
-        {
-            deallocate_segment::<mnemosyne_backend::MemoryBackendWrapper>(seg);
-        }
-        mnemosyne_arena::purge_segment_pool::<DefaultBackend>();
-        mnemosyne_arena::purge_segment_pool::<mnemosyne_backend::MemoryBackendWrapper>();
-    }
-}
 
 #[test]
 fn test_hardened_orphan_adoption_preserves_encoded_chains() {
@@ -223,7 +213,7 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
     use std::vec::Vec;
 
     // Safety: TEST_LOCK is held; no concurrent allocator activity.
-    unsafe { drain_orphan_pools_for_test() };
+    unsafe { super::fixtures::drain_all_pools() };
 
     let (tx, rx) = mpsc::channel();
 
@@ -343,7 +333,7 @@ fn test_orphan_adoption_skips_policy_mismatched_segment() {
     use std::thread;
 
     // Safety: TEST_LOCK is held; no concurrent allocator activity.
-    unsafe { drain_orphan_pools_for_test() };
+    unsafe { super::fixtures::drain_all_pools() };
 
     let (tx, rx) = mpsc::channel();
 
@@ -408,7 +398,7 @@ fn test_mixed_policy_free_and_realloc_preserve_segment_encoding() {
     use std::alloc::Layout;
 
     // Safety: TEST_LOCK is held; no concurrent allocator activity.
-    unsafe { drain_orphan_pools_for_test() };
+    unsafe { super::fixtures::drain_all_pools() };
 
     // The public free-function surface uses separate zero-cost TLS slots for
     // the two encoding modes. The slots are distinct even though both use the
@@ -686,6 +676,9 @@ fn allocation_side_reclaim_counts_cross_thread_blocks_exactly() {
     let _guard = TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
+    // Drains the pools when this test ends: it finishes with segments still
+    // retained, which Miri's leak checker cannot tell from a leak.
+    let _drain = super::fixtures::PoolDrain;
     use std::thread;
 
     unsafe {
@@ -773,6 +766,9 @@ fn cross_thread_stress_producer_consumer() {
     let _guard = TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
+    // Drains the pools when this test ends: it finishes with segments still
+    // retained, which Miri's leak checker cannot tell from a leak.
+    let _drain = super::fixtures::PoolDrain;
 
     const NUM_PRODUCERS: usize = 4;
     const ALLOCS_PER_PRODUCER: usize = 200;

@@ -214,21 +214,22 @@ jobs:
       # runner tips it over, the answer is a faster allocation path, not a
       # bigger number.
       #
-      # `-Zmiri-ignore-leaks` here only, and it is a scope decision rather than
-      # a suppression: the segment pool retains freed mappings for reuse, which
-      # is the pool's purpose, and Miri reports each retained mapping as leaked
-      # at exit. Arena and core keep leak checking on and cover the release
-      # paths. Narrowing this to a test-only drain is MN-444.
+      # Leak checking is on, as in every other Miri step here. An earlier version
+      # of this job disabled it, on the assumption that nearly every test in the
+      # crate ends with segments retained in a pool. Measuring it showed 6 of 75
+      # did (MN-444). Those six now drain the pools through a `PoolDrain` guard,
+      # and the one test that deliberately poisons a free list repairs it after
+      # asserting, so its segment can be reclaimed like any other test's.
       - name: Miri — local (Stacked Borrows)
         env:
-          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-ignore-leaks
+          MIRIFLAGS: -Zmiri-disable-isolation
         run: >-
           cargo +nightly miri nextest run -p mnemosyne-local --locked
           --profile miri
 
       - name: Miri — local (Tree Borrows)
         env:
-          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-ignore-leaks -Zmiri-tree-borrows
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-tree-borrows
         run: >-
           cargo +nightly miri nextest run -p mnemosyne-local --locked
           --profile miri
