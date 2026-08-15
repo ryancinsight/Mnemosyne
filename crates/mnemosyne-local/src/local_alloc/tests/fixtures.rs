@@ -35,7 +35,14 @@ impl HasSegmentPool for MockBackend {
 crate::impl_local_allocator_selector!(MockBackend);
 crate::impl_local_allocator_selector!(DefaultBackend);
 
-/// Releases every segment held by the global pools back to the OS.
+/// Releases every segment held by the global pools back to the OS, for tests
+/// that need a clean slate before they start measuring.
+///
+/// Setup only. This deallocates every orphaned segment unconditionally,
+/// including any that still holds live allocations, so running it at teardown
+/// would delete evidence Miri's leak checker should have reported. Teardown is
+/// `TestLockGuard::drop`, which reclaims cross-thread frees first and pushes
+/// genuinely-live orphans back so they stay visible.
 ///
 /// Drains both backends' orphan pools — a thread that dies owning segments
 /// leaves them there, and `purge_segment_pool` does not cover that pool — then
@@ -59,26 +66,5 @@ pub(crate) unsafe fn drain_all_pools() {
         }
         mnemosyne_arena::purge_segment_pool::<DefaultBackend>();
         mnemosyne_arena::purge_segment_pool::<mnemosyne_backend::MemoryBackendWrapper>();
-    }
-}
-
-/// Drains the global pools when it goes out of scope.
-///
-/// Miri's leak checker runs at process exit and cannot tell a warm cache from a
-/// leak, so a test that ends with segments still in the segment, huge or orphan
-/// pools fails the leak gate even though retention is what those pools are for.
-/// Tests that finish holding retained segments take one of these.
-///
-/// Declare it immediately after the `TEST_LOCK` guard: locals drop in reverse
-/// order, so any `ThreadAllocator` the test builds is dropped first (returning
-/// its segments to the pools), then this drains them, and only then is the lock
-/// released.
-pub(crate) struct PoolDrain;
-
-impl Drop for PoolDrain {
-    fn drop(&mut self) {
-        // SAFETY: the test holding this also holds `TEST_LOCK`, so no other
-        // thread is touching the pools.
-        unsafe { drain_all_pools() };
     }
 }

@@ -10,9 +10,6 @@ fn test_snmalloc_message_passing() {
     let _guard = TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
-    // Drains the pools when this test ends: it finishes with segments still
-    // retained, which Miri's leak checker cannot tell from a leak.
-    let _drain = super::fixtures::PoolDrain;
     use std::thread;
 
     // Purge global segment pool to ensure we must allocate from the OS.
@@ -85,9 +82,6 @@ fn cross_thread_free_does_not_charge_non_owner_defrag_counter() {
     let _guard = TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
-    // Drains the pools when this test ends: it finishes with segments still
-    // retained, which Miri's leak checker cannot tell from a leak.
-    let _drain = super::fixtures::PoolDrain;
     use std::thread;
 
     let mut owner = ThreadAllocator::<DefaultBackend>::new();
@@ -697,9 +691,6 @@ fn allocation_side_reclaim_counts_cross_thread_blocks_exactly() {
     let _guard = TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
-    // Drains the pools when this test ends: it finishes with segments still
-    // retained, which Miri's leak checker cannot tell from a leak.
-    let _drain = super::fixtures::PoolDrain;
     use std::thread;
 
     unsafe {
@@ -792,9 +783,6 @@ fn cross_thread_stress_producer_consumer() {
     let _guard = TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
-    // Drains the pools when this test ends: it finishes with segments still
-    // retained, which Miri's leak checker cannot tell from a leak.
-    let _drain = super::fixtures::PoolDrain;
 
     const NUM_PRODUCERS: usize = 4;
     const ALLOCS_PER_PRODUCER: usize = 200;

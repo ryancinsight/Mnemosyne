@@ -494,9 +494,6 @@ fn hardened_policy_detects_freelist_tamper() {
     let _guard = crate::local_alloc::TEST_LOCK
         .lock()
         .expect("local allocator test lock was poisoned");
-    // Drains the pools when this test ends: it finishes with segments still
-    // retained, which Miri's leak checker cannot tell from a leak.
-    let _drain = crate::local_alloc::tests::fixtures::PoolDrain;
 
     // We want to verify that tamper detection works under HardenedPolicy.
     // Let's allocate two blocks on a fresh page of class 0 (16 bytes).
