@@ -127,7 +127,7 @@ pub enum NumaError {
 /// treat an error as a locality hint that could not be honored.
 #[cfg(target_os = "linux")]
 pub unsafe fn bind_to_node(ptr: *mut u8, size: usize, node: NumaNodeId) -> Result<(), NumaError> {
-    let node_usize = usize::from(node.get());
+    let node_usize = node.get() as usize;
     if node_usize >= MAX_NUMA_NODES {
         return Err(NumaError::InvalidNode { node });
     }
@@ -211,7 +211,7 @@ pub fn allocate_interleaved(layout: Layout) -> Result<NonNull<u8>, NumaError> {
     if let Some(topology) = themis::CpuTopology::detect() {
         let mut nodemask = [0u64; MAX_NUMA_NODES.div_ceil(64)];
         for node in topology.numa_nodes() {
-            let idx = usize::from(node.id.get());
+            let idx = node.id.get() as usize;
             if idx < MAX_NUMA_NODES {
                 nodemask[idx / 64] |= 1u64 << (idx % 64);
             }
