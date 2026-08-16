@@ -36,6 +36,12 @@ mnemosyne-prof = { path = "../mnemosyne-prof", version = "0.2.0" }
 # shared by all three.
 themis = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Node-binding and interleave execution (`mbind`/`SYS_mbind`). Kept
+# linux-gated so non-Linux builds carry no syscall surface; the crate stays
+# `#![no_std]` (libc is FFI declarations only).
+libc = { version = "0.2", default-features = false }
+
 [dev-dependencies]
 mnemosyne = { package = "mnemosyne-memory", path = "../mnemosyne" }
 

@@ -39,11 +39,16 @@ pub use themis::{MemoryTier, PlacementHint};
 /// Resolves a `PlacementHint` to the concrete `MemoryTier` that the heap
 /// façade will dispatch against.
 ///
-/// Non-tier hints (`Current`, `Any`, `Numa`, `Domain`) collapse to
+/// Non-tier hints (`Current`, `Any`, `Domain`) collapse to
 /// [`MemoryTier::Dram`] — the host block pool — because the heap façade
 /// has a single host `RawHeap` instance and that pool lives on standard
-/// host DRAM. `Tier(t)` passes the tier through unchanged so the
-/// per-tier dispatch in [`crate::tiered_heap::TieredHeap::alloc`] and
+/// host DRAM. `Numa(node)` also resolves to [`MemoryTier::Dram`] (node-bound
+/// memory is still host DRAM), but the tier is only half the routing: the
+/// node half is executed by [`crate::numa::bind_to_node`] inside
+/// [`crate::tiered_heap::TieredHeap::alloc`], so a `Numa` hint is honored
+/// by the allocator rather than silently ignored. `Tier(t)` passes the tier
+/// through unchanged so the per-tier dispatch in
+/// [`crate::tiered_heap::TieredHeap::alloc`] and
 /// [`crate::tiered_backend::TieredBackend::for_tier`] can route to the
 /// right sub-heap or concrete backend, including the budget-only tiers
 /// `Registers`/`SharedMem` that the façade will reject.

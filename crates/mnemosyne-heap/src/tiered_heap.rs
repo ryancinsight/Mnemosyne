@@ -178,6 +178,11 @@ impl<'brand, P: AllocPolicy> TieredHeap<'brand, P> {
     /// - A sub-heap allocation failure (out of host memory; CUDA out
     ///   of pinned / device memory; etc.).
     ///
+    /// `PlacementHint::Numa(node)` additionally binds the block to `node`
+    /// via [`crate::numa::bind_to_node`] after allocation. The binding is
+    /// best-effort (a placement *hint*): a failed kernel policy call leaves
+    /// the allocation usable and is not surfaced as an allocation failure.
+    ///
     /// The returned `TieredBlock::tier()` always matches
     /// [`crate::tier::tier_for`] applied to `hint`.
     #[inline]
@@ -190,10 +195,20 @@ impl<'brand, P: AllocPolicy> TieredHeap<'brand, P> {
     ) -> Option<TieredBlock<'brand, u8>> {
         let tier = tier_for(hint);
         match TieredBackend::for_tier(tier) {
-            Some(TierSelection::Host) => self
-                .host
-                .alloc(token, layout)
-                .map(|b| TieredBlock { block: b, tier }),
+            Some(TierSelection::Host) => {
+                let block = self.host.alloc(token, layout)?;
+                if let PlacementHint::Numa(node) = hint {
+                    // SAFETY: `block` is a live heap allocation of at least
+                    // `layout.size()` bytes at `block.as_ptr()`; `bind_to_node`
+                    // only issues a kernel memory-policy call on that range and
+                    // never dereferences the pointer. Best-effort by contract:
+                    // a failed policy call leaves a usable allocation, matching
+                    // the hint semantics of `PlacementHint`.
+                    let _ =
+                        unsafe { crate::numa::bind_to_node(block.as_ptr(), layout.size(), node) };
+                }
+                Some(TieredBlock { block, tier })
+            }
             Some(TierSelection::HostPinned) => self
                 .pinned
                 .alloc(token, layout)
