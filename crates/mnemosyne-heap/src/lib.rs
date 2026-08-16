@@ -4,7 +4,10 @@
 //! [`TieredHeap`] extends it with placement across memory tiers
 //! ([`MemoryTier`], [`PlacementHint`]) so a caller can steer an allocation
 //! toward the tier that matches its access pattern rather than treating
-//! all memory as uniform.
+//! all memory as uniform. [`numa`] executes the node-level half of that
+//! vocabulary — `mbind` binding, interleave allocation, and first-touch —
+//! so a [`PlacementHint::Numa`] is honored by the allocator, not just
+//! resolved to a tier.
 //!
 //! The `brand` family ([`BrandedBox`], [`BrandedVec`], [`BrandedBlock`])
 //! carries an invariant lifetime that ties an allocation to the [`scope`]
@@ -27,6 +30,8 @@ pub mod branded_box;
 pub mod branded_vec;
 /// The owning allocator handle and its reallocation contract.
 pub mod heap;
+/// NUMA-node binding, interleave allocation, and first-touch execution.
+pub mod numa;
 pub(crate) mod raw_heap;
 pub mod tier;
 pub mod tiered_backend;
@@ -39,6 +44,7 @@ pub use brand::{BrandedBlock, BrandedCell, InvariantLifetime, ThreadLocalToken, 
 pub use branded_box::BrandedBox;
 pub use branded_vec::BrandedVec;
 pub use heap::{Heap, ReallocError, ReallocFailure};
+pub use numa::{NumaError, allocate_interleaved, bind_to_node, first_touch};
 pub use tier::{MemoryTier, PlacementHint};
 pub use tiered_backend::TieredBackend;
 pub use tiered_heap::{TieredBlock, TieredHeap, TieredReallocError, scope_tiered};

@@ -519,6 +519,7 @@ dependencies = [
 name = "mnemosyne-heap"
 version = "0.4.0"
 dependencies = [
+ "libc",
  "melinoe",
  "mnemosyne-arena",
  "mnemosyne-backend",
