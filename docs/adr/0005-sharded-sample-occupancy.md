@@ -1,6 +1,6 @@
 # ADR 0005: Sharded Active-Sample Occupancy
 
-Status: accepted
+Status: Accepted
 
 ## Context
 

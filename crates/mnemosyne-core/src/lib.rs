@@ -2,6 +2,8 @@
 
 #![no_std]
 
+extern crate alloc;
+
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
@@ -9,6 +11,7 @@ pub(crate) mod abort;
 pub mod constants;
 pub mod kernel_budget;
 pub mod loom_shim;
+pub mod memory_diagnostics;
 pub mod options;
 pub mod policy;
 pub mod size_class;
@@ -18,6 +21,7 @@ pub mod validation;
 
 pub use constants::*;
 pub use kernel_budget::{KernelResourceBudget, OccupancyLimits};
+pub use memory_diagnostics::{AllocationDiagnostics, MemoryEfficiencyReport, SizeClassMetrics};
 pub use policy::{AllocPolicy, HardenedPolicy, SecurePolicy, StandardPolicy};
 pub use size_class::*;
 pub use sync::*;
