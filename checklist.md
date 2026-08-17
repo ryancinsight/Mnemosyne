@@ -1,5 +1,16 @@
 # Checklist
 
+## Verified — Atlas conformance closure (2026-08-17)
+
+- [x] Replace the fifth existence-only assertion at
+  `crates/mnemosyne-heap/src/tests/numa.rs` with an exact success-value
+  assertion.
+- [x] Verify the exact provider head `39d76d2` through hosted Rust
+  verification, Loom, and Miri under run `32024295467`.
+- [x] Record the remaining conformance baseline as four existence-only
+  assertions; no provider-owned assertion remains in this item.
+
+
 Target version: 0.6.0
 
 ## Trusted publishing

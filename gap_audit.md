@@ -925,3 +925,9 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
   the lazy `OnceLock<Box<PerCpuCache>>` handle recorded above; no static table
   reservation remains in the production cache symbol. The separate profiler
   contention findings remain measurement-gated.
+- [patch] Closed the Atlas conformance regression at the exact provider head
+  `39d76d2`: `crates/mnemosyne-heap/src/tests/numa.rs` now asserts
+  `Ok(())` rather than only checking `is_ok()`. Hosted Rust verification,
+  Loom, and Miri (Stacked and Tree Borrows) passed in run `32024295467`.
+  The provider scan leaves four existence-only assertions, all outside this
+  completed NUMA item; the external `recurseml/analysis` status is report-only.
