@@ -57,6 +57,7 @@ pub unsafe fn miri_cleanup_pools<B: mnemosyne_arena::HasSegmentPool>() {
     unsafe { mnemosyne_arena::purge_segment_pool::<B>() };
 }
 
+pub mod fast_path_cache;
 pub mod local_alloc;
 pub mod per_cpu;
 pub mod tls;
@@ -79,6 +80,9 @@ mod validation;
 mod tests;
 
 pub use alloc::{thread_alloc, thread_alloc_layout};
+pub use fast_path_cache::{
+    FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics, SizeClassCache,
+};
 pub use free::{thread_free, thread_free_layout};
 pub use local_alloc::{SizeClassOccupancy, ThreadAllocator, ThreadAllocatorStats};
 pub use options::{

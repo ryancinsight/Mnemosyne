@@ -14,14 +14,18 @@ pub use mnemosyne_backend::{
     MemoryBackendWrapper, is_cuda_available,
 };
 pub use mnemosyne_core::{
-    AllocPolicy, HardenedPolicy, SecurePolicy, StandardPolicy, options::MnemosyneOptions,
+    AllocPolicy, AllocationDiagnostics, HardenedPolicy, MemoryEfficiencyReport, SecurePolicy,
+    SizeClassMetrics, StandardPolicy, options::MnemosyneOptions,
 };
 #[cfg(feature = "branded")]
 pub use mnemosyne_heap::{
     BrandedBlock, BrandedBox, BrandedCell, BrandedVec, Heap, InvariantLifetime, ReallocError,
     ReallocFailure, ThreadLocalToken, scope as branded_scope,
 };
-pub use mnemosyne_local::{LocalAllocatorSelector, SizeClassOccupancy, usable_size};
+pub use mnemosyne_local::{
+    FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics, LocalAllocatorSelector,
+    SizeClassCache, SizeClassOccupancy, usable_size,
+};
 pub use mnemosyne_prof::{
     disable_leak_detector, disable_profiling, dump_leaks, dump_profile, enable_leak_detector,
     enable_profiling, is_leak_detector_enabled, is_profiling_enabled, register_alloc_hook,
