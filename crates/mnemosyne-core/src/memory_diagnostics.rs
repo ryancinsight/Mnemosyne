@@ -306,17 +306,21 @@ mod tests {
 
     #[test]
     fn test_size_class_metrics_live_allocations() {
-        let mut metrics = SizeClassMetrics::default();
-        metrics.allocation_count = 100;
-        metrics.deallocation_count = 30;
+        let metrics = SizeClassMetrics {
+            allocation_count: 100,
+            deallocation_count: 30,
+            ..SizeClassMetrics::default()
+        };
         assert_eq!(metrics.live_allocations(), 70);
     }
 
     #[test]
     fn test_cache_hit_ratio() {
-        let mut metrics = SizeClassMetrics::default();
-        metrics.cache_hits = 80;
-        metrics.cache_misses = 20;
+        let metrics = SizeClassMetrics {
+            cache_hits: 80,
+            cache_misses: 20,
+            ..SizeClassMetrics::default()
+        };
         assert_eq!(metrics.cache_hit_ratio(), 80);
     }
 
