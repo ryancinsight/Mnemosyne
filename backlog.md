@@ -1,5 +1,14 @@
 # Backlog
 
+- [x] [patch] **ATLAS-MNEMOSYNE-CONFORMANCE-101 — close the fifth
+  existence-only assertion (2026-08-17).** Replaced the NUMA binding test's
+  `is_ok()` assertion with an exact `Ok(())` value assertion in
+  `crates/mnemosyne-heap/src/tests/numa.rs`. The clean provider branch at
+  `39d76d2` passed hosted Rust verification, Loom, and Miri (both Stacked and
+  Tree Borrows) in run `32024295467`; the report-only `recurseml/analysis`
+  status was external and did not block merge. The conformance scan baseline
+  is now 4 existence-only assertions.
+
 - [x] [patch] **Internal policy SSOT consolidation — implemented; validation
   blocked (2026-08-06).** `mnemosyne-core::policy` is the sole implementation
   and canonical internal import surface for `SecurePolicy` and `HardenedPolicy`.

@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Replace the NUMA binding test's existence-only result check with an exact
+  `Ok(())` assertion. Hosted Rust verification, Loom, and Miri pass at
+  provider head `39d76d2` (run `32024295467`).
+
 - **Breaking.** Key the allocator statistics surface by policy:
   `mnemosyne_local::thread_allocator_stats` and
   `mnemosyne::memory_stats_generic` now take the allocation policy as their
