@@ -70,9 +70,10 @@ fn bind_to_node_on_fresh_allocation_is_ok() {
     // the pages are unfaulted so `mbind(MPOL_BIND | MPOL_MF_STRICT)` to node
     // zero succeeds; elsewhere the call is a documented no-op.
     let result = unsafe { bind_to_node(ptr, layout.size(), NumaNodeId::ZERO) };
-    assert!(
-        result.is_ok(),
-        "binding a fresh allocation to node zero succeeds: {result:?}"
+    assert_eq!(
+        result,
+        Ok(()),
+        "binding a fresh allocation to node zero succeeds"
     );
     // SAFETY: deallocate exactly the allocation `ptr` came from.
     unsafe { std::alloc::dealloc(ptr, layout) };
