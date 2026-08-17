@@ -117,7 +117,7 @@ derives from, so the codebase can be read against its sources.
 | Guard regions (`PROT_NONE` / `PAGE_NOACCESS`) for OOB-write trapping | hardened_malloc, Scudo, PartitionAlloc | `MemoryBackend::make_guard`, segment-tail guard |
 | Compile-time policy ZSTs for zero-cost secure-vs-standard selection | mimalloc-secure build flag, lifted to the Rust type system | `AllocPolicy`, `SecurePolicy`, `StandardPolicy` |
 
-The external gap analysis in [`gap_analysis_external.md`](gap_analysis_external.md)
+The external gap analysis in [`docs/gap_analysis_external.md`](docs/gap_analysis_external.md)
 tracks which further research techniques (free-list pointer encryption,
 NUMA-aware arenas, per-CPU caching via `rseq`, Mesh-style compaction) are
 candidates and which are deliberately out of scope, with each row carrying

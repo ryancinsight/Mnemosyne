@@ -1,5 +1,11 @@
 # Checklist
 
+## ATLAS-MNEMOSYNE-ROOT-CLEANUP [patch]
+
+- [x] Move `complexity_audit.md` and `gap_analysis_external.md` under `docs/`
+      and update current references.
+- [x] Exact-head conformance scan: Mnemosyne `root_sprawl` 2 → 0.
+
 ## Verified — Atlas conformance closure (2026-08-17)
 
 - [x] Replace the fifth existence-only assertion at
@@ -1138,7 +1144,7 @@ triaged, then per-crate fixes in eleven atomic commits. Final gate: `cargo fmt
 
 - [x] [patch] Close re-entrancy soundness hole on the guard-free fast path via `with_allocator_unguarded` (busy-bit checked, guard-write-free). Verified: stable + `nightly_tls` green; `unguarded_fast_path_rejects_reentrant_borrow` pins re-entry rejection.
 - [x] [patch] Reduce `unlink_owned_segment` to O(1) via an intrusive doubly-linked owned-segments list (`Segment::prev_owned_segment`, SSOT `push_owned_segment`). Verified: `owned_segment_list_is_doubly_linked_and_unlinks_in_place`.
-- [x] [arch] Add `complexity_audit.md` per-component complexity review with O(1) reduction plan for the remaining cold-path unlink operations.
+- [x] [arch] Add `docs/complexity_audit.md` per-component complexity review with O(1) reduction plan for the remaining cold-path unlink operations.
 - [x] [minor] Add an optional `nightly_tls` `#[thread_local]` fast cache accessor to `mnemosyne-local`, preserving thread-exit reclamation via a `Drop` sentinel; default stable build unchanged. Verified: stable workspace `cargo test` green (no regression); nightly `cargo test -p mnemosyne-local --features nightly_tls` green (18 tests, incl. sentinel reclamation).
 - [x] [patch] Preserve current segment ownership during local free reclamation checks.
 - [x] [patch] Benchmark Mnemosyne against mimalloc and snmalloc for allocation cycles.
@@ -1399,7 +1405,7 @@ triaged, then per-crate fixes in eleven atomic commits. Final gate: `cargo fmt
 - [x] [patch] Replace bare policy integration test layout/thread-join unwraps with contextual diagnostics.
 - [x] [patch] Harden local topology tests with contextual lock/layout/segment diagnostics and an RAII guard for the global per-CPU cache flag.
 - [x] [patch] Replace the remaining bare C-shim leak-report `CString` unwrap with contextual UTF-8 and interior-NUL diagnostics.
-- [x] [patch] Reconcile `complexity_audit.md` with the current free-list/bump-page allocator and remove the stale planned bitmap summary-word item.
+- [x] [patch] Reconcile `docs/complexity_audit.md` with the current free-list/bump-page allocator and remove the stale planned bitmap summary-word item.
 - [x] [patch] Replace bare segment-layout unwraps in `mnemosyne-core::types` tests with a contextual `segment_layout()` helper.
 - [x] [patch] Remove bare `unwrap()`/panic-prone cleanup paths from `mnemosyne-prof` integration tests; add RAII guards for profiler state and thread allocations so failure paths release hooks, profiling/leak-detector state, and live allocations.
 - [x] [patch] Remove production panic paths from native TLS-key initialization in `mnemosyne-local` and `mnemosyne-prof`; native TLS allocation failure now falls back to the standard thread-local slot instead of unwinding.
