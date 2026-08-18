@@ -428,18 +428,25 @@ Filed from the 2026-08-12 verification-posture review:
   MN-447's hardened recycling test, which can now assert the same counter
   deltas as its standard sibling — this item's stated acceptance.
 
-- [ ] [patch] **MN-451 — `ensure_options_initialized` has two export paths.**
-  It is `pub use`d at the crate root *and* re-exported from
-  `internal`. The root path exists because `impl_local_allocator_selector!`
-  expands to `$crate::ensure_options_initialized()`; the `internal` path exists
-  because `mnemosyne-heap` imports its sibling internals from there. One
-  concept, two supported paths, which is the duplication rule's second
-  occurrence.
-  Collapsing onto `internal` means changing what the macro expands to, so every
-  crate invoking the selector macro recompiles against the new path — mechanical
-  but wide, which is why MN-450 left it alone.
-  Acceptance: one export path, the macro and `mnemosyne-heap` agree on it, and
-  `cargo-semver-checks` classifies the removal of the other.
+- [x] [major] **MN-451 — `ensure_options_initialized` has one export path.**
+  Done. It was `pub use`d at the crate root *and* re-exported from `internal`,
+  one concept reachable two ways. It now lives only in `internal`, beside the
+  seams MN-450 moved there, which is the honest home: its callers are the
+  `impl_local_allocator_selector!` expansion and `mnemosyne-heap`, and neither
+  is a consumer calling an entry point.
+  The blast radius in this item's own filing was overstated. I wrote that
+  collapsing it meant "recompiling every consumer" of the macro, implying churn
+  at call sites. There is none: `$crate` resolves inside the defining crate, so
+  changing what the macro expands to leaves every invocation untouched, and
+  `mnemosyne-heap` already imported from `internal`. The change is three lines
+  in `lib.rs`.
+  Reclassified `[patch]` to `[major]` on evidence rather than assumption:
+  `cargo-semver-checks` reports `function_missing: pub fn removed or renamed`
+  for `mnemosyne_local::ensure_options_initialized`. It rides an unreleased
+  cycle already major from MN-440 and MN-448, so it owes no bump that was not
+  owed already; its other three findings belong to those items.
+  Recorded in CHANGELOG under Unreleased, with the note that macro users need
+  no edit.
 
 - [x] [patch] **MN-450 — the test-only export is out of the entry-point
   surface.** Done, and two claims in the original filing were wrong.

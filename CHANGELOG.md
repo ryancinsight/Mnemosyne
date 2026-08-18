@@ -4,6 +4,15 @@
 
 ### Changed
 
+- **Breaking.** `mnemosyne_local::ensure_options_initialized` is no longer
+  exported from the crate root; it is reachable through
+  `mnemosyne_local::internal`, which was already one of its two paths. It is
+  not a consumer entry point — its callers are the
+  `impl_local_allocator_selector!` expansion and `mnemosyne-heap`, which
+  already imported it from `internal`. Code invoking the macro needs no edit,
+  because `$crate` resolves inside the defining crate; only a direct caller of
+  the root path changes an import.
+
 - Move the complexity audit and external gap analysis into `docs/` and update
   all current links and PM references; the repository root now contains only
   sanctioned manifest artifacts.

@@ -85,7 +85,6 @@ pub use fast_path_cache::{
 };
 pub use free::{thread_free, thread_free_layout};
 pub use local_alloc::{SizeClassOccupancy, ThreadAllocator, ThreadAllocatorStats};
-pub use options::ensure_options_initialized;
 pub use realloc::thread_realloc;
 pub use tls_slot::{LocalAllocatorSelector, LocalAllocatorSlot};
 #[cfg(nightly_tls_active)]
@@ -103,7 +102,7 @@ pub use validation::{initialize_allocated_bytes, poison_freed_bytes};
 #[doc(hidden)]
 pub mod internal {
     pub use crate::ThreadAllocator;
-    pub use crate::ensure_options_initialized;
+    pub use crate::options::ensure_options_initialized;
     // Neither of these is an entry point. `mark_options_initialized` is the
     // seam the `mnemosyne` crate uses to freeze options it configured itself,
     // and `reset_options_for_testing` exists only for tests. They live here so
@@ -364,7 +363,7 @@ macro_rules! impl_local_allocator_selector {
 
                 #[inline(always)]
                 fn get_allocator_ptr() -> *mut core::ffi::c_void {
-                    $crate::ensure_options_initialized();
+                    $crate::internal::ensure_options_initialized();
                     <SelectedTls as $crate::tls::TlsProvider<$backend>>::get_allocator_ptr()
                 }
 
@@ -397,7 +396,7 @@ macro_rules! impl_local_allocator_selector {
 
                 #[inline(always)]
                 fn get_allocator_ptr_for_policy<P: mnemosyne_core::AllocPolicy>() -> *mut core::ffi::c_void {
-                    $crate::ensure_options_initialized();
+                    $crate::internal::ensure_options_initialized();
                     if P::ENABLE_FREE_LIST_ENCRYPTION {
                         <EncryptedSelectedTls as $crate::tls::TlsProvider<$backend>>::get_allocator_ptr()
                     } else {
