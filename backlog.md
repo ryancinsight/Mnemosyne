@@ -357,10 +357,8 @@ Filed from the 2026-08-12 verification-posture review:
   earlier "14x, about ninety minutes" figure came from `cargo miri test`, which
   runs serially; CI uses nextest, and the fixes removed the cost problem
   outright.
-  `smallest_class_page_saturates_without_duplicate_or_early_refill` still
-  crosses the 300s slow mark under Tree Borrows and cannot shrink — saturating a
-  page is 4096 allocations and that count is the property. Margin against the
-  600s bound is real but not generous; recorded at the job.
+  `smallest_class_page_saturates_without_duplicate_or_early_refill` no longer
+  crosses the 300s slow mark; see the note under MN-452.
   Both steps ran with `-Zmiri-ignore-leaks` at first; MN-444 removed it, so
   they now carry the same flags as the arena and core steps.
 
@@ -464,6 +462,29 @@ Filed from the 2026-08-12 verification-posture review:
   owed already; its other three findings belong to those items.
   Recorded in CHANGELOG under Unreleased, with the note that macro users need
   no edit.
+
+- [x] [patch] **MN-452 — the saturation test's slow margin.** Done, and the
+  reasoning that closed MN-445 with this left open was wrong twice over.
+  It was recorded as irreducible: saturating a 16-byte-class page is 4096
+  allocations, and that count is the property. Timing the test *in isolation*
+  gave 66s, not the 300s+ the suite reported. Two separate things were going
+  on. Nextest runs one Miri interpreter per core — 24 on this machine — so a
+  test's reported wall clock is its own work plus contention with 23 others,
+  and the suite number was never measuring the test. And half the test's own
+  cost was teardown: rebuilding the page's free chain one `set_next` per block,
+  after every assertion had already been made.
+  That teardown bought nothing. Reclamation decides a page's fate from
+  `alloc_count` and never reads the chain; the segment is released immediately
+  after; and a page that gets pooled rather than released has its free list
+  rebuilt by `get_new_page` before anything allocates from it. Dropping it took
+  the test to 36s and the whole Tree Borrows suite from 463s to 172s — it was
+  the long pole in a parallel run.
+  Nothing was shrunk: the 4096 allocations, every assertion, and the
+  saturation-and-refill transition are all unchanged. What went was cleanup
+  work that asserted nothing.
+  Worth keeping in mind for the next slow marker here: under this much
+  parallelism the suite's per-test number is work plus contention, and only an
+  isolated run distinguishes them.
 
 - [x] [patch] **MN-450 — the test-only export is out of the entry-point
   surface.** Done, and two claims in the original filing were wrong.

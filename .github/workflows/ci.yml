@@ -204,15 +204,24 @@ jobs:
       # on aarch64 and invisible to the native suite, because x86 lowers weak
       # and strong alike.
       #
-      # Both models, and affordably: 36s Stacked, 463s Tree Borrows. Those were
-      # 388s and "three tests over the 600s budget" until the three offending
-      # tests were fixed at their causes (MN-445). One test,
-      # `smallest_class_page_saturates_without_duplicate_or_early_refill`, still
-      # crosses the 300s slow mark under Tree Borrows: saturating a 16 KiB-block
-      # page is 4096 allocations and that count *is* the property, so it cannot
-      # shrink. It has margin against the 600s bound but not a lot; if a slower
-      # runner tips it over, the answer is a faster allocation path, not a
-      # bigger number.
+      # Both models, and affordably: 36s Stacked, 172s Tree Borrows, nothing
+      # crossing the 300s slow mark. Those were 388s and "three tests over the
+      # 600s budget" before MN-445 fixed the offending tests at their causes.
+      #
+      # The last straggler was
+      # `smallest_class_page_saturates_without_duplicate_or_early_refill`. It
+      # looked irreducible — saturating a 16-byte-class page is 4096
+      # allocations and that count is the property — but timing it in isolation
+      # showed 66s, not the 300s+ the suite reported. Two things were true:
+      # nextest runs one Miri interpreter per core (24 here), so a test's
+      # reported wall clock includes contention with 23 others, and half of
+      # this test's own cost was a teardown loop that asserted nothing. Deleting
+      # the teardown took it to 36s and the whole Tree Borrows suite from 463s
+      # to 172s, since it was the long pole.
+      #
+      # If a slow marker appears here again, time the test alone first: under
+      # this much parallelism the suite's number is work plus contention, and
+      # only the isolated number tells you which one grew.
       #
       # Leak checking is on, as in every other Miri step here. An earlier version
       # of this job disabled it, on the assumption that nearly every test in the

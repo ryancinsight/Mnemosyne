@@ -268,24 +268,24 @@ fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
     );
     allocations.push(overflow);
 
-    // This test owns the allocator directly rather than through the TLS
-    // facade. Rebuild the page-local free chain in one owner-side operation so
-    // the saturation assertion is not coupled to the cross-thread classifier
-    // and one atomic publication per block under Miri.
+    // Teardown, asserting nothing: every claim above has already been made.
+    //
+    // This test owns its allocator directly rather than through the TLS facade,
+    // so the blocks cannot simply be freed — `thread_free` would classify them
+    // as cross-thread and publish one atomic per block. An earlier version
+    // instead rebuilt the page's free chain here, one `set_next` per block.
+    // That was half this test's entire runtime under Miri, and it bought
+    // nothing: reclamation decides a page's fate from `alloc_count` and never
+    // reads the chain, the segment is released immediately after, and a page
+    // that is pooled instead of released has its free list rebuilt by
+    // `get_new_page` before anything allocates from it again.
     unsafe {
         let overflow = allocations
             .pop()
             .expect("invariant: overflow allocation is retained last");
         let page = &raw mut (*segment).pages[page_index];
-        let cookie =
-            mnemosyne_core::types::Segment::cookie_for::<StandardPolicy>(segment, page_index);
-        let mut free = None;
-        for ptr in allocations {
-            let block = NonNull::new_unchecked(ptr.cast::<Block>());
-            (*block.as_ptr()).set_next::<StandardPolicy>(free, cookie);
-            free = Some(block);
-        }
-        (*page).free = free;
+        drop(allocations);
+        (*page).free = None;
         mnemosyne_core::types::Page::set_alloc_count_in_segment(segment, page_index, 0);
         crate::thread_free::<StandardPolicy, DefaultBackend>(overflow);
     }
