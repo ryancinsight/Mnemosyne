@@ -1,5 +1,5 @@
 use super::cache_aligned::CacheAlignedAtomicUsize;
-use super::numa_bucket::{NUMA_BUCKETS, bucket_from_usize as numa_bucket, steal_from};
+use super::numa_bucket::{NUMA_BUCKETS, bucket_index as numa_bucket, steal_from};
 use super::tagged_stack::TaggedSegmentStack;
 use mnemosyne_core::types::Segment;
 
@@ -228,7 +228,9 @@ impl GlobalHugePool {
             return false;
         }
 
-        let node = numa_bucket(numa_node);
+        let node = numa_bucket(
+            u32::try_from(numa_node).expect("invariant: NUMA node identifiers fit in u32"),
+        );
         let bucket_idx = huge_bucket_index(size);
         let pool_node = &self.nodes[node];
         let bucket = &pool_node.buckets[bucket_idx];
@@ -267,7 +269,9 @@ impl GlobalHugePool {
     /// The returned segment is exclusively owned by the caller.
     #[inline]
     pub unsafe fn pop(&self, size: usize, numa_node: usize) -> Option<*mut Segment> {
-        let start_node = numa_bucket(numa_node);
+        let start_node = numa_bucket(
+            u32::try_from(numa_node).expect("invariant: NUMA node identifiers fit in u32"),
+        );
         let bucket_idx = huge_bucket_index(size);
 
         // `pop_from_node` already early-returns on an empty node (its leading

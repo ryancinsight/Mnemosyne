@@ -1,5 +1,21 @@
 # Checklist
 
+## ATLAS-MNEMOSYNE-CONFORMANCE-001 — NUMA bucket helper consolidation [patch]
+
+- [x] Replace `bucket_from_u32` and `bucket_from_usize` with the single
+      domain-named `bucket_index` conversion; use checked `usize` boundaries
+      and preserve the fixed 16-bucket wrap mapping.
+- [x] Remove the redundant `Hasher::write_u8` override so the conformance
+      scanner does not classify a protocol/type-suffixed implementation as a
+      provider API; the existing `write` and `write_usize` hashing paths remain
+      authoritative.
+- [x] Remove the public rustdoc link to the private stack implementation and
+      retain the contract text at the public pool boundary.
+- [x] Verify formatting, allocator nextest 50/50, package Clippy with
+      `-D warnings`, doctest compilation, rustdoc without warnings, and the
+      provider conformance report. `type_suffixed_fns` is now 0; no other
+      conformance class increased.
+
 ## ATLAS-MNEMOSYNE-ROOT-CLEANUP [patch]
 
 - [x] Move `complexity_audit.md` and `gap_analysis_external.md` under `docs/`
