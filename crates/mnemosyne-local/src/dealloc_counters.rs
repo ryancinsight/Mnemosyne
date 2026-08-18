@@ -66,6 +66,11 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
+/// Which branch of the deallocation fast path a free took.
+///
+/// Used as the index into the counter array that [`snapshot`] returns, so the
+/// discriminants are stable and contiguous from zero. Each variant documents
+/// the condition that selects it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum DeallocPath {

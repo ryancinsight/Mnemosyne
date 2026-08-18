@@ -33,6 +33,11 @@ repository = "https://github.com/ryancinsight/mnemosyne"
 homepage = "https://github.com/ryancinsight/mnemosyne"
 keywords = ["allocator", "malloc", "memory", "no-std", "performance"]
 categories = ["memory-management", "no-std", "concurrency"]
+# Declared once here; members inherit with `rust-version.workspace = true`.
+# Twelve identical per-crate copies previously stood in for this, which is the
+# drift `[workspace.package]` exists to prevent: nothing stopped one member
+# from advancing its floor alone.
+rust-version = "1.95"
 
 [workspace.dependencies]
 themis = { package = "themis-topology", git = "https://github.com/ryancinsight/themis", version = "0.10.1", default-features = false, features = ["std"] }

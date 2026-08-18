@@ -1,0 +1,57 @@
+name: Minimum Supported Rust Version
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/msrv.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "rust-toolchain.toml"
+  pull_request:
+    paths:
+      - ".github/workflows/msrv.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "rust-toolchain.toml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: msrv-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Rust 1.95 check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the declared MSRV
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.95"
+
+      # `rust-version` is declared once in `[workspace.package]` and inherited,
+      # so this one job covers every member. It was previously duplicated as 12
+      # identical per-crate copies, which nothing stopped from drifting apart.
+      #
+      # The floor was unverified until 2026-08-18 and did not in fact hold: at
+      # 1.95 the workspace failed with `missing documentation for an enum` on
+      # `mnemosyne-local`'s `DeallocPath`, whose variants were documented but
+      # whose type was not. A declared floor with no job is a claim nobody
+      # checks, which is what this job exists to stop.
+      #
+      # `mnemosyne-benchmarks` is outside `default-members` because snmalloc-sys
+      # does not build under ucrt64; `--workspace` here is the hosted Linux
+      # runner, where it is in scope.
+      - name: Check the workspace at the MSRV
+        run: cargo check --locked --workspace --all-features
