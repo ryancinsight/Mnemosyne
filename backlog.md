@@ -1126,7 +1126,7 @@ remainder, each Definition-of-Ready):
 - [patch] Replace bare policy integration test layout/thread-join unwraps with contextual diagnostics.
 - [patch] Harden local topology tests with contextual diagnostics and an RAII guard for the global per-CPU cache flag.
 - [patch] Replace the remaining bare C-shim leak-report `CString` unwrap with contextual diagnostics.
-- [patch] Reconcile `complexity_audit.md` with the current free-list/bump-page allocator after the bitmap free-list experiment was rejected.
+- [patch] Reconcile `docs/complexity_audit.md` with the current free-list/bump-page allocator after the bitmap free-list experiment was rejected.
 - [patch] Replace bare segment-layout unwraps in `mnemosyne-core::types` tests with a single contextual layout helper.
 - [patch] Harden `mnemosyne-prof` integration tests with contextual diagnostics and RAII cleanup for global profiler state and live thread allocations.
 - [patch] Remove production panic paths from OS TLS key initialization; native TLS failure now falls back to standard thread-local state for allocator and profiler access.
