@@ -641,15 +641,32 @@ Filed from the 2026-08-12 verification-posture review:
   and already states its reclamation and Acquire-on-CAS-failure arguments, so
   loom there confirms a written argument rather than probing an unexamined one.
 
-- [ ] [patch] **MN-434 — audit the 53 `SeqCst` sites against the weakest
-  sufficient ordering.** Each atomic access should name the happens-before edge
-  it needs and use the weakest ordering supplying it; 53 `SeqCst` sites in a hot
-  allocator suggests some exceed their edge, and `SeqCst` is the most expensive
-  ordering on every target. Explicitly sequenced *after* MN-433: retuning
-  orderings without a model checker is how correct-looking code acquires
-  interleaving bugs. Acceptance: each changed site names its edge and the loom
-  models pass unchanged at the relaxed ordering; no site is relaxed on reasoning
-  alone.
+- [x] [patch] **MN-434 — the SeqCst audit.** Done, and the premise was wrong:
+  this crate has **zero** `SeqCst` in shipped code. All 53 counted occurrences
+  are test code — drop counters, mock-backend counters, profiler test counters —
+  where `SeqCst` costs nothing and proves nothing. The filing counted raw
+  occurrences and assumed a hot allocator path.
+  Audited what is actually there instead: 237 explicit orderings, 117 `Relaxed`,
+  56 `Acquire`, 54 `Release`, 10 `AcqRel`. The lock-free cores follow the
+  canonical Treiber shape with correct pairing — `Release` on the publishing
+  CAS, `Acquire` on the pop and on the `swap` that takes a whole list,
+  `Relaxed` on the speculative head load the CAS re-validates, `Relaxed` on CAS
+  failure — in both `tagged_stack` and `AtomicFreeList`. The subtle case, the
+  failure ordering, already carries its reasoning at the site. Everything
+  `Relaxed` is a counter, a flag, or a tuning value, several with their skew
+  tolerance written down. Nothing was over-ordered and, more to the point,
+  nothing was under-ordered, which is the direction that would actually bite.
+  So no site changed, and the acceptance's condition — "no site is relaxed on
+  reasoning alone" — is met by there being nothing to relax.
+  The finding is worth more than the non-change: `SeqCst` is now a ratcheted
+  conformance class stack-wide (`seqcst_production`), counted in production
+  source only and baselined per repo, so a new default-`SeqCst` has to be
+  justified. The stack has 126, concentrated exactly where ordering matters
+  most — moirai 101, melinoe 13, kwavers 10, ritk 2. Filed upward as a moirai
+  concern rather than a mnemosyne one.
+  Caveat worth keeping: this audit read code on an x86-64 host, which hides
+  acquire/release mistakes that aarch64 exposes. MN-435's ARM job is what would
+  turn "looks right" into evidence.
 
 - [ ] [patch] **MN-435 — no sanitizer or non-x86 coverage.** CI runs one
   ubuntu-latest x86-64 job, leaving ThreadSanitizer and AddressSanitizer unused
