@@ -143,7 +143,17 @@ fn init_options_from_env() {
     }
 }
 
-/// Reset options state and atomic option values to their defaults. Intended for testing.
+/// Resets the options flag and every tuning value to its default.
+///
+/// Exists only for tests, and is `pub` only because it has to be: the tests
+/// that need it are integration tests in `mnemosyne-decay` and
+/// `mnemosyne-heap`, which are separate crates, so neither `#[cfg(test)]` nor
+/// `pub(crate)` reaches them. It is `#[doc(hidden)]` and lives under
+/// [`crate::internal`] rather than beside the allocator entry points, so it is
+/// not part of this crate's API in anything but the literal semver sense.
+///
+/// Reaching for this outside a test means resetting global tuning under a
+/// running allocator, including re-arming environment parsing.
 #[doc(hidden)]
 pub fn reset_options_for_testing() {
     OPTIONS_INIT.store(false, core::sync::atomic::Ordering::Release);
@@ -157,7 +167,13 @@ pub fn reset_options_for_testing() {
     mnemosyne_prof::reset_profiler_for_testing();
 }
 
-/// Marks options as initialized, preventing subsequent environment parsing from overwriting them.
+/// Marks options as initialized, so later environment parsing cannot overwrite
+/// values the caller set itself.
+///
+/// The seam behind `mnemosyne::configure`: that entry point writes the options
+/// a program asked for, then calls this so a first allocation does not re-read
+/// the environment over them. Exported through [`crate::internal`] because it
+/// is that cross-crate seam rather than something a consumer calls directly.
 #[doc(hidden)]
 pub fn mark_options_initialized() {
     OPTIONS_INIT.store(true, core::sync::atomic::Ordering::Release);

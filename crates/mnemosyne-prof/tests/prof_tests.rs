@@ -5,7 +5,8 @@ use mnemosyne::{
 };
 use mnemosyne_backend::MemoryBackendWrapper as Backend;
 use mnemosyne_heap::scope;
-use mnemosyne_local::{reset_options_for_testing, thread_alloc, thread_free};
+use mnemosyne_local::internal::reset_options_for_testing;
+use mnemosyne_local::{thread_alloc, thread_free};
 use std::sync::Mutex;
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());

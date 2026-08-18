@@ -36,7 +36,7 @@ fn test_runtime_options_override_default_retention() {
     use mnemosyne_arena::HasSegmentPool;
 
     // Reset options to default
-    mnemosyne_local::reset_options_for_testing();
+    mnemosyne_local::internal::reset_options_for_testing();
 
     // 1. Force the option to 0 via env var
     // SAFETY: nextest runs each test in its own process and `TEST_LOCK`
@@ -65,7 +65,7 @@ fn test_runtime_options_override_default_retention() {
     assert_eq!(final_retained, initial_retained);
 
     // Reset options again to defaults
-    mnemosyne_local::reset_options_for_testing();
+    mnemosyne_local::internal::reset_options_for_testing();
     // SAFETY: same single-threaded-environment argument as `set_var` above
     // (per-test process under nextest plus `TEST_LOCK` serialization).
     unsafe { std::env::remove_var("MNEMOSYNE_MAX_RETAINED_SEGMENTS") };
@@ -108,14 +108,14 @@ fn multi_heap_release_does_not_touch_other_heaps() {
     use mnemosyne_arena::HasSegmentPool;
 
     // Reset options for testing
-    mnemosyne_local::reset_options_for_testing();
+    mnemosyne_local::internal::reset_options_for_testing();
     // Allow up to 10 retained segments so dropping the heap caches its segment
     mnemosyne_core::options::set_options(mnemosyne_core::options::MnemosyneOptions {
         max_retained_segments: 10,
         purge_cadence_ms: 0,
         enable_hugepage_hint: true,
     });
-    mnemosyne_local::mark_options_initialized();
+    mnemosyne_local::internal::mark_options_initialized();
 
     let pool = <MemoryBackendWrapper as HasSegmentPool>::global_segment_pool();
     unsafe {
@@ -156,7 +156,7 @@ fn multi_heap_release_does_not_touch_other_heaps() {
         heap2.free_uninit(&mut token2, block2);
     });
 
-    mnemosyne_local::reset_options_for_testing();
+    mnemosyne_local::internal::reset_options_for_testing();
 }
 
 #[test]
@@ -164,7 +164,7 @@ fn test_programmatic_options_configure() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     use mnemosyne_arena::HasSegmentPool;
 
-    mnemosyne_local::reset_options_for_testing();
+    mnemosyne_local::internal::reset_options_for_testing();
 
     // Retrieve default options
     let default_options = mnemosyne_core::options::get_options();
@@ -175,7 +175,7 @@ fn test_programmatic_options_configure() {
         max_retained_segments: 0,
         ..default_options
     });
-    mnemosyne_local::mark_options_initialized();
+    mnemosyne_local::internal::mark_options_initialized();
 
     let active_options = mnemosyne_core::options::get_options();
     assert_eq!(active_options.max_retained_segments, 0);
@@ -199,5 +199,5 @@ fn test_programmatic_options_configure() {
     assert_eq!(final_retained, initial_retained);
 
     // Reset options
-    mnemosyne_local::reset_options_for_testing();
+    mnemosyne_local::internal::reset_options_for_testing();
 }

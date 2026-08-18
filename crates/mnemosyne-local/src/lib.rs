@@ -85,9 +85,7 @@ pub use fast_path_cache::{
 };
 pub use free::{thread_free, thread_free_layout};
 pub use local_alloc::{SizeClassOccupancy, ThreadAllocator, ThreadAllocatorStats};
-pub use options::{
-    ensure_options_initialized, mark_options_initialized, reset_options_for_testing,
-};
+pub use options::ensure_options_initialized;
 pub use realloc::thread_realloc;
 pub use tls_slot::{LocalAllocatorSelector, LocalAllocatorSlot};
 #[cfg(nightly_tls_active)]
@@ -106,6 +104,11 @@ pub use validation::{initialize_allocated_bytes, poison_freed_bytes};
 pub mod internal {
     pub use crate::ThreadAllocator;
     pub use crate::ensure_options_initialized;
+    // Neither of these is an entry point. `mark_options_initialized` is the
+    // seam the `mnemosyne` crate uses to freeze options it configured itself,
+    // and `reset_options_for_testing` exists only for tests. They live here so
+    // the crate root lists what a consumer actually calls.
+    pub use crate::options::{mark_options_initialized, reset_options_for_testing};
     pub use crate::{
         do_local_free_internal, initialize_allocated_bytes, poison_freed_bytes,
         small_realloc_fits_existing_class, thread_free_layout,

@@ -428,23 +428,45 @@ Filed from the 2026-08-12 verification-posture review:
   MN-447's hardened recycling test, which can now assert the same counter
   deltas as its standard sibling — this item's stated acceptance.
 
-- [ ] [major] **MN-450 — `reset_options_for_testing` is public solely for
-  tests.** `mnemosyne-local` re-exports it from `lib.rs` beside the real entry
-  points, so it sits in the crate's semver surface and in its rendered docs as
-  though a consumer might call it. The standards name this one directly: no
-  public API exists solely for tests — test through the public contract, or use
-  a `#[cfg(test)]` helper or `pub(crate)` visibility.
-  Found while enumerating the public surface for MN-449. It was the single
-  export that could not be given a meaningful consumer-facing example, which is
-  the tell — a doctest has no story to write for an item consumers should never
-  call.
-  Integration tests live in a separate crate, so `pub(crate)` alone will not
-  serve; check who actually needs the reset seam before choosing between a
-  `#[cfg(test)]` helper, `#[doc(hidden)]`, or restructuring those tests to not
-  need it. Removing a `pub` export is a breaking change.
-  Acceptance: the public surface contains no item existing only to serve tests,
-  or the residual one is `#[doc(hidden)]` with its reason recorded at the
-  definition and `cargo-semver-checks` run on the change.
+- [ ] [patch] **MN-451 — `ensure_options_initialized` has two export paths.**
+  It is `pub use`d at the crate root *and* re-exported from
+  `internal`. The root path exists because `impl_local_allocator_selector!`
+  expands to `$crate::ensure_options_initialized()`; the `internal` path exists
+  because `mnemosyne-heap` imports its sibling internals from there. One
+  concept, two supported paths, which is the duplication rule's second
+  occurrence.
+  Collapsing onto `internal` means changing what the macro expands to, so every
+  crate invoking the selector macro recompiles against the new path — mechanical
+  but wide, which is why MN-450 left it alone.
+  Acceptance: one export path, the macro and `mnemosyne-heap` agree on it, and
+  `cargo-semver-checks` classifies the removal of the other.
+
+- [x] [patch] **MN-450 — the test-only export is out of the entry-point
+  surface.** Done, and two claims in the original filing were wrong.
+  It said the item shows up in the crate's rendered docs. It does not:
+  `reset_options_for_testing` was already `#[doc(hidden)]`, as was
+  `mark_options_initialized`. I asserted that without checking. What was
+  actually true is narrower — both sat in the crate root's `pub use` list
+  beside the real entry points, so the surface *read* as though they belonged
+  there even though rustdoc never rendered them.
+  It also called removing the export breaking. `cargo-semver-checks` disagrees:
+  it does not treat `#[doc(hidden)]` items as public API and reports no new
+  failure for this change. The three it does report are MN-440's, already under
+  Unreleased. So this is `[patch]`, not `[major]`.
+  What changed: both moved into the crate's own `#[doc(hidden)] pub mod
+  internal`, which is where `mnemosyne-heap` already reaches for sibling
+  internals, leaving the root list to items a consumer calls. Each definition
+  now records why it is `pub` at all — the tests needing the reset are
+  integration tests in `mnemosyne-decay`, `mnemosyne-heap` and
+  `mnemosyne-prof`, which are separate crates, so neither `#[cfg(test)]` nor
+  `pub(crate)` reaches them — and `mark_options_initialized` is documented as
+  the seam behind `mnemosyne::configure` rather than a consumer call.
+  `ensure_options_initialized` stays at the root: the selector macro expands to
+  `$crate::ensure_options_initialized()`, and `mnemosyne-heap` calls it from
+  production code. It is exported from both the root and `internal`, which is a
+  duplicate path worth collapsing, but doing so means editing the macro's
+  expansion and every consumer of it — filed rather than folded in here.
+  311/311 workspace tests, 7/7 doctests, clippy `-D warnings` clean.
 
 - [x] [patch] **MN-449 — `mnemosyne-local` ships doctests.** Done for the
   consumer entry points: `thread_alloc`, `thread_alloc_layout`, `thread_free`,
