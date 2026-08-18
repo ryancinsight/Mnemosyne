@@ -399,9 +399,26 @@ Filed from the 2026-08-12 verification-posture review:
   argument. Counter deltas (`recycled_pages`, `recycle_sweeps`,
   `fresh_segments`) are asserted as deltas rather than absolutes, so a sibling
   test dirtying the thread's allocator cannot satisfy them accidentally.
-  Segment *reclamation* is still uncovered — that is `reclaim_owned_segments` on
-  allocator drop, which happens after any assertion could observe it. Recorded
-  as the remaining half of this area rather than claimed.
+  Segment reclamation is now covered too, in `reclaim_tests.rs`. The reason
+  recorded here for leaving it out was wrong: reclamation was said to run on
+  allocator drop, after any assertion could observe it. `reclaim_owned_segments`
+  is a `pub` method — a test constructs an allocator, calls it, and then looks.
+  The branch worth testing is the one choosing a segment's sink. An emptied
+  segment goes back to the pool for reuse; one still holding live blocks cannot
+  be unmapped at all, because the pointers its former owner handed out are still
+  in use, so the orphan pool is its only destination. Choosing wrong there hands
+  a use-after-free to whoever still holds a block, which is why the live case
+  asserts the block contents survive both the reclaim and a second allocator's
+  adoption of the segment.
+  Both are independently non-vacuous, checked by inverting the sink condition in
+  each direction: forcing live segments down the deallocate path fails the
+  orphan test and not the pooled one, and forcing every segment to orphan fails
+  the pooled test and not the orphan one. Neither assertion is doing the other's
+  job.
+  The blocks are freed through `thread_free`, which sees an owner-token mismatch
+  against a locally constructed allocator and routes them to the page's atomic
+  queue — the same path a foreign thread takes — so reclamation also drains that
+  queue on the way to deciding the count is zero.
 
 - [x] [major] **MN-448 — allocator stats ignored the policy and reported the
   wrong allocator.** Done, per ADR 0008.

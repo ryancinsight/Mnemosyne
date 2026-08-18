@@ -5,4 +5,5 @@ pub(crate) mod fixtures;
 mod fragmentation_tests;
 mod list_tests;
 mod realloc_tests;
+mod reclaim_tests;
 mod reentrant_tests;
