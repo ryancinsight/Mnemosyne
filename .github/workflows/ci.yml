@@ -246,3 +246,87 @@ jobs:
         run: >-
           cargo +nightly miri nextest run -p mnemosyne-local --locked
           --profile miri
+
+  test-aarch64:
+    name: Native tests (aarch64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    # Everything else here runs on x86-64, whose hardware memory model is
+    # strong enough to hide a missing Acquire or Release: a load that should
+    # have been Acquire usually behaves like one anyway. aarch64 does not do
+    # that, so this job is what turns "the orderings read correctly" into
+    # evidence. MN-434's audit of the allocator's Treiber loops and
+    # cross-thread free queue was a code review on an x86 host; the tests that
+    # exercise those paths only run against a weak memory model here.
+    #
+    # It also covers what a second platform covers generally: the cfg(unix)
+    # madvise and hugepage-hint paths on a different page-size regime, and the
+    # SEGMENT_ALIGN arithmetic against a kernel that need not use 4 KiB pages.
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
+        with:
+          tool: nextest@0.9.140
+
+      - name: Run native tests
+        run: >-
+          cargo nextest run --locked --workspace
+          --exclude mnemosyne-benchmarks
+
+  test-tsan:
+    name: ThreadSanitizer
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Loom proves the interleavings it models and Miri checks aliasing, but
+    # neither watches real threads race on real hardware. TSan does, and it
+    # sees the paths a model does not reach: the segment pools, the orphan
+    # hand-off, the cross-thread free queue under genuine concurrency.
+    #
+    # Scoped to the crates whose concurrency is the point. The `mnemosyne`
+    # crate is excluded because its integration tests install the allocator
+    # process-wide with `#[global_allocator]`, and an allocator swapped under
+    # the sanitizer's own bookkeeping is a fight this job does not need to
+    # pick to earn its keep. Widening it is a follow-up, not a prerequisite.
+    #
+    # `-Zbuild-std` is not optional here: TSan reports races against
+    # uninstrumented code as false positives, and std is uninstrumented
+    # unless it is rebuilt.
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the nightly sanitizer toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: nightly
+          components: rust-src
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+
+      - name: Run the concurrency-bearing crates under TSan
+        env:
+          RUSTFLAGS: -Zsanitizer=thread
+          RUSTDOCFLAGS: -Zsanitizer=thread
+          # Halt on the first report rather than continuing under a known-bad
+          # interleaving, and keep the second stack so a race names both sides.
+          TSAN_OPTIONS: halt_on_error=1 second_deadlock_stack=1
+        run: >-
+          cargo +nightly test --locked
+          -Zbuild-std --target x86_64-unknown-linux-gnu
+          -p mnemosyne-memory-core -p mnemosyne-arena -p mnemosyne-local
