@@ -668,15 +668,53 @@ Filed from the 2026-08-12 verification-posture review:
   acquire/release mistakes that aarch64 exposes. MN-435's ARM job is what would
   turn "looks right" into evidence.
 
-- [ ] [patch] **MN-435 — no sanitizer or non-x86 coverage.** CI runs one
-  ubuntu-latest x86-64 job, leaving ThreadSanitizer and AddressSanitizer unused
-  and the platform-specific paths — `cfg(unix)` madvise and hugepage hints,
-  `SEGMENT_ALIGN` assumptions, the Windows backend — untested on any second
-  target. aarch64 has a weaker memory model than x86-64, which is exactly where
-  over-relaxed orderings surface: x86-64 hides acquire/release mistakes that ARM
-  exposes, so MN-434 is materially weaker without it. A native ARM runner is
-  available (`ubuntu-24.04-arm`, already used by hermes). Acceptance: an aarch64
-  job plus a TSan job, or a recorded decision not to.
+- [ ] [patch] **MN-453 — TSan does not cover the global-allocator path.** The
+  `test-tsan` job runs `mnemosyne-memory-core`, `mnemosyne-arena` and
+  `mnemosyne-local`, and excludes the `mnemosyne` crate, whose integration
+  tests install the allocator process-wide via `#[global_allocator]`. That is
+  the configuration real consumers run, and it is the one place where the
+  allocator's own concurrency meets the sanitizer's bookkeeping — TSan
+  allocates for its shadow state through the same libc surface the shim
+  replaces.
+  Excluded to get the job landed on evidence rather than on a fight with an
+  unknown interaction; the three crates it does cover are where the lock-free
+  code actually lives, so the exclusion costs integration coverage rather than
+  the concurrency coverage the job exists for.
+  Worth an attempt before assuming it cannot work: run the `mnemosyne` crate's
+  tests under TSan and see what happens. If they are clean, widen the job. If
+  they are not, the finding is either a real race on the global path or a
+  documented interaction, and both are worth having written down.
+  Acceptance: the `mnemosyne` crate runs under TSan in CI, or the reason it
+  cannot is recorded at the job with what was observed.
+
+- [x] [patch] **MN-435 — aarch64 and ThreadSanitizer jobs.** Done; both run in
+  CI and both passed on their first execution (run 32183974171).
+  `test-aarch64` runs the workspace suite on a native `ubuntu-24.04-arm`
+  runner: 317 tests. This is what settles the caveat MN-434 closed with. That
+  audit read the segment pool's Treiber loops and the cross-thread free queue
+  on an x86-64 host, whose memory model is strong enough that a load which
+  should have been `Acquire` usually behaves like one anyway — so the audit was
+  a code review, not evidence. Those paths now execute against a weak memory
+  model. The job also covers the `cfg(unix)` madvise and hugepage-hint paths
+  and the `SEGMENT_ALIGN` arithmetic on a kernel that need not use 4 KiB pages.
+  `test-tsan` runs 171 tests across `mnemosyne-memory-core`, `mnemosyne-arena`
+  and `mnemosyne-local` under ThreadSanitizer, with no report. Loom proves the
+  interleavings it models and Miri checks aliasing; neither watches real
+  threads race on real hardware over the pools, the orphan hand-off, or the
+  cross-thread queue.
+  Verified the TSan job is not vacuous rather than trusting its green:
+  `-Zbuild-std` genuinely rebuilt `core`, `alloc`, `std`, `compiler_builtins`,
+  `panic_abort`, `panic_unwind` and `proc_macro` from `rust-src` under
+  `-Zsanitizer=thread`, 36 crates in 32s. Without that, std is uninstrumented
+  and TSan reports it as false positives — a job that would have looked green
+  for the wrong reason.
+  Scope not taken: TSan excludes the `mnemosyne` crate, whose integration tests
+  install the allocator process-wide with `#[global_allocator]`. Tracked as
+  MN-453. ASan is also not added — the item allowed "a TSan job", and the
+  memory errors ASan finds are the ones Miri already covers here with more
+  precision, while the data races it does not find are TSan's job.
+
+
 
 Filed from the 2026-07-13 allocator safety, memory, structure, and contention
 audit, in priority order:
