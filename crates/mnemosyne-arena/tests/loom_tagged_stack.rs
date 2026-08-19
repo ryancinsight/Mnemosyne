@@ -29,7 +29,6 @@
 //! ```
 #![cfg(loom)]
 
-use loom::cell::UnsafeCell;
 use loom::sync::Arc;
 use loom::sync::atomic::{AtomicUsize, Ordering};
 
@@ -56,30 +55,26 @@ fn tagged_successor(next: usize, from: usize) -> usize {
 /// A reduction of the stack: a tagged head plus per-node links.
 struct TaggedStack {
     head: AtomicUsize,
-    /// `links[i]` is node `i + 1`'s `next_free_segment`.
-    links: [UnsafeCell<usize>; NODES],
+    /// `links[i]` is node `i + 1`'s `next_free_segment`, atomic for the same
+    /// reason the shipped field is: a popper clearing it races a losing
+    /// popper's read of it.
+    links: [AtomicUsize; NODES],
 }
-
-// SAFETY: the links are only touched by a thread that owns the node — the
-// pusher before publishing it, or the popper after its CAS removed it — which
-// is the same discipline the shipped stack documents.
-unsafe impl Sync for TaggedStack {}
-unsafe impl Send for TaggedStack {}
 
 impl TaggedStack {
     fn new() -> Self {
         Self {
             head: AtomicUsize::new(EMPTY),
-            links: [UnsafeCell::new(EMPTY), UnsafeCell::new(EMPTY)],
+            links: [AtomicUsize::new(EMPTY), AtomicUsize::new(EMPTY)],
         }
     }
 
     fn set_link(&self, node: usize, next: usize) {
-        self.links[node - 1].with_mut(|l| unsafe { *l = next });
+        self.links[node - 1].store(next, Ordering::Relaxed);
     }
 
     fn link(&self, node: usize) -> usize {
-        self.links[node - 1].with(|l| unsafe { *l })
+        self.links[node - 1].load(Ordering::Relaxed)
     }
 
     /// Mirrors `splice_locked`: link the node to the observed head, then publish
@@ -120,11 +115,9 @@ impl TaggedStack {
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    // Mirrors the shipped `pop`, which clears the link here on
-                    // the strength of "the CAS made us the exclusive owner".
-                    // That is what MN-455 disputes: exclusivity holds for
-                    // threads that read the head *after* this CAS, not for one
-                    // that read it before and is still holding the pointer.
+                    // Mirrors the shipped `pop`, which clears the link here.
+                    // The clearing is kept — three tests pin it — and the race
+                    // it used to create is gone because the link is atomic.
                     self.set_link(node, EMPTY);
                     return node;
                 }
@@ -183,16 +176,11 @@ fn a_popped_node_carries_the_link_its_pusher_published() {
 /// A segment popped twice is a segment two threads both believe they own, which
 /// is the failure the tag exists to prevent: without it a stale head could
 /// still CAS successfully after the address was recycled.
-/// Currently fails, and the failure is the point: loom reports
+/// This is the model that found MN-455. It failed with loom reporting
 /// "Causality violation: Concurrent read and write accesses" between the
-/// winning popper's link-clearing write and a losing popper's read of that same
-/// field. Filed as MN-455 — the fix is to make the link atomic, which is a
-/// `[major]` change across 48 sites and wants its own increment.
-///
-/// Kept runnable rather than deleted: this is the reproduction, and running it
-/// is how the fix will be checked.
+/// winning popper's link-clearing write and a losing popper's read of the same
+/// field, and it passes now that the link is atomic.
 #[test]
-#[ignore = "reproduces the MN-455 data race; un-ignore with the fix"]
 fn concurrent_pops_never_hand_out_the_same_node() {
     loom::model(|| {
         let stack = Arc::new(TaggedStack::new());

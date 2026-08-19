@@ -118,7 +118,9 @@ fn huge_pool_concurrent_push_pop_conserves_every_segment() {
         // have a cleared link.
         unsafe {
             assert_eq!(
-                (*seg).next_free_segment,
+                (*seg)
+                    .next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed),
                 core::ptr::null_mut(),
                 "popped segment {seg:?} still has a dangling next link"
             );

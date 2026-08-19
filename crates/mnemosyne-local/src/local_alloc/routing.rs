@@ -454,7 +454,11 @@ unsafe fn acquire_policy_compatible_segment<P: AllocPolicy, B: HasSegmentPool>()
         if incompatible_orphan {
             // SAFETY: the segment is exclusively owned after the pop, so its
             // `next_free_segment` link is free to thread the deferral chain.
-            unsafe { (*seg_ptr).next_free_segment = deferred };
+            unsafe {
+                (*seg_ptr)
+                    .next_free_segment
+                    .store(deferred, core::sync::atomic::Ordering::Relaxed);
+            }
             deferred = seg_ptr;
             continue;
         }
@@ -465,8 +469,12 @@ unsafe fn acquire_policy_compatible_segment<P: AllocPolicy, B: HasSegmentPool>()
         // above; each node is a valid orphan whose link is cleared before the
         // pool takes ownership back.
         unsafe {
-            let next = (*deferred).next_free_segment;
-            (*deferred).next_free_segment = core::ptr::null_mut();
+            let next = (*deferred)
+                .next_free_segment
+                .load(core::sync::atomic::Ordering::Relaxed);
+            (*deferred)
+                .next_free_segment
+                .store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
             B::global_orphan_pool().push_unbounded(deferred);
             deferred = next;
         }

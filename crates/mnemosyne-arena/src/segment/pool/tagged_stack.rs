@@ -74,7 +74,9 @@ impl TaggedSegmentStack {
             // until the publishing CAS succeeds, so linking `tail` to the
             // observed stack head is unobservable to other threads until then.
             unsafe {
-                (*tail).next_free_segment = current_ptr;
+                (*tail)
+                    .next_free_segment
+                    .store(current_ptr, core::sync::atomic::Ordering::Relaxed);
             }
             let next = TaggedHead::tagged_successor(head, current);
             match self.state.head.compare_exchange_weak(
@@ -198,7 +200,11 @@ impl TaggedSegmentStack {
             // with the pushing thread's Release CAS before the link is read. A
             // concurrent push/pop changes the head tag, so our CAS fails and
             // retries rather than acting on a stale successor.
-            let next_ptr = unsafe { (*current_ptr).next_free_segment };
+            let next_ptr = unsafe {
+                (*current_ptr)
+                    .next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed)
+            };
             let next = TaggedHead::tagged_successor(next_ptr, current);
             match self.state.head.compare_exchange_weak(
                 current,
@@ -217,7 +223,9 @@ impl TaggedSegmentStack {
                     // SAFETY: the successful CAS removed `current_ptr` from the
                     // shared stack, so this thread now exclusively owns it.
                     unsafe {
-                        (*current_ptr).next_free_segment = core::ptr::null_mut();
+                        (*current_ptr)
+                            .next_free_segment
+                            .store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
                     }
                     return current_ptr;
                 }
@@ -280,7 +288,12 @@ mod tests {
             let popped = stack.pop();
             assert_eq!(popped, expected);
             unsafe {
-                assert_eq!((*popped).next_free_segment, core::ptr::null_mut());
+                assert_eq!(
+                    (*popped)
+                        .next_free_segment
+                        .load(core::sync::atomic::Ordering::Relaxed),
+                    core::ptr::null_mut()
+                );
             }
         }
         assert_eq!(stack.len(), 0);
@@ -304,16 +317,30 @@ mod tests {
         let b = boxed(0x2000);
         let c = boxed(0x3000);
         unsafe {
-            (*a).next_free_segment = b;
-            (*b).next_free_segment = c;
+            (*a).next_free_segment
+                .store(b, core::sync::atomic::Ordering::Relaxed);
+            (*b).next_free_segment
+                .store(c, core::sync::atomic::Ordering::Relaxed);
             stack.push_chain(a, c, 3);
         }
         assert_eq!(stack.len(), 4);
         // Link integrity: chain order preserved, tail linked to the prior head.
         unsafe {
-            assert_eq!((*a).next_free_segment, b);
-            assert_eq!((*b).next_free_segment, c);
-            assert_eq!((*c).next_free_segment, below);
+            assert_eq!(
+                (*a).next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed),
+                b
+            );
+            assert_eq!(
+                (*b).next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed),
+                c
+            );
+            assert_eq!(
+                (*c).next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed),
+                below
+            );
         }
 
         // Interleave a plain push: it lands above the spliced chain.
@@ -326,7 +353,12 @@ mod tests {
             let popped = stack.pop();
             assert_eq!(popped, expected);
             unsafe {
-                assert_eq!((*popped).next_free_segment, core::ptr::null_mut());
+                assert_eq!(
+                    (*popped)
+                        .next_free_segment
+                        .load(core::sync::atomic::Ordering::Relaxed),
+                    core::ptr::null_mut()
+                );
             }
         }
         assert_eq!(stack.len(), 0);
@@ -354,7 +386,11 @@ mod tests {
         let mut seen = 0usize;
         while !head.is_null() {
             seen += 1;
-            head = unsafe { (*head).next_free_segment };
+            head = unsafe {
+                (*head)
+                    .next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed)
+            };
         }
         assert_eq!(seen, nodes.len());
 
@@ -472,8 +508,10 @@ mod tests {
         let b = boxed(0x2000);
         let c = boxed(0x3000);
         unsafe {
-            (*a).next_free_segment = b;
-            (*b).next_free_segment = c;
+            (*a).next_free_segment
+                .store(b, core::sync::atomic::Ordering::Relaxed);
+            (*b).next_free_segment
+                .store(c, core::sync::atomic::Ordering::Relaxed);
         }
 
         let held = stack.mutation_lock.lock();
@@ -484,8 +522,16 @@ mod tests {
         assert_eq!(stack.len(), 1, "a declined push must not touch the stack");
         // The private chain is intact, so the caller can retry it whole.
         unsafe {
-            assert_eq!((*a).next_free_segment, b);
-            assert_eq!((*b).next_free_segment, c);
+            assert_eq!(
+                (*a).next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed),
+                b
+            );
+            assert_eq!(
+                (*b).next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed),
+                c
+            );
         }
         drop(held);
 
@@ -495,7 +541,12 @@ mod tests {
             let popped = stack.pop();
             assert_eq!(popped, expected);
             unsafe {
-                assert_eq!((*popped).next_free_segment, core::ptr::null_mut());
+                assert_eq!(
+                    (*popped)
+                        .next_free_segment
+                        .load(core::sync::atomic::Ordering::Relaxed),
+                    core::ptr::null_mut()
+                );
             }
         }
         assert_eq!(stack.len(), 0);
@@ -552,8 +603,18 @@ mod tests {
         assert_eq!(count, 2);
         assert_eq!(stack.len(), 0);
         unsafe {
-            assert_eq!((*head).next_free_segment, bottom);
-            assert_eq!((*bottom).next_free_segment, core::ptr::null_mut());
+            assert_eq!(
+                (*head)
+                    .next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed),
+                bottom
+            );
+            assert_eq!(
+                (*bottom)
+                    .next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed),
+                core::ptr::null_mut()
+            );
             let _ = Box::from_raw(top);
             let _ = Box::from_raw(bottom);
         }

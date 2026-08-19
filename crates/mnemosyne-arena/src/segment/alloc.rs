@@ -395,7 +395,11 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
             // SAFETY: `segment` is a node of the chain `take_all` atomically
             // detached from this pool, so it is a valid, exclusively-owned
             // `Segment`; `next` is read before the mapping is released.
-            head = unsafe { (*segment).next_free_segment };
+            head = unsafe {
+                (*segment)
+                    .next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed)
+            };
             match unsafe { release_segment_mapping::<B>(segment) } {
                 SegmentRelease::Released => purged += 1,
                 SegmentRelease::RetainedAfterFailure => {
@@ -406,7 +410,10 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
                     unsafe { node.push_unbounded(segment) };
                     while !head.is_null() {
                         let s = head;
-                        head = unsafe { (*s).next_free_segment };
+                        head = unsafe {
+                            (*s).next_free_segment
+                                .load(core::sync::atomic::Ordering::Relaxed)
+                        };
                         unsafe { node.push_unbounded(s) };
                     }
                     break;
@@ -465,9 +472,15 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
             // `[segment + PAGE_SIZE, segment + SEGMENT_SIZE)` — its user pages,
             // never the page-0 header — discards no live data, and pushing it
             // back keeps it cached for reuse.
-            head = unsafe { (*segment).next_free_segment };
+            head = unsafe {
+                (*segment)
+                    .next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed)
+            };
             unsafe {
-                (*segment).next_free_segment = core::ptr::null_mut();
+                (*segment)
+                    .next_free_segment
+                    .store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
                 let reset_ptr = (segment as usize + PAGE_SIZE) as *mut u8;
                 let reset_size = SEGMENT_SIZE - PAGE_SIZE;
                 if B::page_reset(reset_ptr, reset_size) {

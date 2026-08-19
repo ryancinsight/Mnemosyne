@@ -4,6 +4,17 @@
 
 ### Changed
 
+- **Breaking.** `Segment::next_free_segment` is an `AtomicPtr<Segment>` rather
+  than a `*mut Segment`. The pool stack's `pop` clears this link after its CAS,
+  on the reasoning that the CAS made the popper the exclusive owner — but that
+  only excludes threads reading the head *after* the CAS, so a popper that read
+  the same head before it could read the field while the winner wrote it. As a
+  plain pointer that is a data race and undefined behaviour; loom reported it as
+  a causality violation. Every access is `Relaxed`: the link carries no
+  happens-before obligation of its own, since publication and observation are
+  the head CAS's `Release`/`Acquire`. See ADR-adjacent notes at the field and
+  MN-455.
+
 - **Breaking.** `mnemosyne_local::ensure_options_initialized` is no longer
   exported from the crate root; it is reachable through
   `mnemosyne_local::internal`, which was already one of its two paths. It is

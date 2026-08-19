@@ -391,7 +391,9 @@ impl GlobalHugePool {
                 // SAFETY: `rejected_tail` was removed from the shared stack by
                 // this walk and is exclusively owned until the splice below.
                 unsafe {
-                    (*rejected_tail).next_free_segment = segment;
+                    (*rejected_tail)
+                        .next_free_segment
+                        .store(segment, core::sync::atomic::Ordering::Relaxed);
                 }
             }
             rejected_tail = segment;
@@ -470,7 +472,9 @@ impl GlobalHugePool {
                     // backend `B` is sound; `next` is captured before the mapping
                     // is freed.
                     let next = unsafe {
-                        let next = (*head).next_free_segment;
+                        let next = (*head)
+                            .next_free_segment
+                            .load(core::sync::atomic::Ordering::Relaxed);
                         let raw_ptr = (*head).raw_alloc_ptr;
                         let block_size = (*head).pages[0].block_size;
                         released_bytes += block_size;

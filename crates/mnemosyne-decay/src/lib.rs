@@ -261,7 +261,9 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
         } else {
             // Segment still has live allocations, retain it in the local intrusive list
             unsafe {
-                (*segment).next_free_segment = retained_head;
+                (*segment)
+                    .next_free_segment
+                    .store(retained_head, core::sync::atomic::Ordering::Relaxed);
             }
             retained_head = segment;
         }
@@ -270,9 +272,15 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
     // Push back retained segments to the orphan pool
     let mut curr = retained_head;
     while !curr.is_null() {
-        let next = unsafe { (*curr).next_free_segment };
+        let next = unsafe {
+            (*curr)
+                .next_free_segment
+                .load(core::sync::atomic::Ordering::Relaxed)
+        };
         unsafe {
-            (*curr).next_free_segment = core::ptr::null_mut();
+            (*curr)
+                .next_free_segment
+                .store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
             pool.push_unbounded(curr);
         }
         curr = next;

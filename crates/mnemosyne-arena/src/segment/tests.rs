@@ -162,7 +162,11 @@ fn node_segment_pool_take_all_detaches_whole_chain_in_one_lock() {
     while !head.is_null() {
         walked += 1;
         // SAFETY: `head` is a node of the chain just detached from `pool`.
-        head = unsafe { (*head).next_free_segment };
+        head = unsafe {
+            (*head)
+                .next_free_segment
+                .load(core::sync::atomic::Ordering::Relaxed)
+        };
     }
     assert_eq!(
         walked, 3,
@@ -628,7 +632,12 @@ fn test_huge_pool_exact_bucket_restores_rejected_head() {
         .expect("same-size bucket must scan past undersized heads");
     assert_eq!(popped, fitting);
     unsafe {
-        assert_eq!((*popped).next_free_segment, core::ptr::null_mut());
+        assert_eq!(
+            (*popped)
+                .next_free_segment
+                .load(core::sync::atomic::Ordering::Relaxed),
+            core::ptr::null_mut()
+        );
     }
 
     // Count and byte conservation: exactly the three rejects remain cached.
@@ -649,7 +658,12 @@ fn test_huge_pool_exact_bucket_restores_rejected_head() {
         assert_eq!(restored, expected);
         unsafe {
             assert_eq!((*restored).pages[0].block_size, expected_size);
-            assert_eq!((*restored).next_free_segment, core::ptr::null_mut());
+            assert_eq!(
+                (*restored)
+                    .next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed),
+                core::ptr::null_mut()
+            );
         }
     }
     assert_eq!(pool.retained_blocks(), 0);

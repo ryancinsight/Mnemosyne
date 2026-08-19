@@ -44,7 +44,11 @@ impl DeferredChain {
     unsafe fn push(&mut self, segment: *mut Segment) {
         // SAFETY: `segment` is live and exclusively owned per the contract, so
         // writing its pool link is unobservable to any other thread.
-        unsafe { (*segment).next_free_segment = self.head };
+        unsafe {
+            (*segment)
+                .next_free_segment
+                .store(self.head, core::sync::atomic::Ordering::Relaxed);
+        }
         if self.head.is_null() {
             self.tail = segment;
         }

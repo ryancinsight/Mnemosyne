@@ -627,29 +627,26 @@ Filed from the 2026-08-12 verification-posture review:
   --target x86_64-unknown-linux-gnu` closes that gap for a compile-time failure
   without waiting on CI.
 
-- [ ] [major] **MN-455 — `TaggedSegmentStack::pop` races on the node link.**
-  Found by the loom model MN-433 added for the pop protocol; loom reports
-  "Causality violation: Concurrent read and write accesses".
-  On a successful CAS the winning popper writes
-  `(*current_ptr).next_free_segment = null`, justified by a comment saying the
-  CAS made it the exclusive owner. Exclusivity holds for threads that read the
-  head *after* that CAS. A popper that read the same head *before* it still
-  holds the pointer and can read that field while the winner writes it: a data
-  race on a non-atomic field. Benign on hardware — the loser discards the value
-  when its own CAS fails — and undefined behaviour all the same.
-  Not fixed by dropping the write: three tests pin the cleared link, including
-  `huge_pool_concurrent_push_pop_conserves_every_segment`, which asserts a
-  popped segment has no dangling link. That was tried and reverted; the
-  invariant is treated as contractual here, not as tidiness.
-  The fix is to make `next_free_segment` an `AtomicPtr`, which keeps the
-  invariant and removes the race. The publication edge already lives on the head
-  CAS, so the link itself can be `Relaxed`. It is 48 sites across core, arena
-  and local and changes a `pub` field's type, so it is `[major]` and wants its
-  own increment rather than a tail-end edit that could introduce real races
-  where there were none.
-  Acceptance: `concurrent_pops_never_hand_out_the_same_node` un-ignored and
-  passing, the three pinned assertions intact, and `cargo-semver-checks` run on
-  the field change.
+- [x] [major] **MN-455 — the pool stack's node link is atomic.** Done.
+  `Segment::next_free_segment` is now an `AtomicPtr<Segment>`, which removes the
+  race without giving up the cleared-link invariant three tests pin. Every
+  access is `Relaxed`, and that is not a shortcut: the link carries no
+  happens-before obligation of its own, because publication and observation are
+  the head CAS's `Release`/`Acquire`, so a node reached through the head already
+  synchronizes with the push that linked it. The atomic is for the absence of a
+  race, not for ordering — recorded at the field.
+  The proof is the model that found it: `concurrent_pops_never_hand_out_the_same_node`
+  is un-ignored and passes, where before it reported loom's causality violation.
+  All three pinned assertions survive, now reading through the atomic, including
+  `huge_pool_concurrent_push_pop_conserves_every_segment`'s "still has a dangling
+  next link".
+  `cargo-semver-checks` classifies it, as the acceptance asked: 5 major checks,
+  `struct_pub_field_missing` among them. It rides an unreleased cycle already
+  major.
+  One scare worth recording: two arena Miri tests failed locally afterwards on a
+  memory leak. Checked against HEAD in a throwaway worktree rather than assumed
+  — they fail identically without this change. It is the known Windows-only
+  huge-pool retention leak, and CI on Linux passes them.
 
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and every exclusion is listed here so none is silent. Re-measured

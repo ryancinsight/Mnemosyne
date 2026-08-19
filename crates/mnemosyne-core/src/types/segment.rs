@@ -66,7 +66,22 @@ pub struct Segment {
     /// path, which never touches this field.
     pub prev_owned_segment: *mut Segment,
     /// Pointer to the next free segment in the global pool.
-    pub next_free_segment: *mut Segment,
+    ///
+    /// Atomic because the pool stack's `pop` genuinely races on it. The winning
+    /// popper clears this link after its CAS, on the reasoning that the CAS made
+    /// it the exclusive owner — but that only excludes threads reading the head
+    /// *after* the CAS. A popper that read the same head before it still holds
+    /// the node pointer and can read this field while the winner writes it. As a
+    /// plain `*mut`, that is a data race and undefined behaviour, benign as the
+    /// generated code may be; loom reports it as a causality violation
+    /// (`mnemosyne-arena`'s `loom_tagged_stack`, MN-455).
+    ///
+    /// `Relaxed` everywhere is sufficient and is what every site uses. This link
+    /// carries no happens-before obligation of its own: publication is the head
+    /// CAS's `Release`, and observation is its `Acquire`, so a node reached
+    /// through the head already synchronizes with the push that linked it. The
+    /// atomic here is for the absence of a race, not for ordering.
+    pub next_free_segment: crate::loom_shim::AtomicPtr<Segment>,
     /// If true, free list pointers in this segment are XOR-encrypted.
     pub free_list_encrypted: bool,
     /// NUMA node ID where this segment was allocated.
@@ -244,7 +259,8 @@ impl Segment {
             segment.is_current = false;
             segment.next_owned_segment = core::ptr::null_mut();
             segment.prev_owned_segment = core::ptr::null_mut();
-            segment.next_free_segment = core::ptr::null_mut();
+            (*core::ptr::addr_of_mut!(segment.next_free_segment)) =
+                crate::loom_shim::AtomicPtr::new(core::ptr::null_mut());
             segment.free_list_encrypted = false;
             segment.numa_node = numa_node;
             segment.page_occupied_mask = 0;
