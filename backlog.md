@@ -686,8 +686,8 @@ Filed from the 2026-08-12 verification-posture review:
   Miri exclusion itself is permanent, since interpreting that workload is not a
   goal. Neither is closed by relaxing the job.
 
-- [ ] [arch] **MN-433 — concurrency model checking.** First increment landed;
-  the seam and the first models exist and gate in CI.
+- [x] [arch] **MN-433 — concurrency model checking.** Done; the seam and all
+  the planned models exist and gate in CI.
   Delivered: `mnemosyne_core::loom_shim` re-exports loom's atomics under
   `cfg(loom)` and `core`'s otherwise, and `AtomicFreeList` imports through it,
   so models drive the shipped code rather than a transcription that could drift.
@@ -946,8 +946,17 @@ remainder, each Definition-of-Ready):
   threshold: `sample_size(10)` / 500 ms measurement yields CI widths the
   variance report itself flags at 15-25%. Fix: raise measurement time/samples
   for the gated rows (or gate on median with CI overlap), keep quick settings
-  for exploratory rows. Blocker: quiet machine for re-baselining. Acceptance:
-  gated-row CI half-width < the 5% threshold on the recorded baseline.
+  for exploratory rows. Blocker: quiet machine for re-baselining — re-verified
+  2026-08-19 rather than taken on trust, and still live: the host was running
+  six concurrent compiler processes with several stack repos under active peer
+  edits. Memory-bound criterion rows are exactly what that contaminates, so a
+  baseline taken here would encode the contention rather than the allocator.
+  Not deferred for want of effort: raising the sample counts is a two-line
+  change, but doing it without re-baselining invalidates the recorded baseline,
+  and re-baselining is the part that needs the quiet host. Both halves have to
+  land together.
+  Acceptance: gated-row CI half-width < the 5% threshold on the recorded
+  baseline.
 ## Completed
 
 - 2026-07-15 [patch] Profiler contention audit: code review identified the
