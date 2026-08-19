@@ -668,24 +668,23 @@ Filed from the 2026-08-12 verification-posture review:
   acquire/release mistakes that aarch64 exposes. MN-435's ARM job is what would
   turn "looks right" into evidence.
 
-- [ ] [patch] **MN-453 — TSan does not cover the global-allocator path.** The
-  `test-tsan` job runs `mnemosyne-memory-core`, `mnemosyne-arena` and
-  `mnemosyne-local`, and excludes the `mnemosyne` crate, whose integration
-  tests install the allocator process-wide via `#[global_allocator]`. That is
-  the configuration real consumers run, and it is the one place where the
-  allocator's own concurrency meets the sanitizer's bookkeeping — TSan
-  allocates for its shadow state through the same libc surface the shim
-  replaces.
-  Excluded to get the job landed on evidence rather than on a fight with an
-  unknown interaction; the three crates it does cover are where the lock-free
-  code actually lives, so the exclusion costs integration coverage rather than
-  the concurrency coverage the job exists for.
-  Worth an attempt before assuming it cannot work: run the `mnemosyne` crate's
-  tests under TSan and see what happens. If they are clean, widen the job. If
-  they are not, the finding is either a real race on the global path or a
-  documented interaction, and both are worth having written down.
-  Acceptance: the `mnemosyne` crate runs under TSan in CI, or the reason it
-  cannot is recorded at the job with what was observed.
+- [x] [patch] **MN-453 — TSan covers the global-allocator path.** Done, and the
+  exclusion turned out to be unnecessary. The job now includes
+  `mnemosyne-memory`, whose integration tests install the allocator
+  process-wide with `#[global_allocator]` (PR #63, run 32198740189).
+  The reasoning that scoped it out was a guess: that an allocator swapped under
+  the sanitizer's own bookkeeping would fight it, since TSan allocates shadow
+  state through the same libc surface the shim replaces. Measuring it took one
+  line and one CI run, and it is clean — TSan's shadow allocation and Rust's
+  `GlobalAlloc` sit at different layers and do not collide here. The guess cost
+  real coverage for exactly as long as it went unchecked.
+  Verified the pass is not vacuous: 196 tests across 17 binaries, up from 171,
+  with `mnemosyne-memory` compiled under `-Zsanitizer=thread` and the
+  `global_alloc_tests` binary among those that ran. A green job proves nothing
+  if the crate contributed no tests.
+  Lane note: this ran in the `fix/gitattributes` worktree, re-pointed rather
+  than opened as a third tree — it was clean, idle, and its one commit
+  duplicated work already on main. Lane retired and branch deleted on merge.
 
 - [x] [patch] **MN-435 — aarch64 and ThreadSanitizer jobs.** Done; both run in
   CI and both passed on their first execution (run 32183974171).
