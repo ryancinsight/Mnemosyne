@@ -451,6 +451,7 @@ name = "mnemosyne-arena"
 version = "0.4.0"
 dependencies = [
  "eunomia",
+ "loom",
  "mnemosyne-backend",
  "mnemosyne-memory-core",
  "themis-topology",
