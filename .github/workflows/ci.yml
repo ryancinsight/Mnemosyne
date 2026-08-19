@@ -295,11 +295,11 @@ jobs:
     # sees the paths a model does not reach: the segment pools, the orphan
     # hand-off, the cross-thread free queue under genuine concurrency.
     #
-    # Scoped to the crates whose concurrency is the point. The `mnemosyne`
-    # crate is excluded because its integration tests install the allocator
-    # process-wide with `#[global_allocator]`, and an allocator swapped under
-    # the sanitizer's own bookkeeping is a fight this job does not need to
-    # pick to earn its keep. Widening it is a follow-up, not a prerequisite.
+    # Includes the `mnemosyne` crate, whose integration tests install the
+    # allocator process-wide with `#[global_allocator]`. That is the
+    # configuration consumers actually run, and the one place the allocator's
+    # own concurrency meets the sanitizer's bookkeeping — TSan allocates its
+    # shadow state through the same libc surface the shim replaces.
     #
     # `-Zbuild-std` is not optional here: TSan reports races against
     # uninstrumented code as false positives, and std is uninstrumented
@@ -330,3 +330,4 @@ jobs:
           cargo +nightly test --locked
           -Zbuild-std --target x86_64-unknown-linux-gnu
           -p mnemosyne-memory-core -p mnemosyne-arena -p mnemosyne-local
+          -p mnemosyne-memory
