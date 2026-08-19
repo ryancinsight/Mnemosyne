@@ -627,6 +627,30 @@ Filed from the 2026-08-12 verification-posture review:
   --target x86_64-unknown-linux-gnu` closes that gap for a compile-time failure
   without waiting on CI.
 
+- [ ] [major] **MN-455 — `TaggedSegmentStack::pop` races on the node link.**
+  Found by the loom model MN-433 added for the pop protocol; loom reports
+  "Causality violation: Concurrent read and write accesses".
+  On a successful CAS the winning popper writes
+  `(*current_ptr).next_free_segment = null`, justified by a comment saying the
+  CAS made it the exclusive owner. Exclusivity holds for threads that read the
+  head *after* that CAS. A popper that read the same head *before* it still
+  holds the pointer and can read that field while the winner writes it: a data
+  race on a non-atomic field. Benign on hardware — the loser discards the value
+  when its own CAS fails — and undefined behaviour all the same.
+  Not fixed by dropping the write: three tests pin the cleared link, including
+  `huge_pool_concurrent_push_pop_conserves_every_segment`, which asserts a
+  popped segment has no dangling link. That was tried and reverted; the
+  invariant is treated as contractual here, not as tidiness.
+  The fix is to make `next_free_segment` an `AtomicPtr`, which keeps the
+  invariant and removes the race. The publication edge already lives on the head
+  CAS, so the link itself can be `Relaxed`. It is 48 sites across core, arena
+  and local and changes a `pub` field's type, so it is `[major]` and wants its
+  own increment rather than a tail-end edit that could introduce real races
+  where there were none.
+  Acceptance: `concurrent_pops_never_hand_out_the_same_node` un-ignored and
+  passing, the three pinned assertions intact, and `cargo-semver-checks` run on
+  the field change.
+
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and every exclusion is listed here so none is silent. Re-measured
   2026-08-18 by running each excluded crate rather than inferring from the
@@ -704,10 +728,23 @@ Filed from the 2026-08-12 verification-posture review:
   wrote both. It stops being harmless the moment a reader compares the owner
   against anything else, which is worth remembering before writing such a
   reader.
-  Still to model: the page publish/reclaim pair.
-  `TaggedSegmentStack` stays lowest priority: it serializes on a mutation lock
-  and already states its reclamation and Acquire-on-CAS-failure arguments, so
-  loom there confirms a written argument rather than probing an unexamined one.
+  Third increment: the page publish/reclaim pair and the pool stack are
+  modelled, which was everything left on this item.
+  The page layer's own concurrency is the check-then-drain in
+  `reclaim_thread_free_if_present_in_segment`: it tests `is_empty` and only then
+  drains, so a remote free landing in between is deferred to the next reclaim.
+  The invariant is conservation, not immediacy — the block is drained now or
+  still queued after, never neither, since neither would be a leak. Non-vacuous:
+  making `is_empty` consume the queue fails that model and only that one. The
+  page's `alloc_count` arithmetic is deliberately unmodelled; it is written only
+  by the owner, so there is no interleaving to explore.
+  `TaggedSegmentStack` was the lowest-priority model on the grounds that it
+  would confirm a written argument rather than probe an unexamined one. It did
+  not: modelling the pop protocol found a real data race, now MN-455. That is
+  the argument for doing the low-priority ones — a written argument is exactly
+  the kind that stays convincing after the code stops matching it.
+  Its publication model passes and gates in CI. The race reproduction is kept
+  runnable and `#[ignore]`d against MN-455 rather than deleted.
 
 - [x] [patch] **MN-434 — the SeqCst audit.** Done, and the premise was wrong:
   this crate has **zero** `SeqCst` in shipped code. All 53 counted occurrences

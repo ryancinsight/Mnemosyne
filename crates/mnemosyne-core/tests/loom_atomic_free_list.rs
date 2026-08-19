@@ -176,3 +176,53 @@ fn drain_resets_both_address_and_count() {
         assert_eq!(head, 0x3000);
     });
 }
+
+/// A push racing the reclaim fast path is deferred, never lost.
+///
+/// This is the concurrency the *page* layer adds over the head protocol.
+/// `Page::reclaim_thread_free_if_present_in_segment` checks `is_empty` and only
+/// then drains, so a remote free landing between the check and the drain is not
+/// picked up by that reclaim. That is correct — the block stays queued for the
+/// next one — but only if it is genuinely still queued. If the check could
+/// consume or mask the push, the block would be neither drained nor pending,
+/// which is a leaked block: memory the owner will never hand out again and no
+/// remote thread will free twice.
+///
+/// So the invariant is conservation, not immediacy: across the race, the pushed
+/// block is observed exactly once, either by this reclaim or by the queue it is
+/// still sitting in afterwards.
+///
+/// The page's own `alloc_count` arithmetic is deliberately not modelled: it is
+/// written only by the owning thread, so there is no interleaving to explore.
+/// What is shared here is the queue, and this is the shape that touches it.
+#[test]
+fn a_push_racing_the_reclaim_fast_path_is_deferred_not_lost() {
+    loom::model(|| {
+        let list = Arc::new(HeadProtocol::new());
+
+        let pusher = {
+            let list = Arc::clone(&list);
+            loom::thread::spawn(move || list.push(0x3000))
+        };
+
+        let reclaimed = {
+            let list = Arc::clone(&list);
+            loom::thread::spawn(move || {
+                // Exactly `reclaim_thread_free_if_present_in_segment`'s shape.
+                if list.is_empty() { 0 } else { list.pop_all().1 }
+            })
+            .join()
+            .expect("reclaimer panicked")
+        };
+        pusher.join().expect("pusher panicked");
+
+        let still_queued = usize::from(!list.is_empty());
+        assert_eq!(
+            reclaimed + still_queued,
+            1,
+            "the freed block was neither drained by this reclaim nor left in \
+             the queue for the next one: reclaimed {reclaimed}, \
+             still queued {still_queued}"
+        );
+    });
+}

@@ -26,3 +26,10 @@ themis = { workspace = true }
 
 [lints]
 workspace = true
+
+# Loom is pulled in only under `cfg(loom)`, which is set exclusively by the
+# dedicated model runs (`RUSTFLAGS="--cfg loom"`). A cargo feature would be
+# additive and could unify instrumented atomics into an ordinary build; a cfg
+# cannot.
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"

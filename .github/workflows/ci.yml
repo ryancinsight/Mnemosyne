@@ -126,6 +126,17 @@ jobs:
           cargo test --locked -p mnemosyne-memory-core
           --test loom_segment_ownership --release
 
+      # The pool stack's pop protocol. One model is `#[ignore]`d: it reproduces
+      # the MN-455 data race between a popper clearing a node's link and another
+      # popper still reading it, and stays runnable so the fix can be checked
+      # against it.
+      - name: Loom models — pool stack pop protocol
+        env:
+          RUSTFLAGS: "--cfg loom"
+        run: >-
+          cargo test --locked -p mnemosyne-arena
+          --test loom_tagged_stack --release
+
   # Miri has repeatedly been the tool that found real defects here — the
   # 2026-07-13 page-metadata aliasing violation and the AlignedVec::into_vec
   # leak were both caught under it (gap_audit.md). Until now it ran only by
