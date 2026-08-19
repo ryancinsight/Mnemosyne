@@ -6,6 +6,8 @@
 
 use super::traits::{TlsProvider, TlsSlotAccess};
 use crate::ThreadAllocator;
+#[cfg(nightly_tls_active)]
+use crate::tls_slot::LocalAllocatorSlot;
 use mnemosyne_arena::HasSegmentPool;
 
 /// Unifies the nightly `#[thread_local]` compiler-backed TLS path.
@@ -20,7 +22,8 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
         {
             S::get_slot_nightly(|slot| {
                 S::arm_thread_exit(slot);
-                slot.with_allocator(f)
+                // SAFETY: `allocator_ptr` returns this slot's own live address.
+                unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
             })
         }
         #[cfg(not(nightly_tls_active))]
@@ -36,7 +39,13 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NightlyTls<B, S>
     ) -> Option<R> {
         #[cfg(nightly_tls_active)]
         {
-            S::get_slot_nightly(|slot| unsafe { slot.with_allocator_unguarded(f) })
+            S::get_slot_nightly(|slot| {
+                // SAFETY: `allocator_ptr` returns this slot's own live address,
+                // and the caller's no-re-entry contract is forwarded unchanged.
+                unsafe {
+                    LocalAllocatorSlot::<B>::with_allocator_unguarded(slot.allocator_ptr(), f)
+                }
+            })
         }
         #[cfg(not(nightly_tls_active))]
         {

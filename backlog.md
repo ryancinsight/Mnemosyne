@@ -903,15 +903,22 @@ Added from the 2026-06-27 deep audit of the under-examined crates
 
 - [x] [patch] status=done owner=codex scope=`crates/mnemosyne-core/src/{size_class.rs,types/page/init.rs}` and `crates/mnemosyne-local/src/local_alloc/routing.rs`, with matching PM entries; last-update=2026-07-26. Replaced the three production `unreachable_unchecked` exits with safe checked boundaries: a const lookup-table guard, the canonical corruption abort for an exhausted page, and null propagation for an unavailable current segment. Acceptance met: production source scan is clear, valid allocation behavior passes 187/187 focused all-feature nextest tests, formatting/check/Clippy/doctest/rustdoc gates pass, and no performance gain is claimed.
 
-- [ ] [patch] (Optional, low value) The cached-pointer fast path (check cell/OS
-  slot; if non-null reconstitute + `is_allocating` guard + run; else init) is
-  structurally repeated between `with_allocator` and `with_allocator_unguarded`
-  within `CachedCellTls` and `NativeOsTls`/`AsmTls`. A shared helper
-  parameterized over the slot accessor could factor it, but the providers
-  genuinely differ in slot mechanism (OS key vs TEB asm vs `thread_local!` cell
-  vs nightly static) and in guard-vs-unguard semantics, so the remaining overlap
-  is small and a helper risks obscuring the hot path. Re-evaluate only if a
-  fourth caching provider appears.
+- [x] [patch] **Shared helper for the cached-pointer TLS fast path — decided
+  against, trigger re-checked.** The check-cell-or-OS-slot, reconstitute, guard,
+  run shape repeats between `with_allocator` and `with_allocator_unguarded`
+  across `CachedCellTls`, `NativeOsTls` and `AsmTls`, but the providers differ
+  in slot mechanism and in guard-versus-unguard semantics, so a shared helper
+  would obscure the hot path for little gain. The recorded re-open trigger was a
+  fourth caching provider appearing.
+  Re-checked rather than assumed: the crate has five providers, but `NightlyTls`
+  and `StandardTls` reach their slot directly and cache no pointer, so there are
+  still three caching providers. The trigger has not fired and the decision
+  stands; closed as decided rather than left open indefinitely.
+  Checking it turned up something else — `NightlyTls` was still calling the
+  `&self` forms of `with_allocator`/`with_allocator_unguarded` that MN-440
+  replaced, so `mnemosyne-local` did not compile under `nightly_tls_active`.
+  Fixed in the same change and verified with
+  `RUSTFLAGS="--cfg nightly_tls_active" cargo +nightly check`.
 
 - [ ] [perf-experiment] status=blocked owner=codex scope=`crates/mnemosyne-arena/src/segment/pool/{cache_aligned.rs,tagged_stack.rs,list.rs}`, `crates/mnemosyne-benchmarks/benches/segment_lock.rs`, and matching PM entries; last-update 2026-07-23. Benchmark whether combining the reclamation-safe pool stack's
   `head` + `count` onto ONE cache line beats the current per-atomic isolation.
@@ -969,8 +976,11 @@ remainder, each Definition-of-Ready):
     asserts the policy's `ENABLE_FREE_LIST_ENCRYPTION` matches the segment's
     recorded mode; three latently-unsound integration tests restructured, a
     `should_panic` pin added, the contract documented on `thread_alloc`.
-    The full type-level fix (allocator keyed by encryption class) remains
-    open under AR-1 pending ADR sign-off.
+    The full type-level fix landed: ADR 0001 is Accepted, and the selector
+    keys the TLS slot by encryption class — `EncryptedSelectedTls` alongside
+    `SelectedTls`, reached through `with_allocator_for_policy`. The "pending
+    ADR sign-off" note was stale; verified against the selector macro rather
+    than the record.
   - **AR-7** [minor→major]: edition 2024 / resolver 3 across all 11 crates;
     `rust-version = 1.87` (clippy MSRV proved 1.85 dishonest —
     const `is_multiple_of`); 30 `unsafe extern`, 19 `#[unsafe(no_mangle)]`,
