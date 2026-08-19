@@ -119,8 +119,13 @@ impl Page {
     /// invariant.
     #[inline(always)]
     pub fn parent_segment(&self) -> *mut Segment {
-        let self_addr = self as *const Page as usize;
-        (self_addr & !(crate::constants::SEGMENT_SIZE - 1)) as *mut Segment
+        // `map_addr` keeps this page's provenance, which spans the segment
+        // mapping it lives in; an integer cast would mint a wildcard. See
+        // `locate_segment`.
+        (self as *const Page)
+            .map_addr(|a| a & !(crate::constants::SEGMENT_SIZE - 1))
+            .cast_mut()
+            .cast::<Segment>()
     }
 
     /// Recovers the parent segment from a raw page pointer without retagging
@@ -135,8 +140,11 @@ impl Page {
     /// `page` must identify a live page inside its segment mapping.
     #[inline(always)]
     pub unsafe fn parent_segment_of(page: *const Page) -> *mut Segment {
-        let addr = page as usize;
-        (addr & !(crate::constants::SEGMENT_SIZE - 1)) as *mut Segment
+        // As in `parent_segment`: keep the page's provenance, change only the
+        // address.
+        page.map_addr(|a| a & !(crate::constants::SEGMENT_SIZE - 1))
+            .cast_mut()
+            .cast::<Segment>()
     }
 
     /// Returns the physical start address of this page in memory.

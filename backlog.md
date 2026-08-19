@@ -658,12 +658,26 @@ Filed from the 2026-08-12 verification-posture review:
   (joined under MN-445) and `mnemosyne-decay` (joined here), all under both
   borrow models with leak checking on, plus `mnemosyne-backend` once MN-454
   fixed its unix build under Miri.
-  (a) Still excluded, with the measured reason:
+  (a) Still excluded, and the reason is now diagnosed rather than described.
+  Core's three segment/page recovery paths — `locate_segment`, `locate_page`,
+  `Page::parent_segment` — rebuilt pointers by masking an address and casting
+  the integer, which mints *wildcard* provenance. Migrated to strict provenance
+  (`map_addr` and a `&raw mut` projection), which is a real improvement on its
+  own: the gated crates keep passing under both borrow models, and core no
+  longer launders provenance through an integer round-trip.
+  It did not let the excluded crates in, and what it revealed is why. Their
+  failures changed from "wildcard access rejected near a protected `Unique`" to
+  "tag does not exist in the borrow stack" — the honest error. The wildcard was
+  covering for a pointer chain that genuinely lacks segment-spanning
+  provenance: a block pointer handed to a caller does not carry provenance over
+  its segment header, so recovering the header from it is not merely
+  unfashionable but unjustified.
   - `mnemosyne-heap`, `mnemosyne-prof`, `mnemosyne-c-shim` and the top-level
-    `mnemosyne-memory` report Undefined Behavior — pointers reconstructed from
-    exposed provenance conflicting with a protected `Unique`, the same shape
-    MN-443 fixed in core. Each joins when that is migrated to strict
-    provenance, not before.
+    `mnemosyne-memory` remain out. Letting them in means blocks being produced
+    from a segment-spanning pointer in the first place — free-list construction
+    and the alloc fast path — not another accessor rewrite. That is the next
+    increment here, and it is a larger one than this item's earlier framing
+    implied.
   - `mnemosyne-hardened` has no tests, so adding it would buy nothing.
   - `mnemosyne-benchmarks` is excluded everywhere (snmalloc build).
   `mnemosyne-backend` needed two changes: one test marked, since `make_guard`
