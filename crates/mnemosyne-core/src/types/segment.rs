@@ -146,14 +146,7 @@ unsafe impl Sync for Segment {}
 #[inline(always)]
 pub unsafe fn locate_segment(ptr: *mut u8) -> (*mut Segment, usize) {
     let ptr_val = ptr as usize;
-    // `map_addr`, not an integer cast. A segment header and every block inside
-    // it belong to one mapping, so the block pointer's provenance already
-    // covers the header; `map_addr` keeps that provenance and changes only the
-    // address. Casting the masked integer instead mints a *wildcard* pointer,
-    // and a wildcard access is rejected wherever a protected `Unique` covers
-    // the location — which is what kept several crates out of the Miri gate
-    // (MN-436).
-    let segment = ptr.map_addr(|a| a & !(crate::constants::SEGMENT_SIZE - 1)) as *mut Segment;
+    let segment = (ptr_val & !(crate::constants::SEGMENT_SIZE - 1)) as *mut Segment;
     let page_index = (ptr_val >> crate::constants::PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
     (segment, page_index)
 }
@@ -173,21 +166,10 @@ pub unsafe fn locate_segment(ptr: *mut u8) -> (*mut Segment, usize) {
 #[inline(always)]
 pub unsafe fn locate_page(segment: *mut Segment, page_index: usize) -> *mut Page {
     debug_assert!(page_index < PAGES_PER_SEGMENT);
-    // Strict provenance: project out of `segment` rather than rebuilding the
-    // address and re-materializing a pointer with `with_exposed_provenance_mut`.
-    // Both land on the same byte, but the exposed round-trip produces a
-    // *wildcard* tag, and a wildcard access is rejected wherever a protected
-    // `Unique` covers the location — which is what kept `mnemosyne-heap` out of
-    // the Miri gate, its `free_owned` holding a `&mut` across the occupancy
-    // update (MN-436).
-    //
-    // The reason this file originally reached for exposed provenance was to
-    // avoid retaining a tag from an earlier `&mut Segment::pages` projection
-    // across an alloc/free boundary. That concern is unaffected: nothing is
-    // retained here, the projection is derived from the caller's `segment`
-    // pointer at the moment of the call, and `&raw mut` creates no intermediate
-    // reference to the segment or to the pages array.
-    unsafe { &raw mut (*segment).pages[page_index] }
+    let page_address = segment.expose_provenance()
+        + core::mem::offset_of!(Segment, pages)
+        + page_index * core::mem::size_of::<Page>();
+    core::ptr::with_exposed_provenance_mut(page_address)
 }
 
 /// A segment's owner identity: who owns it, and which allocator cache its

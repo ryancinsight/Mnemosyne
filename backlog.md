@@ -660,14 +660,16 @@ Filed from the 2026-08-12 verification-posture review:
   fixed its unix build under Miri.
   (a) Still excluded, and the reason is now diagnosed rather than described.
   Core's three segment/page recovery paths — `locate_segment`, `locate_page`,
-  `Page::parent_segment` — rebuilt pointers by masking an address and casting
-  the integer, which mints *wildcard* provenance. Migrated to strict provenance
-  (`map_addr` and a `&raw mut` projection), which is a real improvement on its
-  own: the gated crates keep passing under both borrow models, and core no
-  longer launders provenance through an integer round-trip.
-  It did not let the excluded crates in, and what it revealed is why. Their
-  failures changed from "wildcard access rejected near a protected `Unique`" to
-  "tag does not exist in the borrow stack" — the honest error. The wildcard was
+  `Page::parent_segment` — rebuild pointers by masking an address and casting
+  the integer, which mints *wildcard* provenance. Migrating them to strict
+  provenance (`map_addr` and a `&raw mut` projection) was tried and **reverted**:
+  it passed locally on Windows and failed core's own Miri job on Linux
+  (`randomized_page_free_list_uses_seeded_permutation`, "tag does not exist in
+  the borrow stack"). The migration cannot land before the thing it exposed is
+  fixed, because core's own tests depend on the laundering too.
+  What the attempt revealed is the point of keeping it recorded. Failures
+  changed from "wildcard access rejected near a protected `Unique`" to
+  "tag does not exist in the borrow stack" — the honest error. The wildcard is
   covering for a pointer chain that genuinely lacks segment-spanning
   provenance: a block pointer handed to a caller does not carry provenance over
   its segment header, so recovering the header from it is not merely
@@ -675,9 +677,11 @@ Filed from the 2026-08-12 verification-posture review:
   - `mnemosyne-heap`, `mnemosyne-prof`, `mnemosyne-c-shim` and the top-level
     `mnemosyne-memory` remain out. Letting them in means blocks being produced
     from a segment-spanning pointer in the first place — free-list construction
-    and the alloc fast path — not another accessor rewrite. That is the next
+    and the alloc fast path — not another accessor rewrite, and core's own
+    seeded-permutation test says core is on the same footing. That is the next
     increment here, and it is a larger one than this item's earlier framing
-    implied.
+    implied. Do it bottom-up (block production first, accessors last), and
+    verify on Linux: the accessor-only attempt looked clean on a Windows host.
   - `mnemosyne-hardened` has no tests, so adding it would buy nothing.
   - `mnemosyne-benchmarks` is excluded everywhere (snmalloc build).
   `mnemosyne-backend` needed two changes: one test marked, since `make_guard`
