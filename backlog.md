@@ -564,7 +564,7 @@ Filed from the 2026-08-12 verification-posture review:
   borrow models: 40s Stacked, 287s Tree Borrows, the latter down from 482s
   because the drained memory is no longer tracked to exit.
 
-- [ ] [patch] status=in-progress owner=claude scope=`crates/mnemosyne-core/src/types/segment.rs`, `crates/mnemosyne-core/src/types/page/occupancy.rs`, `crates/mnemosyne-local/src/{free.rs,local_alloc.rs,local_alloc/segment/reclaim.rs,tests.rs}`, `crates/mnemosyne-heap/src/raw_heap.rs`; last-update=2026-08-14. **MN-441 — `is_current` is non-atomic.** Done, by the second of the two
+- [x] [patch] **MN-441 — `is_current` is owner-only by construction.** Done, by the second of the two
   options: documented and *enforced* as owner-only rather than made atomic.
   The audit settles the question the item left open. The only remote-thread
   path into a segment is `thread_free_cold`, which pushes into the page's
@@ -584,6 +584,13 @@ Filed from the 2026-08-12 verification-posture review:
   accessors `debug_assert!` the caller's owner token was considered and
   rejected: `mnemosyne-core` cannot see TLS owner identity without inverting the
   layering, and `occupancy.rs` holds no token to pass.
+  Bookkeeping note: this entry sat as `- [ ] status=in-progress owner=claude`
+  from 2026-08-14 until now, with a body reading "Done". The work landed in
+  e421584 and merged; only the marker and the claim were left stale. A claim
+  that outlives its work is worse than no claim — the stale-claim sweep reads
+  it as a live hold on `segment.rs`, `occupancy.rs`, `free.rs`,
+  `local_alloc.rs`, `reclaim.rs` and `raw_heap.rs`, so a peer looking for work
+  would have skipped that whole scope rather than taken it.
   Also recorded the invariant the flag carries at a pool boundary, which the
   item did not name: a segment must never reach a global pool with the flag set,
   or the next thread to claim it inherits a stale "currently being sliced" state
