@@ -64,11 +64,13 @@
   merged in PR #9 (`01e7de7`, implementation `09b2ef8`); provider gates and the
   consumer wheel boundary are green.
 
-- [x] [patch] status=review owner=codex scope=`Cargo.toml`, `Cargo.lock`, and
+- [x] [patch] status=done owner=codex scope=`Cargo.toml`, `Cargo.lock`, and
   release artifacts; remove the Themis revision quarantine so consumers follow
   its default branch through one canonical source identity. Acceptance: focused
   allocator gates are green and the Moirai consumer no longer duplicates the
-  Themis source.
+  Themis source. The current manifest uses the canonical git-plus-version
+  dependency without a `rev` pin or path override; the checked item is closed
+  and has no remaining provider-side action.
 
 ## Atlas in-house replacement roadmap — mnemosyne slice [arch]
 
