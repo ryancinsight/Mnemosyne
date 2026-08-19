@@ -109,12 +109,22 @@ jobs:
       # Release profile: loom explores a large state space and a debug build
       # makes that needlessly slow. The models assert behaviour, not timing, so
       # the profile does not affect what they prove.
-      - name: Loom models
+      - name: Loom models — free-list head protocol
         env:
           RUSTFLAGS: "--cfg loom"
         run: >-
           cargo test --locked -p mnemosyne-memory-core
           --test loom_atomic_free_list --release
+
+      # The ownership pair, added under MN-433. Both edge models fail if the
+      # publishing store is weakened to Relaxed, so they test the
+      # Release/Acquire edge rather than merely exercising it.
+      - name: Loom models — segment ownership protocol
+        env:
+          RUSTFLAGS: "--cfg loom"
+        run: >-
+          cargo test --locked -p mnemosyne-memory-core
+          --test loom_segment_ownership --release
 
   # Miri has repeatedly been the tool that found real defects here — the
   # 2026-07-13 page-metadata aliasing violation and the AlignedVec::into_vec

@@ -15,24 +15,19 @@ pub struct Segment {
     /// Atomic because it is genuinely shared: the owning thread writes it when
     /// it claims or orphans the segment, while *remote* threads read it during
     /// cross-thread free to decide routing. As a plain `usize` that pairing was
-    /// a data race — Miri's detector reported the orphaning write in
-    /// `segment::reclaim` against the concurrent read in `free`. `AtomicUsize`
-    /// has `usize`'s size and alignment, so the pinned segment layout is
-    /// unchanged. Access it through [`Segment::owner`] and
-    /// [`Segment::set_owner`], which carry the release/acquire pairing.
-    pub owner: core::sync::atomic::AtomicUsize,
-    /// Raw owner allocator cache pointer used after ownership has been proved.
+    /// Who owns this segment, and the allocator cache to route its frees to.
     ///
-    /// Atomic for the same reason as [`Segment::owner`]: the owning thread
-    /// writes it when claiming or orphaning the segment while remote threads
-    /// read it on the cross-thread free path. As a plain pointer that pairing
-    /// was a data race, which Miri reported against the orphaning write in
-    /// `segment::reclaim`. `AtomicPtr` matches a raw pointer's size and
-    /// alignment, so the pinned segment layout is unchanged. Access through
-    /// [`Segment::owner_allocator`] / [`Segment::set_owner_allocator`], which
-    /// carry the same Release/Acquire pairing as the owner token they
-    /// accompany.
-    pub owner_allocator: core::sync::atomic::AtomicPtr<core::ffi::c_void>,
+    /// One field rather than two because the pair is only ever meaningful
+    /// together: an observer that reads an owner and then reads a stale or
+    /// absent allocator for it has read a torn identity. Keeping them as
+    /// independent members made that tearing expressible; keeping them in one
+    /// unit with private members means the only way to touch either is through
+    /// the paired accessors, which carry the Release/Acquire pairing.
+    ///
+    /// It is also what makes the protocol model-checkable. A loom model cannot
+    /// build a whole `Segment` — the embedded `[Page; PAGES_PER_SEGMENT]` would
+    /// create one instrumented atomic per page — but it can build this.
+    pub ownership: SegmentOwnership,
     /// True while this segment is the owner's active page-slicing segment.
     ///
     /// Deliberately non-atomic, and private so that stays true: this is the one
@@ -162,6 +157,77 @@ pub unsafe fn locate_page(segment: *mut Segment, page_index: usize) -> *mut Page
     core::ptr::with_exposed_provenance_mut(page_address)
 }
 
+/// A segment's owner identity: who owns it, and which allocator cache its
+/// frees route to.
+///
+/// The two are published and observed as a pair. A reader that sees an owner
+/// and then reads an allocator belonging to the *previous* owner has read a
+/// torn identity and will route a free to the wrong cache, which is why the
+/// members are private and reachable only through the accessors below.
+///
+/// Atomics come from [`crate::loom_shim`], so a loom model drives this exact
+/// code rather than a transcription of it. That is the point of the type
+/// existing separately from `Segment`: a model cannot construct a whole
+/// `Segment`, whose `[Page; PAGES_PER_SEGMENT]` would create one instrumented
+/// atomic per page, but it can construct this.
+pub struct SegmentOwnership {
+    owner: crate::loom_shim::AtomicUsize,
+    allocator: crate::loom_shim::AtomicPtr<core::ffi::c_void>,
+}
+
+impl SegmentOwnership {
+    /// An unowned pair.
+    ///
+    /// `const` in ordinary builds; loom's instrumented atomics are not
+    /// const-constructible, so the model build gets a non-const twin.
+    #[cfg(not(loom))]
+    pub const fn unowned() -> Self {
+        Self {
+            owner: crate::loom_shim::AtomicUsize::new(SegmentOwner::NONE.0),
+            allocator: crate::loom_shim::AtomicPtr::new(core::ptr::null_mut()),
+        }
+    }
+
+    /// Loom-build constructor. See the `cfg(not(loom))` form above.
+    #[cfg(loom)]
+    pub fn unowned() -> Self {
+        Self {
+            owner: crate::loom_shim::AtomicUsize::new(SegmentOwner::NONE.0),
+            allocator: crate::loom_shim::AtomicPtr::new(core::ptr::null_mut()),
+        }
+    }
+
+    /// Reads the owner.
+    ///
+    /// `Acquire`: pairs with [`Self::set_owner`]'s `Release` so everything the
+    /// owner wrote before claiming or orphaning is visible to whoever observes
+    /// the identity.
+    #[inline(always)]
+    pub fn owner(&self) -> SegmentOwner {
+        SegmentOwner(self.owner.load(crate::loom_shim::Ordering::Acquire))
+    }
+
+    /// Publishes the owner.
+    #[inline(always)]
+    pub fn set_owner(&self, owner: SegmentOwner) {
+        self.owner
+            .store(owner.0, crate::loom_shim::Ordering::Release);
+    }
+
+    /// Reads the owner's allocator cache.
+    #[inline(always)]
+    pub fn allocator(&self) -> *mut core::ffi::c_void {
+        self.allocator.load(crate::loom_shim::Ordering::Acquire)
+    }
+
+    /// Publishes the owner's allocator cache.
+    #[inline(always)]
+    pub fn set_allocator(&self, allocator: *mut core::ffi::c_void) {
+        self.allocator
+            .store(allocator, crate::loom_shim::Ordering::Release);
+    }
+}
+
 impl Segment {
     /// Initializes a segment header at a given aligned address.
     ///
@@ -174,9 +240,7 @@ impl Segment {
         unsafe {
             let segment = &mut *aligned_ptr;
             segment.raw_alloc_ptr = raw_alloc_ptr;
-            (*core::ptr::addr_of_mut!(segment.owner)) =
-                core::sync::atomic::AtomicUsize::new(SegmentOwner::NONE.0);
-            segment.owner_allocator = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+            (*core::ptr::addr_of_mut!(segment.ownership)) = SegmentOwnership::unowned();
             segment.is_current = false;
             segment.next_owned_segment = core::ptr::null_mut();
             segment.prev_owned_segment = core::ptr::null_mut();
@@ -345,9 +409,9 @@ impl Segment {
     pub unsafe fn owner_allocator(segment: *const Segment) -> *mut core::ffi::c_void {
         // SAFETY: caller guarantees a live header; the projection touches only
         // the atomic field.
-        let field = unsafe { &raw const (*segment).owner_allocator };
-        // SAFETY: `field` addresses the initialized atomic slot.
-        unsafe { (*field).load(core::sync::atomic::Ordering::Acquire) }
+        let field = unsafe { &raw const (*segment).ownership };
+        // SAFETY: `field` addresses the initialized ownership pair.
+        unsafe { (*field).allocator() }
     }
 
     /// Publishes the cached owner-allocator pointer.
@@ -358,9 +422,9 @@ impl Segment {
     #[inline(always)]
     pub unsafe fn set_owner_allocator(segment: *const Segment, allocator: *mut core::ffi::c_void) {
         // SAFETY: caller guarantees a live header.
-        let field = unsafe { &raw const (*segment).owner_allocator };
-        // SAFETY: `field` addresses the initialized atomic slot.
-        unsafe { (*field).store(allocator, core::sync::atomic::Ordering::Release) };
+        let field = unsafe { &raw const (*segment).ownership };
+        // SAFETY: `field` addresses the initialized ownership pair.
+        unsafe { (*field).set_allocator(allocator) };
     }
 
     /// Reads the active-slicing flag.
@@ -416,9 +480,9 @@ impl Segment {
     pub unsafe fn owner(segment: *const Segment) -> SegmentOwner {
         // SAFETY: caller guarantees a live header; the projection touches only
         // the `owner` field.
-        let field = unsafe { &raw const (*segment).owner };
-        // SAFETY: `field` addresses the initialized atomic owner slot.
-        SegmentOwner(unsafe { (*field).load(core::sync::atomic::Ordering::Acquire) })
+        let field = unsafe { &raw const (*segment).ownership };
+        // SAFETY: `field` addresses the initialized ownership pair.
+        unsafe { (*field).owner() }
     }
 
     /// Publishes a new owner identity for this segment.
@@ -434,9 +498,9 @@ impl Segment {
     #[inline(always)]
     pub unsafe fn set_owner(segment: *const Segment, owner: SegmentOwner) {
         // SAFETY: caller guarantees a live header.
-        let field = unsafe { &raw const (*segment).owner };
-        // SAFETY: `field` addresses the initialized atomic owner slot.
-        unsafe { (*field).store(owner.0, core::sync::atomic::Ordering::Release) };
+        let field = unsafe { &raw const (*segment).ownership };
+        // SAFETY: `field` addresses the initialized ownership pair.
+        unsafe { (*field).set_owner(owner) };
     }
 
     /// Returns true if this segment is owned by the allocator represented by the given raw slot pointer.

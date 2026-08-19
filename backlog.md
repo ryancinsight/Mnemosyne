@@ -680,10 +680,31 @@ Filed from the 2026-08-12 verification-posture review:
   store makes loom find the lost-push and swallowed-push interleavings, so the
   assertions can fail. That check matters — the suite completes in well under a
   second, which on its own looks indistinguishable from exploring nothing.
-  Remaining: the models cover the head protocol, reduced to a token payload
-  because a full model would have to allocate real `Block`s inside a segment
-  mapping. Still to model — the page publish/reclaim pair, and the segment
-  ownership protocol MN-439 exposed, which is where the known unfixed races are.
+  Second increment landed: the segment ownership protocol is modelled.
+  It needed a structural change first. `Segment` embeds
+  `[Page; PAGES_PER_SEGMENT]`, each with an `AtomicFreeList`, so under
+  `cfg(loom)` building one segment creates one instrumented atomic per page and
+  the state space explodes — the ownership pair was unmodellable while it lived
+  inside `Segment`. It is now a `SegmentOwnership` type holding both fields with
+  private members, which a model *can* build, so these models drive the shipped
+  code rather than a transcription. The extraction stands on its own merits too:
+  the two fields are only meaningful together, and holding them as independent
+  members is what made a torn identity expressible at all.
+  Four models, two of which fail if the publishing store is weakened to
+  `Relaxed`, so they test the Release/Acquire edge rather than exercising it:
+  observing an owner implies seeing what that owner published before claiming;
+  observing an orphan implies seeing the teardown; the pair converges after a
+  claim; and no reader observes a value that was never published.
+  **A finding worth keeping**, because the first version of these models
+  asserted it as a bug and loom was right to reject them: the owner and the
+  allocator are two stores, so a reader landing between them sees a mixed pair.
+  No ordering fixes that — only a single atomic location or a lock would. It is
+  harmless today because the free path reads the allocator only after matching
+  the owner against its *own* token, and a thread that matches is the one that
+  wrote both. It stops being harmless the moment a reader compares the owner
+  against anything else, which is worth remembering before writing such a
+  reader.
+  Still to model: the page publish/reclaim pair.
   `TaggedSegmentStack` stays lowest priority: it serializes on a mutation lock
   and already states its reclamation and Acquire-on-CAS-failure arguments, so
   loom there confirms a written argument rather than probing an unexamined one.
