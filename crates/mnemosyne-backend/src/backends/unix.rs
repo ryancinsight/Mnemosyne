@@ -281,6 +281,10 @@ mod tests {
     use super::*;
     use mnemosyne_core::MemoryBackend;
 
+    // The hugepage hint this exercises is itself `not(miri)`, and so is the
+    // `SEGMENT_SIZE` import it needs, so under Miri the test would neither
+    // compile nor have a subject. Gated to match the code it covers.
+    #[cfg(not(miri))]
     #[test]
     fn segment_sized_allocation_survives_hugepage_hint() {
         // The MADV_HUGEPAGE hint is purely advisory: a Linux kernel that
@@ -312,6 +316,10 @@ mod tests {
         );
     }
 
+    // The hugepage hint this exercises is itself `not(miri)`, and so is the
+    // `SEGMENT_SIZE` import it needs, so under Miri the test would neither
+    // compile nor have a subject. Gated to match the code it covers.
+    #[cfg(not(miri))]
     #[test]
     fn sub_segment_allocation_skips_hugepage_hint() {
         // Mappings smaller than SEGMENT_SIZE must not receive the hint
