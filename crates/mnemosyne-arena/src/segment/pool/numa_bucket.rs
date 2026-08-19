@@ -3,13 +3,8 @@ use themis::NumaNodeId;
 pub(crate) const NUMA_BUCKETS: usize = 16;
 
 #[inline(always)]
-pub(crate) fn bucket_from_u32(node: u32) -> usize {
+pub(crate) fn bucket_index(node: u32) -> usize {
     NumaNodeId::new(node).bucket_index::<NUMA_BUCKETS>().index()
-}
-
-#[inline(always)]
-pub(crate) fn bucket_from_usize(node: usize) -> usize {
-    bucket_from_u32(node as u32)
 }
 
 #[inline]
@@ -17,7 +12,10 @@ pub(crate) fn steal_from<T>(
     start_node: usize,
     mut pop_from_node: impl FnMut(usize) -> Option<T>,
 ) -> Option<T> {
-    let start = NumaNodeId::new(start_node as u32).bucket_index::<NUMA_BUCKETS>();
+    let start = NumaNodeId::new(
+        u32::try_from(start_node).expect("invariant: NUMA node identifiers fit in u32"),
+    )
+    .bucket_index::<NUMA_BUCKETS>();
     for offset in 1..NUMA_BUCKETS {
         if let Some(value) = pop_from_node(start.wrapping_add(offset).index()) {
             return Some(value);
@@ -55,5 +53,12 @@ mod tests {
 
         assert_eq!(result, Some(5));
         assert_eq!(visited, vec![3, 4, 5]);
+    }
+
+    #[test]
+    fn bucket_index_wraps_node_ids_into_the_fixed_bucket_count() {
+        assert_eq!(bucket_index(0), 0);
+        assert_eq!(bucket_index(15), 15);
+        assert_eq!(bucket_index(19), 3);
     }
 }

@@ -67,8 +67,8 @@ impl NodeSegmentPool {
     ///
     /// # Safety
     ///
-    /// As [`super::tagged_stack::TaggedSegmentStack::push_chain`]: `head` and
-    /// `tail` must be exclusively-owned `Segment`s linked through
+    /// The backing stack's `push_chain` contract applies: `head` and `tail`
+    /// must be exclusively-owned `Segment`s linked through
     /// `next_free_segment` with `tail` exactly `len - 1` hops from `head`
     /// (`len >= 1`). Ownership of every chain node transfers to the pool.
     #[inline]

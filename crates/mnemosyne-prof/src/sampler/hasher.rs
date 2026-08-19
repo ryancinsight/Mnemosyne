@@ -17,11 +17,6 @@ impl Hasher for FastHasher {
     }
 
     #[inline(always)]
-    fn write_u8(&mut self, i: u8) {
-        self.0 = self.0.wrapping_mul(109) ^ (i as u64);
-    }
-
-    #[inline(always)]
     fn write_usize(&mut self, i: usize) {
         // Construction: fmix64 (the MurmurHash3/SplitMix64 finalizer) gives a
         // full per-word avalanche, then a rotate-xor-multiply step chains the
