@@ -247,25 +247,28 @@ jobs:
           cargo +nightly miri nextest run -p mnemosyne-local --locked
           --profile miri
 
-      # decay and backend join under MN-436, which records this job's
-      # exclusions so none is silent and shrinks them as crates come clean.
-      # Measured rather than assumed: heap, prof, c-shim and the top-level
-      # crate still report Undefined Behavior from pointers reconstructed out
-      # of exposed provenance, and stay out until that is migrated. hardened
-      # has no tests, so adding it would buy nothing.
-      - name: Miri — decay and backend (Stacked Borrows)
+      # decay joins under MN-436, which records this job's exclusions so none
+      # is silent and shrinks them as crates come clean. Measured rather than
+      # assumed: heap, prof, c-shim and the top-level crate still report
+      # Undefined Behavior from pointers reconstructed out of exposed
+      # provenance, and stay out until that is migrated; hardened has no tests.
+      # backend is held back by MN-454 — its unix backend gates the
+      # `SEGMENT_SIZE` import on `not(miri)` while tests use it unconditionally,
+      # so the crate does not compile under Miri on Linux. That is invisible
+      # from a Windows host, which compiles a different backend.
+      - name: Miri — decay (Stacked Borrows)
         env:
           MIRIFLAGS: -Zmiri-disable-isolation
         run: >-
-          cargo +nightly miri nextest run -p mnemosyne-decay -p mnemosyne-backend
-          --locked --profile miri
+          cargo +nightly miri nextest run -p mnemosyne-decay --locked
+          --profile miri
 
-      - name: Miri — decay and backend (Tree Borrows)
+      - name: Miri — decay (Tree Borrows)
         env:
           MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-tree-borrows
         run: >-
-          cargo +nightly miri nextest run -p mnemosyne-decay -p mnemosyne-backend
-          --locked --profile miri
+          cargo +nightly miri nextest run -p mnemosyne-decay --locked
+          --profile miri
 
   test-aarch64:
     name: Native tests (aarch64)

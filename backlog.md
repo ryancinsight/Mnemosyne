@@ -608,13 +608,31 @@ Filed from the 2026-08-12 verification-posture review:
   the package the accessors and the occupancy readers live in. The later
   `mnemosyne-decay` lifecycle failure was tracked and closed as MN-446.
 
+- [ ] [patch] **MN-454 — `mnemosyne-backend` does not compile under Miri on
+  Linux.** `backends/unix.rs:4` gates the `SEGMENT_SIZE` import on
+  `all(target_os = "linux", not(miri))`, while tests at lines 292 and 317 use
+  the constant unconditionally, so `cargo miri` on Linux fails to build the
+  test list with `E0425: cannot find value SEGMENT_SIZE`.
+  Latent until now because the crate had never run under Miri, and invisible
+  from a Windows development host, which compiles the Windows backend instead —
+  the crate passed 13/13 there, which is how it reached CI. That is the lesson
+  worth keeping: a local Miri pass on Windows says nothing about the unix
+  backend, and this crate exists precisely to differ per platform.
+  The fix is to make the import and the tests that use it agree. The tests in
+  question exercise the madvise and hugepage-hint paths, which are themselves
+  `not(miri)`, so gating them the same way is likely right — but decide it by
+  compiling for Linux rather than by reading, given how this surfaced.
+  Acceptance: `cargo +nightly miri nextest run -p mnemosyne-backend` builds and
+  passes on Linux, and the crate joins the Miri job.
+
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
   deliberately and every exclusion is listed here so none is silent. Re-measured
   2026-08-18 by running each excluded crate rather than inferring from the
   original note, which had gone stale in both halves.
   Covered now: `mnemosyne-memory-core`, `mnemosyne-arena`, `mnemosyne-local`
-  (joined under MN-445), and `mnemosyne-decay` + `mnemosyne-backend` (joined
-  here), all under both borrow models with leak checking on.
+  (joined under MN-445) and `mnemosyne-decay` (joined here), all under both
+  borrow models with leak checking on. `mnemosyne-backend` passed locally and
+  failed in CI; held back as MN-454.
   (a) Still excluded, with the measured reason:
   - `mnemosyne-heap`, `mnemosyne-prof`, `mnemosyne-c-shim` and the top-level
     `mnemosyne-memory` report Undefined Behavior — pointers reconstructed from
@@ -623,10 +641,10 @@ Filed from the 2026-08-12 verification-posture review:
     provenance, not before.
   - `mnemosyne-hardened` has no tests, so adding it would buy nothing.
   - `mnemosyne-benchmarks` is excluded everywhere (snmalloc build).
-  `mnemosyne-backend` needed one test marked: `make_guard` installs a guard
-  page through `mprotect`/`VirtualProtect`, which Miri does not implement, so
-  it reported failure on a healthy mapping. The subject is unobservable under
-  the interpreter, not broken, and the reason is recorded at the test.
+  `mnemosyne-backend` also needed one test marked — `make_guard` installs a
+  guard page through `mprotect`/`VirtualProtect`, which Miri does not
+  implement, so it reported failure on a healthy mapping — but that was not
+  enough, see MN-454.
   (b) The two arena `*_concurrency` binaries stay out of Miri: sized for native
   execution (8 threads x 50,000 iterations for the huge pool) and hopeless
   under an interpreter that preempts at every atomic. **Its stated acceptance
