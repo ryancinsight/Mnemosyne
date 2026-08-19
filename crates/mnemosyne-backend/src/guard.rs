@@ -41,6 +41,11 @@ mod tests {
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
+    // `make_guard` installs a guard page through the OS (`mprotect` on unix,
+    // `VirtualProtect` on Windows). Miri does not implement either, so it
+    // reports failure and the assertion below fires on a healthy mapping —
+    // the subject is unobservable under the interpreter rather than broken.
+    #[cfg_attr(miri, ignore = "guard-page install is an OS call Miri cannot make")]
     fn wrapper_make_guard_records_confirmed_install_and_keeps_mapping_reserved() {
         let _guard = TEST_LOCK
             .lock()

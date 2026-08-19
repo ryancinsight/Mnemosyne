@@ -247,6 +247,26 @@ jobs:
           cargo +nightly miri nextest run -p mnemosyne-local --locked
           --profile miri
 
+      # decay and backend join under MN-436, which records this job's
+      # exclusions so none is silent and shrinks them as crates come clean.
+      # Measured rather than assumed: heap, prof, c-shim and the top-level
+      # crate still report Undefined Behavior from pointers reconstructed out
+      # of exposed provenance, and stay out until that is migrated. hardened
+      # has no tests, so adding it would buy nothing.
+      - name: Miri — decay and backend (Stacked Borrows)
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+        run: >-
+          cargo +nightly miri nextest run -p mnemosyne-decay -p mnemosyne-backend
+          --locked --profile miri
+
+      - name: Miri — decay and backend (Tree Borrows)
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-tree-borrows
+        run: >-
+          cargo +nightly miri nextest run -p mnemosyne-decay -p mnemosyne-backend
+          --locked --profile miri
+
   test-aarch64:
     name: Native tests (aarch64)
     runs-on: ubuntu-24.04-arm

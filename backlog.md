@@ -609,18 +609,38 @@ Filed from the 2026-08-12 verification-posture review:
   `mnemosyne-decay` lifecycle failure was tracked and closed as MN-446.
 
 - [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
-  deliberately and each exclusion is listed here so none is silent:
-  (a) crates other than `mnemosyne-arena` and `mnemosyne-memory-core` — the
-  segment-alignment and tagged-pointer structures reconstruct pointers from
-  exposed provenance, which Miri reports (gap_audit.md, 2026-07-13); each
-  further crate joins only once it passes;
-  (b) the `*_concurrency` stress binaries, sized for native execution
-  (8 threads x 50,000 iterations for the huge pool) and hopeless under an
-  interpreter that preempts at every atomic — interleaving coverage belongs to
-  MN-433, not to Miri.
-  Acceptance: (a) shrinks as crates are cleaned or the exposed-provenance sites
-  are migrated to strict provenance; (b) is retired by MN-433 landing. Neither
-  should be closed by relaxing the job.
+  deliberately and every exclusion is listed here so none is silent. Re-measured
+  2026-08-18 by running each excluded crate rather than inferring from the
+  original note, which had gone stale in both halves.
+  Covered now: `mnemosyne-memory-core`, `mnemosyne-arena`, `mnemosyne-local`
+  (joined under MN-445), and `mnemosyne-decay` + `mnemosyne-backend` (joined
+  here), all under both borrow models with leak checking on.
+  (a) Still excluded, with the measured reason:
+  - `mnemosyne-heap`, `mnemosyne-prof`, `mnemosyne-c-shim` and the top-level
+    `mnemosyne-memory` report Undefined Behavior — pointers reconstructed from
+    exposed provenance conflicting with a protected `Unique`, the same shape
+    MN-443 fixed in core. Each joins when that is migrated to strict
+    provenance, not before.
+  - `mnemosyne-hardened` has no tests, so adding it would buy nothing.
+  - `mnemosyne-benchmarks` is excluded everywhere (snmalloc build).
+  `mnemosyne-backend` needed one test marked: `make_guard` installs a guard
+  page through `mprotect`/`VirtualProtect`, which Miri does not implement, so
+  it reported failure on a healthy mapping. The subject is unobservable under
+  the interpreter, not broken, and the reason is recorded at the test.
+  (b) The two arena `*_concurrency` binaries stay out of Miri: sized for native
+  execution (8 threads x 50,000 iterations for the huge pool) and hopeless
+  under an interpreter that preempts at every atomic. **Its stated acceptance
+  was wrong, though.** It said retirement waits on MN-433, but loom models only
+  `AtomicFreeList` — the pools it would need to cover have no model. Meanwhile
+  MN-435's TSan job runs `mnemosyne-arena`'s full test set, and both
+  `huge_pool_concurrency` and `segment_pool_concurrency` execute under it
+  (verified in run 32198740189). So the coverage those binaries represent is
+  already met, by a race detector on the real workload rather than a model of a
+  transcription of it.
+  Acceptance: (a) shrinks as the exposed-provenance sites migrate — it shrank
+  by two crates here; (b) is met for coverage purposes by the TSan job, and the
+  Miri exclusion itself is permanent, since interpreting that workload is not a
+  goal. Neither is closed by relaxing the job.
 
 - [ ] [arch] **MN-433 — concurrency model checking.** First increment landed;
   the seam and the first models exist and gate in CI.
