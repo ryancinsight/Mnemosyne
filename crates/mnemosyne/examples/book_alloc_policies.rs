@@ -6,6 +6,8 @@
 //! calls [`purge`] to release cached free segments back to the OS and confirms
 //! that the retained count drops.
 
+extern crate mnemosyne;
+
 use mnemosyne::{Mnemosyne, memory_stats, purge};
 
 #[global_allocator]
