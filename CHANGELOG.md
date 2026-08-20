@@ -4,6 +4,8 @@
 
 - Enable the shared hosted mdBook test for the two included Mnemosyne
   allocator examples by staging the real `mnemosyne-memory` library target.
+  Exact PR and merged-default CI, Miri, MSRV, mdBook, and Pages gates pass;
+  live Pages returns HTTP 200.
 
 ### Changed
 
