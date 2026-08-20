@@ -1,5 +1,19 @@
 # Backlog
 
+## ATLAS-MNEMOSYNE-BOOK-TEST-2026-08-20 — Execute included book examples [patch] — implementation complete; hosted verification pending
+
+- **Scope:** shared Pages caller and the two included allocator examples;
+  allocator implementation and the peer-staged `Cargo.lock` remain outside
+  this increment.
+- **Acceptance:** the caller pins the shared Atlas workflow, enables
+  `mdbook-test`, stages package `mnemosyne-memory` under library target
+  `mnemosyne`, and hosted CI executes both included examples with Rust 1.97.0.
+- **Baseline:** local `mdbook test docs/book` reached both examples but failed
+  with unresolved `mnemosyne` imports because the caller provided no staged
+  library or explicit crate declaration.
+- **Landed source:** workflow and example changes are ready on branch
+  `ci/mnemosyne-book-test`; hosted verification is pending.
+
 - [x] [patch] **ATLAS-MNEMOSYNE-CONFORMANCE-101 — close the fifth
   existence-only assertion (2026-08-17).** Replaced the NUMA binding test's
   `is_ok()` assertion with an exact `Ok(())` value assertion in

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Enable the shared hosted mdBook test for the two included Mnemosyne
+  allocator examples by staging the real `mnemosyne-memory` library target.
+
 ### Changed
 
 - **Breaking.** `Segment::next_free_segment` is an `AtomicPtr<Segment>` rather

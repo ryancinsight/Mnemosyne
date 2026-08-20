@@ -10,6 +10,8 @@
 //! pool, which covers recursive FFT twiddle computation, nested solver
 //! residuals, and similar patterns common in kwavers and apollo.
 
+extern crate mnemosyne;
+
 use mnemosyne::scratch::{MAX_POOL_SLOTS, ScratchPool};
 
 fn dot_product(a: &[f64], b: &[f64]) -> f64 {

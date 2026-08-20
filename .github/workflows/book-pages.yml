@@ -24,10 +24,14 @@ jobs:
     # Body owned once by Atlas (ADR 0035); the caller passes only the
     # built output directory. Enable Pages once per repository under
     # Settings -> Pages -> Source: GitHub Actions.
-    uses: ryancinsight/atlas/.github/workflows/book-pages.yml@4c31dd753f06dd93b4c04798cf781df253e3e532
+    uses: ryancinsight/atlas/.github/workflows/book-pages.yml@53eb15ae2fa7ee9192e5d006989a430269fdc881
     permissions:
       contents: read
       pages: write
       id-token: write # OIDC Pages artifact flow; no deploy key.
     with:
       output-path: target/book/mnemosyne
+      mdbook-test: true
+      rust-toolchain: "1.97.0"
+      cargo-package: mnemosyne-memory
+      cargo-crate: mnemosyne
