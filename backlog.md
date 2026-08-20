@@ -1,6 +1,6 @@
 # Backlog
 
-## ATLAS-MNEMOSYNE-BOOK-TEST-2026-08-20 — Execute included book examples [patch] — implementation complete; hosted verification pending
+## ATLAS-MNEMOSYNE-BOOK-TEST-2026-08-20 — Execute included book examples [patch] — done 2026-08-20
 
 - **Scope:** shared Pages caller and the two included allocator examples;
   allocator implementation and the peer-staged `Cargo.lock` remain outside
@@ -11,8 +11,13 @@
 - **Baseline:** local `mdbook test docs/book` reached both examples but failed
   with unresolved `mnemosyne` imports because the caller provided no staged
   library or explicit crate declaration.
-- **Landed source:** workflow and example changes are ready on branch
-  `ci/mnemosyne-book-test`; hosted verification is pending.
+- **Landed source:** source `a527380a15e8979c3b773a4e9891f1d53b0bc45c`, PR #65,
+  and merged default `7003eb3d09a716a91b4560e1810d65970c874daa`. Exact PR Rust,
+  MSRV, Loom, TSan, aarch64, Miri, and Pages checks pass; post-merge CI
+  `32341399588`, MSRV `32341399599`, and Deploy mdBook `32341400004` pass.
+  Live Pages returns HTTP 200 with the expected Mnemosyne title.
+- **Delivery:** the Atlas gitlink records the merged default and this provider
+  item is closed.
 
 - [x] [patch] **ATLAS-MNEMOSYNE-CONFORMANCE-101 — close the fifth
   existence-only assertion (2026-08-17).** Replaced the NUMA binding test's
