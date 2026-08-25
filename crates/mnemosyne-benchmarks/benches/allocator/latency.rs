@@ -7,6 +7,7 @@ use super::allocation::{AllocatedBlock, alloc_dealloc, burst_alloc_dealloc, deal
 use super::compat::bench_jemalloc;
 use super::constants::{BATCH_ALLOCS, HUGE_LAYOUT, LARGE_LAYOUT, MEDIUM_LAYOUT, SMALL_LAYOUT};
 use super::failure::require_allocated;
+#[cfg(feature = "snmalloc")]
 use super::platform::snmalloc_skips;
 use super::registration::{bench_batched_case, bench_iter_case};
 
@@ -50,6 +51,7 @@ pub fn bench_allocator_cycles(c: &mut Criterion) {
             &layout,
             cycle,
         );
+        #[cfg(feature = "snmalloc")]
         if !snmalloc_skips(name) {
             bench_iter_case(
                 &mut group,
@@ -162,6 +164,7 @@ pub fn bench_allocator_alloc(c: &mut Criterion) {
             setup,
             alloc_only,
         );
+        #[cfg(feature = "snmalloc")]
         if !snmalloc_skips(name) {
             bench_batched_case(
                 &mut group,
@@ -231,6 +234,7 @@ pub fn bench_allocator_dealloc(c: &mut Criterion) {
             setup,
             dealloc,
         );
+        #[cfg(feature = "snmalloc")]
         if !snmalloc_skips(name) {
             bench_batched_case(
                 &mut group,
@@ -293,14 +297,17 @@ pub fn bench_allocator_bursts(c: &mut Criterion) {
             &layout,
             burst,
         );
-        bench_iter_case(
-            &mut group,
-            "SnMalloc",
-            name,
-            &snmalloc_rs::SnMalloc,
-            &layout,
-            burst,
-        );
+        #[cfg(feature = "snmalloc")]
+        {
+            bench_iter_case(
+                &mut group,
+                "SnMalloc",
+                name,
+                &snmalloc_rs::SnMalloc,
+                &layout,
+                burst,
+            );
+        }
         #[cfg(jemalloc_available)]
         bench_iter_case(
             &mut group,

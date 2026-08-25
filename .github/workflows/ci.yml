@@ -53,10 +53,6 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      # mnemosyne-benchmarks is excluded throughout: it pulls snmalloc-rs,
-      # whose build fails under current host compilers (atlas
-      # backlog.md#atlas-mnemosyne-snmalloc-1). Everything else is covered.
-      #
       # No lint allows remain. The three former command-line allows were
       # retired 2026-08-05 (ATLAS-MNEMOSYNE-CI-1): the workspace passes bare
       # `-D warnings` under the pinned 1.97.0 toolchain with
@@ -66,11 +62,14 @@ jobs:
       # and the single missing_const_for_thread_local false positive is
       # already suppressed at its site with its own removal trigger
       # (crates/mnemosyne-arena/src/segment/pool/segment_pool.rs).
+      #
+      # mnemosyne-benchmarks participates everywhere now: the SnMalloc
+      # comparator that could not build on hosted runners is opt-in via the
+      # `snmalloc` feature (default builds omit it), so the crate compiles
+      # clean under default features. The dedicated `benchmark-hygiene` job
+      # below lints and smoke-runs it.
       - name: Lint all affected targets
-        run: >-
-          cargo clippy --locked --workspace --exclude mnemosyne-benchmarks
-          --all-targets --
-          -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       # mnemosyne-c-shim is back in scope. Its test binary used to exit
       # without producing a test list on Linux: the shim defines malloc,
@@ -79,14 +78,10 @@ jobs:
       # through the shim before it was ready. Those seven symbols are now
       # exported only outside cfg(test), so the harness links a normal libc.
       - name: Run native tests
-        run: >-
-          cargo nextest run --locked --workspace
-          --exclude mnemosyne-benchmarks
+        run: cargo nextest run --locked --workspace
 
       - name: Run documentation tests
-        run: >-
-          cargo test --locked --workspace
-          --exclude mnemosyne-benchmarks --doc
+        run: cargo test --locked --workspace --doc
 
   # Loom enumerates thread interleavings rather than sampling them, which is
   # what the `*_concurrent_push_pop` stress tests do. It is the tool for the
@@ -339,9 +334,38 @@ jobs:
           tool: nextest@0.9.140
 
       - name: Run native tests
-        run: >-
-          cargo nextest run --locked --workspace
-          --exclude mnemosyne-benchmarks
+        run: cargo nextest run --locked --workspace
+
+  # The benchmark crate is first-class verification surface, not dead weight:
+  # three Criterion targets and their shared harness modules are linted with
+  # the workspace floor and compiled+executed once here so a broken bench
+  # cannot hide behind `--exclude`. `cargo test --benches` runs each Criterion
+  # binary in its test mode (one cheap pass per group, no measurement), which
+  # is the single-iteration smoke; the measured runs stay local by design.
+  # Timeout derives from the five-minute job target plus the jemalloc
+  # source build tikv-jemallocator performs on Linux.
+  benchmark-hygiene:
+    name: Benchmark hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.97.0
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
+        with:
+          tool: nextest@0.9.140
+
+      - name: Lint benchmarks with the workspace floor
+        run: cargo clippy --locked -p mnemosyne-benchmarks --all-targets -- -D warnings
+
+      - name: Single-pass Criterion smoke (test mode, no measurement)
+        run: cargo test --locked --benches -p mnemosyne-benchmarks
 
   test-tsan:
     name: ThreadSanitizer

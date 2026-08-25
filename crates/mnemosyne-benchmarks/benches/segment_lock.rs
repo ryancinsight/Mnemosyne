@@ -1,3 +1,11 @@
+// Source-included from the arena so the bench can reach pub(crate) pool
+// internals. This subset has no `try_lock` caller — that lives in the arena's
+// `tagged_stack`, which the bench does not include — hence the expected
+// dead-code finding scoped to exactly this inclusion.
+#[expect(
+    dead_code,
+    reason = "try_lock/TRY_ATTEMPTS serve arena tagged_stack, not this source-included subset"
+)]
 #[path = "../../mnemosyne-arena/src/segment/pool/cache_aligned.rs"]
 mod cache_aligned;
 

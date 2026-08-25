@@ -39,21 +39,21 @@ fn main() -> Result<(), &'static str> {
     println!(
         "phase,current_mapped_bytes,peak_mapped_bytes,map_calls,unmap_calls,page_reset_calls,page_reset_bytes,guard_install_calls,guard_install_bytes,retained_free_segments,max_retained_free_segments,retained_free_bytes,purged_segments,purge_calls,purged_bytes,reset_segments,reset_calls,retained_huge_blocks,retained_huge_bytes,current_thread_live_allocations,current_thread_owned_segments,cross_thread_reclaimed_blocks,page_refills,recycled_pages,fresh_pages,fresh_segments,orphan_segments_adopted,recycle_sweeps"
     );
-    print_stats("before", before);
-    print_stats("during", during);
-    print_stats("after", after);
+    print_stats("before", &before);
+    print_stats("during", &during);
+    print_stats("after", &after);
     let eviction_after = run_segment_eviction()?;
-    print_stats("eviction_after", eviction_after);
+    print_stats("eviction_after", &eviction_after);
     let reset_after = reset_segment_cache()?;
-    print_stats("reset_after", reset_after);
+    print_stats("reset_after", &reset_after);
     let purge_after = purge_segment_cache()?;
-    print_stats("purge_after", purge_after);
+    print_stats("purge_after", &purge_after);
     println!("phase,size_class,active_pages,empty_pages,live_allocations,total_slots");
-    print_occupancy("after", after);
+    print_occupancy("after", &after);
     Ok(())
 }
 
-fn print_stats(phase: &str, stats: mnemosyne::MemoryStats) {
+fn print_stats(phase: &str, stats: &mnemosyne::MemoryStats) {
     println!(
         "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
         phase,
@@ -87,8 +87,8 @@ fn print_stats(phase: &str, stats: mnemosyne::MemoryStats) {
     );
 }
 
-fn print_occupancy(phase: &str, stats: mnemosyne::MemoryStats) {
-    for (class, occupancy) in stats.size_class_occupancy.into_iter().enumerate() {
+fn print_occupancy(phase: &str, stats: &mnemosyne::MemoryStats) {
+    for (class, occupancy) in stats.size_class_occupancy.iter().enumerate() {
         if occupancy.active_pages > 0 {
             println!(
                 "{},{},{},{},{},{}",

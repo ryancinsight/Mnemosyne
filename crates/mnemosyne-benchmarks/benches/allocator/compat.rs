@@ -93,7 +93,10 @@ pub mod bench_jemalloc {
     }
 }
 
-// MinGW linker compatibility stubs for snmalloc
+// MinGW linker compatibility stubs for snmalloc: only linked when the
+// SnMalloc comparator is, since the shim satisfies snmalloc-rs's import of
+// VirtualAlloc2FromApp, which classic MinGW import libs lack.
+#[cfg(all(windows, feature = "snmalloc"))]
 #[unsafe(no_mangle)]
 pub static mut __imp_VirtualAlloc2FromApp: unsafe extern "system" fn(
     *mut core::ffi::c_void,
@@ -105,6 +108,7 @@ pub static mut __imp_VirtualAlloc2FromApp: unsafe extern "system" fn(
     u32,
 ) -> *mut core::ffi::c_void = fallback_virtual_alloc_2_from_app;
 
+#[cfg(all(windows, feature = "snmalloc"))]
 unsafe extern "system" fn fallback_virtual_alloc_2_from_app(
     h_process: *mut core::ffi::c_void,
     base_address: *mut core::ffi::c_void,

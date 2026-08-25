@@ -6,8 +6,7 @@ use crate::config::{RegressionThreshold, VarianceThreshold, gate_row};
 /// SSOT table; every other row falls back to [`RegressionThreshold::DEFAULT`].
 pub fn get_regression_threshold(benchmark: &str) -> f64 {
     gate_row(benchmark)
-        .map(|row| row.regression_threshold)
-        .unwrap_or(RegressionThreshold::DEFAULT)
+        .map_or(RegressionThreshold::DEFAULT, |row| row.regression_threshold)
         .ratio()
 }
 

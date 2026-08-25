@@ -5,7 +5,10 @@ use super::allocation::alloc_usable_dealloc;
 #[cfg(jemalloc_available)]
 use super::compat::bench_jemalloc;
 use super::constants::{HUGE_LAYOUT, LARGE_LAYOUT, MEDIUM_LAYOUT, SMALL_LAYOUT};
-use super::failure::{benchmark_failure, require_allocated};
+#[cfg(feature = "snmalloc")]
+use super::failure::benchmark_failure;
+use super::failure::require_allocated;
+#[cfg(feature = "snmalloc")]
 use super::platform::snmalloc_skips;
 
 pub fn bench_usable_size(c: &mut Criterion) {
@@ -35,6 +38,7 @@ pub fn bench_usable_size(c: &mut Criterion) {
                 })
             })
         });
+        #[cfg(feature = "snmalloc")]
         if !snmalloc_skips(name) {
             group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
                 // Safety: `layout` comes from the static valid benchmark layout table.
@@ -99,6 +103,7 @@ pub fn bench_usable_size_query(c: &mut Criterion) {
         // Safety: pointer was allocated by MiMalloc for `layout` above.
         unsafe { mimalloc::MiMalloc.dealloc(mimalloc_ptr, layout) };
 
+        #[cfg(feature = "snmalloc")]
         if !snmalloc_skips(name) {
             // Safety: `layout` comes from the static valid benchmark layout table.
             let snmalloc_ptr = unsafe {

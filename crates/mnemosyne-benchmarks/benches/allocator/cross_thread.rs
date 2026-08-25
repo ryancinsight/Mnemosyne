@@ -8,6 +8,7 @@ use super::constants::{
     SMALL_LAYOUT, THREAD_ALLOCS, THREADS,
 };
 use super::failure::benchmark_failure;
+#[cfg(feature = "snmalloc")]
 use super::platform::snmalloc_skips;
 use super::workers::{HandoffWorker, ThreadCycleWorkers};
 
@@ -16,6 +17,7 @@ pub fn bench_cross_thread_free(c: &mut Criterion) {
     static SYSTEM: System = System;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
     static RPMALLOC: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
+    #[cfg(feature = "snmalloc")]
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
     #[cfg(jemalloc_available)]
     static JEMALLOC: bench_jemalloc::Jemalloc = bench_jemalloc::Jemalloc;
@@ -57,6 +59,7 @@ pub fn bench_cross_thread_free(c: &mut Criterion) {
         });
         drop(rpmalloc_worker);
 
+        #[cfg(feature = "snmalloc")]
         if !snmalloc_skips(name) {
             let snmalloc_worker = HandoffWorker::new(&SNMALLOC);
             group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
@@ -91,6 +94,7 @@ pub fn bench_multithreaded_alloc(c: &mut Criterion) {
     static SYSTEM: System = System;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
     static RPMALLOC: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
+    #[cfg(feature = "snmalloc")]
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
     #[cfg(jemalloc_available)]
     static JEMALLOC: bench_jemalloc::Jemalloc = bench_jemalloc::Jemalloc;
@@ -115,9 +119,12 @@ pub fn bench_multithreaded_alloc(c: &mut Criterion) {
         group.bench_function("RpMalloc", |b| b.iter(|| rpmalloc_workers.run()));
         drop(rpmalloc_workers);
 
-        let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, SMALL_LAYOUT);
-        group.bench_function("SnMalloc", |b| b.iter(|| snmalloc_workers.run()));
-        drop(snmalloc_workers);
+        #[cfg(feature = "snmalloc")]
+        {
+            let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, SMALL_LAYOUT);
+            group.bench_function("SnMalloc", |b| b.iter(|| snmalloc_workers.run()));
+            drop(snmalloc_workers);
+        }
 
         #[cfg(jemalloc_available)]
         {
@@ -148,9 +155,12 @@ pub fn bench_multithreaded_alloc(c: &mut Criterion) {
         group.bench_function("RpMalloc", |b| b.iter(|| rpmalloc_workers.run()));
         drop(rpmalloc_workers);
 
-        let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, MEDIUM_LAYOUT);
-        group.bench_function("SnMalloc", |b| b.iter(|| snmalloc_workers.run()));
-        drop(snmalloc_workers);
+        #[cfg(feature = "snmalloc")]
+        {
+            let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, MEDIUM_LAYOUT);
+            group.bench_function("SnMalloc", |b| b.iter(|| snmalloc_workers.run()));
+            drop(snmalloc_workers);
+        }
 
         #[cfg(jemalloc_available)]
         {
@@ -167,6 +177,7 @@ pub fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
     static SYSTEM: System = System;
     static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
     static RPMALLOC: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
+    #[cfg(feature = "snmalloc")]
     static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
     #[cfg(jemalloc_available)]
     static JEMALLOC: bench_jemalloc::Jemalloc = bench_jemalloc::Jemalloc;
@@ -200,11 +211,14 @@ pub fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
     });
     drop(rpmalloc_workers);
 
-    let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, SMALL_LAYOUT);
-    group.bench_function("SnMalloc", |b| {
-        b.iter(|| snmalloc_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
-    });
-    drop(snmalloc_workers);
+    #[cfg(feature = "snmalloc")]
+    {
+        let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, SMALL_LAYOUT);
+        group.bench_function("SnMalloc", |b| {
+            b.iter(|| snmalloc_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
+        });
+        drop(snmalloc_workers);
+    }
 
     #[cfg(jemalloc_available)]
     {
