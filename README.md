@@ -45,7 +45,7 @@ Its design incorporates core lessons from modern allocator research (specificall
 *   Every allocation entry point (`thread_alloc`, `thread_alloc_layout`, `allocate_large_or_huge`) routes through the same single-source predicates, so a change to `MAX_ALLOC_SIZE`, the power-of-two alignment requirement, or the `SEGMENT_SIZE` alignment cap edits exactly one definition while monomorphization keeps every call site branch-for-branch identical to the prior inlined checks.
 
 ### 7. Cache-Line-Aligned Page Metadata
-*   `Page` is exactly 64 bytes — one cache line on 64-bit targets — and the layout is pinned by `page_struct_size_stays_within_one_cache_line`. Every fast-path allocation reads and writes `page.free`, `page.local_free`, `page.alloc_count`, and `page.block_size` from a single contiguous cache line.
+*   `Page` is exactly 64 bytes — one cache line on 64-bit targets — and the layout is pinned by `page_struct_size_stays_within_one_cache_line`. Every fast-path allocation reads and writes `page.free`, `page.thread_free`, `page.alloc_count`, and `page.block_size` from a single contiguous cache line. (`Page` carries no `local_free` field: the owning thread's frees go back onto `page.free`, and `page.thread_free` is the cross-thread queue.)
 *   The dead `Page::segment` back-pointer field was removed: callers always recover the parent segment by rounding the page address down to `SEGMENT_ALIGN`, eliminating 32 stores per fresh segment initialization.
 
 ### 8. Backend Release Accounting
@@ -53,7 +53,7 @@ Its design incorporates core lessons from modern allocator research (specificall
 *   `purge_segment_pool` counts only confirmed releases as purged and pushes failed releases back into the retained pool, preserving ownership metadata on backend failure.
 
 ### 9. Transparent Huge Page Hint (Linux)
-*   `UnixBackend::allocate` issues `madvise(MADV_HUGEPAGE)` on Linux for mappings that are at least one full `SEGMENT_SIZE` (2 MiB) and a multiple thereof. The kernel can then back each segment with a single 2 MiB transparent huge page, halving TLB pressure on hot segment-metadata access.
+*   `UnixBackend::allocate` issues `madvise(MADV_HUGEPAGE)` on Linux for every mapping that is at least one full `SEGMENT_SIZE` (2 MiB); the size need not be a multiple of `SEGMENT_SIZE` — see [`hint_hugepage`](crates/mnemosyne-backend/src/backends/unix.rs) and the `large_non_multiple_allocation_receives_hugepage_hint` guard. The hint is additionally gated on the `MNEMOSYNE_ENABLE_HUGEPAGE_HINT` / `MnemosyneOptions::enable_hugepage_hint` runtime knob. The kernel can then back each segment with a single 2 MiB transparent huge page, halving TLB pressure on hot segment-metadata access.
 *   The advice is purely advisory and ignored on kernels without THP support; the mapping itself is never invalidated by a hint failure. Non-Linux Unix targets compile a no-op stub.
 
 ### 10. Page-Level OS Reclaim (`page_reset` and `reset()`)

@@ -1,5 +1,249 @@
 # Gap Audit
 
+## Finding 2026-08-20: mnemosyne scope-vs-delivery audit
+
+Static audit only — no build, test, clippy, or benchmark run (all Atlas repos
+share one `CARGO_TARGET_DIR`; taking the global build lock was out of scope).
+Every count below is a reproducible `grep`/`find` over the working tree at
+detached `HEAD` `6b0e490`, clean (`git status --porcelain` empty). No claim
+here asserts that any suite passes.
+
+### Measured tree
+
+| Metric | Value | How measured |
+| --- | --- | --- |
+| Workspace members | 12 (10 `default-members`) | `Cargo.toml` |
+| Source `.rs` files / LOC | 193 / 37,906 | `find crates fuzz -name '*.rs' -not -path '*/target/*'` |
+| `#[test]` functions | 369 | `grep -rn '#\[test\]' crates fuzz` |
+| Integration test files | 19 | `find crates -path '*/tests/*.rs' -not -path '*/src/*'` |
+| Book chapters | 10 numbered + intro + 2 executable examples | `docs/book/SUMMARY.md` |
+| ADRs | 7 Accepted (0001, 0003–0008; 0002 absorbed into 0003) | `docs/adr/README.md` |
+| `todo!` / `unimplemented!` / `TODO` / `FIXME` / `HACK` | 0 / 0 / 0 / 0 / 0 | `grep -rn -F` over `crates fuzz` and all `*.md` |
+| `dyn ` sites | 0 (one doc-comment mention in `mnemosyne-heap/src/tiered_backend.rs:12`) | `grep -rn 'dyn '` |
+| Type-suffixed identifiers | 0 | `grep -rnE '\b(fn\|struct\|enum\|trait\|mod)\s+[a-zA-Z_]*(f32\|f64\|u8\|i32\|u32\|f16\|bf16)'` |
+| Junk-drawer modules | 0 | `find` for `utils`/`helpers`/`misc`/`common` |
+| `pub use ... as ...` | 3, all benign (2 platform `DefaultBackend` selections, 1 bench compat alias) | `grep -rn 'pub use .* as '` |
+| Existence-only assertions | 4 | `grep -rn 'assert!(.*\.is_ok())\|assert!(.*\.is_some())'` — matches the recorded baseline |
+| Production `unwrap()` | 0 (2 occurrences are inside doctests: `mnemosyne-heap/src/numa.rs:34`, `tiered_heap.rs:356`; the other 24 are under `#![cfg_attr(test, allow(clippy::unwrap_used))]`) | `grep -rn '\.unwrap()'` |
+| `#[allow(...)]` sites | 18 | `grep -rn '#\[allow(\|#!\[allow('` |
+| `#[expect(...)]` sites | 0 | `grep -rn '#\[expect(\|#!\[expect('` |
+| Files > 500 lines | 6 (4 are test files; production: `mnemosyne-arena/src/segment/pool/tagged_stack.rs` 622, `mnemosyne-core/src/types/segment.rs` 544) | `find ... -exec wc -l` |
+| Crates without `#![deny(missing_docs)]` | 2 published (`mnemosyne-core`, `mnemosyne-arena`) + `mnemosyne-benchmarks` (`publish = false`) | `grep 'missing_docs' crates/*/src/lib.rs` |
+| Per-crate READMEs | 11/11 published crates present | `find` |
+| Registry metadata (description/readme/keywords/categories/license) | complete on all 11 published crates | `grep` over each `Cargo.toml` |
+| Production `unsafe {}` blocks | 742 (inline `#[cfg(test)] mod` regions excluded) | script scan |
+| …with no `// SAFETY:`/`// Safety:` comment within 14 lines | 84 (11%) | same scan |
+| Implementation-bearing `lib.rs`/`mod.rs` | 8 (largest: `mnemosyne-local/src/lib.rs` 434 L, `mnemosyne-c-shim/src/lib.rs` 376 L, `mnemosyne-decay/src/lib.rs` 288 L) | `wc -l` + item grep |
+
+### Verification infrastructure present (static inspection of `.github/workflows/`)
+
+`ci.yml` defines: `verify` (fmt, clippy `-D warnings`, `cargo nextest run
+--locked --workspace`, `cargo test --doc`), `loom` (3 models: free-list head
+protocol, segment ownership, pool-stack pop), `miri` (Stacked **and** Tree
+Borrows across `mnemosyne-memory-core`, `mnemosyne-arena`, `mnemosyne-local`,
+`mnemosyne-decay`, `mnemosyne-backend`), an aarch64 native job, and
+`test-tsan`. `msrv.yml` builds at the declared 1.95 floor. `book-pages.yml`
+calls the shared Atlas Pages workflow with `mdbook-test: true`.
+`rust-release.yml` publishes via crates.io OIDC trusted publishing with an
+environment-gated job. `.config/nextest.toml` commits the 30 s slow / 60 s
+terminate budget plus a documented 300 s Miri profile. All third-party
+actions are SHA-pinned. This is a strong verification floor; the findings
+below are what it does **not** cover.
+
+### Findings
+
+- **[correctness] `AllocationDiagnostics` is a public API with no writer.**
+  `mnemosyne-core/src/memory_diagnostics.rs` defines `record_allocation`,
+  `record_deallocation`, `record_cache_hit`, and `record_cache_miss`, and the
+  module doc claims it "tracks allocation size distribution, per-size-class
+  fragmentation, and fast-path cache hit/miss ratios". Grepping the whole
+  workspace for each of those four methods outside the defining file returns
+  **zero** call sites (the single `record_deallocation` hit is an unrelated
+  method on `mnemosyne-local/src/fast_path_cache.rs:196`). `fragmented_blocks`
+  and `page_utilization_percent` have zero writers anywhere and can only ever
+  read `0`, yet `MemoryEfficiencyReport::from_diagnostics` derives a
+  `fragmentation_overhead` percentage from them. The type is publicly
+  re-exported from the facade at `crates/mnemosyne/src/lib.rs:17-18`. Under
+  the mock-detection heuristic, replacing every `record_*` body with
+  `unimplemented!()` would not change any observable behavior of the
+  allocator. Either wire the recorders into the allocation paths or delete the
+  surface; do not ship a diagnostic whose output is input-insensitive.
+
+- **[docs] `docs/book/size_classes.md` described an architecture that does not
+  exist** (fixed in this pass). The chapter carried a "Thread-Local Magazine
+  Protocol" section describing a "global depot", magazine swap, and "periodic
+  background steal", and a tier table reading "Small ≤ 256 bytes: Thread-local
+  slab allocator" / "Medium 256 B – 8 KB: per-thread magazine". `grep -rni
+  'magazine\|depot\|slab'` over `crates` returns **0** hits. The real
+  threshold is `MAX_SMALL_ALLOC_SIZE = 8 * 1024`
+  (`mnemosyne-core/src/constants.rs:22`) with `NUM_SIZE_CLASSES = 44`
+  (`constants.rs:37`), and the real mechanism is the per-page `free` +
+  `thread_free` pair. The chapter also claimed `KernelResourceBudget` limits
+  drive segment reclamation per size class; that type is a GPU launch-shape
+  limiter. Chapter rewritten against the constants and `size_class.rs`.
+
+- **[docs] `Page` has no `local_free` field** (README fixed in this pass).
+  `README.md:48` listed `page.local_free` among the fields the fast path
+  touches, and `docs/gap_analysis_external.md` §2 names the sharded lists as
+  "(`free`, `local_free`, `thread_free`)". `crates/mnemosyne-core/src/types/page/mod.rs:13-33`
+  declares `free`, `thread_free`, `block_size`, `alloc_count`,
+  `initialized_blocks`, `next_page`, `prev_page`, `size_class`, `list_state`,
+  `page_index` — no `local_free`. All 18 `local_free` matches in the tree are
+  the function `do_local_free_internal`. The gap-analysis row is still stale.
+
+- **[docs] Two size constants in `docs/gap_analysis_external.md` are wrong.**
+  §3 states "Bounded retained-segment pool (`MAX_RETAINED_SEGMENTS =
+  PAGES_PER_SEGMENT = 32`)". The actual compile-time ceiling is
+  `MAX_RETAINED_SEGMENTS_LIMIT = 1024`
+  (`mnemosyne-core/src/constants.rs:40`); the effective bound is the runtime
+  `MnemosyneOptions::max_retained_segments`, defaulting to that ceiling and
+  clamped to it in `set_options` (`options.rs:61-66`). §4 states "Bounded
+  retention of huge mappings — Not implemented (every large alloc goes back to
+  backend)", but `mnemosyne-arena/src/segment/pool/huge_pool.rs` implements
+  per-NUMA-bucket retained chains under a byte budget with `retained_blocks`
+  and `retained_bytes` accessors.
+
+- **[docs] Four `docs/gap_analysis_external.md` rows claim "Not implemented"
+  for shipped capabilities.** §5 "NUMA-aware arena selection — Not
+  implemented `[major]`" is contradicted by
+  `mnemosyne-arena/src/segment/pool/numa_bucket.rs` (16 buckets, `steal_from`
+  remote fallback) and `segment_pool.rs:112-162` (local-first pop with a
+  rate-limited node refresh). §7 "Per-allocation profiling / heap snapshot —
+  Not implemented" and "Tracing / event hook callback — Not implemented" are
+  contradicted by `mnemosyne-prof` (`register_alloc_hook`,
+  `register_free_hook`, `on_alloc`, `on_free`, Poisson sampler, leak detector;
+  ADRs 0004/0005). §9 "`posix_memalign` / `aligned_alloc` — Indirectly via
+  `GlobalAlloc` Layout `[major]`" is contradicted by
+  `mnemosyne-c-shim/src/lib.rs:187,216`, which exports both directly. §11.2
+  still speaks of `page_reset`/`make_guard` in the future conditional ("a
+  method on the trait *would* let…") although §12 records both as delivered.
+
+- **[docs] `docs/gap_analysis_external.md` §12 names two test guards that do
+  not exist.** `c_shim_round_trip_matches_global_alloc` and
+  `runtime_options_override_default_retention` return 0 hits. The nearest
+  actual guards are `malloc_free_round_trip_is_aligned_and_writable`
+  (`mnemosyne-c-shim/src/tests.rs:57`) and `test_memory_stats_retention_bound`
+  (`mnemosyne/tests/global_alloc_tests/stats.rs:30`). Ten of the twelve named
+  guards spot-checked in that document do resolve.
+
+- **[docs] `docs/book/numa_placement.md` named APIs absent from the tree**
+  (fixed in this pass). It referenced `NumaBucketIndex<N>`, a const-generic
+  `BUCKETS` parameter, and an `ASSERT_NONZERO` const (0 hits each), and gave a
+  Moirai `runtime.spawn_fn_with` example although Moirai is not a dependency
+  of any member manifest. Rewritten against `numa_bucket.rs`,
+  `segment_pool.rs`, and `mnemosyne-heap/src/numa.rs`.
+
+- **[docs] `docs/adr/README.md` cites a generator that is not in the repo.**
+  Its header reads "Generated by scripts/adr-index.py — do not hand-edit.
+  Regenerate: python scripts/adr-index.py generate". There is no `scripts/`
+  directory; `find . -name 'adr-index.py' -not -path './target/*'` returns
+  nothing. The index therefore has no regenerate-and-diff freshness check, and
+  the instruction is unrunnable as written. Separately, ADR 0001's status line
+  reads "Accepted and implemented" rather than the canonical `Accepted`.
+
+- **[docs] `README.md` overstated the huge-page hint condition** (fixed in
+  this pass). It said the hint applies to mappings "at least one full
+  `SEGMENT_SIZE` (2 MiB) **and a multiple thereof**".
+  `mnemosyne-backend/src/backends/unix.rs:100` tests only `length >=
+  SEGMENT_SIZE`, and the test
+  `large_non_multiple_allocation_receives_hugepage_hint`
+  (`unix.rs:344`) exists specifically to pin that a 3 MiB mapping *does*
+  receive the hint. `docs/gap_analysis_external.md` §12 repeats the same wrong
+  condition and is not fixed here.
+
+- **[verification] The three huge-page-hint tests cannot observe the hint.**
+  `segment_sized_allocation_survives_hugepage_hint` (`unix.rs:289`),
+  `sub_segment_allocation_skips_hugepage_hint` (`unix.rs:324`), and
+  `large_non_multiple_allocation_receives_hugepage_hint` (`unix.rs:344`) all
+  assert only that the mapping allocates, round-trips boundary bytes, and
+  deallocates. Two of the three names assert a *hint decision*
+  ("skips", "receives") that no assertion checks. Replacing `hint_hugepage`'s
+  body with a no-op leaves all three green. Route the decision through an
+  observable counter (the backend already has a `recorders` telemetry module)
+  so the names are backed by assertions.
+
+- **[verification] `mnemosyne-benchmarks` is excluded from every CI gate.**
+  `ci.yml` passes `--exclude mnemosyne-benchmarks` to clippy (line 63), to
+  `nextest` (line 76), to the doctest run (line 81), and to the aarch64 job
+  (line 336). That is 3,638 LOC and 29 files — including three `harness =
+  false` Criterion targets and three binaries (`benchmark_summary`,
+  `memory_report`, `check_cpu_cache`) — that are never linted, never compiled
+  in CI, and never smoke-run. No job runs `cargo test --benches` or Criterion
+  `--test`, so no benchmark carries the committed finite runtime budget the
+  test suite has. The exclusion is justified in a comment (the crate pulls
+  `snmalloc-rs` and other comparators), but the consequence is that the
+  regression-threshold tooling the README documents as the performance gate is
+  itself unverified.
+
+- **[verification] The fuzz target is never executed.** `fuzz/` declares the
+  `c_shim_api` libFuzzer target over the C ABI surface — the crate's one
+  untrusted-input boundary — but `grep -rli fuzz .github/workflows` returns
+  nothing. A committed but unrun fuzz target is not fuzzing coverage.
+
+- **[security] No supply-chain job exists.** `grep -rli` over
+  `.github/workflows` finds no `cargo-deny`, `cargo-audit`,
+  `cargo-semver-checks`, `cargo-machete`, or `cargo-geiger` step, and there is
+  no `deny.toml` or `audit.toml` in the repo. Advisory, license, ban,
+  duplicate, unused-dependency, and yanked-crate checks are therefore absent
+  for a crate published to crates.io under eleven package identities. The
+  absence of `cargo-semver-checks` also means the pre-release semver gate the
+  backlog records as having been run manually has no standing enforcement.
+
+- **[verification] No steady-state RSS or fragmentation bound for
+  long-running arenas.** `decay_purger_reaches_steady_state`
+  (`mnemosyne-decay/tests/decay_tests.rs:142`) is the only steady-state test
+  and asserts retained-*segment-count* convergence, not resident bytes.
+  `grep -rni 'live_bytes'` returns 0. `MemoryEfficiencyReport::fragmentation_overhead`
+  exists but has no writer (first finding) and no test asserts a bound on it.
+  The adversarial mix that fragments a heap — alternating size classes with
+  pinned survivors over a long run — has no coverage. `memory_report` is the
+  nearest thing and it lives in the CI-excluded benchmarks crate.
+
+- **[arch] Two published foundation crates lack `#![deny(missing_docs)]`.**
+  `crates/mnemosyne-core/src/lib.rs` and `crates/mnemosyne-arena/src/lib.rs`
+  carry `#![no_std]` / `#![cfg_attr(...)]` but no `missing_docs` deny; the
+  other nine published crates do. These two carry the allocator's core layout
+  types and the segment/arena surface, so they are the crates where an
+  undocumented public item costs the most.
+
+- **[pm-hygiene] The board and checklist are past the point of being an
+  index.** `backlog.md` is 1,633 lines with 65 completed items retained as
+  full prose and only 5 unchecked; it carries four separate section headings
+  (`## Open` at lines 206 and 1571, `## Closed` at 140 and 189, `## Completed`
+  at 996, `## Next` at 1628), so there is no single place a cold-start agent
+  reads to find the ready work. `checklist.md` is 1,529 lines with the same
+  shape. Most retained items predate the current head and have no stable ID.
+
+- **[docs] `docs/complexity_audit.md` states "the current 11-crate workspace";
+  `Cargo.toml` lists 12 members.** Its workspace-map table omits
+  `mnemosyne-decay`, `mnemosyne-prof`, `mnemosyne-build-util`, and
+  `mnemosyne-benchmarks`.
+
+- **[pm-hygiene] `Cargo.toml`'s lint-floor comment describes a mechanism the
+  tree does not use.** It states the 24 `unwrap` sites "are pinned per file by
+  `#![expect(..., reason = "MNEM-UNWRAP-1")]`, which self-expires the moment a
+  file's last unwrap goes". There are **0** `#[expect(` / `#![expect(`
+  attributes in the tree; both pinning sites
+  (`mnemosyne-core/src/kernel_budget.rs:12-18`,
+  `mnemosyne-local/src/tests.rs:1-7`) use
+  `#![cfg_attr(test, allow(clippy::unwrap_used, reason = "test scope: ..."))]`.
+  `allow` does not self-expire, so the stated ratchet property does not hold,
+  and the `MNEM-UNWRAP-1` id appears nowhere but in that comment.
+  `clippy::allow_attributes` is not in the workspace lint floor.
+
+### Not findings (checked and clean)
+
+- `MnemosyneOptions::enable_hugepage_hint` **is** wired: `hint_hugepage`
+  reads `mnemosyne_core::options::ENABLE_HUGEPAGE_HINT`
+  (`unix.rs:100-102`). An earlier hypothesis that the knob was inert is
+  disproved.
+- All 16 numbered README architectural highlights resolve to real code, and
+  10 of 12 spot-checked named test guards exist under the documented names.
+- No stub markers, no `dyn` dispatch, no type-suffixed identifiers, no junk
+  drawers, no production `unwrap`, complete registry metadata, and per-crate
+  READMEs on every published crate.
+
+
 ## WGPU 30 and Melinoe 0.9 closure (2026-08-12)
 
 The WGPU 30 staging-ownership decision and the Melinoe 0.9 provider refresh
