@@ -12,6 +12,12 @@ default = ["mnemosyne-memory"]
 mnemosyne-memory = ["mnemosyne/branded"]
 # Enables the hosted yield branch in the source-included arena lock benchmark.
 std = []
+# Opt-in SnMalloc comparator column. `snmalloc-rs` fails to build under the
+# current hosted-runner compilers (atlas backlog.md#atlas-mnemosyne-snmalloc-1),
+# so the comparator is opt-in: default builds (CI, local development) compile
+# and run every benchmark without it, and `--features snmalloc` restores the
+# column where the dependency builds.
+snmalloc = ["dep:snmalloc-rs"]
 # Opt-in jemalloc comparator on Windows by linking a system-installed
 # `libjemalloc_s.a` (e.g. MSYS2 `mingw-w64-*-jemalloc`). `tikv-jemallocator`
 # builds jemalloc from source, which does not link on windows-gnu, so the
@@ -25,7 +31,7 @@ nightly_tls = ["mnemosyne/nightly_tls"]
 [dependencies]
 mimalloc = { version = "0.1", features = ["extended"] }
 rpmalloc = "0.2.2"
-snmalloc-rs = { version = "0.3", features = ["win8compat"] }
+snmalloc-rs = { version = "0.3", features = ["win8compat"], optional = true }
 criterion = { version = "0.5", features = ["html_reports"] }
 serde_json = "1"
 mnemosyne = { package = "mnemosyne-memory", path = "../mnemosyne", version = "0.7.0", default-features = false }

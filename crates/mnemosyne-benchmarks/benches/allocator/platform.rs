@@ -7,6 +7,10 @@
 /// predicate a single source of truth while remaining behaviourally identical
 /// to the per-group checks it replaces (each group only ever passes its own
 /// huge row name). On every other platform no row is skipped.
+///
+/// Present only under the `snmalloc` feature: without it no group registers a
+/// SnMalloc column, so the predicate has no caller.
+#[cfg(feature = "snmalloc")]
 #[inline]
 pub fn snmalloc_skips(name: &str) -> bool {
     #[cfg(all(windows, target_arch = "x86_64"))]

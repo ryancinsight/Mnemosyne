@@ -7,8 +7,10 @@ pub fn write_metadata_json(path: &str) -> io::Result<()> {
     let rustc_version = std::process::Command::new("rustc")
         .arg("--version")
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
+        .map_or_else(
+            |_| "unknown".to_string(),
+            |o| String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        );
 
     let os_family = if cfg!(target_family = "windows") {
         "windows"
@@ -28,8 +30,7 @@ pub fn write_metadata_json(path: &str) -> io::Result<()> {
 
     let timestamp_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
 
     let metadata = json!({
         "rustc_version": rustc_version,

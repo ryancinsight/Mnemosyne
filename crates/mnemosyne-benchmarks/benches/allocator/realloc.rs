@@ -9,6 +9,7 @@ use super::constants::{
     HUGE_REALLOC_SRC_LAYOUT, LARGE_LAYOUT, LARGE_WITHIN_CLASS_LAYOUT, SMALL_LAYOUT,
     SMALL_WITHIN_CLASS_LAYOUT,
 };
+#[cfg(feature = "snmalloc")]
 use super::platform::snmalloc_skips;
 use super::registration::bench_iter_case;
 
@@ -61,6 +62,7 @@ pub fn bench_realloc(c: &mut Criterion) {
             &input,
             realloc,
         );
+        #[cfg(feature = "snmalloc")]
         if !snmalloc_skips(name) {
             bench_iter_case(
                 &mut group,
