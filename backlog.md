@@ -31,23 +31,27 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   **Risk/change class:** [patch] if deleted from a pre-1.0 surface; run
   `cargo-semver-checks` either way. **Effort:** S (delete) / M (wire).
 
-- [ ] **MNEM-CI-BENCH-1** [patch] status=todo owner=unclaimed
+- [x] **MNEM-CI-BENCH-1** [patch] status=done owner=atlas-session
   scope=`.github/workflows/ci.yml`, `crates/mnemosyne-benchmarks/Cargo.toml`.
   Non-goals: changing any benchmark's measured scenario, inputs, or timed
-  region; changing baselines. **Outcome:** the 3,638 LOC of
-  `mnemosyne-benchmarks` stop being invisible to CI. Today `--exclude
-  mnemosyne-benchmarks` is passed to clippy (`ci.yml:63`), nextest (`:76`),
-  doctests (`:81`), and the aarch64 job (`:336`), so three Criterion targets
-  and three binaries are never linted, compiled, or smoke-run, and no
-  benchmark carries the committed finite runtime budget that
-  `.config/nextest.toml` gives the test suite. **Acceptance oracle:** a CI job
+  region; changing baselines. **Outcome:** delivered in this PR — the
+  SnMalloc comparator that could not build on hosted runners is opt-in via
+  the `snmalloc` feature (jemalloc stays default on non-Windows), all four
+  `--exclude mnemosyne-benchmarks` flags are dropped, and a
+  `benchmark-hygiene` job runs workspace-floor clippy on the crate plus a
+  single-pass Criterion smoke (`cargo test --benches`, test mode). Lint debt
+  exposed by first-time coverage fixed at its sites; segment_lock's
+  source-include carries a scoped `#[expect(dead_code)]` for the arena-only
+  `try_lock`. **Acceptance oracle:** a CI job
   runs `cargo clippy -p mnemosyne-benchmarks --all-targets -- -D warnings` and
   a single-iteration Criterion smoke (`cargo test --benches -p
-  mnemosyne-benchmarks`, i.e. Criterion's `--test` mode) inside the 30 s
-  nextest budget, both green, with the job's `timeout-minutes` derived from
-  the five-minute target. If a comparator dependency (`snmalloc-rs`,
+  mnemosyne-benchmarks`, i.e. Criterion's `--test` mode) inside the job's
+  finite budget, both green — satisfied by the new job (12-minute
+  `timeout-minutes`, sized to the five-minute target plus the Linux jemalloc
+  source build). If a comparator dependency (`snmalloc-rs`,
   jemalloc) cannot build on a runner, gate that comparator behind a feature
-  rather than excluding the whole crate. **Dependencies:** none.
+  rather than excluding the whole crate — done for snmalloc.
+  **Dependencies:** none.
   **Risk/change class:** [patch]. **Effort:** M.
 
 - [ ] **MNEM-SUPPLY-1** [security][patch] status=todo owner=unclaimed
