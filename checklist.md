@@ -1,5 +1,90 @@
 # Checklist
 
+## gap-audit-2026-08-20 (owner: atlas-gap-audit)
+
+Execution order for the `## Ready — gap-audit 2026-08-20 intake` items in
+`backlog.md`. Evidence for each is in `gap_audit.md` under "Finding
+2026-08-20: mnemosyne scope-vs-delivery audit". The audit itself ran
+static-only at detached `HEAD` `6b0e490` — no build, test, clippy, or
+benchmark was executed — so step 0 applies to every item below.
+
+**0. Before editing anything for an item, re-run its cited grep against the
+current `HEAD`.** Recorded facts decay; several of these counts will have
+moved if peers landed work after `6b0e490`. Also re-check `git status -sb`:
+this tree was detached at audit time, so confirm which branch the work belongs
+on before committing (a shared tree's branch moves under you).
+
+Audit pass itself (done — no follow-up needed):
+
+- [x] Orient: `HEAD` `6b0e490`, detached, `git status --porcelain` empty.
+- [x] Read declared scope: `README.md` (16 numbered highlights),
+      `CHANGELOG.md` Unreleased, `docs/adr/README.md` (7 Accepted),
+      `docs/book/SUMMARY.md` (10 numbered chapters), `docs/complexity_audit.md`,
+      `docs/gap_analysis_external.md`, `backlog.md`, `checklist.md`,
+      `gap_audit.md`.
+- [x] Measure the tree; every count recorded in `gap_audit.md` with its command.
+- [x] Cross-check all 16 README highlights and 12 named test guards against code.
+- [x] Fix three unambiguously stale factual claims (`README.md` ×2,
+      `docs/book/size_classes.md`, `docs/book/numa_placement.md`).
+
+Ordered execution — verification and correctness first, then docs, then
+hygiene. Items within a numbered step are independent and may be claimed
+concurrently on disjoint scopes; steps are ordered by dependency.
+
+1. **MNEM-PM-COMPACT-1** first, alone. Compaction precedes replenishment —
+   doing it after the next batch of items lands means compacting twice. Do not
+   collapse the five pre-existing unchecked items or any in-progress claim.
+
+2. **MNEM-DIAG-1** — the one correctness-class finding. Decide wire-vs-delete
+   before touching anything else, because MNEM-RSS-1's oracle may depend on
+   `fragmentation_overhead`. Sequence: (a) confirm the zero-call-site grep;
+   (b) look for a cold-path recording site — page refill, page transition,
+   segment adoption — that does not add an atomic to `alloc_class`'s hot path;
+   (c) if none exists, delete the module and the three facade re-exports and
+   run `cargo-semver-checks` on both affected packages; (d) if one exists,
+   wire it and write the value-semantic test the acceptance oracle names.
+
+3. Verification infrastructure, all independent of each other and of step 2 —
+   claim on disjoint files:
+   - **MNEM-SEMVER-1** (smallest; also validates the two Unreleased breaks).
+   - **MNEM-SUPPLY-1** (may host the semver job in the same workflow).
+   - **MNEM-FUZZ-CI-1**.
+   - **MNEM-CI-BENCH-1** (largest of the four — expect comparator build
+     failures on the runner; gate the comparator, never re-exclude the crate).
+
+4. **MNEM-THP-TEST-1** then **MNEM-RSS-1**. THP first: it is small and
+   establishes the telemetry-counter-as-oracle pattern that MNEM-RSS-1 reuses.
+   For both, derive the asserted bound and state the derivation at the
+   assertion site — an underived tolerance is test-gaming.
+
+5. Documentation, independent of everything above:
+   - **MNEM-DOCS-GAP-1** — re-derive every state column from a cited
+     `path:line`. This is the item most likely to surface further capability
+     drift, so run it before MNEM-BOOK-DEPTH-1.
+   - **MNEM-ADR-INDEX-1**.
+   - **MNEM-MISSINGDOCS-1** — run the deny locally first and count the flagged
+     items before committing to an effort estimate.
+
+6. Ratchets, last, as background burn-down:
+   - **MNEM-LINTFLOOR-1** (small; unblocks nothing but removes a false claim
+     from the one file every contributor reads).
+   - **MNEM-UNSAFE-DOC-1** — module by module, non-increasing. Normalize
+     `// Safety:` → `// SAFETY:` in the same pass so the scan mechanizes.
+   - **MNEM-BOOK-DEPTH-1** — decompose into one item per chapter first.
+
+Standing constraints for every item above:
+
+- Never bypass `cargo nextest run` or raise `.config/nextest.toml`'s 30 s
+  slow bound; a test crossing it is a performance defect in the code under
+  test.
+- Never edit a benchmark body, its inputs, or its timed region to move a
+  number. MNEM-CI-BENCH-1 changes the *harness invocation*, not the
+  instrument.
+- The Miri, Loom, and TSan jobs are the strongest evidence this repo has —
+  any change to an unsafe path or an atomic ordering re-runs all three before
+  merge.
+
+
 ## ATLAS-MNEMOSYNE-CONFORMANCE-001 — NUMA bucket helper consolidation [patch]
 
 - [x] Replace `bucket_from_u32` and `bucket_from_usize` with the single

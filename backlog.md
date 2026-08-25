@@ -1,5 +1,254 @@
 # Backlog
 
+## Ready — gap-audit 2026-08-20 intake
+
+Filed by the Atlas gap audit at detached `HEAD` `6b0e490`. Evidence for every
+item is in `gap_audit.md` under "Finding 2026-08-20: mnemosyne
+scope-vs-delivery audit". These are DoR-shaped and unclaimed; the audit ran
+static-only (no build/test/clippy), so each item's first step is to reproduce
+its cited grep against current `HEAD` before editing (stale-memory rule).
+
+- [ ] **MNEM-DIAG-1** [patch] status=todo owner=unclaimed
+  scope=`crates/mnemosyne-core/src/memory_diagnostics.rs`,
+  `crates/mnemosyne/src/lib.rs`, and whichever alloc/free path is chosen as
+  the recording site. Non-goals: adding hot-path atomics to the small-alloc
+  fast path; changing `MemoryStats`/`BackendMemoryStats`/`ArenaMemoryStats`.
+  **Outcome:** `AllocationDiagnostics` either records real allocator activity
+  or stops being public. Today `record_allocation`, `record_cache_hit`, and
+  `record_cache_miss` have zero call sites workspace-wide, and
+  `fragmented_blocks` / `page_utilization_percent` have zero writers, yet
+  `MemoryEfficiencyReport::from_diagnostics` computes a
+  `fragmentation_overhead` from them and the type is re-exported from the
+  facade (`crates/mnemosyne/src/lib.rs:17-18`). **Acceptance oracle:** either
+  (a) a value-semantic test drives N allocations and M frees across ≥2 size
+  classes through the public allocator and asserts the exact resulting
+  `total_allocations`, `live_allocations`, per-class `allocation_count`, and a
+  non-trivial `fragmentation_overhead`; or (b) the module and its three
+  facade re-exports are deleted and `cargo package --dry-run` on
+  `mnemosyne-memory-core` and `mnemosyne-memory` succeeds. Decide by whether a
+  cold-path recording site exists that does not cost the fast path — if it
+  does not, (b) is the correct answer. **Dependencies:** none.
+  **Risk/change class:** [patch] if deleted from a pre-1.0 surface; run
+  `cargo-semver-checks` either way. **Effort:** S (delete) / M (wire).
+
+- [ ] **MNEM-CI-BENCH-1** [patch] status=todo owner=unclaimed
+  scope=`.github/workflows/ci.yml`, `crates/mnemosyne-benchmarks/Cargo.toml`.
+  Non-goals: changing any benchmark's measured scenario, inputs, or timed
+  region; changing baselines. **Outcome:** the 3,638 LOC of
+  `mnemosyne-benchmarks` stop being invisible to CI. Today `--exclude
+  mnemosyne-benchmarks` is passed to clippy (`ci.yml:63`), nextest (`:76`),
+  doctests (`:81`), and the aarch64 job (`:336`), so three Criterion targets
+  and three binaries are never linted, compiled, or smoke-run, and no
+  benchmark carries the committed finite runtime budget that
+  `.config/nextest.toml` gives the test suite. **Acceptance oracle:** a CI job
+  runs `cargo clippy -p mnemosyne-benchmarks --all-targets -- -D warnings` and
+  a single-iteration Criterion smoke (`cargo test --benches -p
+  mnemosyne-benchmarks`, i.e. Criterion's `--test` mode) inside the 30 s
+  nextest budget, both green, with the job's `timeout-minutes` derived from
+  the five-minute target. If a comparator dependency (`snmalloc-rs`,
+  jemalloc) cannot build on a runner, gate that comparator behind a feature
+  rather than excluding the whole crate. **Dependencies:** none.
+  **Risk/change class:** [patch]. **Effort:** M.
+
+- [ ] **MNEM-SUPPLY-1** [security][patch] status=todo owner=unclaimed
+  scope=`.github/workflows/ci.yml`, new `deny.toml`. Non-goals: changing any
+  dependency version; adopting Dependabot/Renovate (separate item).
+  **Outcome:** the workspace has advisory, license, ban, duplicate,
+  unused-dependency, and yanked-crate enforcement. Today `grep -rli` over
+  `.github/workflows` finds no `cargo-deny`, `cargo-audit`,
+  `cargo-machete`, `cargo-geiger`, or `cargo-semver-checks` step, and no
+  `deny.toml`/`audit.toml` exists — for eleven crates.io-published package
+  identities. **Acceptance oracle:** a `supply-chain` job runs `cargo deny
+  check advisories bans licenses sources` and `cargo machete` green against a
+  committed `deny.toml`, and `cargo semver-checks check-release` runs on any
+  PR touching a `pub` item (see MNEM-SEMVER-1). Triage exposure from `cargo
+  tree -e normal`, never lockfile presence. **Dependencies:** none.
+  **Risk/change class:** [patch]. **Effort:** M.
+
+- [ ] **MNEM-SEMVER-1** [patch] status=todo owner=unclaimed
+  scope=`.github/workflows/ci.yml`. Non-goals: changing any public API.
+  **Outcome:** `cargo-semver-checks` becomes a standing gate rather than a
+  manually-run step recorded in closed backlog entries. The audit found no
+  semver job in any workflow, while `CHANGELOG.md` Unreleased already carries
+  two entries marked **Breaking** (`Segment::next_free_segment` becoming
+  `AtomicPtr`, and `ensure_options_initialized` leaving the crate root).
+  **Acceptance oracle:** the job runs on every PR touching a published crate's
+  `pub` surface, and its classification is authoritative over the PR's
+  declared change class — a detected break under a `[patch]`/`[minor]` label
+  fails the gate. Verify by confirming it flags the two Unreleased breaks.
+  **Dependencies:** MNEM-SUPPLY-1 may host the same job. **Risk/change
+  class:** [patch]. **Effort:** S.
+
+- [ ] **MNEM-FUZZ-CI-1** [patch] status=todo owner=unclaimed
+  scope=`.github/workflows/ci.yml`, `fuzz/`. Non-goals: writing new fuzz
+  targets (separate item if the arena/segment surface warrants one).
+  **Outcome:** the committed `c_shim_api` libFuzzer target actually runs. It
+  covers the crate's one untrusted-input boundary (the C ABI: `malloc`,
+  `free`, `calloc`, `realloc`, `aligned_alloc`, `posix_memalign`,
+  `malloc_usable_size`) and today no workflow references `fuzz` at all.
+  **Acceptance oracle:** a scheduled or merge-triggered job runs `cargo
+  +nightly fuzz run c_shim_api` for a committed finite duration under the
+  nightly verification toolchain, green, with any discovered crash committed
+  to the corpus as a regression. State the time budget explicitly.
+  **Dependencies:** none. **Risk/change class:** [patch]. **Effort:** S.
+
+- [ ] **MNEM-RSS-1** [verification][patch] status=todo owner=unclaimed
+  scope=`crates/mnemosyne-decay/tests/`, `crates/mnemosyne-arena/tests/`.
+  Non-goals: shrinking any existing test's workload; adding hot-path counters.
+  **Outcome:** a bounded-memory argument exists for a long-running arena.
+  Today `decay_purger_reaches_steady_state`
+  (`mnemosyne-decay/tests/decay_tests.rs:142`) asserts retained-*segment
+  count* convergence only; `grep -rni 'live_bytes'` returns 0; no test bounds
+  fragmentation over an adversarial mix. **Acceptance oracle:** a test runs an
+  alternating-size-class workload with pinned survivors for a bounded number
+  of rounds and asserts that `arena_memory_stats().current_mapped_bytes` (or
+  the equivalent retained-bytes accessor) converges within a derived bound of
+  live bytes — the bound stated with its derivation, not a tuned epsilon —
+  and completes inside the 30 s nextest budget. If the workload cannot fit
+  that budget, that is a performance defect to profile, not a reason to move
+  it out of the suite. **Dependencies:** MNEM-DIAG-1 if the oracle uses
+  `fragmentation_overhead`. **Risk/change class:** [patch]. **Effort:** M.
+
+- [ ] **MNEM-THP-TEST-1** [verification][patch] status=todo owner=unclaimed
+  scope=`crates/mnemosyne-backend/src/backends/unix.rs`,
+  `crates/mnemosyne-backend/src/recorders.rs`. Non-goals: changing when the
+  hint is issued. **Outcome:** the three huge-page-hint tests assert the
+  behavior their names claim. `sub_segment_allocation_skips_hugepage_hint`
+  (`unix.rs:324`) and `large_non_multiple_allocation_receives_hugepage_hint`
+  (`unix.rs:344`) each assert only allocate/write/deallocate round-trip;
+  replacing `hint_hugepage`'s body with a no-op leaves all three green.
+  **Acceptance oracle:** `hint_hugepage` records its decision through the
+  existing `recorders` telemetry (a `hugepage_hint_calls` counter, `#[cfg]`-
+  scoped exactly like the existing `page_reset_calls`), and each of the three
+  tests asserts the exact counter delta — 0 for the sub-segment case, 1 for
+  both ≥ `SEGMENT_SIZE` cases. A no-op `hint_hugepage` must then fail two of
+  the three. **Dependencies:** none. **Risk/change class:** [patch].
+  **Effort:** S.
+
+- [ ] **MNEM-DOCS-GAP-1** [docs][patch] status=todo owner=unclaimed
+  scope=`docs/gap_analysis_external.md`, `docs/complexity_audit.md`. Non-goals:
+  re-surveying the allocator literature; changing any priority tag whose
+  underlying assessment still holds. **Outcome:** the external gap analysis
+  stops asserting the tree's state incorrectly. Six verified drifts: §2 names
+  a `local_free` page field that does not exist; §3 states
+  `MAX_RETAINED_SEGMENTS = 32` when `MAX_RETAINED_SEGMENTS_LIMIT = 1024`
+  (`mnemosyne-core/src/constants.rs:40`); §4 calls huge-mapping retention "Not
+  implemented" although `huge_pool.rs` retains per NUMA bucket under a byte
+  budget; §5 calls NUMA-aware arena selection "Not implemented" although
+  `numa_bucket.rs` + `segment_pool.rs:112-162` implement it; §7 calls
+  per-allocation profiling and alloc/free hooks "Not implemented" although
+  `mnemosyne-prof` ships both; §9 calls `posix_memalign`/`aligned_alloc`
+  indirect although `mnemosyne-c-shim/src/lib.rs:187,216` export them. §11.2
+  speaks of `page_reset`/`make_guard` in the future conditional; §12 names two
+  test guards (`c_shim_round_trip_matches_global_alloc`,
+  `runtime_options_override_default_retention`) that return 0 grep hits; §12
+  repeats the wrong `size % SEGMENT_SIZE == 0` huge-page condition already
+  corrected in `README.md`. `docs/complexity_audit.md` says "11-crate
+  workspace" for 12 members and its map omits four crates. **Acceptance
+  oracle:** every row's state column is re-derived from a cited
+  `path:line`, and a grep for each named test guard resolves.
+  **Dependencies:** none. **Risk/change class:** [patch]. **Effort:** M.
+
+- [ ] **MNEM-ADR-INDEX-1** [docs][patch] status=todo owner=unclaimed
+  scope=`docs/adr/README.md`, new `scripts/` or `xtask`. Non-goals: rewriting
+  ADR content. **Outcome:** the ADR index's generator claim becomes true.
+  `docs/adr/README.md` reads "Generated by scripts/adr-index.py — do not
+  hand-edit. Regenerate: python scripts/adr-index.py generate"; there is no
+  `scripts/` directory and `find . -name 'adr-index.py'` returns nothing, so
+  the index has no freshness check and the instruction is unrunnable.
+  **Acceptance oracle:** either the generator is committed and a CI step runs
+  its `check` mode (regenerate-and-diff, failing on drift), or the header is
+  replaced with the truth that the index is hand-maintained. Also normalize
+  ADR 0001's status line from "Accepted and implemented" to the canonical
+  `Accepted`. **Dependencies:** none. **Risk/change class:** [patch].
+  **Effort:** S.
+
+- [ ] **MNEM-MISSINGDOCS-1** [arch][patch] status=todo owner=unclaimed
+  scope=`crates/mnemosyne-core/src/lib.rs`,
+  `crates/mnemosyne-arena/src/lib.rs` and whatever public items the deny then
+  flags. Non-goals: the other ten crates (already conforming);
+  `mnemosyne-benchmarks` (`publish = false`). **Outcome:** every published
+  crate denies undocumented public API. These two are the only published
+  crates without `#![deny(missing_docs)]`, and they hold the core layout types
+  (`Block`/`Page`/`Segment`), size classes, validation predicates, the policy
+  ZSTs, and the whole segment/arena/scratch surface. **Acceptance oracle:**
+  both `lib.rs` files carry `#![deny(missing_docs)]` and `cargo doc --no-deps`
+  is warning-clean for both packages under `RUSTDOCFLAGS=-D warnings`. Each
+  doc added must state the item's contract, not restate its signature.
+  **Dependencies:** none. **Risk/change class:** [patch]. **Effort:** M —
+  size it by first running the deny locally and counting the flagged items.
+
+- [ ] **MNEM-UNSAFE-DOC-1** [verification][patch] status=todo owner=unclaimed
+  scope=the 84 sites enumerated in `gap_audit.md`; largest clusters
+  `mnemosyne-local/src/free.rs` (17), `local_alloc/page/transitions.rs` (11),
+  `alloc.rs` (8), `mnemosyne-decay/src/lib.rs` (7),
+  `mnemosyne-local/src/realloc.rs` (6), `local_alloc/routing.rs` (6).
+  Non-goals: changing any unsafe operation; adding blanket comments that
+  restate the code. **Outcome:** every production `unsafe {}` block is
+  preceded by a safety comment discharging its specific obligation. 84 of 742
+  production blocks (11%) have no `// SAFETY:`/`// Safety:` within 14 lines.
+  **Acceptance oracle:** re-running the audit's scan reports 0, and the
+  comment at each site names the invariant relied on rather than repeating the
+  call. Run as a non-increasing ratchet, module by module, so the count only
+  decreases. Note that the tree mixes `// SAFETY:` and `// Safety:` — pick one
+  (terminology SSOT) and normalize in the same pass so the scan can be
+  mechanized as a CI check. **Dependencies:** none. **Risk/change class:**
+  [patch]. **Effort:** L.
+
+- [ ] **MNEM-PM-COMPACT-1** [pm-hygiene][patch] status=todo owner=unclaimed
+  scope=`backlog.md`, `checklist.md`. Non-goals: deleting evidence — closed
+  items keep their commit/PR references; touching any in-progress claim.
+  **Outcome:** a cold-start agent can find the ready work in one place.
+  `backlog.md` is 1,633 lines with 65 completed items retained as full prose,
+  5 unchecked, and four competing section headings (`## Open` at 206 and 1571,
+  `## Closed` at 140 and 189, `## Completed` at 996, `## Next` at 1628);
+  `checklist.md` is 1,529 lines with the same shape. **Acceptance oracle:**
+  one `## Ready`, one `## In progress`, one `## Blocked`, and one `## Closed`
+  section; every closed item collapsed to a one-line entry with its commit/PR
+  link; every remaining open item carrying the board schema (stable ID,
+  outcome, scope/non-goals, acceptance oracle, dependencies, risk/change
+  class, status, owner, last-update). Compaction precedes the next
+  replenishment. **Dependencies:** none — but do this before filing further
+  items. **Risk/change class:** [patch]. **Effort:** M.
+
+- [ ] **MNEM-LINTFLOOR-1** [pm-hygiene][patch] status=todo owner=unclaimed
+  scope=`Cargo.toml` `[workspace.lints]` block,
+  `crates/mnemosyne-core/src/kernel_budget.rs`,
+  `crates/mnemosyne-local/src/tests.rs`. Non-goals: loosening any lint level;
+  changing the pedantic ratchet baselines. **Outcome:** the lint-floor comment
+  matches the tree. It states the 24 `unwrap` sites "are pinned per file by
+  `#![expect(..., reason = "MNEM-UNWRAP-1")]`, which self-expires the moment a
+  file's last unwrap goes". There are 0 `expect` attributes in the workspace;
+  both sites use `#![cfg_attr(test, allow(clippy::unwrap_used, reason =
+  "test scope: ..."))]`, which does not self-expire, and `MNEM-UNWRAP-1`
+  appears nowhere else. **Acceptance oracle:** either both sites migrate to
+  `expect` (verifying the attribute survives the `cfg_attr(test, ...)` wrapper
+  under the pinned toolchain) and the comment's ratchet claim becomes true, or
+  the comment is corrected to describe `allow`. Add `clippy::allow_attributes`
+  to the floor so the migration is mechanized thereafter. **Dependencies:**
+  none. **Risk/change class:** [patch]. **Effort:** S.
+
+- [ ] **MNEM-BOOK-DEPTH-1** [docs][minor] status=todo owner=unclaimed
+  scope=`docs/book/`. Non-goals: the two factual rewrites already landed
+  (`size_classes.md`, `numa_placement.md`); adding chapters with no teaching
+  content. **Outcome:** the book teaches allocator design from the ground up,
+  as the domain-book contract requires, rather than summarizing the README.
+  All ten numbered chapters are 36–54 lines, and only two of them
+  (`alloc_policies`, `scratch_pools`) have an executable example under
+  `mdbook test`. The theory layer a newcomer needs — fragmentation as a
+  metric and why size classes bound it, the happens-before argument behind the
+  page-local cross-thread queue, decay/purge as an RSS-vs-syscall tradeoff,
+  why free-list encryption detects the UAF classes it does — is absent, and
+  the sources are already cited in the README's Research Foundations table.
+  **Acceptance oracle:** each Part has at least one chapter carrying a
+  derivation or protocol argument with a resolved citation (paper + section),
+  and each Part has at least one `mdbook test`-executed example. File one
+  DoR-shaped sub-item per chapter rather than treating this as one edit; this
+  entry is the parent. **Dependencies:** MNEM-DOCS-GAP-1 (the gap analysis is
+  the source for several chapters' "what we do not do" sections).
+  **Risk/change class:** [minor]. **Effort:** L.
+
+
 ## ATLAS-MNEMOSYNE-BOOK-TEST-2026-08-20 — Execute included book examples [patch] — done 2026-08-20
 
 - **Scope:** shared Pages caller and the two included allocator examples;
