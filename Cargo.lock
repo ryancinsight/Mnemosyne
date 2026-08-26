@@ -420,7 +420,7 @@ dependencies = [
 [[package]]
 name = "melinoe"
 version = "0.9.0"
-source = "git+https://github.com/ryancinsight/melinoe.git#f0be44d2026ad081dfca77571f509a76e9f37f6f"
+source = "git+https://github.com/ryancinsight/melinoe.git#f7fa27ac45a47837d33c61f2583ee37b2e648344"
 
 [[package]]
 name = "memchr"
@@ -473,8 +473,6 @@ dependencies = [
  "mnemosyne-arena",
  "mnemosyne-backend",
  "mnemosyne-build-util",
- "mnemosyne-decay",
- "mnemosyne-heap",
  "mnemosyne-local",
  "mnemosyne-memory",
  "mnemosyne-memory-core",
@@ -577,7 +575,6 @@ dependencies = [
  "mnemosyne-heap",
  "mnemosyne-local",
  "mnemosyne-memory",
- "mnemosyne-memory-core",
 ]
 
 [[package]]
