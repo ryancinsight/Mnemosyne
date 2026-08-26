@@ -8,7 +8,7 @@ scope-vs-delivery audit". These are DoR-shaped and unclaimed; the audit ran
 static-only (no build/test/clippy), so each item's first step is to reproduce
 its cited grep against current `HEAD` before editing (stale-memory rule).
 
-- [ ] **MNEM-DIAG-1** [patch] status=todo owner=unclaimed
+- [x] **MNEM-DIAG-1** [patch] status=done owner=atlas-session
   scope=`crates/mnemosyne-core/src/memory_diagnostics.rs`,
   `crates/mnemosyne/src/lib.rs`, and whichever alloc/free path is chosen as
   the recording site. Non-goals: adding hot-path atomics to the small-alloc
