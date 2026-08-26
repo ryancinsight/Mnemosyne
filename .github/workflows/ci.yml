@@ -83,6 +83,20 @@ jobs:
       - name: Run documentation tests
         run: cargo test --locked --workspace --doc
 
+  supply-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install cargo-deny and cargo-machete
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
+        with:
+          tool: cargo-deny,cargo-machete
+      - name: cargo deny check (advisories bans licenses sources)
+        run: cargo deny check advisories bans licenses sources
+      - name: cargo machete (unused dependencies)
+        run: cargo machete
+
   # Loom enumerates thread interleavings rather than sampling them, which is
   # what the `*_concurrent_push_pop` stress tests do. It is the tool for the
   # happens-before edges Miri does not check: Miri validates aliasing and leaks

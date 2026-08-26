@@ -1,0 +1,29 @@
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+    "BSD-3-Clause",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-git = "deny"
+unknown-registry = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+    "https://github.com/ryancinsight/eunomia",
+    "https://github.com/ryancinsight/themis",
+    "https://github.com/ryancinsight/melinoe.git",
+]
