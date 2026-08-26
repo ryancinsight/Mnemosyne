@@ -14,8 +14,7 @@ pub use mnemosyne_backend::{
     MemoryBackendWrapper, is_cuda_available,
 };
 pub use mnemosyne_core::{
-    AllocPolicy, AllocationDiagnostics, HardenedPolicy, MemoryEfficiencyReport, SecurePolicy,
-    SizeClassMetrics, StandardPolicy, options::MnemosyneOptions,
+    AllocPolicy, HardenedPolicy, SecurePolicy, StandardPolicy, options::MnemosyneOptions,
 };
 #[cfg(feature = "branded")]
 pub use mnemosyne_heap::{
