@@ -49,7 +49,7 @@ themis = { workspace = true }
 melinoe = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-mnemosyne-heap = { path = "../mnemosyne-heap" }
+mnemosyne-heap = { version = "0.4.0", path = "../mnemosyne-heap" }
 
 [lints]
 workspace = true
