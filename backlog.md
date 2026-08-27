@@ -1,5 +1,13 @@
 # Backlog
 
+## In progress
+
+- [ ] [patch] **MN-457 — scope the Windows CUDA thread-exit import to
+  x86_64.** status=review; integrator=codex; lease discharged by the delivery
+  commit; last-update=2026-08-27. The import now matches its x86_64-only
+  redirect caller. AArch64 Windows strict-warning check, host all-target
+  Clippy, and 14/14 focused nextest tests pass.
+
 ## Ready — gap-audit 2026-08-20 intake
 
 Filed by the Atlas gap audit at detached `HEAD` `6b0e490`. Evidence for every
