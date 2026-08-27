@@ -57,11 +57,11 @@ impl Page {
         // inside this page, and the page metadata is exclusively owned here.
         unsafe { (*page).initialized_blocks = initialized + 1 };
 
-        let segment_addr = (page as usize) & !(crate::constants::SEGMENT_SIZE - 1);
-        let page_offset = page_index << crate::constants::PAGE_SHIFT;
-        // SAFETY: `page` is embedded in a segment-aligned mapping and its
-        // validated page index selects a page wholly inside that mapping.
-        let page_start = unsafe { (segment_addr as *mut u8).add(page_offset) };
+        let segment_addr = page.addr() & !(crate::constants::SEGMENT_SIZE - 1);
+        let segment = page.map_addr(|_| segment_addr).cast::<Segment>();
+        // SAFETY: `page` retains its parent segment mapping's provenance and
+        // the initialized page index selects an in-range physical page.
+        let page_start = unsafe { Self::page_start_in_segment(segment, page_index) };
         // SAFETY: the bump-range invariant established above bounds this block
         // offset within the page and preserves the block's required alignment.
         let block_ptr = unsafe { page_start.add(initialized * block_size) } as *mut Block;
@@ -74,73 +74,42 @@ impl Page {
     ///
     /// # Safety
     ///
-    /// The page must have free blocks or uninitialized blocks remaining.
+    /// `page` must identify a live, exclusively owned page projected from its
+    /// complete segment mapping. The page must have free blocks or
+    /// uninitialized blocks remaining.
     #[inline(always)]
-    pub unsafe fn pop_block<P: crate::policy::AllocPolicy>(&mut self) -> NonNull<Block> {
-        if let Some(block) = unsafe { Self::try_pop_bump_block(self) } {
+    pub unsafe fn pop_block<P: crate::policy::AllocPolicy>(page: *mut Self) -> NonNull<Block> {
+        if let Some(block) = unsafe { Self::try_pop_bump_block(page) } {
             block
-        } else if let Some(block) = self.free {
+        } else if let Some(block) = unsafe { (*page).free } {
             let block_addr = block.as_ptr() as usize;
-            let page_start = self.page_start() as usize;
+            let page_addr = page.addr();
+            let segment_addr = page_addr & !(crate::constants::SEGMENT_SIZE - 1);
+            let page_start = segment_addr
+                + (unsafe { (*page).page_index as usize } << crate::constants::PAGE_SHIFT);
+            let block_size = unsafe { (*page).block_size };
             if block_addr < page_start
-                || block_addr + self.block_size > page_start + crate::constants::PAGE_SIZE
+                || block_addr + block_size > page_start + crate::constants::PAGE_SIZE
                 || (block_addr & (crate::constants::MIN_BLOCK_SIZE - 1)) != 0
             {
                 abort_on_corruption(
                     "pop_block found a free-list node outside its page or misaligned",
                 );
             }
-            // SAFETY: `parent_segment` returns `self`'s valid parent header and
-            // `index_in_segment` is this page's in-range index, satisfying
-            // `cookie_for`'s contract.
-            let cookie =
-                unsafe { Segment::cookie_for::<P>(self.parent_segment(), self.index_in_segment()) };
+            let segment = page.map_addr(|_| segment_addr).cast::<Segment>();
+            let page_index = unsafe { (*page).page_index as usize };
+            // SAFETY: `page` retains the parent mapping provenance and its
+            // initialized index is in range, satisfying `cookie_for`.
+            let cookie = unsafe { Segment::cookie_for::<P>(segment, page_index) };
             // SAFETY: `block` came from `self.free`, the page-local free list
             // whose nodes are validated above to lie within the page and be
             // `MIN_BLOCK_SIZE`-aligned, so `block.as_ptr()` is a valid, aligned
             // `Block` exclusively owned by this thread; reading its encoded
             // next-link with the matching `cookie` is sound.
-            self.free = unsafe { (*block.as_ptr()).get_next::<P>(cookie) };
+            unsafe { (*page).free = (*block.as_ptr()).get_next::<P>(cookie) };
             block
         } else {
             abort_on_corruption("pop_block called on an exhausted page");
-        }
-    }
-
-    /// Initializes a page's free list for a specific block size.
-    ///
-    /// # Safety
-    ///
-    /// The `page_start` pointer must point to the start of the 64KB page
-    /// and must be valid for reads and writes of size `PAGE_SIZE`.
-    /// Receiver-taking form retained for callers not yet converted (MN-438).
-    ///
-    /// Recovers the segment by masking the receiver's address, so the segment
-    /// accesses inside invalidate the `&mut self` borrow: **using the receiver
-    /// after this call is Undefined Behavior**. Prefer
-    /// [`Page::initialize_free_list_in_segment`].
-    ///
-    /// # Safety
-    ///
-    /// `page_start` must point to the start of this page and be valid for
-    /// `PAGE_SIZE` reads and writes, and the caller must not use the receiver
-    /// after the call.
-    pub unsafe fn initialize_free_list<P: crate::policy::AllocPolicy>(
-        &mut self,
-        page_start: *mut u8,
-        random_value: u64,
-    ) {
-        let segment = self.parent_segment();
-        let page_index = self.index_in_segment();
-        // SAFETY: `parent_segment` returns this page's parent header and
-        // `index_in_segment` its own in-range index.
-        unsafe {
-            Self::initialize_free_list_in_segment::<P>(
-                segment,
-                page_index,
-                page_start,
-                random_value,
-            )
         }
     }
 

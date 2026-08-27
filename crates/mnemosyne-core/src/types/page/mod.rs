@@ -104,54 +104,41 @@ impl Page {
         self.page_index as usize
     }
 
-    /// Recovers a raw pointer to this page's parent segment header.
+    /// Recovers the parent segment from a raw page pointer.
     ///
-    /// Every `Page` lives inside its parent segment's `pages` array, and the
-    /// segment header is `SEGMENT_ALIGN`-aligned at the base of the mapping, so
-    /// masking the page's own address down to `SEGMENT_SIZE` yields the header.
-    /// This is the single authoritative segment-recovery accessor; the free,
-    /// realloc, reclaim, and occupancy paths route through it instead of
-    /// repeating the `addr & !(SEGMENT_SIZE - 1)` mask (and its SAFETY argument)
-    /// inline.
-    ///
-    /// The returned pointer is only valid while this page is part of a live,
-    /// mapped segment; callers dereference it under their own segment-ownership
-    /// invariant.
-    #[inline(always)]
-    pub fn parent_segment(&self) -> *mut Segment {
-        let self_addr = self as *const Page as usize;
-        (self_addr & !(crate::constants::SEGMENT_SIZE - 1)) as *mut Segment
-    }
-
-    /// Recovers the parent segment from a raw page pointer without retagging
-    /// the page.
-    ///
-    /// The `&self` form above is fine on owner-only paths, but on cross-thread
-    /// paths the reference retags the whole `Page`, which races against the
-    /// owner's concurrent metadata writes. This form takes the address only.
+    /// The result retains the page pointer's allocation provenance while its
+    /// address is aligned down to the segment boundary. Callers must therefore
+    /// pass a page pointer projected from the complete segment mapping, not a
+    /// pointer reconstructed from an integer address.
     ///
     /// # Safety
     ///
     /// `page` must identify a live page inside its segment mapping.
     #[inline(always)]
     pub unsafe fn parent_segment_of(page: *const Page) -> *mut Segment {
-        let addr = page as usize;
-        (addr & !(crate::constants::SEGMENT_SIZE - 1)) as *mut Segment
+        let segment_addr = page.addr() & !(crate::constants::SEGMENT_SIZE - 1);
+        page.map_addr(|_| segment_addr).cast_mut().cast()
     }
 
-    /// Returns the physical start address of this page in memory.
+    /// Returns an access-capable pointer to a page's physical storage.
+    ///
+    /// This form derives from the parent segment pointer and therefore
+    /// preserves provenance for the complete segment mapping.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must identify a live segment allocation and `page_index` must
+    /// be in `1..PAGES_PER_SEGMENT`.
     #[inline(always)]
-    pub fn page_start(&self) -> *mut u8 {
-        let self_addr = self as *const Page as usize;
-        let segment_addr = self_addr & !(crate::constants::SEGMENT_SIZE - 1);
-        let page_offset = (self.page_index as usize) << crate::constants::PAGE_SHIFT;
-        // SAFETY: `segment_addr` is the base of `self`'s parent segment mapping
-        // (the address of `self` masked down to `SEGMENT_SIZE`), and
-        // `page_offset = page_index * PAGE_SIZE` with `page_index <
-        // PAGES_PER_SEGMENT`, so the result stays within the single
-        // `SEGMENT_SIZE` allocation that contains this page — the offset is in
-        // bounds of that object.
-        unsafe { (segment_addr as *mut u8).add(page_offset) }
+    pub unsafe fn page_start_in_segment(segment: *mut Segment, page_index: usize) -> *mut u8 {
+        debug_assert!(page_index > 0 && page_index < crate::constants::PAGES_PER_SEGMENT);
+        // SAFETY: the caller guarantees a live full-segment mapping and an
+        // in-range page index, so this offset stays inside that allocation.
+        unsafe {
+            segment
+                .cast::<u8>()
+                .add(page_index << crate::constants::PAGE_SHIFT)
+        }
     }
 
     /// Returns the maximum number of blocks that can fit in this page.

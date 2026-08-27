@@ -669,11 +669,10 @@ fn cross_thread_free_pushes_block_to_page_thread_free_queue() {
 
     let before_alloc_count = page.alloc_count;
     // SAFETY: caller owns the page through the still-live owner segment;
-    // the typed wrapper recomputes `segment`/`page_index` and reads
+    // the typed wrapper uses the existing segment mapping and reads
     // `StandardPolicy::ENABLE_FREE_LIST_ENCRYPTION` for the cookie.
-    let seg = page.parent_segment();
-    let idx = page.index_in_segment();
-    let reclaimed = unsafe { Page::reclaim_thread_free_for_policy::<StandardPolicy>(seg, idx) };
+    let reclaimed =
+        unsafe { Page::reclaim_thread_free_for_policy::<StandardPolicy>(segment, page_index) };
     assert_eq!(
         reclaimed, 1,
         "expected exactly one block from the cross-thread free on this page; got {} \

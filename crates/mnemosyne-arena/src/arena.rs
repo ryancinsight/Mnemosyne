@@ -43,14 +43,15 @@ unsafe fn init_segment_layout(
     alignment: usize,
     size: usize,
 ) -> Option<(*mut u8, usize, usize, usize)> {
-    let aligned_addr = checked_align_up(raw_ptr as usize, SEGMENT_ALIGN)?;
-    let aligned_ptr = aligned_addr as *mut Segment;
+    let raw_addr = raw_ptr.addr();
+    let aligned_addr = checked_align_up(raw_addr, SEGMENT_ALIGN)?;
+    let aligned_ptr = raw_ptr.map_addr(|_| aligned_addr).cast::<Segment>();
     let reserved_prefix_end = aligned_addr.checked_add(PAGE_SIZE)?;
     let user_addr = checked_align_up(reserved_prefix_end, alignment)?;
-    let user_ptr = user_addr as *mut u8;
+    let user_ptr = raw_ptr.map_addr(|_| user_addr);
     let metadata_addr = user_addr - core::mem::size_of::<*mut Segment>();
     let payload_end = user_addr.checked_add(size)?;
-    let mapping_end = (raw_ptr as usize).checked_add(total_alloc_size)?;
+    let mapping_end = raw_addr.checked_add(total_alloc_size)?;
 
     debug_assert_eq!(
         user_addr % core::mem::align_of::<*mut Segment>(),
@@ -93,8 +94,8 @@ unsafe fn initialize_large_or_huge_segment_fresh(
     alignment: usize,
     size: usize,
 ) -> Option<(*mut u8, usize, usize, usize)> {
-    let aligned_addr = checked_align_up(raw_ptr as usize, SEGMENT_ALIGN)?;
-    let aligned_ptr = aligned_addr as *mut Segment;
+    let aligned_addr = checked_align_up(raw_ptr.addr(), SEGMENT_ALIGN)?;
+    let aligned_ptr = raw_ptr.map_addr(|_| aligned_addr).cast::<Segment>();
     // SAFETY: fresh mapping — write invariant header fields.
     unsafe {
         let node = crate::current_numa_node();

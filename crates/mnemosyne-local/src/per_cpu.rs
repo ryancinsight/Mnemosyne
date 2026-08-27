@@ -6,7 +6,7 @@
 //! cache is explicitly used.
 
 use core::ops::Deref;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::policy::AllocPolicy;
 use std::boxed::Box;
@@ -32,11 +32,11 @@ pub static PER_CPU_CACHE_ENABLED: AtomicBool = AtomicBool::new(true);
 /// A lock-free block cache slot for a single CPU, protected against UAF and ABA hazards.
 #[repr(align(64))]
 pub struct CpuCacheSlot {
-    /// Cached block addresses per size class, zero meaning an empty entry.
+    /// Cached block pointers per size class, null meaning an empty entry.
     ///
     /// The slot is cache-line aligned so neighbouring CPUs do not contend
     /// on the same line while pushing and popping their own caches.
-    pub blocks: [[AtomicUsize; MAX_CACHED_BLOCKS]; NUM_SIZE_CLASSES],
+    pub blocks: [[AtomicPtr<u8>; MAX_CACHED_BLOCKS]; NUM_SIZE_CLASSES],
 }
 
 impl Default for CpuCacheSlot {
@@ -50,7 +50,7 @@ impl CpuCacheSlot {
     /// Creates a new empty `CpuCacheSlot`.
     pub const fn new() -> Self {
         Self {
-            blocks: [const { [const { AtomicUsize::new(0) }; MAX_CACHED_BLOCKS] };
+            blocks: [const { [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_CACHED_BLOCKS] };
                 NUM_SIZE_CLASSES],
         }
     }
@@ -209,13 +209,13 @@ pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
 
     for _ in 0..2 {
         let mut found_idx = None;
-        let mut block_ptr_val = 0;
+        let mut block_ptr = core::ptr::null_mut();
 
         for i in 0..MAX_CACHED_BLOCKS {
             let val = slot.blocks[class][i].load(Ordering::Relaxed);
-            if val != 0 {
+            if !val.is_null() {
                 found_idx = Some(i);
-                block_ptr_val = val;
+                block_ptr = val;
                 break;
             }
         }
@@ -237,13 +237,13 @@ pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
         // `try_free_cpu`: the retry budget here is for CPU migration, and a
         // spurious failure would spend it while reporting an empty cache.
         match slot.blocks[class][idx].compare_exchange(
-            block_ptr_val,
-            0,
+            block_ptr,
+            core::ptr::null_mut(),
             Ordering::Acquire,
             Ordering::Relaxed,
         ) {
             Ok(_) => {
-                return block_ptr_val as *mut u8;
+                return block_ptr;
             }
             Err(_) => {
                 if !refreshed {
@@ -289,11 +289,11 @@ pub fn try_free_cpu(ptr: *mut u8, class: usize, encrypted: bool) -> bool {
         let mut is_double_free = false;
         for i in 0..MAX_CACHED_BLOCKS {
             let val = slot.blocks[class][i].load(Ordering::Relaxed);
-            if val == ptr as usize {
+            if val == ptr {
                 is_double_free = true;
                 break;
             }
-            if val == 0 && found_idx.is_none() {
+            if val.is_null() && found_idx.is_none() {
                 found_idx = Some(i);
             }
         }
@@ -325,8 +325,8 @@ pub fn try_free_cpu(ptr: *mut u8, class: usize, encrypted: bool) -> bool {
         // failure means the slot genuinely changed under us, which is the
         // condition the retry is written for.
         match slot.blocks[class][idx].compare_exchange(
-            0,
-            ptr as usize,
+            core::ptr::null_mut(),
+            ptr,
             Ordering::Release,
             Ordering::Relaxed,
         ) {

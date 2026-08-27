@@ -4,11 +4,11 @@
 
 - [x] Reproduce and localize the exposed-provenance warnings through the Leto
       single-write storage path.
-- [ ] Preserve backend-allocation provenance while aligning segment headers and
+- [x] Preserve backend-allocation provenance while aligning segment headers and
       recovering segment/page pointers; do not retain integer-to-pointer
       reconstruction as a fallback.
-- [ ] Add boundary/value tests for aligned recovery and allocator-owned drops.
-- [ ] Run focused strict Miri, nextest, Clippy, docs, and SemVer gates against
+- [x] Add boundary/value tests for aligned recovery and allocator-owned drops.
+- [x] Run focused strict Miri, nextest, Clippy, docs, and SemVer gates against
       the exact increment.
 - [ ] Update the recorded Miri exclusion and close the lease with the merged
       commit.

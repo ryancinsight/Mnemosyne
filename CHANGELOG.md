@@ -9,6 +9,18 @@
 
 ### Changed
 
+- **Breaking.** Allocator mapping provenance now remains attached from backend
+  allocation through aligned segments, page lists, free-list links, per-CPU
+  caches, and tagged atomic heads. Low-level page callers must use the
+  segment-addressed forms: `Page::parent_segment_of(page_pointer)`,
+  `Page::page_start_in_segment(segment, page_index)`,
+  `Page::initialize_free_list_in_segment(segment, page_index, ...)`, and
+  `Page::pop_block::<P>(page_pointer)`. The former receiver methods could not
+  prove access to the parent mapping and made page-scoped exclusivity claims
+  incompatible with remote frees, so they are removed rather than wrapped.
+  Strict Miri passes the 18-test core suite and the exact Leto single-write
+  storage constructor/drop path. See ADR 0009.
+
 - **Breaking.** `Segment::next_free_segment` is an `AtomicPtr<Segment>` rather
   than a `*mut Segment`. The pool stack's `pop` clears this link after its CAS,
   on the reasoning that the CAS made the popper the exclusive owner — but that
@@ -195,8 +207,8 @@
 - `mnemosyne-arena::AlignedVec::into_vec` now releases its distinct aligned
   source allocation after copying initialized elements into the standard
   `Vec`; conversion no longer leaks the source buffer.
-- Cached small-page metadata pointers are refreshed through explicit exposed
-  provenance before reuse, and cross-thread frees no longer create exclusive
+- Cached small-page metadata pointers retain their segment mapping provenance
+  through raw projections, and cross-thread frees no longer create exclusive
   references to owner-managed page metadata. The exact Hermes allocation/free
   regression passes Miri under Stacked Borrows and Tree Borrows.
 - Latent `nightly_tls` build break: `mnemosyne-prof` imported
@@ -616,7 +628,7 @@
 - Enabled the jemalloc benchmark comparator on Windows via an opt-in `system-jemalloc` feature. `tikv-jemallocator` builds jemalloc from source, which does not link on windows-gnu (the jemalloc column was N/A); the feature instead links a system-installed static `libjemalloc_s.a` (e.g. MSYS2 `mingw-w64-*-jemalloc`) through a thin `GlobalAlloc` over jemalloc's sized `je_*x` API, with `build.rs` locating the lib from `PATH` (`*/{ucrt64,mingw64}/bin` siblings) or `MNEMOSYNE_JEMALLOC_LIB_DIR`. Default Windows builds are unchanged (feature off ⇒ jemalloc still skipped); non-Windows targets keep `tikv-jemallocator`. Run with `cargo bench -p mnemosyne-benchmarks --features system-jemalloc`. Verified: links and produces real numbers on windows-gnu (e.g. cycle latency small/medium/large ≈ 6.98 / 7.49 / 15.30 ns).
 - Reduced Windows commit charge by ~`SEGMENT_ALIGN` (≈ 2 MiB) per segment: added `MemoryBackend::decommit` (Windows `VirtualFree(MEM_DECOMMIT)` / Unix `madvise(MADV_DONTNEED)`) and used it in `allocate_segment` to return the eagerly-committed alignment slack `[raw_ptr, aligned_addr)` to the OS while keeping the reservation releasable. Unlike `page_reset` (`MEM_RESET`), `decommit` actually drops commit charge. Records `decommit_calls`/`decommit_bytes` telemetry. Backends without it opt out via the default. Pinned by `decommit_telemetry_increments_call_and_byte_counters_only` and `wrapper_decommit_returns_slack_and_keeps_reservation_releasable`.
 - Added `Page::index_in_segment()`, an O(1) address-derivation of a page's index within its segment, validated against the stored `page_index` field across a real segment (`page_index_field_matches_address_derivation`). This is the verified foundation for replacing the stored `page_index` with a doubly-linked `prev_page` back-pointer (O(1) page-list unlink) while keeping `Page` within its 64-byte cache line.
-- Hardened the `AtomicFreeList` 64-bit pointer-packing deallocation queue: replaced bare integer/pointer casts with explicit `expose_provenance`/`with_exposed_provenance_mut` (provenance-correct for a tagged-pointer list), replaced magic-number masks with named `PACKED_PTR_BITS`/`PTR_MASK`/`COUNT_WRAP_MASK` constants, and documented the 48-bit address and 16-bit counter portability contract. No behavior or codegen change; validated under Miri (no UB).
+- Hardened the `AtomicFreeList` 64-bit pointer-packing deallocation queue: its `AtomicPtr` head retains block provenance while `map_addr` packs and unpacks the 48-bit address plus 16-bit counter; named `PACKED_PTR_BITS`/`PTR_MASK`/`COUNT_WRAP_MASK` constants document the portability contract. The one-word layout and O(1) count remain unchanged and strict Miri validates push/pop.
 - Added a Miri-validated pure-logic test for the singly-linked page-list splice helper (`unlink_page_from_list`), which previously had no Miri-runnable coverage.
 - Reduced `unlink_owned_segment` from O(owned-segments) to O(1) by converting the owned-segments list to an intrusive doubly-linked list (`Segment::prev_owned_segment`), routing both insertion sites through the single authoritative `ThreadAllocator::push_owned_segment`. Removes the owned-segment-count term from `try_reclaim_segment`. Pinned by `owned_segment_list_is_doubly_linked_and_unlinks_in_place`.
 - Added `docs/complexity_audit.md`, a per-component asymptotic-complexity review confirming all per-allocation/per-free hot paths are O(1) and cataloguing the remaining cold-path super-constant operations with a reduction plan.

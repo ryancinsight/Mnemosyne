@@ -4,8 +4,6 @@ use core::ptr::NonNull;
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::types::Page;
 
-use super::access::refresh_page_pointer;
-
 type PageListBrand<'id, B> = fn(&'id mut ThreadAllocator<B>) -> &'id mut ThreadAllocator<B>;
 
 /// Zero-sized permission proving exclusive allocator authority over page-list
@@ -31,7 +29,7 @@ impl<'id, B: HasSegmentPool> PageListToken<'id, B> {
     #[inline(always)]
     pub(crate) unsafe fn page(&mut self, page_ptr: NonNull<Page>) -> BrandedPage<'id> {
         BrandedPage {
-            ptr: refresh_page_pointer(page_ptr),
+            ptr: page_ptr,
             _brand: PhantomData,
         }
     }
@@ -88,8 +86,9 @@ pub(crate) unsafe fn push_page_front<'id, B: HasSegmentPool>(
     unsafe { (*raw_page.as_ptr()).list_state = list_state };
     let page_index = unsafe { (*raw_page.as_ptr()).page_index };
     if page_index > 0 {
-        let (segment, _) =
-            unsafe { mnemosyne_core::types::locate_segment(raw_page.as_ptr().cast()) };
+        // SAFETY: list nodes retain the complete segment mapping provenance
+        // supplied when the allocator projected each page metadata header.
+        let segment = unsafe { Page::parent_segment_of(raw_page.as_ptr()) };
         unsafe {
             (*segment).page_linked_mask |= 1 << page_index;
         }
@@ -144,8 +143,9 @@ pub(crate) unsafe fn unlink_page_from_list<'id, B: HasSegmentPool>(
     }
     let page_index = unsafe { (*raw_page.as_ptr()).page_index };
     if page_index > 0 {
-        let (segment, _) =
-            unsafe { mnemosyne_core::types::locate_segment(raw_page.as_ptr().cast()) };
+        // SAFETY: as in `push_page_front`, this node is a raw projection from
+        // its live parent segment mapping.
+        let segment = unsafe { Page::parent_segment_of(raw_page.as_ptr()) };
         unsafe {
             (*segment).page_linked_mask &= !(1 << page_index);
         }

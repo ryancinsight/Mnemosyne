@@ -1,11 +1,9 @@
 //! Page-local allocation and intrusive-list concerns.
 
-mod access;
 mod allocation;
 mod lists;
 mod transitions;
 
-pub(crate) use access::{refresh_page_pointer, refresh_raw_page_pointer};
 pub(crate) use allocation::{
     pop_page_free_block, try_allocate_page_local, try_reclaim_and_allocate,
 };

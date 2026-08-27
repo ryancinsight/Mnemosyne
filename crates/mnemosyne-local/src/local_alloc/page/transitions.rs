@@ -1,8 +1,8 @@
 use crate::local_alloc::ThreadAllocator;
 use core::ptr::NonNull;
 use mnemosyne_arena::HasSegmentPool;
-use mnemosyne_core::constants::{NUM_SIZE_CLASSES, SEGMENT_SIZE};
-use mnemosyne_core::types::{Page, Segment};
+use mnemosyne_core::constants::NUM_SIZE_CLASSES;
+use mnemosyne_core::types::Page;
 
 use super::lists::{
     PageListToken, move_page_between_lists_branded, push_page_front, unlink_page_from_list,
@@ -197,9 +197,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     break;
                 }
                 checked += 1;
-                let page_addr = page_ptr.as_ptr() as usize;
-                let segment_addr = page_addr & !(SEGMENT_SIZE - 1);
-                let segment = segment_addr as *mut Segment;
+                // SAFETY: every list node is a live page projected from its
+                // complete segment mapping by the allocator's routing path.
+                let segment = unsafe { Page::parent_segment_of(page_ptr.as_ptr()) };
 
                 // Check if there are other active allocations in this segment using the occupancy bitmask.
                 let has_other_allocations = unsafe { (*segment).page_occupied_mask != 0 };

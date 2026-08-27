@@ -6,12 +6,12 @@ use mnemosyne_core::types::{Block, Page};
 ///
 /// # Why these take `*mut Page` rather than `&mut Page`
 ///
-/// The allocator's page lists carry addresses and refresh exposed provenance at
-/// each use (see `page::access`), so a page pointer here is already a wildcard.
-/// Turning one into `&mut Page` mints a `Unique` tag, and the page's own
-/// segment accesses — the occupancy mask, `is_current`, the free-list cookie —
-/// then have to pop that tag, which is Undefined Behavior. Staying on raw
-/// pointers keeps every access in this path on the same wildcard footing.
+/// The allocator's page lists retain pointers projected from the complete
+/// segment mapping. Turning one into `&mut Page` mints a `Unique` tag, and the
+/// page's own segment accesses — the occupancy mask, `is_current`, the
+/// free-list cookie — then invalidate that tag. Keeping the pointer raw
+/// preserves the segment-spanning provenance without making an exclusivity
+/// claim the allocator cannot uphold across remote frees.
 ///
 /// # Safety
 ///
@@ -21,7 +21,7 @@ use mnemosyne_core::types::{Block, Page};
 #[inline(always)]
 pub(crate) unsafe fn pop_page_free_block<P: AllocPolicy>(page: *mut Page) -> NonNull<Block> {
     // SAFETY: caller guarantees `page` is live with a non-empty free list.
-    unsafe { (*page).pop_block::<P>() }
+    unsafe { Page::pop_block::<P>(page) }
 }
 
 /// Allocates one block from a page-local free list or from that page's lazy
@@ -46,7 +46,7 @@ pub(crate) unsafe fn try_allocate_page_local<P: AllocPolicy>(
         let block = if let Some(block) = Page::try_pop_bump_block(page) {
             block
         } else if (*page).free.is_some() {
-            (*page).pop_block::<P>()
+            Page::pop_block::<P>(page)
         } else {
             return None;
         };
@@ -54,7 +54,7 @@ pub(crate) unsafe fn try_allocate_page_local<P: AllocPolicy>(
         // parent segment on that hot path; only the empty-to-occupied
         // transition needs the segment occupancy mask.
         if (*page).alloc_count == 0 {
-            let segment = (*page).parent_segment();
+            let segment = Page::parent_segment_of(page);
             let page_index = (*page).index_in_segment();
             Page::increment_alloc_count_in_segment(segment, page_index);
         } else {
@@ -88,7 +88,7 @@ pub(crate) unsafe fn try_reclaim_and_allocate<P: AllocPolicy>(
         if (*page).thread_free.is_empty() {
             return None;
         }
-        ((*page).parent_segment(), (*page).index_in_segment())
+        (Page::parent_segment_of(page), (*page).index_in_segment())
     };
 
     // SAFETY: `parent_segment`/`index_in_segment` name this page's parent

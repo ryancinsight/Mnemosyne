@@ -93,8 +93,11 @@ fn test_per_cpu_cache_contention_bounds() {
     let cpu_id = per_cpu::get_current_cpu_id();
     let class = 0;
 
-    // Set up a block in the per-CPU cache slot
-    let dummy_block = 0x12345678usize;
+    // Set up two live block addresses for the contended slot. The worker owns
+    // the backing allocation until it clears the slot, so every published
+    // pointer retains valid provenance for the complete test.
+    let blocks = Box::new([0_u8; 2]);
+    let dummy_block = blocks.as_ptr().cast_mut();
     per_cpu::PER_CPU_CACHE.slots[cpu_id].blocks[class][0].store(dummy_block, Ordering::Relaxed);
 
     let stop = std::sync::Arc::new(AtomicBool::new(false));
@@ -102,15 +105,17 @@ fn test_per_cpu_cache_contention_bounds() {
 
     // Spawn a thread to constantly change the slot value to cause CAS failures
     let handle = thread::spawn(move || {
-        let mut val = dummy_block;
+        let first = blocks.as_ptr().cast_mut();
+        // SAFETY: `blocks` has two initialized elements, so index 1 is in
+        // bounds and remains live for this closure's complete execution.
+        let second = unsafe { first.add(1) };
+        let mut val = first;
         while !stop_clone.load(Ordering::Relaxed) {
-            val = if val == dummy_block {
-                0x87654321usize
-            } else {
-                dummy_block
-            };
+            val = if val == first { second } else { first };
             per_cpu::PER_CPU_CACHE.slots[cpu_id].blocks[class][0].store(val, Ordering::Relaxed);
         }
+        per_cpu::PER_CPU_CACHE.slots[cpu_id].blocks[class][0]
+            .store(core::ptr::null_mut(), Ordering::Relaxed);
     });
 
     // Run try_alloc_cpu many times under severe contention.
@@ -122,6 +127,10 @@ fn test_per_cpu_cache_contention_bounds() {
     stop.store(true, Ordering::Relaxed);
     let _ = handle.join();
 
-    // Clean up slot
-    per_cpu::PER_CPU_CACHE.slots[cpu_id].blocks[class][0].store(0, Ordering::Relaxed);
+    assert!(
+        per_cpu::PER_CPU_CACHE.slots[cpu_id].blocks[class][0]
+            .load(Ordering::Relaxed)
+            .is_null(),
+        "contention worker must clear the slot before dropping its backing allocation"
+    );
 }

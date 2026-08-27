@@ -145,8 +145,9 @@ unsafe impl Sync for Segment {}
 /// valid index into its `pages` array.
 #[inline(always)]
 pub unsafe fn locate_segment(ptr: *mut u8) -> (*mut Segment, usize) {
-    let ptr_val = ptr as usize;
-    let segment = (ptr_val & !(crate::constants::SEGMENT_SIZE - 1)) as *mut Segment;
+    let ptr_val = ptr.addr();
+    let segment_addr = ptr_val & !(crate::constants::SEGMENT_SIZE - 1);
+    let segment = ptr.map_addr(|_| segment_addr).cast::<Segment>();
     let page_index = (ptr_val >> crate::constants::PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
     (segment, page_index)
 }
@@ -166,10 +167,10 @@ pub unsafe fn locate_segment(ptr: *mut u8) -> (*mut Segment, usize) {
 #[inline(always)]
 pub unsafe fn locate_page(segment: *mut Segment, page_index: usize) -> *mut Page {
     debug_assert!(page_index < PAGES_PER_SEGMENT);
-    let page_address = segment.expose_provenance()
-        + core::mem::offset_of!(Segment, pages)
-        + page_index * core::mem::size_of::<Page>();
-    core::ptr::with_exposed_provenance_mut(page_address)
+    // SAFETY: the caller guarantees a live segment and an in-range index. A
+    // raw place projection retains the segment allocation's provenance and
+    // creates no reference to the enclosing metadata.
+    unsafe { &raw mut (*segment).pages[page_index] }
 }
 
 /// A segment's owner identity: who owns it, and which allocator cache its
