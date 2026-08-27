@@ -922,7 +922,10 @@ Filed from the 2026-08-12 verification-posture review:
   — they fail identically without this change. It is the known Windows-only
   huge-pool retention leak, and CI on Linux passes them.
 
-- [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.** The job scopes
+- [ ] [patch] **MN-436 — the Miri gate's recorded exclusions.**
+  status=in-progress; integrator=codex; live lease=`mnemosyne-core/src/types/{segment,page}`,
+  `mnemosyne-arena/src/segment/alloc.rs`, focused tests/docs; last-update=2026-08-27.
+  The job scopes
   deliberately and every exclusion is listed here so none is silent. Re-measured
   2026-08-18 by running each excluded crate rather than inferring from the
   original note, which had gone stale in both halves.
