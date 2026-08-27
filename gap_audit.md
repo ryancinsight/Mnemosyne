@@ -426,6 +426,13 @@ of these two completed items.
   and tagged atomic heads. Strict Miri passes the core suite and exact Leto
   storage consumer path; native concurrency stress remains covered by TSan and
   loom rather than the interpreter.
+- Exact PR Miri found that one legacy local-allocator test projected page
+  pointers through `&mut Segment::pages`, narrowing the borrow tag before the
+  page-list operation updated parent-segment occupancy. Production paths
+  already used raw mapping-derived projections. The test now uses the same
+  canonical `locate_page` boundary; the originally failing case passes strict
+  Miri under Stacked and Tree Borrows. The reusable audit rule is that unsafe
+  harnesses must satisfy the same provenance contract as production callers.
 - Closed `mnemosyne-arena::AlignedVec::into_vec`'s source-buffer leak. Zero-copy
   transfer is not layout-compatible with `Vec`'s allocator contract, so the
   retained design copies once and releases the distinct aligned allocation.

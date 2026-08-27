@@ -18,7 +18,8 @@
   `Page::pop_block::<P>(page_pointer)`. The former receiver methods could not
   prove access to the parent mapping and made page-scoped exclusivity claims
   incompatible with remote frees, so they are removed rather than wrapped.
-  Strict Miri passes the 18-test core suite and the exact Leto single-write
+  Strict Miri passes the 18-test core suite, the page-list parent-segment
+  occupancy update under both borrow models, and the exact Leto single-write
   storage constructor/drop path. See ADR 0009.
 
 - **Breaking.** `Segment::next_free_segment` is an `AtomicPtr<Segment>` rather

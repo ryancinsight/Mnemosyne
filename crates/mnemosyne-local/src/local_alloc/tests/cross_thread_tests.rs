@@ -4,6 +4,7 @@ use core::ptr::NonNull;
 use mnemosyne_arena::{allocate_segment, deallocate_segment};
 use mnemosyne_core::constants::{PAGE_SHIFT, PAGES_PER_SEGMENT};
 use mnemosyne_core::policy::StandardPolicy;
+use mnemosyne_core::types::locate_page;
 
 #[test]
 fn test_snmalloc_message_passing() {
@@ -510,8 +511,14 @@ fn test_online_defragmentation_page_prioritization() {
         }
     }
 
-    let seg1_page2 = unsafe { NonNull::new_unchecked(&mut (*seg1).pages[2] as *mut Page) };
-    let seg2_page1 = unsafe { NonNull::new_unchecked(&mut (*seg2).pages[1] as *mut Page) };
+    // SAFETY: both segments are live, and indices 2 and 1 are in range.
+    // `locate_page` retains each mapping's provenance without creating a
+    // subobject reference that would forbid the list's parent-segment update.
+    let seg1_page2 = NonNull::new(unsafe { locate_page(seg1, 2) })
+        .expect("an in-range page in a live segment cannot be null");
+    // SAFETY: `seg2` is live and page index 1 is in range.
+    let seg2_page1 = NonNull::new(unsafe { locate_page(seg2, 1) })
+        .expect("an in-range page in a live segment cannot be null");
 
     // Push seg1_page2 first, then seg2_page1 second
     unsafe {

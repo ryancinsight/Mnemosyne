@@ -923,7 +923,7 @@ Filed from the 2026-08-12 verification-posture review:
   huge-pool retention leak, and CI on Linux passes them.
 
 - [ ] [major] **MN-436 — preserve allocator mapping provenance.**
-  status=review; integrator=codex; lease discharged by delivery commit;
+  status=review; integrator=codex; lease discharged by the fix-forward commit;
   last-update=2026-08-27. ADR 0009 replaces exposed/wildcard provenance in
   core, arena, and local allocation paths with mapping-derived raw pointers,
   `AtomicPtr` packed heads, and `map_addr` tagging. Unsound page receiver APIs
@@ -938,6 +938,15 @@ Filed from the 2026-08-12 verification-posture review:
   bound; unchanged real workloads pass nextest and remain covered by hosted
   TSan run 32198740189 and loom models. The distinct `RawHeap` address recovery
   is outside this core/arena/local increment and is tracked by MN-456.
+  Hosted PR #75 Miri then found one test-only contract violation: run
+  `33112953132` created page pointers through `&mut (*segment).pages[index]`,
+  whose subobject retag cannot authorize the list operation's subsequent
+  parent-segment occupancy write. Production page-list callers already use raw
+  place projections. Fix forward with the same mapping-derived projection and
+  require both borrow models before closure. The exact failing case now passes
+  strict-provenance Miri under Stacked and Tree Borrows, all 93 local-allocator
+  native tests pass, and focused Clippy is warning-clean. Hosted full-suite
+  Miri remains the merge gate.
 
 - [ ] [major] **MN-456 — preserve `RawHeap` mapping provenance.**
   status=todo; integrator=unclaimed; dependencies=MN-436; scope=
