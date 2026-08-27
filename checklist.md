@@ -4,9 +4,10 @@
 
 - [x] Reproduce the AArch64 Windows `dead_code` diagnostic and localize it to
       the architecture mismatch between `ExitThread` and its only caller.
-- [ ] Scope the import to x86_64 and verify host plus AArch64 Windows builds
+- [x] Scope the import to x86_64 and verify host plus AArch64 Windows builds
       under `-D warnings`.
-- [ ] Run focused tests, synchronize PM state, and deliver the fix.
+- [x] Run host all-target Clippy and 14/14 focused nextest tests, synchronize
+      PM state, and deliver the fix.
 
 ## MN-436 (owner: codex)
 

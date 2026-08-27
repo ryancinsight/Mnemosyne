@@ -76,6 +76,7 @@ unsafe extern "system" {
         VectoredHandler: unsafe extern "system" fn(*mut EXCEPTION_POINTERS) -> i32,
     ) -> *mut c_void;
     fn RemoveVectoredExceptionHandler(Handler: *mut c_void) -> u32;
+    #[cfg(target_arch = "x86_64")]
     fn ExitThread(dwExitCode: u32) -> !;
 }
 
