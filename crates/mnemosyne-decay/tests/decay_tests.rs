@@ -4,12 +4,41 @@ use mnemosyne_backend::MemoryBackendWrapper as Backend;
 use mnemosyne_core::StandardPolicy as Policy;
 use mnemosyne_core::options::PURGE_CADENCE_MS;
 use mnemosyne_local::internal::reset_options_for_testing;
-use mnemosyne_local::{thread_alloc, thread_free};
+use mnemosyne_local::{thread_alloc, thread_allocator_stats, thread_free};
 use std::thread;
 use std::time::Duration;
 
 static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 const BACKGROUND_DECAY_TIMEOUT: Duration = Duration::from_secs(5);
+const FRAGMENTATION_SIZES: [usize; 4] = [16, 64, 256, 1024];
+const FRAGMENTATION_ROUNDS: usize = 64;
+const TEMPORARY_BLOCKS_PER_CLASS: usize = 32;
+const PINNED_LIVE_BYTES: usize = 16 + 64 + 256 + 1024;
+
+const _: () = assert!(
+    (TEMPORARY_BLOCKS_PER_CLASS + 1) * 1024 <= mnemosyne_core::constants::PAGE_SIZE,
+    "the largest size-class wave must fit in one page"
+);
+const _: () = assert!(
+    FRAGMENTATION_SIZES.len() < mnemosyne_core::constants::PAGES_PER_SEGMENT,
+    "the active size classes must fit in one segment after its metadata page"
+);
+
+fn allocate_patterned_block(size: usize, pattern: u8) -> *mut u8 {
+    // SAFETY: the requested size and alignment are non-zero, and the returned
+    // block is retained until one matching `thread_free` call.
+    let ptr = unsafe { thread_alloc::<Policy, Backend>(size, 16) };
+    assert!(!ptr.is_null(), "allocation failed for {size}-byte block");
+    // SAFETY: a successful allocation provides `size` writable bytes.
+    unsafe { ptr.write_bytes(pattern, size) };
+    ptr
+}
+
+fn free_block(ptr: *mut u8) {
+    // SAFETY: callers pass each pointer returned by
+    // `allocate_patterned_block` exactly once.
+    unsafe { thread_free::<Policy, Backend>(ptr) };
+}
 
 #[test]
 fn test_decay_purger_spawns_and_cleans_orphans() {
@@ -282,5 +311,102 @@ fn decay_step_returns_segment_bytes_to_os() {
         "purged_bytes must increase after decay_step: before={}, after={}",
         before.purged_bytes,
         after.purged_bytes
+    );
+}
+
+#[test]
+fn alternating_size_classes_converge_with_pinned_survivors() {
+    struct ResetOptionsOnDrop;
+
+    impl Drop for ResetOptionsOnDrop {
+        fn drop(&mut self) {
+            reset_options_for_testing();
+        }
+    }
+
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    reset_options_for_testing();
+    let _reset = ResetOptionsOnDrop;
+    mnemosyne_core::options::MAX_RETAINED_SEGMENTS.store(0, Ordering::Release);
+    mnemosyne_decay::decay_step();
+
+    let baseline_mapped = mnemosyne_backend::backend_memory_stats().current_mapped_bytes;
+    let worker = thread::spawn(move || {
+        let patterns = [0x11, 0x33, 0x55, 0x77];
+        let pinned: [(*mut u8, usize, u8); FRAGMENTATION_SIZES.len()] =
+            core::array::from_fn(|index| {
+                let size = FRAGMENTATION_SIZES[index];
+                let pattern = patterns[index];
+                (allocate_patterned_block(size, pattern), size, pattern)
+            });
+
+        for round in 0..FRAGMENTATION_ROUNDS {
+            let sizes = if round.is_multiple_of(2) {
+                FRAGMENTATION_SIZES
+            } else {
+                [1024, 256, 64, 16]
+            };
+            let mut temporary =
+                Vec::with_capacity(FRAGMENTATION_SIZES.len() * TEMPORARY_BLOCKS_PER_CLASS);
+            for size in sizes {
+                temporary.extend(
+                    (0..TEMPORARY_BLOCKS_PER_CLASS).map(|_| allocate_patterned_block(size, 0xA5)),
+                );
+            }
+
+            temporary.into_iter().rev().for_each(free_block);
+
+            let allocator = thread_allocator_stats::<Policy, Backend>();
+            assert_eq!(
+                allocator.current_thread_live_allocations,
+                FRAGMENTATION_SIZES.len(),
+                "round {round} must retain only the four pinned survivors"
+            );
+            assert_eq!(
+                allocator.fresh_segments, 1,
+                "round {round} mapped another segment"
+            );
+            assert_eq!(
+                allocator.current_thread_owned_segments, 1,
+                "round {round} escaped the one-segment working-set bound"
+            );
+
+            let mapped = mnemosyne_backend::backend_memory_stats().current_mapped_bytes;
+            let mapped_delta = mapped
+                .checked_sub(baseline_mapped)
+                .expect("invariant: this workload cannot unmap the pre-test baseline");
+            assert!(
+                mapped_delta <= mnemosyne_arena::SEGMENT_MAPPING_SIZE,
+                "round {round} retains {mapped_delta} mapped bytes for {PINNED_LIVE_BYTES} pinned bytes; bound is one {}-byte segment mapping",
+                mnemosyne_arena::SEGMENT_MAPPING_SIZE
+            );
+
+            for &(ptr, size, pattern) in &pinned {
+                // SAFETY: pinned blocks remain allocated throughout every
+                // round, and both reads stay inside their allocation.
+                unsafe {
+                    assert_eq!(ptr.read(), pattern);
+                    assert_eq!(ptr.add(size - 1).read(), pattern);
+                }
+            }
+        }
+
+        let allocator = thread_allocator_stats::<Policy, Backend>();
+        assert_eq!(
+            allocator.current_thread_live_allocations,
+            FRAGMENTATION_SIZES.len(),
+            "only the four pinned survivors may remain live"
+        );
+        for &(ptr, _, _) in &pinned {
+            free_block(ptr);
+        }
+    });
+    worker.join().expect("fragmentation worker panicked");
+
+    mnemosyne_decay::decay_step();
+    assert_eq!(
+        mnemosyne_backend::backend_memory_stats().current_mapped_bytes,
+        baseline_mapped,
+        "the completed workload must return to its pre-test mapping baseline"
     );
 }
