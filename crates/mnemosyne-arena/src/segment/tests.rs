@@ -106,7 +106,7 @@ fn purge_retains_segment_when_backend_release_fails() {
     let segment_ptr = segment.as_mut_ptr();
 
     unsafe {
-        Segment::initialize(segment_ptr, 0x1000 as *mut u8, 0);
+        Segment::initialize(segment_ptr, segment_ptr.cast(), 0);
         FailingReleaseBackend::global_segment_pool().push_unbounded(segment_ptr);
     }
 
@@ -144,7 +144,7 @@ fn node_segment_pool_take_all_detaches_whole_chain_in_one_lock() {
         // onto the pool's intrusive list. The segments are never released (the
         // test drops the pool without deallocating), so stack storage is fine.
         unsafe {
-            Segment::initialize(p, 0x1000 as *mut u8, 0);
+            Segment::initialize(p, p.cast(), 0);
             pool.push_unbounded(p);
         }
     }

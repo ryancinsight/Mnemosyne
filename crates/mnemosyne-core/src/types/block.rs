@@ -43,7 +43,7 @@ impl Block {
         if encrypted {
             self.next_encoded.map(|encoded| {
                 let cookie = page_cookie | 1;
-                let decoded_ptr = (encoded.as_ptr() as usize ^ cookie) as *mut Block;
+                let decoded_ptr = encoded.as_ptr().map_addr(|addr| addr ^ cookie);
                 // SAFETY: same argument as `get_next` — the odd `cookie` flips
                 // the low bit of the even, aligned original address, so the
                 // decoded pointer is necessarily non-null.
@@ -88,7 +88,7 @@ impl Block {
         if encrypted {
             self.next_encoded = next.map(|ptr| {
                 let cookie = page_cookie | 1;
-                let encoded_ptr = (ptr.as_ptr() as usize ^ cookie) as *mut Block;
+                let encoded_ptr = ptr.as_ptr().map_addr(|addr| addr ^ cookie);
                 // SAFETY: same argument as `set_next` — `ptr` is non-null and
                 // aligned, the odd `cookie` flips its low bit, so the encoded
                 // address is non-null.

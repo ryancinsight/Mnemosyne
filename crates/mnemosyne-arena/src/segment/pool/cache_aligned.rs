@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use mnemosyne_core::types::Segment;
 
 /// Tagged atomic segment head used by segment-pool stacks.
@@ -9,7 +9,7 @@ use mnemosyne_core::types::Segment;
 /// `next_free_segment` link.
 #[repr(transparent)]
 pub(crate) struct TaggedHead {
-    value: AtomicUsize,
+    value: AtomicPtr<Segment>,
 }
 
 /// Cache-line-packed head and advisory count for one segment-pool stack.
@@ -162,23 +162,23 @@ impl TaggedHead {
     #[inline(always)]
     pub(crate) const fn new() -> Self {
         Self {
-            value: AtomicUsize::new(0),
+            value: AtomicPtr::new(core::ptr::null_mut()),
         }
     }
 
     #[inline(always)]
-    pub(crate) fn load(&self, order: core::sync::atomic::Ordering) -> usize {
+    pub(crate) fn load(&self, order: core::sync::atomic::Ordering) -> *mut Segment {
         self.value.load(order)
     }
 
     #[inline(always)]
-    pub(crate) fn ptr(state: usize) -> *mut Segment {
-        core::ptr::with_exposed_provenance_mut::<Segment>(state & Self::PTR_MASK)
+    pub(crate) fn ptr(state: *mut Segment) -> *mut Segment {
+        state.map_addr(|addr| addr & Self::PTR_MASK)
     }
 
     #[inline(always)]
-    pub(crate) fn tagged_successor(ptr: *mut Segment, current: usize) -> usize {
-        let addr = ptr.expose_provenance();
+    pub(crate) fn tagged_successor(ptr: *mut Segment, current: *mut Segment) -> *mut Segment {
+        let addr = ptr.addr();
         if (addr & !Self::PTR_MASK) != 0 {
             #[cfg(any(feature = "std", test))]
             {
@@ -192,31 +192,31 @@ impl TaggedHead {
 
         #[cfg(target_pointer_width = "64")]
         {
-            let tag = (((current >> Self::PACKED_PTR_BITS) + 1) & Self::TAG_MASK)
+            let tag = (((current.addr() >> Self::PACKED_PTR_BITS) + 1) & Self::TAG_MASK)
                 << Self::PACKED_PTR_BITS;
-            tag | addr
+            ptr.map_addr(|_| tag | addr)
         }
         #[cfg(not(target_pointer_width = "64"))]
         {
-            addr
+            ptr
         }
     }
 
     #[inline(always)]
     pub(crate) fn compare_exchange_weak(
         &self,
-        current: usize,
-        next: usize,
+        current: *mut Segment,
+        next: *mut Segment,
         success: core::sync::atomic::Ordering,
         failure: core::sync::atomic::Ordering,
-    ) -> Result<usize, usize> {
+    ) -> Result<*mut Segment, *mut Segment> {
         self.value
             .compare_exchange_weak(current, next, success, failure)
     }
 
     #[inline(always)]
-    pub(crate) fn swap_null(&self, order: core::sync::atomic::Ordering) -> usize {
-        self.value.swap(0, order)
+    pub(crate) fn swap_null(&self, order: core::sync::atomic::Ordering) -> *mut Segment {
+        self.value.swap(core::ptr::null_mut(), order)
     }
 }
 
@@ -235,6 +235,7 @@ impl CacheAlignedAtomicUsize {
     }
 }
 
-const _: () = assert!(core::mem::size_of::<TaggedHead>() == core::mem::size_of::<AtomicUsize>());
+const _: () =
+    assert!(core::mem::size_of::<TaggedHead>() == core::mem::size_of::<AtomicPtr<Segment>>());
 const _: () =
     assert!(core::mem::size_of::<TaggedStackState>() == core::mem::align_of::<TaggedStackState>());

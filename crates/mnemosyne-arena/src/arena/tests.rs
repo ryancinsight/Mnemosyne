@@ -204,7 +204,7 @@ fn huge_deallocation_returns_backend_release_status() {
     }
 
     let released = unsafe {
-        deallocate_large_or_huge::<FailingHugeReleaseBackend>(0x2000 as *mut u8, segment_ptr)
+        deallocate_large_or_huge::<FailingHugeReleaseBackend>(segment_ptr.cast(), segment_ptr)
     };
 
     assert!(!released, "failing huge release backend reported success");

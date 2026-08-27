@@ -418,13 +418,14 @@ of these two completed items.
   one shard under its mutex, while final `Arc` destruction and allocator work
   occur after the guard is dropped. Focused Criterion records current behavior
   only; no comparative speedup claim is made.
-- Closed the page-metadata aliasing defect under both Miri models. The allocator
-  now refreshes cached metadata addresses using explicit exposed provenance and
-  restricts remote frees to the page-local atomic queue; no cross-thread path
-  forms `&mut Page`. The evidence is bounded-exhaustive interpreter checking of
-  the exact Hermes regression plus value-semantic allocator tests, not a strict
-  provenance proof: segment alignment and tagged-pointer structures still use
-  exposed-provenance reconstruction and Miri reports those sites.
+- Closed the page-metadata aliasing defect under both Miri borrow models. The
+  allocator retains segment mapping provenance through raw page projections
+  and restricts remote frees to the page-local atomic queue; no cross-thread
+  path forms `&mut Page`. ADR 0009 subsequently closes the strict-provenance
+  remainder for aligned segment/page recovery, free-list links, per-CPU caches,
+  and tagged atomic heads. Strict Miri passes the core suite and exact Leto
+  storage consumer path; native concurrency stress remains covered by TSan and
+  loom rather than the interpreter.
 - Closed `mnemosyne-arena::AlignedVec::into_vec`'s source-buffer leak. Zero-copy
   transfer is not layout-compatible with `Vec`'s allocator contract, so the
   retained design copies once and releases the distinct aligned allocation.

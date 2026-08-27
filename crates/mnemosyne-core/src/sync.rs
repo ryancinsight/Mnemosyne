@@ -8,19 +8,15 @@ use core::ptr::NonNull;
 ///
 /// Implements atomic push and atomic pop-all operations, matching the deallocation
 /// queue pattern from mimalloc.
-#[cfg(target_pointer_width = "64")]
-pub struct AtomicFreeList {
-    head: crate::loom_shim::AtomicUsize,
-}
-
-#[cfg(not(target_pointer_width = "64"))]
 pub struct AtomicFreeList {
     head: crate::loom_shim::AtomicPtr<Block>,
 }
 
-/// On 64-bit targets the head is a single `AtomicUsize` that packs the list
-/// head address (low bits) with a wrapping push counter (high bits), so
+/// On 64-bit targets the head is a single `AtomicPtr` that packs the list head
+/// address (low bits) with a wrapping push counter (high bits), so
 /// `pop_all` returns the block count in O(1) without walking the list.
+/// `ptr::map_addr` changes only the address component, retaining the head
+/// block's provenance through atomic publication and consumption.
 ///
 /// Layout: bits `0..PACKED_PTR_BITS` hold the head block address; the
 /// remaining high bits hold a push counter.
@@ -55,7 +51,7 @@ impl AtomicFreeList {
     #[cfg(not(loom))]
     pub const fn new() -> Self {
         Self {
-            head: crate::loom_shim::AtomicUsize::new(0),
+            head: crate::loom_shim::AtomicPtr::new(core::ptr::null_mut()),
         }
     }
 
@@ -63,7 +59,7 @@ impl AtomicFreeList {
     #[cfg(loom)]
     pub fn new() -> Self {
         Self {
-            head: crate::loom_shim::AtomicUsize::new(0),
+            head: crate::loom_shim::AtomicPtr::new(core::ptr::null_mut()),
         }
     }
 
@@ -85,14 +81,7 @@ impl AtomicFreeList {
     #[inline]
     pub fn push_dynamic(&self, block: NonNull<Block>, encrypted: bool) {
         let block_ptr = block.as_ptr();
-        // A tagged-pointer free list inherently materializes pointers from
-        // integers, so it uses *exposed* provenance (it cannot be
-        // strict-provenance clean — Miri flags exposed provenance the same as a
-        // bare cast). Using the explicit `expose_provenance` /
-        // `with_exposed_provenance_mut` APIs rather than bare `as` casts states
-        // that intent precisely and keeps the round-trip well-defined under the
-        // exposed-provenance model.
-        let block_addr = block_ptr.expose_provenance();
+        let block_addr = block_ptr.addr();
         if (block_addr & !Self::PTR_MASK) != 0 {
             crate::abort::abort_on_corruption("Block address does not fit in 48 bits");
         }
@@ -107,12 +96,13 @@ impl AtomicFreeList {
 
         let mut current = self.head.load(Ordering::Relaxed);
         loop {
-            let current_addr = current & Self::PTR_MASK;
+            let current_value = current.addr();
+            let current_addr = current_value & Self::PTR_MASK;
             if block_addr == current_addr {
                 crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
             }
-            let current_ptr = core::ptr::with_exposed_provenance_mut::<Block>(current_addr);
-            let next_count = ((current >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
+            let current_ptr = current.map_addr(|_| current_addr);
+            let next_count = ((current_value >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
 
             // Safety: block_ptr is valid, writeable, aligned memory, exclusive
             // to the pushing thread until the CAS publishes it.
@@ -121,10 +111,11 @@ impl AtomicFreeList {
             }
 
             let next_val = (next_count << Self::PACKED_PTR_BITS) | block_addr;
+            let next = block_ptr.map_addr(|_| next_val);
 
             match self.head.compare_exchange_weak(
                 current,
-                next_val,
+                next,
                 Ordering::Release,
                 Ordering::Relaxed,
             ) {
@@ -139,17 +130,18 @@ impl AtomicFreeList {
     /// This is wait-free and returns a standard local linked list along with its count in O(1).
     #[inline]
     pub fn pop_all(&self, _encrypted: bool, _cookie: usize) -> Option<(NonNull<Block>, usize)> {
-        let val = self.head.swap(0, Ordering::Acquire);
-        let addr = val & Self::PTR_MASK;
-        let count = val >> Self::PACKED_PTR_BITS;
-        let ptr = core::ptr::with_exposed_provenance_mut::<Block>(addr);
+        let val = self.head.swap(core::ptr::null_mut(), Ordering::Acquire);
+        let packed = val.addr();
+        let addr = packed & Self::PTR_MASK;
+        let count = packed >> Self::PACKED_PTR_BITS;
+        let ptr = val.map_addr(|_| addr);
         NonNull::new(ptr).map(|head| (head, count))
     }
 
     /// Checks if the atomic list is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        (self.head.load(Ordering::Relaxed) & Self::PTR_MASK) == 0
+        (self.head.load(Ordering::Relaxed).addr() & Self::PTR_MASK) == 0
     }
 }
 
@@ -176,17 +168,12 @@ impl AtomicFreeList {
     #[inline]
     pub fn push_dynamic(&self, block: NonNull<Block>, encrypted: bool) {
         let block_ptr = block.as_ptr();
-        let block_addr = block_ptr as usize;
-        let cookie = if encrypted {
-            let segment_addr = block_addr & !(crate::constants::SEGMENT_SIZE - 1);
-            let page_index =
-                (block_addr & (crate::constants::SEGMENT_SIZE - 1)) >> crate::constants::PAGE_SHIFT;
-            // SAFETY: as in the 64-bit `push`, `segment_addr` is the valid parent
-            // segment header for the live `block` and `page_index <
-            // PAGES_PER_SEGMENT`, so the per-page key read is valid.
-            unsafe { (*(segment_addr as *const crate::types::Segment)).keys[page_index] }
-        } else {
-            0
+        // SAFETY: as in the 64-bit `push`, `block_ptr` identifies a live block
+        // inside its parent segment and therefore carries the mapping
+        // provenance needed by `locate_segment` and `cookie_for_dynamic`.
+        let cookie = unsafe {
+            let (segment, page_index) = crate::types::locate_segment(block_ptr.cast::<u8>());
+            Segment::cookie_for_dynamic(segment.cast_const(), encrypted, page_index)
         };
 
         let mut current = self.head.load(Ordering::Relaxed);

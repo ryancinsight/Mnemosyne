@@ -1,6 +1,6 @@
 # ADR 0001 — Binding free-list encryption mode to avoid mixed-policy corruption
 
-- Status: Accepted and implemented
+- Status: Accepted
 - Change class: [arch]
 - Date: 2026-07-23
 - Scope: `mnemosyne-core` (`policy`, `types::page`, `types::segment`, `sync`),

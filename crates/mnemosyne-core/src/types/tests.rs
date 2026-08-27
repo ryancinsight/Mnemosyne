@@ -54,7 +54,7 @@ fn test_page_reclaim_thread_free() {
     unsafe { (*page).block_size = 16 };
 
     unsafe {
-        let page_start = (*page).page_start();
+        let page_start = Page::page_start_in_segment(segment_ptr, PAGE_INDEX);
         Page::initialize_free_list_in_segment::<crate::policy::StandardPolicy>(
             segment_ptr,
             PAGE_INDEX,
@@ -63,7 +63,7 @@ fn test_page_reclaim_thread_free() {
         );
     }
 
-    let first = unsafe { (*page).pop_block::<crate::policy::StandardPolicy>() };
+    let first = unsafe { Page::pop_block::<crate::policy::StandardPolicy>(page) };
     unsafe { (*page).alloc_count = 1 };
     unsafe {
         (*page)
@@ -105,7 +105,7 @@ fn test_page_reclaim_thread_free_hot_path() {
     unsafe { (*page).block_size = 16 };
 
     unsafe {
-        let page_start = (*page).page_start();
+        let page_start = Page::page_start_in_segment(segment_ptr, PAGE_INDEX);
         Page::initialize_free_list_in_segment::<crate::policy::StandardPolicy>(
             segment_ptr,
             PAGE_INDEX,
@@ -114,8 +114,8 @@ fn test_page_reclaim_thread_free_hot_path() {
         );
     }
 
-    let b1 = unsafe { (*page).pop_block::<crate::policy::StandardPolicy>() };
-    let b2 = unsafe { (*page).pop_block::<crate::policy::StandardPolicy>() };
+    let b1 = unsafe { Page::pop_block::<crate::policy::StandardPolicy>(page) };
+    let b2 = unsafe { Page::pop_block::<crate::policy::StandardPolicy>(page) };
 
     // Simulate all other blocks allocated / empty free list
     unsafe {
@@ -179,7 +179,7 @@ fn randomized_page_free_list_uses_seeded_permutation() {
     }
 
     unsafe {
-        let page_start = (*page).page_start();
+        let page_start = Page::page_start_in_segment(segment_ptr, PAGE_INDEX);
         Page::initialize_free_list_in_segment::<RandomizedTestPolicy>(
             segment_ptr,
             PAGE_INDEX,
@@ -187,8 +187,8 @@ fn randomized_page_free_list_uses_seeded_permutation() {
             (7 << 16) | 5,
         );
 
-        let first = (*page).pop_block::<RandomizedTestPolicy>();
-        let second = (*page).pop_block::<RandomizedTestPolicy>();
+        let first = Page::pop_block::<RandomizedTestPolicy>(page);
+        let second = Page::pop_block::<RandomizedTestPolicy>(page);
         let block_size = (*page).block_size;
 
         assert_eq!(
@@ -210,13 +210,14 @@ fn randomized_page_free_list_uses_seeded_permutation() {
 fn huge_mapping_suffix_uses_raw_mapping_base() {
     let mut segment_storage = core::mem::MaybeUninit::<Segment>::uninit();
     let segment = segment_storage.as_mut_ptr();
-    let raw = 0x1000usize as *mut u8;
+    let mut mapping = std::vec![0_u8; 0x4000];
+    let raw = mapping.as_mut_ptr();
     unsafe {
         Segment::initialize(segment, raw, 0);
         (*segment).pages[0].block_size = 0x4000;
     }
 
-    let user_ptr = 0x2800usize as *const u8;
+    let user_ptr = unsafe { raw.add(0x1800) }.cast_const();
     let suffix = unsafe { (*segment).huge_mapping_suffix_from(user_ptr) };
 
     assert_eq!(

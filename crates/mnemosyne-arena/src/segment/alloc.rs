@@ -102,7 +102,7 @@ unsafe fn initialize_allocated_segment(
     numa_node: u32,
 ) -> Option<(*mut Segment, usize, usize, usize)> {
     let aligned_addr = checked_align_up(raw_ptr as usize, SEGMENT_ALIGN)?;
-    let aligned_ptr = aligned_addr as *mut Segment;
+    let aligned_ptr = raw_ptr.map_addr(|_| aligned_addr).cast::<Segment>();
 
     // Safety: aligned_ptr is within the allocated region.
     unsafe {
@@ -158,8 +158,10 @@ pub(crate) unsafe fn decommit_mapping_slack<B: mnemosyne_core::MemoryBackend>(
     }
     if tail_slack_start < mapping_end {
         // SAFETY: per this function's contract, `[tail_slack_start,
-        // mapping_end)` is a data-free subrange of the live mapping.
-        let _ = unsafe { B::decommit(tail_slack_start as *mut u8, mapping_end - tail_slack_start) };
+        // mapping_end)` is a data-free subrange of the live mapping. Deriving
+        // the subrange pointer from `raw_ptr` retains the mapping provenance.
+        let tail_slack = raw_ptr.map_addr(|_| tail_slack_start);
+        let _ = unsafe { B::decommit(tail_slack, mapping_end - tail_slack_start) };
     }
 }
 
@@ -217,8 +219,8 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
             // Safety: aligned_addr + PAGE_SIZE - SEGMENT_HEADER_GUARD_SIZE is inside the mapping
             // and Page 0 is reserved strictly for Segment metadata (ending far before the guard).
             let header_guard_addr = aligned_addr + PAGE_SIZE - SEGMENT_HEADER_GUARD_SIZE;
-            let _guarded =
-                unsafe { B::make_guard(header_guard_addr as *mut u8, SEGMENT_HEADER_GUARD_SIZE) };
+            let header_guard = raw_ptr.map_addr(|_| header_guard_addr);
+            let _guarded = unsafe { B::make_guard(header_guard, SEGMENT_HEADER_GUARD_SIZE) };
         }
     }
 
@@ -242,8 +244,8 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
             // because slack-after >= OS_PAGE_SIZE >= SEGMENT_TAIL_GUARD_SIZE on
             // supported targets. `make_guard` never invalidates the mapping.
             let tail_guard_addr = aligned_addr + SEGMENT_SIZE;
-            let _guarded =
-                unsafe { B::make_guard(tail_guard_addr as *mut u8, SEGMENT_TAIL_GUARD_SIZE) };
+            let tail_guard = raw_ptr.map_addr(|_| tail_guard_addr);
+            let _guarded = unsafe { B::make_guard(tail_guard, SEGMENT_TAIL_GUARD_SIZE) };
         }
     }
 
@@ -481,7 +483,7 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
                 (*segment)
                     .next_free_segment
                     .store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
-                let reset_ptr = (segment as usize + PAGE_SIZE) as *mut u8;
+                let reset_ptr = segment.cast::<u8>().add(PAGE_SIZE);
                 let reset_size = SEGMENT_SIZE - PAGE_SIZE;
                 if B::page_reset(reset_ptr, reset_size) {
                     reset_count += 1;

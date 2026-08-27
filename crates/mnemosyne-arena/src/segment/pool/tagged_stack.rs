@@ -264,7 +264,9 @@ mod tests {
         // SAFETY: `segment` is the live, uniquely-owned Box allocation just created,
         // and `Segment` requires only that the target be valid for writes here — the
         // pool tests never depend on `SEGMENT_ALIGN` addressing.
-        unsafe { Segment::initialize(segment, raw as *mut u8, 0) };
+        unsafe {
+            Segment::initialize(segment, segment.cast::<u8>().map_addr(|_| raw), 0);
+        }
         segment
     }
 
@@ -560,6 +562,7 @@ mod tests {
 
     #[test]
     fn detach_waits_for_active_head_observer() {
+        use core::sync::atomic::AtomicPtr;
         use std::sync::{Arc, Barrier, mpsc};
         use std::thread;
 
@@ -576,15 +579,16 @@ mod tests {
         // observer releases its guard; only then may its caller unmap nodes.
         let observer = stack.mutation_lock.lock();
         let rendezvous = Arc::new(Barrier::new(2));
+        let detached_head = Arc::new(AtomicPtr::new(core::ptr::null_mut()));
         let (result_tx, result_rx) = mpsc::channel();
         let worker_stack = Arc::clone(&stack);
         let worker_rendezvous = Arc::clone(&rendezvous);
+        let worker_head = Arc::clone(&detached_head);
         let worker = thread::spawn(move || {
             worker_rendezvous.wait();
             let (head, count) = worker_stack.take_all();
-            result_tx
-                .send((head.expose_provenance(), count))
-                .expect("result receiver remains live");
+            worker_head.store(head, Ordering::Relaxed);
+            result_tx.send(count).expect("result receiver remains live");
         });
 
         rendezvous.wait();
@@ -596,9 +600,9 @@ mod tests {
         assert_eq!(stack.len(), 2);
         drop(observer);
 
-        let (head_addr, count) = result_rx.recv().expect("detach result is produced");
+        let count = result_rx.recv().expect("detach result is produced");
         worker.join().expect("detach worker did not panic");
-        let head = core::ptr::with_exposed_provenance_mut::<Segment>(head_addr);
+        let head = detached_head.load(Ordering::Relaxed);
         assert_eq!(head, top);
         assert_eq!(count, 2);
         assert_eq!(stack.len(), 0);
