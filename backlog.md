@@ -1,5 +1,18 @@
 # Backlog
 
+## In progress
+
+- [ ] [patch] **MN-457 — scope the Windows CUDA thread-exit import to
+  x86_64.** status=in-progress; integrator=codex task
+  `01a0253c-6013-7552-99cc-36bbbcf77f6d`; lease=codex
+  `crates/mnemosyne-backend/src/backends/cuda/veh.rs`, this backlog entry, and
+  the matching checklist section; last-update=2026-08-27. AArch64 Windows
+  strict-warning compilation removes the x86_64-only redirect routine but
+  retains its `ExitThread` import, producing `dead_code`. Scope the import to
+  the same architecture without changing probe behavior. Acceptance:
+  `mnemosyne-backend` compiles warning-clean for AArch64 Windows and the host
+  target, with focused backend tests green.
+
 ## Ready — gap-audit 2026-08-20 intake
 
 Filed by the Atlas gap audit at detached `HEAD` `6b0e490`. Evidence for every
