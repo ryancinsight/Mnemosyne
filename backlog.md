@@ -104,7 +104,11 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   to the corpus as a regression. State the time budget explicitly.
   **Dependencies:** none. **Risk/change class:** [patch]. **Effort:** S.
 
-- [ ] **MNEM-RSS-1** [verification][patch] status=todo owner=unclaimed
+- [ ] **MNEM-RSS-1** [verification][patch] status=in-progress
+  owner=codex; branch=`codex/mnemosyne-rss-convergence`;
+  lease=`crates/mnemosyne-decay/tests/`, `crates/mnemosyne-arena/tests/`,
+  allocator/statistics implementation reached by the regression, and this
+  board entry; last-update=2026-08-27.
   scope=`crates/mnemosyne-decay/tests/`, `crates/mnemosyne-arena/tests/`.
   Non-goals: shrinking any existing test's workload; adding hot-path counters.
   **Outcome:** a bounded-memory argument exists for a long-running arena.
