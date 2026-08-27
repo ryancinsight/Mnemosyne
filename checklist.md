@@ -10,7 +10,7 @@
 - [x] Add boundary/value tests for aligned recovery and allocator-owned drops.
 - [x] Run focused strict Miri, nextest, Clippy, docs, and SemVer gates against
       the exact increment.
-- [ ] Replace the hosted Miri test's `&mut` page projection with the canonical
+- [x] Replace the hosted Miri test's `&mut` page projection with the canonical
       mapping-provenance-preserving raw projection and verify the exact failing
       case under Stacked and Tree Borrows.
 - [ ] Update the recorded Miri exclusion and close the lease with the merged
