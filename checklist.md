@@ -1,5 +1,19 @@
 # Checklist
 
+## MNEM-RSS-1 (owner: codex)
+
+- [x] Reproduce the missing byte-level steady-state oracle and derive the
+      one-mapping bound from page and segment geometry.
+- [x] Add alternating size-class waves with pinned, value-checked survivors,
+      exact live-state assertions, panic-safe option restoration, and baseline
+      mapping recovery.
+- [x] Pass focused and full package Nextest plus warning-denied all-target
+      Clippy without changing allocator production code or runtime budgets.
+- [x] Restore the standalone lockfile and deliver source commit `22361e9`.
+- [x] Attempt independent review through two existing tasks. Both completed
+      without a verdict; the policy-permitted routine self-review found no
+      blocking issue and does not claim independent evidence.
+
 ## MN-457 (owner: codex)
 
 - [x] Reproduce the AArch64 Windows `dead_code` diagnostic and localize it to

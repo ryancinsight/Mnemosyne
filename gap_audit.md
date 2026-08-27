@@ -189,15 +189,22 @@ below are what it does **not** cover.
   absence of `cargo-semver-checks` also means the pre-release semver gate the
   backlog records as having been run manually has no standing enforcement.
 
-- **[verification] No steady-state RSS or fragmentation bound for
-  long-running arenas.** `decay_purger_reaches_steady_state`
-  (`mnemosyne-decay/tests/decay_tests.rs:142`) is the only steady-state test
-  and asserts retained-*segment-count* convergence, not resident bytes.
-  `grep -rni 'live_bytes'` returns 0. `MemoryEfficiencyReport::fragmentation_overhead`
-  exists but has no writer (first finding) and no test asserts a bound on it.
-  The adversarial mix that fragments a heap — alternating size classes with
-  pinned survivors over a long run — has no coverage. `memory_report` is the
-  nearest thing and it lives in the CI-excluded benchmarks crate.
+- **[verification] Steady-state mapped memory under fragmentation is bounded
+  — resolved 2026-08-27.**
+  `alternating_size_classes_converge_with_pinned_survivors` runs 64 alternating
+  waves over 16-, 64-, 256-, and 1,024-byte classes while retaining one
+  value-checked survivor per class. Each wave adds 32 transient blocks per
+  class. Compile-time assertions prove that every class remains within one
+  64-KiB page and that all four pages fit beside the metadata page in one
+  segment. Every round therefore asserts exactly four live allocations, one
+  owned/fresh segment, and no more than one 4-MiB over-reserved mapping for
+  1,360 pinned bytes; completion must return `current_mapped_bytes` to its
+  pre-test value. The test uses direct allocator telemetry and no sleeps or
+  hot-path counters. Warning-denied package Clippy passes; focused Nextest
+  passes in 17 ms and the full `mnemosyne-decay` package passes 7/7 in 1.058 s.
+  Evidence limit: mapped virtual bytes are the repository's deterministic
+  cross-platform bound; this test does not claim an operating-system RSS
+  sample or allocator throughput measurement.
 
 - **[arch] Two published foundation crates lack `#![deny(missing_docs)]`.**
   `crates/mnemosyne-core/src/lib.rs` and `crates/mnemosyne-arena/src/lib.rs`
