@@ -104,26 +104,9 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   to the corpus as a regression. State the time budget explicitly.
   **Dependencies:** none. **Risk/change class:** [patch]. **Effort:** S.
 
-- [ ] **MNEM-RSS-1** [verification][patch] status=in-progress
-  owner=codex; branch=`codex/mnemosyne-rss-convergence`;
-  lease=`crates/mnemosyne-decay/tests/`, `crates/mnemosyne-arena/tests/`,
-  allocator/statistics implementation reached by the regression, and this
-  board entry; last-update=2026-08-27.
-  scope=`crates/mnemosyne-decay/tests/`, `crates/mnemosyne-arena/tests/`.
-  Non-goals: shrinking any existing test's workload; adding hot-path counters.
-  **Outcome:** a bounded-memory argument exists for a long-running arena.
-  Today `decay_purger_reaches_steady_state`
-  (`mnemosyne-decay/tests/decay_tests.rs:142`) asserts retained-*segment
-  count* convergence only; `grep -rni 'live_bytes'` returns 0; no test bounds
-  fragmentation over an adversarial mix. **Acceptance oracle:** a test runs an
-  alternating-size-class workload with pinned survivors for a bounded number
-  of rounds and asserts that `arena_memory_stats().current_mapped_bytes` (or
-  the equivalent retained-bytes accessor) converges within a derived bound of
-  live bytes — the bound stated with its derivation, not a tuned epsilon —
-  and completes inside the 30 s nextest budget. If the workload cannot fit
-  that budget, that is a performance defect to profile, not a reason to move
-  it out of the suite. **Dependencies:** MNEM-DIAG-1 if the oracle uses
-  `fragmentation_overhead`. **Risk/change class:** [patch]. **Effort:** M.
+- [x] **MNEM-RSS-1** [verification][patch] status=complete; commit=`22361e9`; lease=none.
+  Sixty-four alternating size-class waves stay within one derived 4-MiB mapping, preserve four pinned values, and return to the exact baseline; package Nextest passes 7/7 in 1.058 s.
+  Two independent reviewer tasks returned no verdict; the routine static self-review found no blocking issue, and `gap_audit.md` records the mapped-memory evidence limit.
 
 - [ ] **MNEM-THP-TEST-1** [verification][patch] status=todo owner=unclaimed
   scope=`crates/mnemosyne-backend/src/backends/unix.rs`,
