@@ -105,7 +105,7 @@ pub struct Segment {
 // (`raw_alloc_ptr`, `owner_allocator`, the intrusive list links) and interior
 // mutability are gated by the segment-ownership protocol: a segment carries an
 // opaque `owner` token, and only the thread allocator that can prove token
-// equality (`SegmentOwner::matches`/`is_owned_by`) mutates its fields, while
+// equality (`Segment::owner` + `SegmentOwner::matches`) mutates its fields, while
 // cross-thread frees route through each page's `AtomicFreeList`. No field is
 // thread-affine, so transferring ownership of a `Segment` header between
 // threads (`Send`) is sound once the previous owner has released it.
@@ -518,28 +518,5 @@ impl Segment {
         let field = unsafe { &raw const (*segment).ownership };
         // SAFETY: `field` addresses the initialized ownership pair.
         unsafe { (*field).set_owner(owner) };
-    }
-
-    /// Returns true if this segment is owned by the allocator represented by the given raw slot pointer.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that `self` is a valid reference to a `Segment`.
-    #[inline(always)]
-    pub unsafe fn is_owned_by(
-        &self,
-        get_slot_ptr: impl FnOnce() -> *mut core::ffi::c_void,
-    ) -> bool {
-        // SAFETY: `self` is a live segment header.
-        let owner = unsafe { Self::owner(self as *const Segment) };
-        #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
-        {
-            let _ = get_slot_ptr;
-            owner.matches_thread_id(crate::types::current_thread_id())
-        }
-        #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
-        {
-            owner.matches(get_slot_ptr())
-        }
     }
 }
