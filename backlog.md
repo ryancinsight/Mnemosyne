@@ -2,6 +2,51 @@
 
 ## In progress
 
+- [ ] [patch] **MN-458 — close the retag, provenance, and cold-branch
+  stragglers.** status=review; integrator=claude-fable session 03d80d33
+  (atlas `ATLAS-PROVIDER-CHAIN-QUALITY-2026-08-27`); lease discharged by the
+  delivery commits; last-update=2026-08-28. Four findings from a follow-up
+  audit of the MN-437..MN-456 sweep, each the surviving instance of a pattern
+  that sweep removed elsewhere:
+  - **N1** `mnemosyne-local/src/realloc.rs` — the in-place small-realloc path
+    was the last caller of `Segment::is_owned_by(&self)`, whose shared
+    reference retags the whole 2 MiB header and races any concurrent
+    remote-thread field write (MN-439). Now reads through the raw
+    `Segment::owner` projection; the accessor is deleted.
+  - **N2** `mnemosyne-heap/src/raw_heap.rs` — the free path synthesized
+    segment provenance from a masked integer (MN-456) and held a `&mut Page`
+    across segment-rooted accesses including the occupancy decrement that
+    writes that same page (MN-438/MN-443). Now derives via `locate_segment`
+    and addresses pages through `locate_page`'s raw projection, matching
+    `do_local_free_internal`, which already takes `*mut Page`.
+  - **N3** `mnemosyne-local/src/tls/stable.rs` — the unguarded cold branch
+    passed the null cache value that routed it there instead of the freshly
+    cached allocator pointer, dereferencing null on a thread's first
+    unguarded touch. Latent (no production caller); regression test added.
+  - **N4** `mnemosyne-arena/.../huge_pool.rs` — recorded the advisory
+    soft-cap tradeoff its sibling `try_push_retained` already documents.
+  Evidence: workspace Clippy `-D warnings` clean, `cargo fmt --check` clean,
+  nextest 289/289, doctests 5/5. Miri both borrow models: `mnemosyne-local`
+  84/84 and `mnemosyne-memory-core` 18/18 (the N1/N3 crates). The N3 test was
+  falsified against the unfixed source — it dies with an access violation
+  nextest attributes to that test.
+
+- [ ] [patch] **MN-459 — bring `mnemosyne-heap` under the Miri gate.**
+  status=todo; owner=unclaimed. The Miri job covers `mnemosyne-arena`,
+  `mnemosyne-memory-core`, `mnemosyne-local`, `mnemosyne-decay`, and
+  `mnemosyne-backend`, but not `mnemosyne-heap` — which is why MN-458's N2
+  kept the exact int-to-ptr and `&mut Page`-across-segment patterns the
+  MN-437..MN-456 sweep removed from every gated sibling. The gap is the
+  defect generator, not the instance. Blocker: the crate has three
+  pre-existing Miri failures **in its own test helpers**, measured
+  2026-08-28 on unmodified `main` (`tests::numa::first_touch_is_idempotent_
+  and_touches_every_page` and `tests::numa::allocate_interleaved_returns_
+  usable_aligned_memory` access one page past a 12288-byte allocation at
+  `tests/numa.rs:51`; `tests::boxed`/`tests::vec`
+  `test_branded_vec_into_boxed_slice_shrinks_storage_to_len`). Fix those
+  three tests at their cause, then add the crate to both borrow-model steps.
+  Until then the crate's unsafe surface is reviewed but unchecked.
+
 - [ ] [patch] **MN-457 — scope the Windows CUDA thread-exit import to
   x86_64.** status=review; integrator=codex; lease discharged by the delivery
   commit; last-update=2026-08-27. The import now matches its x86_64-only
