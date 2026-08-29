@@ -9,6 +9,17 @@
 
 ### Changed
 
+- **Breaking.** `Segment::is_owned_by` is removed from `mnemosyne-memory-core`.
+  Its `&self` receiver retagged the whole 2 MiB segment header to read one
+  field, which races any concurrent remote-thread write to that segment — the
+  same class as the receiver methods removed above, and the reason MN-439
+  replaced every other such accessor. Callers use the raw-pointer form:
+  `Segment::owner(segment)` followed by `SegmentOwner::matches(slot_ptr)`, or
+  `matches_thread_id(current_thread_id())` on Windows x86-64. It is removed
+  rather than wrapped, because a forwarding wrapper would keep the retag
+  reachable. Confirmed by `cargo semver-checks` as a major-class removal; no
+  caller existed in this repository or anywhere in the Atlas stack.
+
 - **Breaking.** Allocator mapping provenance now remains attached from backend
   allocation through aligned segments, page lists, free-list links, per-CPU
   caches, and tagged atomic heads. Low-level page callers must use the
