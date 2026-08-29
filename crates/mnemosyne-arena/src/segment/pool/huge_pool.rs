@@ -235,6 +235,12 @@ impl GlobalHugePool {
         let pool_node = &self.nodes[node];
         let bucket = &pool_node.buckets[bucket_idx];
 
+        // Soft limit check, matching `NodeSegmentPool::try_push_retained`: the
+        // bucket count is advisory, so concurrent pushers can both pass this
+        // gate and overshoot the per-bucket budget (and the node totals below)
+        // by at most the number of racing pushers. That bound is acceptable
+        // for a cache; the alternative — holding a lock to atomically
+        // check-and-push — is the contention this path exists to avoid.
         if bucket.count() >= bucket_block_cap(bucket_idx) {
             return false;
         }
