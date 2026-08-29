@@ -207,9 +207,16 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                 // SAFETY: as above; the gate permits this borrow.
                 let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
                 // SAFETY: `segment` is the live header recovered from `ptr`;
-                // `is_owned_by` reads its owner field and compares against the
-                // current thread's allocator pointer.
-                let is_owner = unsafe { (*segment).is_owned_by(|| slot_ptr) };
+                // the raw-pointer accessor projects only the ownership field.
+                // A shared `&Segment` here would retag the whole 2 MiB header
+                // and race any concurrent remote-thread field write — for
+                // example a `thread_free` push into a sibling page of this
+                // same segment (MN-439).
+                let owner = unsafe { Segment::owner(segment) };
+                #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
+                let is_owner = owner.matches_thread_id(mnemosyne_core::types::current_thread_id());
+                #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
+                let is_owner = owner.matches(slot_ptr);
 
                 if is_owner {
                     unsafe {

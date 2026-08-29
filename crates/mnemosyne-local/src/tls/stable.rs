@@ -108,7 +108,11 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B,
                 let alloc_ptr = slot.allocator_ptr();
                 S::get_cached_cell(|cell| cell.set(alloc_ptr));
                 S::arm_thread_exit(slot);
-                unsafe { LocalAllocatorSlot::<B>::with_allocator_unguarded(ptr, f) }
+                // SAFETY: `alloc_ptr` is this slot's own live address, just
+                // cached above. `ptr` must not be used here: reaching this
+                // branch means it is null, and the callee projects a field
+                // through it before any null check.
+                unsafe { LocalAllocatorSlot::<B>::with_allocator_unguarded(alloc_ptr, f) }
             })
         }
     }

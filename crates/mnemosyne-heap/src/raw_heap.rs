@@ -2,10 +2,10 @@ use core::alloc::Layout;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::internal::{
-    Block, HasSegmentPool, MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, PAGE_SHIFT, PAGES_PER_SEGMENT,
-    SEGMENT_SIZE, Segment, ThreadAllocator, allocate_large_or_huge, deallocate_large_or_huge,
-    do_local_free_internal, ensure_options_initialized, initialize_allocated_bytes,
-    is_valid_layout_alloc_request, poison_freed_bytes, size_to_class_nonzero,
+    Block, HasSegmentPool, MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, Segment, ThreadAllocator,
+    allocate_large_or_huge, deallocate_large_or_huge, do_local_free_internal,
+    ensure_options_initialized, initialize_allocated_bytes, is_valid_layout_alloc_request,
+    poison_freed_bytes, size_to_class_nonzero,
 };
 
 pub(crate) struct RawHeap<P: AllocPolicy, B: HasSegmentPool> {
@@ -182,15 +182,19 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             return;
         }
 
-        let ptr_val = ptr as usize;
-        let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
-        let segment = segment_addr as *mut Segment;
-        let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-        // SAFETY: `ptr` was returned by this allocator, so masking off the
-        // low `SEGMENT_SIZE` bits recovers the live segment header that was
-        // initialized at allocation time. `page_index` is bounded by the
-        // `(PAGES_PER_SEGMENT - 1)` mask, so it indexes the `pages` array.
-        let page = unsafe { (*segment).pages.get_unchecked_mut(page_index) };
+        // SAFETY: `ptr` was returned by this allocator, so it points into a
+        // live segment mapping; `locate_segment` derives the header pointer by
+        // `map_addr`, keeping the mapping's provenance rather than synthesizing
+        // it from an integer (MN-456), and returns the mask-bounded page index.
+        let (segment, page_index) = unsafe { mnemosyne_core::types::locate_segment(ptr) };
+        // SAFETY: `segment` is that live header and `page_index` is bounded by
+        // the `(PAGES_PER_SEGMENT - 1)` mask, so it indexes the `pages` array.
+        // A raw place projection is used rather than `&mut Page`: the page's
+        // own metadata is also written through segment-rooted projections
+        // during the free below (`decrement_alloc_count_in_segment`), and a
+        // live `&mut Page` across those writes is the aliasing violation
+        // MN-438/MN-443 removed elsewhere.
+        let page = unsafe { mnemosyne_core::types::locate_page(segment, page_index) };
 
         if mnemosyne_prof::is_active() {
             // SAFETY: `ptr`, `page`, and `page_index` are the live triple just
@@ -200,7 +204,9 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             mnemosyne_prof::on_free(ptr, size);
         }
 
-        if page_index == 0 || page.block_size == 0 {
+        // SAFETY: `page` is the live page projection recovered above; its
+        // `block_size` is initialized for every allocated block.
+        if page_index == 0 || unsafe { (*page).block_size } == 0 {
             // SAFETY: `page_index == 0` or a zero `block_size` identifies a
             // large/huge allocation, whose deallocation path `ptr` was routed
             // through at alloc time; the `# Safety` contract guarantees `ptr`
@@ -210,10 +216,10 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         }
 
         if P::ENABLE_POISONING {
-            // SAFETY: small-page free — `page.block_size` is the exact block
+            // SAFETY: small-page free — `(*page).block_size` is the exact block
             // stride of `page`, and `ptr` is a live block of that page, so
             // poisoning `block_size` bytes stays within the block.
-            unsafe { poison_freed_bytes::<P>(ptr, page.block_size) };
+            unsafe { poison_freed_bytes::<P>(ptr, (*page).block_size) };
         }
 
         // SAFETY: `ptr` is a small-page block (`page_index != 0`,
@@ -232,7 +238,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
     unsafe fn free_owned(
         &self,
         block: *mut Block,
-        page: &mut mnemosyne_core::types::Page,
+        page: *mut mnemosyne_core::types::Page,
         segment: *mut Segment,
         page_index: usize,
     ) {
@@ -244,14 +250,17 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             // invariant), so `new_unchecked` is sound and the page-local
             // atomic free list takes ownership of it.
             unsafe {
-                page.thread_free
+                (*page)
+                    .thread_free
                     .push_dynamic(NonNull::new_unchecked(block), encrypted);
             }
             return;
         }
 
-        let page_free = page.free;
-        let page_alloc_count = page.alloc_count;
+        // SAFETY: `page` is the live page projection from the caller's
+        // matching triple; these read its own initialized metadata.
+        let page_free = unsafe { (*page).free };
+        let page_alloc_count = unsafe { (*page).alloc_count };
         // SAFETY: `segment` is the live segment owning `page`; `page_index`
         // indexes its `keys` array (sized `PAGES_PER_SEGMENT`) and is the
         // page's own index, so the read is in bounds.
@@ -263,9 +272,13 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             // invariant); writing its `next` link, publishing it as the
             // free-list head, and decrementing the page/segment occupancy all
             // stay within `page`/`segment` under exclusive access.
+            // The occupancy decrement writes this same page's `alloc_count`
+            // through a segment-rooted projection, so the free-list head is
+            // published through the raw page pointer rather than a live
+            // `&mut Page` held across it (MN-438/MN-443).
             unsafe {
                 (*block).set_next_dynamic(page_free, encrypted, cookie);
-                page.free = Some(NonNull::new_unchecked(block));
+                (*page).free = Some(NonNull::new_unchecked(block));
                 mnemosyne_core::types::Page::decrement_alloc_count_in_segment(segment, page_index);
             }
             return;
@@ -420,10 +433,13 @@ unsafe fn free_large_or_huge<P: AllocPolicy, B: HasSegmentPool>(ptr: *mut u8) {
 #[inline(always)]
 unsafe fn allocation_size(
     ptr: *mut u8,
-    page: &mnemosyne_core::types::Page,
+    page: *const mnemosyne_core::types::Page,
     page_index: usize,
 ) -> usize {
-    if page_index == 0 || page.block_size == 0 {
+    // SAFETY: the caller passes the live page projection matching `ptr`; the
+    // raw form keeps this read off a whole-`Page` reference so it composes
+    // with the segment-rooted writes on the free path.
+    if page_index == 0 || unsafe { (*page).block_size } == 0 {
         // SAFETY: large/huge classification — the owning `*mut Segment` lives
         // in the slot directly preceding the user payload (written at alloc
         // time), so this read recovers the live segment pointer.
@@ -432,7 +448,8 @@ unsafe fn allocation_size(
         // `huge_or_large_size` reads only metadata inside that mapping.
         unsafe { huge_or_large_size(ptr, segment) }
     } else {
-        page.block_size
+        // SAFETY: as above — `page` is the live projection for `ptr`.
+        unsafe { (*page).block_size }
     }
 }
 
