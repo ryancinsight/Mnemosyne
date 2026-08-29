@@ -2,8 +2,18 @@
 
 ## In progress
 
-- [ ] [patch] **MN-458 — close the retag, provenance, and cold-branch
-  stragglers.** status=review; integrator=claude-fable session 03d80d33
+- [ ] [minor] **MN-458 — close the retag, provenance, and cold-branch
+  stragglers.** status=review; **class corrected from [patch] to [minor]
+  2026-08-28**: N1 removes `Segment::is_owned_by`, a `pub unsafe fn` on a
+  public type in the publishable `mnemosyne-memory-core`, which
+  `cargo semver-checks` classifies as a major-class removal (`0.x` breaking →
+  minor bump at release). The removal stands — a forwarding wrapper would keep
+  the whole-header retag reachable, which is the defect — and no caller exists
+  in this repository or anywhere in the Atlas stack (verified by a stack-wide
+  scan of every member's sources). Recorded under CHANGELOG *Unreleased →
+  Changed → Breaking*; no manifest version is bumped, since a completed item
+  does not authorize a release. Missed at delivery because this repository has
+  no semver gate — see MN-460. integrator=claude-fable session 03d80d33
   (atlas `ATLAS-PROVIDER-CHAIN-QUALITY-2026-08-27`); lease discharged by the
   delivery commits; last-update=2026-08-28. Four findings from a follow-up
   audit of the MN-437..MN-456 sweep, each the surviving instance of a pattern
@@ -30,6 +40,25 @@
   84/84 and `mnemosyne-memory-core` 18/18 (the N1/N3 crates). The N3 test was
   falsified against the unfixed source — it dies with an access violation
   nextest attributes to that test.
+
+- [ ] [patch] **MN-460 — add a semver gate for the publishable crates.**
+  status=todo; owner=unclaimed. This repository publishes
+  `mnemosyne-memory-core` (0.2.0, no `publish = false`) but runs no
+  `cargo-semver-checks` job, so a public-surface removal reaches `main`
+  unflagged and the change-class on the board can be wrong. Demonstrated
+  2026-08-28: MN-458's `Segment::is_owned_by` removal was delivered as
+  `[patch]`; running the tool by hand afterwards reported *"semver requires
+  new major version: 1 major and 0 minor checks failed"*
+  (`inherent_method_missing`). The tool is already installed locally, so this
+  is a CI wiring item, not a tooling one.
+  **Design note, why it is not a one-line job:** the Unreleased section
+  already carries several accepted breaking changes, so a gate that simply
+  diffs `main` against the published baseline is red from the first run and
+  gets ignored. It must compare against the last release tag and fail only
+  when the manifest version has not been bumped to cover the detected class —
+  i.e. it gates the *release*, not every commit. Wire it into the release
+  path alongside the publish pipeline, and keep a non-blocking informational
+  run on PRs so the class is visible while the change is still in review.
 
 - [ ] [patch] **MN-459 — bring `mnemosyne-heap` under the Miri gate.**
   status=todo; owner=unclaimed. The Miri job covers `mnemosyne-arena`,
