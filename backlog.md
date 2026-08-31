@@ -3,14 +3,13 @@
 ## In progress
 
 - [ ] [patch] **MN-CONFORMANCE-COMMENTED-CODE-2026-08-31 — restore the
-  Atlas commented-code ratchet.** status=in-progress; integrator=Codex
-  `/root/mnemosyne_conformance`; lease=Codex
-  `crates/mnemosyne-arena/src/segment/pool/huge_pool.rs`, owner-local PM;
-  last-update=2026-08-31. Replace the newly counted prose line without
-  changing the huge-pool soft-cap contract. Acceptance: Mnemosyne's
-  `commented_out_code` count returns to its committed bound without a
-  baseline raise or suppression; focused documentation and repository gates
-  remain green.
+  Atlas commented-code ratchet.** status=review; integrator=Codex
+  `/root/mnemosyne_conformance`; lease=none; last-update=2026-08-31. Source
+  `c9b3367` rewords the newly counted prose line without changing the
+  huge-pool soft-cap contract. Exact live-tree Atlas conformance reports zero
+  regressions/tightenings without a baseline raise; affected all-target
+  warning-denied Clippy, 50/50 Nextest, rustfmt, and diff checks pass.
+  Independent review, hosted checks, PR, and merge remain open.
 
 - [ ] [minor] **MN-458 — close the retag, provenance, and cold-branch
   stragglers.** status=review; **class corrected from [patch] to [minor]
