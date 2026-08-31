@@ -2,6 +2,15 @@
 
 ## In progress
 
+- [ ] [patch] **MN-CONFORMANCE-COMMENTED-CODE-2026-08-31 — restore the
+  Atlas commented-code ratchet.** status=review; integrator=Codex
+  `/root/mnemosyne_conformance`; lease=none; last-update=2026-08-31. Source
+  `c9b3367` rewords the newly counted prose line without changing the
+  huge-pool soft-cap contract. Exact live-tree Atlas conformance reports zero
+  regressions/tightenings without a baseline raise; affected all-target
+  warning-denied Clippy, 50/50 Nextest, rustfmt, and diff checks pass.
+  Independent review, hosted checks, PR, and merge remain open.
+
 - [ ] [minor] **MN-458 — close the retag, provenance, and cold-branch
   stragglers.** status=review; **class corrected from [patch] to [minor]
   2026-08-28**: N1 removes `Segment::is_owned_by`, a `pub unsafe fn` on a

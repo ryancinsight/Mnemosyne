@@ -1,5 +1,14 @@
 # Checklist
 
+## MN-CONFORMANCE-COMMENTED-CODE-2026-08-31 (owner: codex)
+
+- [x] Reproduce the exact Atlas ratchet raise and identify the added prose
+      line counted as code.
+- [x] Reword the soft-cap rationale without changing its contract in source
+      commit `c9b3367`.
+- [x] Pass the exact conformance scan and affected repository gates.
+- [ ] Commit, publish, independently review, and merge the correction.
+
 ## MNEM-RSS-1 (owner: codex)
 
 - [x] Reproduce the missing byte-level steady-state oracle and derive the
