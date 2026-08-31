@@ -2,6 +2,16 @@
 
 ## In progress
 
+- [ ] [patch] **MN-CONFORMANCE-COMMENTED-CODE-2026-08-31 — restore the
+  Atlas commented-code ratchet.** status=in-progress; integrator=Codex
+  `/root/mnemosyne_conformance`; lease=Codex
+  `crates/mnemosyne-arena/src/segment/pool/huge_pool.rs`, owner-local PM;
+  last-update=2026-08-31. Replace the newly counted prose line without
+  changing the huge-pool soft-cap contract. Acceptance: Mnemosyne's
+  `commented_out_code` count returns to its committed bound without a
+  baseline raise or suppression; focused documentation and repository gates
+  remain green.
+
 - [ ] [minor] **MN-458 — close the retag, provenance, and cold-branch
   stragglers.** status=review; **class corrected from [patch] to [minor]
   2026-08-28**: N1 removes `Segment::is_owned_by`, a `pub unsafe fn` on a
