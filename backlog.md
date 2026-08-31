@@ -60,6 +60,49 @@
   path alongside the publish pipeline, and keep a non-blocking informational
   run on PRs so the class is visible while the change is still in review.
 
+- [ ] [minor] [perf] **MN-461 — 16 KiB is the only size where this allocator loses to the system allocator.**
+  status=todo; owner=unclaimed; found 2026-08-31 by a size-class ladder.
+  `MAX_SMALL_ALLOC_SIZE = 8 * 1024`, so a request above 8 KiB leaves the
+  thread-cache path for the large/huge path. Measured alloc+free pairs, best of
+  150 blocks of 1000, warm, against `std::alloc::System` in the same binary:
+
+  | bytes | mnemosyne | system | ratio |
+  |---|---|---|---|
+  | 8 .. 8192 | 3.7-4.0 ns | 19-21 ns | **0.19x** |
+  | **16384** | 42.5 ns | 23.2 ns | **1.83x — we lose** |
+  | 32768 | 42.4 ns | 66.6 ns | 0.64x |
+  | 65536 | 42.5 ns | 66.6 ns | 0.64x |
+  | 262144 | 42.5 ns | 68.7 ns | 0.62x |
+
+  The small path is five times faster than the system allocator and the large
+  path is a third faster. The two allocators simply place their small/large
+  boundary differently, and ours sits lower — so there is exactly one window,
+  above 8 KiB and below wherever the system allocator's own boundary falls,
+  where we are behind. 16 KiB is inside it.
+
+  **Why this is not obviously "just raise it".** `PAGE_SIZE` is 64 KiB and the
+  only stated constraint is `MAX_SMALL_ALLOC_SIZE <= PAGE_SIZE`, so there is
+  design headroom. But the cost is paid in memory, not code:
+  `SIZE_TO_CLASS` is `[u8; MAX_SMALL_ALLOC_SIZE + 1]` and doubles with the
+  constant; `NUM_SIZE_CLASSES`, `CLASS_TO_SIZE` and `CLASS_TO_MAX_BLOCKS` all
+  grow; the 14-entry `LOOKUP` needs another bucket; and every 8-16 KiB request
+  starts rounding up to a class instead of taking the large path. Whether that
+  trade is right depends on how often this stack allocates in that window and
+  on the fragmentation it causes — neither of which this measurement covers.
+
+  **Verification method.** Raise to 16 KiB, re-run this ladder (expect ~4 ns at
+  16384), then measure resident bytes on a workload allocating in the window —
+  the change is only worth taking if speed improves without a fragmentation
+  regression. The existing Miri gate covers `mnemosyne-local` and
+  `mnemosyne-arena`, so the table changes are checkable; `mnemosyne-heap` is
+  outside it (MN-459).
+
+  **Note on scope.** The absolute numbers say this is a narrow win, not a
+  crisis: 42.5 ns for a 16 KiB allocation is respectable, and the stack's
+  hottest consumers (apollo FFT scratch, leto tiles) pool their buffers and do
+  not hit this per call. It is filed because it is the one measurable place the
+  allocator is beaten by the thing it replaces.
+
 - [ ] [patch] **MN-459 — bring `mnemosyne-heap` under the Miri gate.**
   status=todo; owner=unclaimed. The Miri job covers `mnemosyne-arena`,
   `mnemosyne-memory-core`, `mnemosyne-local`, `mnemosyne-decay`, and
