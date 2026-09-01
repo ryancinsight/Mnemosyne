@@ -2,6 +2,7 @@ use criterion::{Criterion, Throughput, black_box};
 
 use super::constants::SEGMENT_EVICTION_ALLOCS;
 use super::failure::benchmark_failure;
+use super::registration::bench_sole_column;
 
 #[inline(never)]
 /// Exercises the segment cache retention and purge boundary.
@@ -48,7 +49,7 @@ pub fn bench_segment_cache_eviction(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("Segment cache eviction");
     group.throughput(Throughput::Elements(SEGMENT_EVICTION_ALLOCS as u64));
-    group.bench_function("Mnemosyne", |b| {
+    bench_sole_column(&mut group, "Mnemosyne", |b| {
         // Safety: `segment_cache_eviction_cycle` owns every allocated segment.
         b.iter(|| unsafe { segment_cache_eviction_cycle() })
     });

@@ -1,5 +1,142 @@
 # Allocator Baseline Metadata
 
+## 2026-09-01 — pinned measurement procedure (MN-464); baseline still NOT refreshed
+
+The section below this one recorded that the suite disagreed with itself by more
+than the gate it feeds: a **12.6% median spread** across three identical runs,
+against per-row ceilings of 1.05 to 1.25. This section records what caused that,
+what the procedure now does about it, and why the baseline is *still* not
+refreshed.
+
+### The measurement procedure
+
+Run it from **outside** the Atlas stack, on an otherwise idle host:
+
+```sh
+python D:/atlas/repos/mnemosyne/scripts/allocator_measurement.py \
+    --workdir ./measurement --runs 3
+```
+
+It builds both binaries before any timing starts, discards one warm-up run, runs
+the suite three times into separate Criterion roots, and checks agreement with
+`benchmark_summary --repeat-spread`, which reads the same `GATE_ROWS` table the
+regression gate reads. A gated row may not move between identical runs by more
+than the gate would call a regression; the check exits nonzero when one does.
+
+Two of the three levers live inside the benchmark process, so an ordinary
+`cargo bench` gets them too (`benches/allocator/host.rs`,
+`benches/allocator/measurement.rs`). Each run's `bench.log` opens with what the
+process actually achieved, e.g.
+
+```text
+allocator_bench: power throttling opted out; bound to 8 performance cores (mask 0xc03c03)
+```
+
+Numbers taken under a `REFUSED` line are not comparable with numbers taken under
+a prepared one.
+
+### What actually caused the spread
+
+Measured on this host (Windows 11 26340, `1.97.0-x86_64-pc-windows-msvc`, Core
+Ultra 9 285K, High performance power plan), three identical runs per arm with a
+discarded warm-up run:
+
+| Arm | Gate-row median spread | Gate rows over their own ceiling |
+| --- | --- | --- |
+| As committed before this change | 12.3% | 5 / 12 |
+| Process pinned to logical 0-7 only | 14.1% | 7 / 12 |
+| Full procedure | **1.9%** | **1 / 12** |
+
+1. **Hybrid-core placement — confirmed, but the obvious mask is the wrong one.**
+   The 285K's eight performance cores are **not** logical 0-7. Querying
+   `GetLogicalProcessorInformationEx(RelationProcessorCore)` and selecting the
+   highest `EfficiencyClass` yields mask `0xc03c03` — logical
+   {0, 1, 10, 11, 12, 13, 22, 23}. Confirmed by measurement rather than by
+   reading the parse: `allocator cycle latency/mnemosyne/small_32` runs at
+   3.31-3.38 ns pinned to any subset of that mask (`0x3`, `0xc00`, `0xc00000`)
+   and at 4.09 ns pinned to `0xf0`, which the mask excludes — a 24% difference
+   between core classes on one row. This is why the second arm above fails:
+   `0xff` contains six efficiency cores, so pinning to it constrains placement
+   without fixing it.
+2. **Windows power throttling — confirmed, and it degrades a whole run.** With
+   pinning and a raised sample budget but no opt-out, one run in four was
+   uniformly three to five times slower than its neighbours across nearly every
+   row (`realloc latency/mnemosyne/cross_class_32_to_64` 11.4 / 63.5 / 11.3 ns;
+   `huge_shrink_4m_to_2m` 9.7 / 28.1 / 9.4 µs) and took 198 s against 148 s for
+   the others. That signature — uniform, whole-process, wall-clock visible — is
+   `EcoQoS` classifying a long-running non-foreground process as background
+   work. `SetProcessInformation(ProcessPowerThrottling, EXECUTION_SPEED)`
+   clears it; the technique is Apollo's, from
+   `apollo/crates/apollo-fft/benches/engine_census.rs`. Across the four runs of
+   the full procedure, elapsed time is 238 / 233 / 244 / 232 s — the spread that
+   exposed the throttled run is gone.
+3. **Sample budget — confirmed contributory.** The suite ran every row at ten
+   samples, 100 ms warm-up, 500 ms measurement. Criterion sizes a row's whole
+   iteration count from its warm-up, so one scheduling disturbance inside those
+   100 ms mis-sizes every sample that follows, which is how a single row moves
+   3-5x while its neighbours do not. The allocator under test now runs at fifty
+   samples, 1 s warm-up, 2 s measurement; comparator columns keep the smoke
+   budget, because they feed a report rather than a gate.
+4. **Ruled out: run ordering alone.** A discarded warm-up run is kept in the
+   procedure — the first run on a freshly built binary reads high — but it is
+   not the cause. Adding it to the unpinned arm *raised* the measured spread
+   from 12.3% to 20.5%, because it changed which disturbances landed in the
+   sample, not how many.
+5. **Ruled out: cross-row allocator residue as a general effect.** With the
+   above applied, 11 of 12 gated rows agree to within 0.3-4.8% while running in
+   exactly the same single process, in the same order, with the same
+   comparator allocators allocating between them. Residue is not moving the
+   suite as a whole. It remains the standing hypothesis for the one row that
+   still disagrees.
+
+Secondary evidence: rows the variance report flags `unstable` fall from 37 / 39 /
+33 per run to 22 / 26 / 16.
+
+An independent later pair of runs, driven by `scripts/allocator_measurement.py`
+rather than by hand, reproduces this: the same eleven rows agree to
+**0.09-1.19%**, and the same twelfth breaches at 46.6%.
+
+### Why the baseline is still not refreshed
+
+`realloc latency/mnemosyne/huge_shrink_4m_to_2m` still spreads **30.9%** across
+the three runs (12.69 / 11.17 / 9.70 µs), against a 15% ceiling; over all four
+runs including the warm-up it is 51.6%. The acceptance oracle for MN-464 is that
+*every* gated row agrees within its own ceiling, so it is not met, and a baseline
+refreshed now would encode one arbitrary point of that row's distribution as the
+reference.
+
+The instrument is no longer the suspect. In the same four runs, the same row
+measured for the other allocators is stable:
+
+| Allocator | `huge_shrink_4m_to_2m` across four runs | Spread |
+| --- | --- | --- |
+| MiMalloc | 274.6 / 276.4 / 270.1 / 269.6 ns | 2.5% |
+| System | 964.2 / 948.7 / 928.9 / 949.6 µs | 3.8% |
+| RpMalloc | 596.2 / 551.2 / 539.4 / 543.7 µs | 10.5% |
+| **Mnemosyne** | **8.37 / 12.69 / 11.17 / 9.70 µs** | **51.6%** |
+
+Three allocators measure that scenario to within 2.5-10.5% on the same host, in
+the same runs, under the same procedure. The remaining instability is in
+Mnemosyne's 4 MiB→2 MiB huge-realloc path — a real, run-order-dependent
+behaviour of the allocator, tracked as its own item rather than absorbed here.
+
+A second reason to hold: **the measurement basis has changed twice over, so the
+committed baseline is not comparable to a run of this procedure row for row.**
+It was measured under MSYS2 GNU `rustc 1.95.0`; runs are now MSVC `1.97.0`, and
+they are additionally pinned to performance cores and unthrottled. The effect is
+visible rather than theoretical — `threaded saturated small allocation
+cycles/mnemosyne` reads 63.3-63.6 µs under the procedure against 77-85 µs
+unpinned, because it now runs on eight performance cores instead of whatever mix
+the scheduler chose. When the baseline is refreshed it must be refreshed whole,
+under this procedure, and the old numbers discarded rather than compared against.
+
+### Cost
+
+One run of the suite takes 232-244 s on this host, against the 300 s bench-suite
+wall-clock bound: about 150 s for the 39 allocator-under-test rows at the gate
+budget and about 85 s for the 89 comparator rows at the smoke budget. The
+single-iteration CI smoke (`cargo test --benches`) is unaffected at 3.3 s.
+
 ## 2026-09-01 — comparison report regenerated; baseline deliberately NOT refreshed
 
 `allocator_comparison.md` had not been regenerated since 2026-07-23

@@ -19,6 +19,25 @@
 
 ### Changed
 
+- The allocator benchmark suite now prepares its own process before taking a
+  sample: it opts out of Windows power throttling and binds to the host's
+  performance cores, selected by `EfficiencyClass` rather than by assuming the
+  low logical indices. Rows measuring the allocator under test run at fifty
+  samples over two seconds with a one-second warm-up; comparator columns keep
+  the previous smoke budget, because they feed a report rather than the
+  regression gate. Each run reports what it achieved on its first line, so a
+  run that could not be prepared is visibly not comparable with one that was.
+  Across three identical runs the gate-row median spread falls from 12.3% to
+  1.9% and rows exceeding their own regression ceiling from five of twelve to
+  one; suite runtime is 232-244 s against its 300 s bound, and the
+  single-iteration CI smoke is unaffected. No benchmark body, workload, or
+  threshold value changed. `benchmark_summary` gains `--repeat-spread`, which
+  checks that repeated runs agree within the ceilings the gate itself uses, and
+  `scripts/allocator_measurement.py` runs the whole procedure. The
+  source-controlled baseline is deliberately not refreshed: one gated row still
+  disagrees with itself (MN-466). See
+  `benchmarks/allocator_baseline_metadata.md`.
+
 - **Breaking.** `Segment::is_owned_by` is removed from `mnemosyne-memory-core`.
   Its `&self` receiver retagged the whole 2 MiB segment header to read one
   field, which races any concurrent remote-thread write to that segment — the

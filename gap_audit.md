@@ -390,6 +390,32 @@ of these two completed items.
 
 ## Residual risk / open findings
 
+- [open] `realloc latency/mnemosyne/huge_shrink_4m_to_2m` does not reproduce
+  itself run to run, and the instrument has been eliminated as the cause.
+  Under MN-464's procedure (performance-core pinned, power-throttling opted
+  out, 50 samples over 2 s) eleven of twelve gated rows agree to within
+  0.3-4.8% across three identical runs; this one spreads 30.9% (51.6% over
+  four). In the *same* runs the same 4 MiB→2 MiB shrink measures MiMalloc to
+  2.5%, System to 3.8%, and RpMalloc to 10.5%, so the state dependence is in
+  Mnemosyne's huge-realloc path rather than in the host or the harness. It
+  blocks the threshold baseline refresh and is the one row a rerun could still
+  trip the gate on. Tracked as MN-466 / MN-467; evidence in
+  `benchmarks/allocator_baseline_metadata.md`, 2026-09-01 MN-464 section.
+  Evidence tier: empirical Criterion measurement with a cross-allocator control.
+
+- **Reusable audit pattern — an unpinned or throttled benchmark host measures
+  the scheduler, not the code.** Two host behaviours produced allocator-shaped
+  results on this machine: hybrid-core placement (24% between core classes on a
+  3 ns row) and `EcoQoS` power throttling (3-5x across a whole run). Both are
+  invisible in the numbers alone — the second is indistinguishable from a
+  catastrophic regression — and both are now handled in
+  `benches/allocator/host.rs`. Two traps worth carrying forward: the
+  performance cores are not the low logical indices (mask `0xc03c03` here, not
+  `0xff`), so a mask must come from `EfficiencyClass` and be validated by
+  measuring both classes; and a whole-run degradation shows up in wall-clock
+  elapsed time before it shows up in any row, which makes run duration a free
+  validity canary.
+
 - [closed] The remaining `allocator deallocation latency/large_8192` gap is
   not a hidden large/huge unmapping path. `8192` equals
   `MAX_SMALL_ALLOC_SIZE`; the opt-in branch probe and value-semantic regression
