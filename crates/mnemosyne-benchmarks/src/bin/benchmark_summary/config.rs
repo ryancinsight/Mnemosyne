@@ -7,6 +7,9 @@ pub const METADATA_PATH: &str = "target/criterion/benchmark_metadata.json";
 pub const BASELINE_PATH: &str = "benchmarks/allocator_baseline_excerpt.csv";
 pub const REFRESH_BASELINE_FLAG: &str = "--refresh-baseline";
 pub const ENFORCE_THRESHOLDS_FLAG: &str = "--enforce-thresholds";
+/// Followed by the Criterion output roots of repeated identical runs; selects
+/// the repeat-agreement mode in [`crate::repeat`].
+pub const REPEAT_SPREAD_FLAG: &str = "--repeat-spread";
 
 pub const ACTIVE_GROUPS: [&str; 13] = [
     "allocator allocation latency/",

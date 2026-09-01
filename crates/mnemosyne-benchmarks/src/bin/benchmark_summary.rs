@@ -8,6 +8,8 @@ mod criterion;
 mod csv;
 #[path = "benchmark_summary/metadata.rs"]
 mod metadata;
+#[path = "benchmark_summary/repeat.rs"]
+mod repeat;
 #[path = "benchmark_summary/report.rs"]
 mod report;
 #[path = "benchmark_summary/threshold.rs"]
@@ -15,7 +17,8 @@ mod threshold;
 
 use config::{
     BASELINE_PATH, COMPARISON_PATH, CRITERION_ROOT, CURRENT_EXCERPT_PATH, ENFORCE_THRESHOLDS_FLAG,
-    METADATA_PATH, REFRESH_BASELINE_FLAG, SUMMARY_PATH, VARIANCE_PATH, baseline_benchmarks,
+    METADATA_PATH, REFRESH_BASELINE_FLAG, REPEAT_SPREAD_FLAG, SUMMARY_PATH, VARIANCE_PATH,
+    baseline_benchmarks,
 };
 use criterion::collect_estimates;
 use report::{
@@ -27,31 +30,43 @@ use std::io;
 use std::path::Path;
 use threshold::get_regression_threshold;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct SummaryFlags {
     refresh_baseline: bool,
     enforce_thresholds: bool,
+    /// Criterion output roots of repeated identical runs, collected from the
+    /// positional arguments that follow [`REPEAT_SPREAD_FLAG`].
+    repeat_spread_roots: Vec<String>,
 }
 
 fn parse_flags(args: impl IntoIterator<Item = String>) -> SummaryFlags {
-    args.into_iter().fold(
-        SummaryFlags {
-            refresh_baseline: false,
-            enforce_thresholds: false,
-        },
-        |mut flags, arg| {
-            match arg.as_str() {
-                REFRESH_BASELINE_FLAG => flags.refresh_baseline = true,
-                ENFORCE_THRESHOLDS_FLAG => flags.enforce_thresholds = true,
-                _ => {}
+    let mut flags = SummaryFlags::default();
+    let mut collecting_roots = false;
+    for arg in args {
+        match arg.as_str() {
+            REFRESH_BASELINE_FLAG => {
+                flags.refresh_baseline = true;
+                collecting_roots = false;
             }
-            flags
-        },
-    )
+            ENFORCE_THRESHOLDS_FLAG => {
+                flags.enforce_thresholds = true;
+                collecting_roots = false;
+            }
+            REPEAT_SPREAD_FLAG => collecting_roots = true,
+            _ if collecting_roots => flags.repeat_spread_roots.push(arg),
+            _ => {}
+        }
+    }
+    flags
 }
 
 fn main() -> io::Result<()> {
     let flags = parse_flags(std::env::args().skip(1));
+    // Repeat agreement reads several runs' roots and reports nothing about a
+    // single run, so it is its own mode rather than an extra section here.
+    if !flags.repeat_spread_roots.is_empty() {
+        return repeat::check_repeat_agreement(&flags.repeat_spread_roots);
+    }
     let root = Path::new(CRITERION_ROOT);
     let baseline_content = if Path::new(BASELINE_PATH).exists() {
         fs::read_to_string(BASELINE_PATH)?
@@ -148,6 +163,7 @@ mod tests {
             SummaryFlags {
                 refresh_baseline: true,
                 enforce_thresholds: true,
+                repeat_spread_roots: Vec::new(),
             }
         );
     }
@@ -156,12 +172,41 @@ mod tests {
     fn unknown_summary_flags_are_ignored() {
         let flags = parse_flags([String::from("--ignored")]);
 
+        assert_eq!(flags, SummaryFlags::default());
+    }
+
+    #[test]
+    fn repeat_spread_collects_the_roots_that_follow_it() {
+        let flags = parse_flags([
+            String::from(REPEAT_SPREAD_FLAG),
+            String::from("run1/target/criterion"),
+            String::from("run2/target/criterion"),
+        ]);
+
         assert_eq!(
-            flags,
-            SummaryFlags {
-                refresh_baseline: false,
-                enforce_thresholds: false,
-            }
+            flags.repeat_spread_roots,
+            vec![
+                String::from("run1/target/criterion"),
+                String::from("run2/target/criterion"),
+            ]
         );
+    }
+
+    /// A later flag ends root collection, so the two modes cannot silently
+    /// swallow each other's arguments.
+    #[test]
+    fn a_following_flag_ends_root_collection() {
+        let flags = parse_flags([
+            String::from(REPEAT_SPREAD_FLAG),
+            String::from("run1/target/criterion"),
+            String::from(ENFORCE_THRESHOLDS_FLAG),
+            String::from("stray"),
+        ]);
+
+        assert_eq!(
+            flags.repeat_spread_roots,
+            vec![String::from("run1/target/criterion")]
+        );
+        assert!(flags.enforce_thresholds);
     }
 }
