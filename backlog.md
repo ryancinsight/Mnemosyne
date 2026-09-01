@@ -2,6 +2,86 @@
 
 ## In progress
 
+- [ ] [patch] [perf] **MN-464 — the threshold baseline is noisier than the
+  thresholds it gates.** status=todo; owner=unclaimed; found 2026-09-01 while
+  regenerating `allocator_comparison.md`. Two independent problems, both
+  measured (evidence in `benchmarks/allocator_baseline_metadata.md`,
+  2026-09-01 section):
+  1. **Cross-configuration reference.** `allocator_baseline_excerpt.csv` was
+     measured under MSYS2 GNU `rustc 1.95.0`; the pinned toolchain is now
+     `1.97.0-x86_64-pc-windows-msvc`. Every `--enforce-thresholds` run
+     therefore compares an MSVC build against GNU reference values. The four
+     regressions it currently reports reproduce identically on *pre-sweep*
+     source under the current toolchain, so they measure the toolchain change.
+  2. **Noise exceeds the gate.** Three consecutive identical runs give a
+     median row-to-row spread of 12.6% against per-row ceilings of 1.05-1.25,
+     with individual rows reaching 67% and 30 rows flagged `unstable`. A gate
+     whose noise floor is above its trip point cannot distinguish a regression
+     from a rerun.
+  Refreshing the baseline from another run of the same procedure fixes
+  neither, which is why 2026-09-01 regenerated the report and left the
+  baseline alone. **Outcome:** a measurement procedure whose repeat-run spread
+  is below the tightest gate threshold, and a baseline captured with it under
+  the pinned toolchain. The likely levers are the ones apollo already uses for
+  its pinned probes — CPU affinity pinning (this is a hybrid P/E-core host, so
+  an unpinned sample can land on either core type), a raised sample floor for
+  the gated rows only, and reporting a median of repeats rather than one run.
+  **Acceptance oracle:** three consecutive runs of the new procedure agree
+  within the tightest gate threshold on every gated row; the refreshed
+  baseline is then captured and `--enforce-thresholds` passes at ~1.00x.
+  **Non-goals:** changing any benchmark body, workload or threshold value to
+  make the numbers agree — that is instrument tuning. **Dependencies:** none.
+  **Effort:** M.
+
+- [ ] [patch] **MN-462 — the SnMalloc comparator column cannot be produced on
+  any MSYS2-flavoured Windows host.** status=todo; owner=unclaimed; diagnosed
+  2026-09-01. `snmalloc-sys` 0.3.8's `build.rs` matches `config.is_windows()`
+  before `config.is_msvc()` and, inside that arm, branches on the `MSYSTEM`
+  environment variable — so a Git Bash / MSYS2 shell makes it pass
+  `-DCMAKE_CXX_FLAGS=-fuse-ld=lld -Wno-error=unknown-pragmas` to a cmake run
+  that has already selected the `Visual Studio 17 2022` generator and
+  `cl.exe`. `cl` rejects the GNU flag (`D8021`) and the CXX compiler probe
+  fails. Confirmed not to be a cmake-selection problem: the native CMake 4.3.1
+  fails identically, and `env -u MSYSTEM` does not clear the flags. This is
+  upstream's defect, so the options are a version bump once it is fixed, a
+  vetted `[patch]` fork, or accepting the column's absence — the last is the
+  status quo and is why the feature is opt-in. **Acceptance oracle:**
+  `cargo build -p mnemosyne-benchmarks --benches --release --features
+  snmalloc` succeeds on this host, or the comparator is recorded as
+  permanently unavailable here with the reason. **Effort:** S.
+
+- [ ] [patch] **MN-463 — the Windows Jemalloc column needs an MSVC-built
+  jemalloc.** status=todo; owner=unclaimed; diagnosed 2026-09-01. This is the
+  real GNU/MSVC mismatch, and it is now purely a library-provenance problem:
+  `build.rs` finds `D:\msys64\ucrt64\lib\libjemalloc_s.a`, but that is a
+  mingw-gcc archive whose objects reference `___chkstk_ms`, a GCC runtime
+  symbol MSVCRT does not export, so `link.exe` fails with `LNK2001` on six
+  objects and `LNK1120`. The `system-jemalloc` feature and its `build.rs`
+  probe were written when the pinned toolchain was MSYS2 GNU `1.95.0`; the
+  toolchain is now `x86_64-pc-windows-msvc`, so the probe locates a library it
+  can never link. **Outcome:** either the probe rejects a GNU archive against
+  an MSVC target with a clear diagnostic instead of emitting an unusable link
+  directive, or an MSVC-built jemalloc is sourced and the column returns. The
+  first is the smaller, correct increment: a build script that emits a link
+  line it knows will fail is worse than one that says why it cannot.
+  **Acceptance oracle:** on an MSVC host the feature either links or fails at
+  `build.rs` with the ABI reason named; the `Jemalloc (ns)` column is then
+  populated or documented, never silently empty. **Effort:** S.
+
+- [ ] [patch] **MN-465 — `mnemosyne-backend` does not lint clean for
+  `aarch64-unknown-linux-gnu`.** status=todo; owner=unclaimed; found
+  2026-09-01 in passing. `cargo clippy --workspace --all-targets --target
+  aarch64-unknown-linux-gnu -- -D warnings` fails with three
+  `clippy::unnecessary_cast` errors at `backends/cuda/loader.rs:85,87,129`
+  (`c"libcuda.so".as_ptr() as *const u8`). `c_char` is signed on
+  x86_64-linux and unsigned on aarch64-linux, so the cast is load-bearing on
+  the target CI lints and a no-op on the one it does not: the aarch64 CI job
+  runs `ubuntu-24.04-arm` *native tests*, not a cross-target lint, so nothing
+  catches it. The fix is a `c_char`-typed pointer rather than a hardcoded
+  `u8`, plus the missing target in the lint matrix — the cast is the instance,
+  the uncovered target is the generator. **Acceptance oracle:** the command
+  above is clean, and a job or matrix cell runs it. **Effort:** S.
+
 - [ ] [patch] **MN-CONFORMANCE-COMMENTED-CODE-2026-08-31 — restore the
   Atlas commented-code ratchet.** status=review; integrator=Codex
   `/root/mnemosyne_conformance`; lease=none; last-update=2026-08-31. Source

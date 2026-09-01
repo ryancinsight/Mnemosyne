@@ -1,5 +1,123 @@
 # Allocator Baseline Metadata
 
+## 2026-09-01 — comparison report regenerated; baseline deliberately NOT refreshed
+
+`allocator_comparison.md` had not been regenerated since 2026-07-23
+(`63623cb`), 204 commits and the whole MN-437..MN-458 soundness sweep ago. It
+is now regenerated. **The threshold baseline
+(`allocator_baseline_excerpt.csv`) was not touched**, for the reasons below.
+
+### The recorded toolchain blocker was in one opt-in comparator, not the harness
+
+The blocker on file was that the Criterion executable would not link. Split by
+comparator, on this host (Windows 11 26340, `1.97.0-x86_64-pc-windows-msvc`
+from `rust-toolchain.toml`):
+
+- **Default feature set builds and runs.** `cargo build -p
+  mnemosyne-benchmarks --benches --release` finishes in 42 s. Mnemosyne, the
+  system allocator, mimalloc and rpmalloc all produce real rows.
+- **`--features snmalloc` cannot build.** `snmalloc-sys` 0.3.8's `build.rs`
+  branches on the `MSYSTEM` environment variable *before* it checks
+  `is_msvc()`, so under any MSYS2-flavoured shell it hands cmake
+  `-DCMAKE_CXX_FLAGS=-fuse-ld=lld -Wno-error=unknown-pragmas` while cmake
+  selects the MSVC generator and `cl.exe`. `cl` rejects the GNU flag
+  (`command line error D8021: invalid numeric argument
+  '/Wno-error=unknown-pragmas'`) and the CXX compiler probe fails. Substituting
+  the native CMake 4.3.1 for the MSYS2 one does not help — the flags come from
+  the crate, not the generator — and unsetting `MSYSTEM` did not clear them
+  either. This is a third-party build-script defect, not a repository one; the
+  comparator is opt-in precisely because it also fails on hosted runners.
+- **`--features system-jemalloc` cannot link.** This is the genuine
+  GNU-vs-MSVC mismatch: the located `D:\msys64\ucrt64\lib\libjemalloc_s.a` is
+  a mingw-gcc archive that needs `___chkstk_ms`, a GCC runtime symbol MSVCRT
+  does not provide, so `link.exe` reports `LNK2001` on six objects and
+  `LNK1120`. The Windows jemalloc column requires either a GNU-hosted rustc or
+  an MSVC-built jemalloc; neither exists here.
+
+**Comparators that actually ran: Mnemosyne, System, MiMalloc, RpMalloc.** The
+`SnMalloc (ns)` and `Jemalloc (ns)` columns are `N/A` on every row because
+those two comparators could not be built or linked, not because they measured
+nothing — the diagnoses above are the reason, and `MN-462` / `MN-463` track
+them.
+
+### Why the numbers moved, and why it is not the sweep
+
+The stale table was produced under MSYS2 GNU `rustc 1.95.0` with `snmalloc-rs`
+still a mandatory dependency; this one under MSVC `rustc 1.97.0` with it
+absent. That is a different build, so the two tables are not directly
+comparable — several comparator columns move by an order of magnitude
+(mimalloc `allocator deallocation latency/huge_2m` goes from `5763.028` ns to
+`97.573` ns) purely from the change of C runtime and link set.
+
+To separate the environment from the code, the same benchmark was run against
+the pre-sweep revision under the *current* toolchain: `524abee` (2026-08-12,
+the parent of MN-437's first commit), with `a80df6f`'s snmalloc opt-in
+cherry-picked on so both sides link an identical comparator set. Three runs
+each side, comparing medians against measured run-to-run spread:
+
+**No Mnemosyne row regressed beyond noise across the sweep.** Four rows
+improved beyond it — `allocator cycle latency/small_32` `0.84x`, `realloc
+latency/within_class_24_to_32` `0.90x`, `allocator allocation
+latency/large_8192` `0.93x`, `usable size query latency/small_32` `0.93x` —
+and everything else sits inside run-to-run variation. The provenance and
+segment-ownership rewrites cost nothing measurable.
+
+### Why the baseline was not refreshed
+
+1. **Run-to-run spread on this host swamps the thresholds.** Median spread
+   across three consecutive identical runs is **12.6%**, against gate
+   thresholds of 5-25%. Individual rows reach 67%
+   (`realloc latency/mnemosyne/cross_class_8k_to_16k`: 74.2 / 72.4 / 121.1 ns)
+   and the variance report flags 30 rows `unstable`, several with relative CI
+   widths above 1.0. A baseline refreshed from one such run would encode noise
+   as the reference.
+2. **The four "regressions" `--enforce-thresholds` reports against the current
+   baseline are all inside that spread** — `allocator cycle
+   latency/mnemosyne/small_32` 1.061, `cross-thread free
+   handoff/mnemosyne/small_32` 1.641, `realloc
+   latency/mnemosyne/within_class_24_to_32` 1.230, `realloc
+   latency/mnemosyne/cross_class_8k_to_16k` 1.355 — and the control run
+   reproduces them on pre-sweep source, so they are the toolchain change, not
+   a code regression.
+3. **The existing baseline is itself cross-configuration.** It was measured
+   under the GNU toolchain, so the gate currently compares MSVC runs against
+   GNU reference values. Refreshing it from a noisy MSVC run would replace one
+   mismatch with a noisy reference; the correct fix is a pinned, repeatable
+   measurement procedure, tracked as `MN-464`.
+
+### The recorded losses
+
+Of the 14 rows where the stale table showed Mnemosyne behind a comparator,
+**13 still show a loss** and one — `threaded small allocation cycles` vs
+MiMalloc, `1.51x` — is now a win at a `0.99x` median. Nineteen further ratios
+flipped from win to loss, but they are comparator-side: Mnemosyne's own
+absolute numbers are unchanged against the pre-sweep control, so those ratios
+moved because mimalloc and rpmalloc got faster under the MSVC build, not
+because this allocator got slower. `deallocation latency/large_8192` vs
+RpMalloc reproduces at `1.84x` (stale `2.25x`); per `gap_audit.md` that avenue
+is closed with no safe production optimization identified, and it is recorded
+here rather than reopened.
+
+### Reproduction
+
+Run from outside the Atlas stack so the overlay does not rewrite the lockfile:
+
+```sh
+export CARGO_TARGET_DIR=D:/atlas/target
+export CRITERION_HOME="<scratch>/target/criterion"   # keeps target/ unforked
+cd <scratch>                                          # holds ./benchmarks/
+cargo bench --manifest-path <repo>/Cargo.toml -p mnemosyne-benchmarks \
+    --bench allocator_bench
+cargo run  --manifest-path <repo>/Cargo.toml -p mnemosyne-benchmarks \
+    --bin benchmark_summary --release
+```
+
+`benchmark_summary` resolves `target/criterion` and `benchmarks/` relative to
+the working directory, so running it from a scratch directory keeps a stray
+run from overwriting the source-controlled baseline even by accident.
+
+---
+
 The source-controlled baseline excerpt and the comparison report are
 generated from independent bounded Criterion smoke runs, so the same row may
 appear with different point estimates in `allocator_baseline_excerpt.csv`
