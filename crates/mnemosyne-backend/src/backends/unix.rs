@@ -96,7 +96,10 @@ unsafe fn hint_hugepage(ptr: *mut u8, length: usize) {
     // unaffected since `cfg(miri)` never holds outside `cargo miri`.
     #[cfg(all(target_os = "linux", not(miri)))]
     {
-        if length >= SEGMENT_SIZE
+        // FALSIFICATION EXPERIMENT (throwaway branch, never merged): the
+        // hint is disabled for every size the tests use, standing in for
+        // a no-op body. Two of the three tests must now fail.
+        if length >= SEGMENT_SIZE.saturating_mul(1_048_576)
             && mnemosyne_core::options::ENABLE_HUGEPAGE_HINT
                 .load(core::sync::atomic::Ordering::Relaxed)
         {
