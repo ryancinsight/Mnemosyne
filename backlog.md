@@ -1069,15 +1069,26 @@ Filed from the 2026-08-12 verification-posture review:
   native tests pass, and focused Clippy is warning-clean. Hosted full-suite
   Miri remains the merge gate.
 
-- [ ] [major] **MN-456 — preserve `RawHeap` mapping provenance.**
-  status=todo; integrator=unclaimed; dependencies=MN-436; scope=
-  `crates/mnemosyne-heap`, top-level heap consumers, focused tests and docs;
-  non-goal=changing allocation policy or benchmark workloads. Replace integer
-  segment recovery in `RawHeap` with allocation-derived pointers and migrate
-  any public surface required by the proof. Acceptance: strict-provenance Miri
-  exercises heap allocate/free/reallocate and drop through value-semantic tests,
-  native nextest remains within committed bounds, SemVer class is measured,
-  and no exposed-provenance reconstruction remains in the heap path.
+- [x] [patch] **MN-456 — preserve `RawHeap` mapping provenance.** Done by
+  MN-458's N2, commit `6c778b5`; **class corrected from [major] to [patch]**:
+  the change is `pub(crate)`-internal (`RawHeap::free_owned_unchecked`), so no
+  public surface migration was required and no SemVer break exists in
+  `mnemosyne-heap`. Verified 2026-09-01 against `raw_heap.rs:186-197`: the free
+  path derives the segment through `locate_segment` (`ptr.map_addr`, keeping
+  the mapping's provenance) and addresses the page through `locate_page`'s raw
+  place projection, replacing the masked `segment_addr as *mut Segment` cast.
+  `realloc_owned_unchecked` carries no independent recovery — it routes through
+  `free_owned_unchecked` / `alloc` / `usable_size`. A grep over
+  `crates/mnemosyne-heap/src` finds no remaining pointer reconstruction from an
+  integer; the surviving `as usize` casts are NUMA node ids (`numa.rs:130,214`)
+  and one test alignment check.
+  **Residual, tracked elsewhere:** the acceptance clause "strict-provenance
+  Miri exercises heap allocate/free/reallocate and drop through value-semantic
+  tests" is unmet, because `mnemosyne-heap` is outside the Miri gate entirely.
+  That is MN-459, which cites this crate's absence from the gate as the reason
+  N2's patterns survived the MN-437..MN-456 sweep. The residual is not
+  re-scoped into this item because closing it means fixing the crate's three
+  pre-existing Miri test-helper failures, which is MN-459's whole body of work.
 
 - [x] [arch] **MN-433 — concurrency model checking.** Done; the seam and all
   the planned models exist and gate in CI.
