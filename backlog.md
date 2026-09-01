@@ -207,16 +207,22 @@
   falsified against the unfixed source — it dies with an access violation
   nextest attributes to that test.
 
-- [ ] [patch] **MN-460 — add a semver gate for the publishable crates.**
-  status=todo; owner=unclaimed. This repository publishes
-  `mnemosyne-memory-core` (0.2.0, no `publish = false`) but runs no
-  `cargo-semver-checks` job, so a public-surface removal reaches `main`
-  unflagged and the change-class on the board can be wrong. Demonstrated
+- [x] [patch] **MN-460 — add a semver gate for the publishable crates.**
+  status=done 2026-09-01; owner=atlas session. This repository publishes
+  `mnemosyne-memory-core` (0.2.0, no `publish = false`) but ran no
+  `cargo-semver-checks` job, so a public-surface removal reached `main`
+  unflagged and the change-class on the board could be wrong. Demonstrated
   2026-08-28: MN-458's `Segment::is_owned_by` removal was delivered as
   `[patch]`; running the tool by hand afterwards reported *"semver requires
   new major version: 1 major and 0 minor checks failed"*
-  (`inherent_method_missing`). The tool is already installed locally, so this
-  is a CI wiring item, not a tooling one.
+  (`inherent_method_missing`).
+  **Delivered:** mnemosyne CI now calls the shared Atlas gate
+  (`atlas/.github/workflows/semver-gate.yml`, pin `0253866f8`) with the
+  publishable package set (`mnemosyne`, `mnemosyne-memory-core`,
+  `mnemosyne-memory`, `mnemosyne-arena`, `mnemosyne-backend`,
+  `mnemosyne-local`, `mnemosyne-heap`, `mnemosyne-decay`,
+  `mnemosyne-hardened`, `mnemosyne-prof`, `mnemosyne-c-shim`), toolchain
+  1.97.0. PRs run the gate informationally; release tags gate blocking.
   **Design note, why it is not a one-line job:** the Unreleased section
   already carries several accepted breaking changes, so a gate that simply
   diffs `main` against the published baseline is red from the first run and
