@@ -2,6 +2,21 @@
 
 ## In progress
 
+- [ ] [patch] **MN-THEMIS-AFFINITY-CONSUMER-2026-09-01.**
+  status=review; integrator=Codex
+  `01a0253c-6013-7552-99cc-36bbbcf77f6d`;
+  branch=`refactor/mnemosyne-affinity-provider`; lease=none;
+  source=`49146cdd98fa0457082f7f3da7ca9df9ea30f7a7`;
+  last-update=2026-09-01. The benchmark now consumes Themis's presence-proven
+  efficiency view and group-zero mask while preserving launcher-mask
+  intersection, process-wide Win32 binding, every `AffinityOutcome`, and the
+  timed region. The standalone lock resolves merged Themis provider
+  `64ac8ccee8a916b264f0f933de3f642b69ed5434`. Warning-denied host all-target
+  Clippy, focused Nextest 27/27, and all three Criterion test-mode binaries are
+  green. Cross-target collection is limited before Mnemosyne code by the
+  upstream `mimalloc` AArch64 type mismatch and unavailable Linux C
+  cross-compiler; review, PR, and merge closure remain.
+
 - [x] [patch] **MN-468 — the benchmark harness parses its own performance-core
   mask.** status=review; integrator=atlas-session;
   branch=`refactor/mnemosyne-themis-core-class`; PR #86; lease discharged by the
