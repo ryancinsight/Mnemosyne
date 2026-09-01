@@ -1,4 +1,4 @@
-use criterion::{BenchmarkId, Criterion, Throughput, black_box};
+use criterion::{Criterion, Throughput, black_box};
 use std::alloc::System;
 
 #[cfg(jemalloc_available)]
@@ -10,6 +10,7 @@ use super::constants::{
 use super::failure::benchmark_failure;
 #[cfg(feature = "snmalloc")]
 use super::platform::snmalloc_skips;
+use super::registration::{bench_column, bench_sole_column};
 use super::workers::{HandoffWorker, ThreadCycleWorkers};
 
 pub fn bench_cross_thread_free(c: &mut Criterion) {
@@ -36,25 +37,25 @@ pub fn bench_cross_thread_free(c: &mut Criterion) {
         };
         group.throughput(Throughput::Elements(count as u64));
         let mnemosyne_worker = HandoffWorker::new(&MNEMOSYNE);
-        group.bench_with_input(BenchmarkId::new("Mnemosyne", name), &layout, |b, layout| {
+        bench_column(&mut group, "Mnemosyne", name, &layout, |b, layout| {
             b.iter(|| mnemosyne_worker.alloc_then_handoff(*layout, count))
         });
         drop(mnemosyne_worker);
 
         let system_worker = HandoffWorker::new(&SYSTEM);
-        group.bench_with_input(BenchmarkId::new("System", name), &layout, |b, layout| {
+        bench_column(&mut group, "System", name, &layout, |b, layout| {
             b.iter(|| system_worker.alloc_then_handoff(*layout, count))
         });
         drop(system_worker);
 
         let mimalloc_worker = HandoffWorker::new(&MIMALLOC);
-        group.bench_with_input(BenchmarkId::new("MiMalloc", name), &layout, |b, layout| {
+        bench_column(&mut group, "MiMalloc", name, &layout, |b, layout| {
             b.iter(|| mimalloc_worker.alloc_then_handoff(*layout, count))
         });
         drop(mimalloc_worker);
 
         let rpmalloc_worker = HandoffWorker::new(&RPMALLOC);
-        group.bench_with_input(BenchmarkId::new("RpMalloc", name), &layout, |b, layout| {
+        bench_column(&mut group, "RpMalloc", name, &layout, |b, layout| {
             b.iter(|| rpmalloc_worker.alloc_then_handoff(*layout, count))
         });
         drop(rpmalloc_worker);
@@ -62,7 +63,7 @@ pub fn bench_cross_thread_free(c: &mut Criterion) {
         #[cfg(feature = "snmalloc")]
         if !snmalloc_skips(name) {
             let snmalloc_worker = HandoffWorker::new(&SNMALLOC);
-            group.bench_with_input(BenchmarkId::new("SnMalloc", name), &layout, |b, layout| {
+            bench_column(&mut group, "SnMalloc", name, &layout, |b, layout| {
                 b.iter(|| snmalloc_worker.alloc_then_handoff(*layout, count))
             });
             drop(snmalloc_worker);
@@ -71,7 +72,7 @@ pub fn bench_cross_thread_free(c: &mut Criterion) {
         #[cfg(jemalloc_available)]
         {
             let jemalloc_worker = HandoffWorker::new(&JEMALLOC);
-            group.bench_with_input(BenchmarkId::new("Jemalloc", name), &layout, |b, layout| {
+            bench_column(&mut group, "Jemalloc", name, &layout, |b, layout| {
                 b.iter(|| jemalloc_worker.alloc_then_handoff(*layout, count))
             });
             drop(jemalloc_worker);
@@ -104,32 +105,42 @@ pub fn bench_multithreaded_alloc(c: &mut Criterion) {
         group.throughput(Throughput::Elements((THREADS * THREAD_ALLOCS) as u64));
 
         let mnemosyne_workers = ThreadCycleWorkers::new(&MNEMOSYNE, SMALL_LAYOUT);
-        group.bench_function("Mnemosyne", |b| b.iter(|| mnemosyne_workers.run()));
+        bench_sole_column(&mut group, "Mnemosyne", |b| {
+            b.iter(|| mnemosyne_workers.run())
+        });
         drop(mnemosyne_workers);
 
         let system_workers = ThreadCycleWorkers::new(&SYSTEM, SMALL_LAYOUT);
-        group.bench_function("System", |b| b.iter(|| system_workers.run()));
+        bench_sole_column(&mut group, "System", |b| b.iter(|| system_workers.run()));
         drop(system_workers);
 
         let mimalloc_workers = ThreadCycleWorkers::new(&MIMALLOC, SMALL_LAYOUT);
-        group.bench_function("MiMalloc", |b| b.iter(|| mimalloc_workers.run()));
+        bench_sole_column(&mut group, "MiMalloc", |b| {
+            b.iter(|| mimalloc_workers.run())
+        });
         drop(mimalloc_workers);
 
         let rpmalloc_workers = ThreadCycleWorkers::new(&RPMALLOC, SMALL_LAYOUT);
-        group.bench_function("RpMalloc", |b| b.iter(|| rpmalloc_workers.run()));
+        bench_sole_column(&mut group, "RpMalloc", |b| {
+            b.iter(|| rpmalloc_workers.run())
+        });
         drop(rpmalloc_workers);
 
         #[cfg(feature = "snmalloc")]
         {
             let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, SMALL_LAYOUT);
-            group.bench_function("SnMalloc", |b| b.iter(|| snmalloc_workers.run()));
+            bench_sole_column(&mut group, "SnMalloc", |b| {
+                b.iter(|| snmalloc_workers.run())
+            });
             drop(snmalloc_workers);
         }
 
         #[cfg(jemalloc_available)]
         {
             let jemalloc_workers = ThreadCycleWorkers::new(&JEMALLOC, SMALL_LAYOUT);
-            group.bench_function("Jemalloc", |b| b.iter(|| jemalloc_workers.run()));
+            bench_sole_column(&mut group, "Jemalloc", |b| {
+                b.iter(|| jemalloc_workers.run())
+            });
             drop(jemalloc_workers);
         }
         group.finish();
@@ -140,32 +151,42 @@ pub fn bench_multithreaded_alloc(c: &mut Criterion) {
         group.throughput(Throughput::Elements((THREADS * THREAD_ALLOCS) as u64));
 
         let mnemosyne_workers = ThreadCycleWorkers::new(&MNEMOSYNE, MEDIUM_LAYOUT);
-        group.bench_function("Mnemosyne", |b| b.iter(|| mnemosyne_workers.run()));
+        bench_sole_column(&mut group, "Mnemosyne", |b| {
+            b.iter(|| mnemosyne_workers.run())
+        });
         drop(mnemosyne_workers);
 
         let system_workers = ThreadCycleWorkers::new(&SYSTEM, MEDIUM_LAYOUT);
-        group.bench_function("System", |b| b.iter(|| system_workers.run()));
+        bench_sole_column(&mut group, "System", |b| b.iter(|| system_workers.run()));
         drop(system_workers);
 
         let mimalloc_workers = ThreadCycleWorkers::new(&MIMALLOC, MEDIUM_LAYOUT);
-        group.bench_function("MiMalloc", |b| b.iter(|| mimalloc_workers.run()));
+        bench_sole_column(&mut group, "MiMalloc", |b| {
+            b.iter(|| mimalloc_workers.run())
+        });
         drop(mimalloc_workers);
 
         let rpmalloc_workers = ThreadCycleWorkers::new(&RPMALLOC, MEDIUM_LAYOUT);
-        group.bench_function("RpMalloc", |b| b.iter(|| rpmalloc_workers.run()));
+        bench_sole_column(&mut group, "RpMalloc", |b| {
+            b.iter(|| rpmalloc_workers.run())
+        });
         drop(rpmalloc_workers);
 
         #[cfg(feature = "snmalloc")]
         {
             let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, MEDIUM_LAYOUT);
-            group.bench_function("SnMalloc", |b| b.iter(|| snmalloc_workers.run()));
+            bench_sole_column(&mut group, "SnMalloc", |b| {
+                b.iter(|| snmalloc_workers.run())
+            });
             drop(snmalloc_workers);
         }
 
         #[cfg(jemalloc_available)]
         {
             let jemalloc_workers = ThreadCycleWorkers::new(&JEMALLOC, MEDIUM_LAYOUT);
-            group.bench_function("Jemalloc", |b| b.iter(|| jemalloc_workers.run()));
+            bench_sole_column(&mut group, "Jemalloc", |b| {
+                b.iter(|| jemalloc_workers.run())
+            });
             drop(jemalloc_workers);
         }
         group.finish();
@@ -188,25 +209,25 @@ pub fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
     ));
 
     let mnemosyne_workers = ThreadCycleWorkers::new(&MNEMOSYNE, SMALL_LAYOUT);
-    group.bench_function("Mnemosyne", |b| {
+    bench_sole_column(&mut group, "Mnemosyne", |b| {
         b.iter(|| mnemosyne_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
     });
     drop(mnemosyne_workers);
 
     let system_workers = ThreadCycleWorkers::new(&SYSTEM, SMALL_LAYOUT);
-    group.bench_function("System", |b| {
+    bench_sole_column(&mut group, "System", |b| {
         b.iter(|| system_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
     });
     drop(system_workers);
 
     let mimalloc_workers = ThreadCycleWorkers::new(&MIMALLOC, SMALL_LAYOUT);
-    group.bench_function("MiMalloc", |b| {
+    bench_sole_column(&mut group, "MiMalloc", |b| {
         b.iter(|| mimalloc_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
     });
     drop(mimalloc_workers);
 
     let rpmalloc_workers = ThreadCycleWorkers::new(&RPMALLOC, SMALL_LAYOUT);
-    group.bench_function("RpMalloc", |b| {
+    bench_sole_column(&mut group, "RpMalloc", |b| {
         b.iter(|| rpmalloc_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
     });
     drop(rpmalloc_workers);
@@ -214,7 +235,7 @@ pub fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
     #[cfg(feature = "snmalloc")]
     {
         let snmalloc_workers = ThreadCycleWorkers::new(&SNMALLOC, SMALL_LAYOUT);
-        group.bench_function("SnMalloc", |b| {
+        bench_sole_column(&mut group, "SnMalloc", |b| {
             b.iter(|| snmalloc_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
         });
         drop(snmalloc_workers);
@@ -223,7 +244,7 @@ pub fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
     #[cfg(jemalloc_available)]
     {
         let jemalloc_workers = ThreadCycleWorkers::new(&JEMALLOC, SMALL_LAYOUT);
-        group.bench_function("Jemalloc", |b| {
+        bench_sole_column(&mut group, "Jemalloc", |b| {
             b.iter(|| jemalloc_workers.run_with_iterations(SATURATED_THREAD_ALLOCS))
         });
         drop(jemalloc_workers);

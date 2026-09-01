@@ -3,7 +3,9 @@ mod compat;
 mod constants;
 mod cross_thread;
 mod failure;
+mod host;
 mod latency;
+mod measurement;
 mod platform;
 mod profiler;
 mod realloc;
@@ -15,6 +17,9 @@ mod workers;
 pub use cross_thread::{
     bench_cross_thread_free, bench_multithreaded_alloc, bench_saturated_multithreaded_alloc,
 };
+pub use host::prepare_measurement_host;
+pub use measurement::default_criterion;
+
 pub use latency::{
     bench_allocator_alloc, bench_allocator_bursts, bench_allocator_cycles, bench_allocator_dealloc,
     bench_leak_detector_allocator_cycles,

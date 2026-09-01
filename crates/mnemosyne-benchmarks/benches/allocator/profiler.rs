@@ -2,6 +2,7 @@ use criterion::measurement::WallTime;
 use criterion::{BenchmarkGroup, Criterion, Throughput};
 
 use super::constants::{SMALL_LAYOUT, THREAD_ALLOCS, THREADS};
+use super::registration::bench_sole_column;
 use super::workers::ThreadCycleWorkers;
 
 trait ProfilerMode {
@@ -37,7 +38,7 @@ fn bench_mode<M: ProfilerMode>(
 ) {
     let workers = ThreadCycleWorkers::new(allocator, SMALL_LAYOUT);
     M::prepare();
-    group.bench_function(M::NAME, |b| b.iter(|| workers.run()));
+    bench_sole_column(group, M::NAME, |b| b.iter(|| workers.run()));
     drop(workers);
     mnemosyne_prof::reset_profiler_for_testing();
 }
