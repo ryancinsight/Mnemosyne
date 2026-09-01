@@ -24,6 +24,10 @@ use core::fmt;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AffinityOutcome {
     /// The process is bound to `processors` performance cores.
+    #[cfg_attr(
+        not(windows),
+        expect(dead_code, reason = "constructed only by the Windows platform backend")
+    )]
     Bound {
         /// Number of logical processors in the bound set.
         processors: u32,
@@ -32,14 +36,26 @@ pub enum AffinityOutcome {
     },
     /// The launcher already restricted the process to a set containing no
     /// performance core, so the operator's narrower choice is left in place.
+    #[cfg_attr(
+        not(windows),
+        expect(dead_code, reason = "constructed only by the Windows platform backend")
+    )]
     LauncherMaskPreserved {
         /// Mask the launcher supplied, left unchanged.
         mask: usize,
     },
     /// Every logical processor reports the same efficiency class, so the host
     /// has no performance-core subset to select.
+    #[cfg_attr(
+        not(windows),
+        expect(dead_code, reason = "constructed only by the Windows platform backend")
+    )]
     Homogeneous,
     /// The operating system rejected a query or the bind itself.
+    #[cfg_attr(
+        not(windows),
+        expect(dead_code, reason = "constructed only by the Windows platform backend")
+    )]
     Refused {
         /// Platform operation that failed.
         operation: &'static str,
@@ -61,8 +77,16 @@ pub enum AffinityOutcome {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ThrottlingOutcome {
     /// Throttling is disabled for this process.
+    #[cfg_attr(
+        not(windows),
+        expect(dead_code, reason = "constructed only by the Windows platform backend")
+    )]
     OptedOut,
     /// The operating system rejected the request.
+    #[cfg_attr(
+        not(windows),
+        expect(dead_code, reason = "constructed only by the Windows platform backend")
+    )]
     Refused {
         /// Operating-system error code captured at the failure site.
         code: u32,
