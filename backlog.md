@@ -2,9 +2,10 @@
 
 ## In progress
 
-- [ ] [patch] **MN-468 — the benchmark harness parses its own performance-core
-  mask.** status=in-progress; integrator=atlas-session;
-  branch=`refactor/mnemosyne-themis-core-class`; lease=`benches/allocator/host.rs`.
+- [x] [patch] **MN-468 — the benchmark harness parses its own performance-core
+  mask.** status=review; integrator=atlas-session;
+  branch=`refactor/mnemosyne-themis-core-class`; PR #86; lease discharged by the
+  delivery commit; last-update=2026-09-01.
   `themis-topology` gained processor efficiency class (themis#35, ADR 0004), so
   the harness's own `GetLogicalProcessorInformationEx` record walk — mirrored
   Win32 layouts, offset assertions, three unaligned readers — is duplication of
@@ -18,6 +19,23 @@
   `0xc03c03`, excluding cpu 2) and `benchmark_summary --repeat-spread` no worse
   than MN-464's recorded 1.9% median / 1-of-12 over ceiling.
   **Dependencies:** `cargo update -p themis-topology`. **Effort:** S.
+  **Delivered.** `host.rs` 525 → 358 lines, `unsafe` sites 19 → 7 (the survivors
+  are plain Win32 calls, no pointer arithmetic); net −152 lines.
+  **Placement preserved:** the bound mask is `0xc03c03` on every launch, and six
+  independent launches measure `allocator cycle latency/mnemosyne/small_32` at
+  3.242-3.308 ns (2.04% spread, 5% ceiling) — MN-464's performance-core band is
+  3.31-3.38 ns and its efficiency-core value 4.09 ns, so the selection is
+  unambiguously performance cores. **Repeat-spread:** gate-row median 1.50%
+  against MN-464's 1.9%; 2 of 12 over ceiling against 1 of 12. The extra breach
+  (`small_32`, 8.66%) is a disturbed third run, not the migration: run 3 is
+  uniformly elevated across all 130 rows (median ratio 1.0103 vs run 1, 63% of
+  rows above) including the comparator allocators this change cannot touch, ran
+  246 s against 230-234 s, and 3-11 peer `cargo`/`rustc` processes were live on
+  the host throughout. The bench sets no `#[global_allocator]`, so
+  `CpuTopology::detect()`'s startup allocations cannot reach the measured heap.
+  The remaining breach is MN-466. **Residual risk:** a clean full-suite repeat on
+  a quiet host was not obtainable — the host did not clear within a 10-minute
+  wait — so the six-launch row probe stands in for it.
 
 - [x] [patch] [perf] **MN-464 — the threshold baseline is noisier than the
   thresholds it gates.** status=review; owner=atlas-session;
