@@ -19,6 +19,17 @@
 
 ### Changed
 
+- **Small-class ceiling raised to 16 KiB** (`MAX_SMALL_ALLOC_SIZE`, MN-461).
+  Requests of 8-16 KiB previously left the size-class path for the large/huge
+  path, which maps `size + SEGMENT_ALIGN + PAGE_SIZE` per allocation, so each
+  such object reserved its own ~2 MiB segment and cost 41 ns per alloc+free
+  against 2.6 ns on the class path. Four classes (10240, 12288, 14336, 16384)
+  now serve the window at 2.7 ns, and a workload holding 256 such objects maps
+  12 MiB instead of 535 MiB. `NUM_SIZE_CLASSES` is 48. The size-to-class table
+  is indexed by 16-byte granule rather than by byte, which keeps it at 1 KiB;
+  every class size is a multiple of `MIN_BLOCK_SIZE`, so the mapping is
+  unchanged for every request.
+
 - The allocator benchmark host preparation now consumes Themis's
   presence-proven efficiency view and Windows processor-group masks. This
   removes the remaining local flattened-processor shift arithmetic while

@@ -232,8 +232,49 @@
   path alongside the publish pipeline, and keep a non-blocking informational
   run on PRs so the class is visible while the change is still in review.
 
-- [ ] [minor] [perf] **MN-461 — 16 KiB is the only size where this allocator loses to the system allocator.**
-  status=todo; owner=unclaimed; found 2026-08-31 by a size-class ladder.
+- [x] [minor] [perf] **MN-461 — 16 KiB is the only size where this allocator loses to the system allocator.**
+  status=done 2026-09-01; integrator=Claude session 03d80d33; found 2026-08-31 by a size-class ladder.
+
+  **Delivered.** `MAX_SMALL_ALLOC_SIZE` 8 KiB → 16 KiB with four classes
+  (10240, 12288, 14336, 16384; `NUM_SIZE_CLASSES` 44 → 48), one more `LOOKUP`
+  bucket (2048-byte steps over 8193..=16384), and `SIZE_TO_CLASS` indexed by
+  16-byte granule instead of by byte — every class size is a multiple of
+  `MIN_BLOCK_SIZE`, so rounding a request up to 16 never changes its class, and
+  the table is 1 KiB rather than 16 KiB. `round_up_size` no longer hard-codes
+  8192. The hot-path sweep gains 8193/12288/16384 and its page-recycling driver
+  fills with the actual largest class (4 blocks per page).
+
+  **The memory half, which this item refused to guess at.** The large/huge path
+  maps `size + SEGMENT_ALIGN + PAGE_SIZE` per allocation, so every 9-16 KiB
+  object reserved its own ~2.07 MiB segment. `memory_report` extended with a
+  12288 and a 16384 row (128 allocations each, 3.5 MiB of payload in the window):
+
+  | phase | mapped before | mapped after |
+  |---|---|---|
+  | during (640 live) | 561,512,448 B (535.5 MiB) | **12,582,912 B (12 MiB)** |
+  | after free | 143,392,768 B retained, 64 huge blocks / 132.8 MiB | 12,582,912 B, 0 huge blocks |
+
+  44.6x less address space mapped for the same live set; nothing left in the
+  huge pool after free. This was a memory *win*, not the trade the item feared:
+  the fragmentation risk ran the other way.
+
+  **The speed half**, alloc+free pairs warm, best of 150 blocks of 1000, same
+  binary as `std::alloc::System`:
+
+  | bytes | before | after | system |
+  |---|---|---|---|
+  | 4096-8192 | 2.6 ns | 2.7 ns | 19.0 ns |
+  | 10240-16384 | **41.2 ns** | **2.7 ns** | 19.0 ns |
+  | 32768 | 41.2 ns | 41.0 ns | 65-71 ns |
+
+  The window now runs 7x faster than the system allocator instead of 2.1x
+  slower; the compacted table costs nothing measurable at ≤ 8 KiB.
+
+  **Gates.** fmt; clippy `--locked --workspace --all-targets -D warnings`;
+  nextest 339/339; doctests; Miri as CI runs it: core 18/18, arena 48/48
+  (`--profile miri`, concurrency binaries excluded as in CI), local 84/84
+  under Stacked Borrows. Tree Borrows runs on the PR.
+
   `MAX_SMALL_ALLOC_SIZE = 8 * 1024`, so a request above 8 KiB leaves the
   thread-cache path for the large/huge path. Measured alloc+free pairs, best of
   150 blocks of 1000, warm, against `std::alloc::System` in the same binary:

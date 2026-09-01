@@ -28,11 +28,12 @@ const ALIGN: usize = 16;
 /// Representative sizes spanning the smallest class, several size-class
 /// boundaries (`+1` lands in the next class), and the small/large cutoff.
 const SIZES: &[usize] = &[
-    1, 8, 15, 16, 17, 24, 32, 33, 48, 64, 100, 128, 256, 511, 512, 1000, 1024, 4096, 8192,
+    1, 8, 15, 16, 17, 24, 32, 33, 48, 64, 100, 128, 256, 511, 512, 1000, 1024, 4096, 8192, 8193,
+    12288, 16384,
 ];
 
 /// Largest request in [`SIZES`], so one stack buffer serves every comparison.
-const MAX_SIZE: usize = 8192;
+const MAX_SIZE: usize = 16384;
 
 /// Asserts every byte of `p[..size]` still equals `stamp`.
 ///
@@ -258,12 +259,12 @@ fn segment_of(p: *mut u8) -> usize {
 /// Runs allocator entry points; the caller must not hold live blocks whose
 /// policy differs from `P`.
 unsafe fn drive_page_recycling<P: AllocPolicy>() {
-    /// Largest small class: `PAGE_SIZE / 8192` = 8 blocks per page.
-    const BIG: usize = 8192;
+    /// Largest small class: `PAGE_SIZE / 16384` = 4 blocks per page.
+    const BIG: usize = 16384;
     /// A different class, so the emptied page must be re-initialized to serve it.
     const OTHER: usize = 4096;
-    /// 31 usable pages x 8 blocks, plus slack.
-    const LIMIT: usize = 512;
+    /// 31 usable pages x 4 blocks, plus slack.
+    const LIMIT: usize = 256;
 
     // Safety: BIG is a valid small request and ALIGN is a power of two.
     let first = unsafe { thread_alloc::<P, Backend>(BIG, ALIGN) };

@@ -18,8 +18,14 @@ pub const PAGE_ALIGN: usize = PAGE_SIZE;
 /// The number of pages per segment (32).
 pub const PAGES_PER_SEGMENT: usize = SEGMENT_SIZE / PAGE_SIZE;
 
-/// The maximum size of a small allocation class (8KB).
-pub const MAX_SMALL_ALLOC_SIZE: usize = 8 * 1024;
+/// The maximum size of a small allocation class (16KB).
+///
+/// Raised from 8KB (MN-461): a request above this ceiling takes the
+/// large/huge path, which maps `size + SEGMENT_ALIGN + PAGE_SIZE` per
+/// allocation, so every 8-16KB object reserved its own ~2MB segment and
+/// paid 41 ns against 2.6 ns on the class path. Four classes (10240,
+/// 12288, 14336, 16384) now pack four to twelve blocks per 64KB page.
+pub const MAX_SMALL_ALLOC_SIZE: usize = 16 * 1024;
 
 /// The smallest size-class block, in bytes.
 ///
@@ -34,7 +40,7 @@ pub const MIN_BLOCK_SIZE: usize = 16;
 pub const MAX_ALLOC_SIZE: usize = isize::MAX as usize;
 
 /// The total number of small size classes.
-pub const NUM_SIZE_CLASSES: usize = 44;
+pub const NUM_SIZE_CLASSES: usize = 48;
 
 /// The maximum number of segments retained in the global pool (compile-time limit).
 pub const MAX_RETAINED_SEGMENTS_LIMIT: usize = 1024;
