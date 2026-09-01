@@ -2,6 +2,23 @@
 
 ## In progress
 
+- [ ] [patch] **MN-468 — the benchmark harness parses its own performance-core
+  mask.** status=in-progress; integrator=atlas-session;
+  branch=`refactor/mnemosyne-themis-core-class`; lease=`benches/allocator/host.rs`.
+  `themis-topology` gained processor efficiency class (themis#35, ADR 0004), so
+  the harness's own `GetLogicalProcessorInformationEx` record walk — mirrored
+  Win32 layouts, offset assertions, three unaligned readers — is duplication of
+  a query the stack now owns upstream. Delete it and bind from
+  `CpuTopology::detect()`, preserving themis's typed absence rather than
+  guessing: `efficiency_class_count()` is the oracle, so `None` (unreported) and
+  `Some(1)` (homogeneous) stay distinguishable in the run's first line.
+  **Non-goals:** the EcoQoS opt-out and the Criterion sample budgets, the other
+  two legs of MN-464, are untouched; no benchmark body, workload, or threshold
+  changes. **Acceptance oracle:** placement unchanged (the bound mask stays
+  `0xc03c03`, excluding cpu 2) and `benchmark_summary --repeat-spread` no worse
+  than MN-464's recorded 1.9% median / 1-of-12 over ceiling.
+  **Dependencies:** `cargo update -p themis-topology`. **Effort:** S.
+
 - [x] [patch] [perf] **MN-464 — the threshold baseline is noisier than the
   thresholds it gates.** status=review; owner=atlas-session;
   branch=`perf/mnemosyne-pinned-measurement`. **Delivered: the measurement
