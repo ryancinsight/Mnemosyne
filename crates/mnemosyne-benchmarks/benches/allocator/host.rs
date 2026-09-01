@@ -183,7 +183,7 @@ mod platform {
     use super::{AffinityOutcome, ThrottlingOutcome};
     use core::ffi::c_void;
     use core::mem::size_of;
-    use themis::CpuTopology;
+    use themis::{CpuTopology, ProcessorGroupAffinity};
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
@@ -255,14 +255,20 @@ mod platform {
         let Some(topology) = CpuTopology::detect() else {
             return AffinityOutcome::ClassesUnreported;
         };
-        match topology.is_hybrid() {
-            // Typed absence: the platform did not report classes, so there is
-            // no performance subset and this harness invents none.
-            None => return AffinityOutcome::ClassesUnreported,
-            Some(false) => return AffinityOutcome::Homogeneous,
-            Some(true) => {}
+        let Some(efficiency) = topology.efficiency() else {
+            return AffinityOutcome::ClassesUnreported;
+        };
+        if !efficiency.is_hybrid() {
+            return AffinityOutcome::Homogeneous;
         }
-        let performance_mask = performance_core_mask(&topology);
+        // `SetProcessAffinityMask` accepts only a mask, not a processor-group
+        // id. Themis owns the flattened-id conversion; selecting group zero
+        // preserves the API's process-primary-group contract without local
+        // shift arithmetic.
+        let performance_mask = efficiency
+            .highest_class_affinity_groups()
+            .group(0)
+            .map_or(0, ProcessorGroupAffinity::mask);
         let process_mask = match current_process_mask() {
             Ok(mask) => mask,
             Err(outcome) => return outcome,
@@ -292,29 +298,6 @@ mod platform {
             processors: selected.count_ones(),
             mask: selected,
         }
-    }
-
-    /// The affinity mask of the host's most performant core class.
-    ///
-    /// Zero when nothing of that class is nameable in an affinity mask, which
-    /// `bind_to_performance_cores` reads through the same intersection it
-    /// applies to the launcher's mask.
-    ///
-    /// The topology query itself is platform-independent; only the reduction to
-    /// a mask is not. `SetProcessAffinityMask` addresses one processor group,
-    /// and themis numbers processors `group * 64 + bit`, so a processor whose
-    /// bit does not fit a `usize` belongs to a group this call cannot name --
-    /// which is exactly the shift `checked_shl` declines.
-    fn performance_core_mask(topology: &CpuTopology) -> usize {
-        let Some(fastest) = topology.highest_efficiency_class() else {
-            return 0;
-        };
-        let Some(processors) = topology.processors_in_efficiency_class(fastest) else {
-            return 0;
-        };
-        processors
-            .filter_map(|processor| 1usize.checked_shl(processor))
-            .fold(0, |mask, bit| mask | bit)
     }
 
     /// This process's current affinity mask.

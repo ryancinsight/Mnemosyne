@@ -884,7 +884,7 @@ dependencies = [
 [[package]]
 name = "themis-topology"
 version = "0.10.1"
-source = "git+https://github.com/ryancinsight/themis#1f55611b2ea7dd6f8402b839d7f19bba2bd950fb"
+source = "git+https://github.com/ryancinsight/themis#64ac8ccee8a916b264f0f933de3f642b69ed5434"
 dependencies = [
  "melinoe",
 ]

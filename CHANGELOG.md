@@ -19,6 +19,12 @@
 
 ### Changed
 
+- The allocator benchmark host preparation now consumes Themis's
+  presence-proven efficiency view and Windows processor-group masks. This
+  removes the remaining local flattened-processor shift arithmetic while
+  preserving typed absence, homogeneous-host handling, launcher-mask
+  intersection, and the Criterion timed region.
+
 - The allocator benchmark harness asks `themis::CpuTopology` which processors
   are performance cores instead of parsing the Windows
   `GetLogicalProcessorInformationEx(RelationProcessorCore)` records itself.
