@@ -32,9 +32,9 @@ jobs:
   # the detected class.
   semver:
     name: SemVer gate
-    uses: ryancinsight/atlas/.github/workflows/semver-gate.yml@22657a1c9c5903cbdd871eeed02825053633df15
+    uses: ryancinsight/atlas/.github/workflows/semver-gate.yml@4c2f2c29b32fb2868c35d878cb3894efc2fde862
     with:
-      package: mnemosyne mnemosyne-memory-core mnemosyne-memory mnemosyne-arena mnemosyne-backend mnemosyne-local mnemosyne-heap mnemosyne-decay mnemosyne-hardened mnemosyne-prof mnemosyne-c-shim
+      package: mnemosyne,mnemosyne-memory-core,mnemosyne-memory,mnemosyne-arena,mnemosyne-backend,mnemosyne-local,mnemosyne-heap,mnemosyne-decay,mnemosyne-hardened,mnemosyne-prof,mnemosyne-c-shim
       rust-toolchain: 1.97.0
     permissions:
       contents: read
