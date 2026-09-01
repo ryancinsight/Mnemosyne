@@ -14,9 +14,17 @@
 //!    slower than an unthrottled one and is indistinguishable, from the numbers
 //!    alone, from a catastrophic allocator regression.
 //!
-//! [`prepare_measurement_host`] addresses both before the first sample is
-//! taken, and reports what it actually achieved rather than assuming success:
-//! a run that could not be prepared is a run whose numbers carry that caveat.
+//! Which cores are the performance cores is asked of [`themis::CpuTopology`],
+//! not of the operating system here: the split is not inferable from processor
+//! ids — this host's performance cores are the non-contiguous mask `0xc03c03` —
+//! and one topology crate owning that query keeps every consumer on the same
+//! answer. themis reports typed absence when a platform says nothing, and this
+//! module preserves it rather than substituting a guess.
+//!
+//! [`prepare_measurement_host`] addresses both behaviours before the first
+//! sample is taken, and reports what it actually achieved rather than assuming
+//! success: a run that could not be prepared is a run whose numbers carry that
+//! caveat.
 
 use core::fmt;
 
@@ -51,6 +59,14 @@ pub enum AffinityOutcome {
         expect(dead_code, reason = "constructed only by the Windows platform backend")
     )]
     Homogeneous,
+    /// The platform reported no efficiency-class table at all, so there is no
+    /// performance subset to select and none is guessed. Distinct from
+    /// [`Self::Homogeneous`], which is a host that reported one class.
+    #[cfg_attr(
+        not(windows),
+        expect(dead_code, reason = "constructed only by the Windows platform backend")
+    )]
+    ClassesUnreported,
     /// The operating system rejected a query or the bind itself.
     #[cfg_attr(
         not(windows),
@@ -135,6 +151,9 @@ impl fmt::Display for HostPreparation {
             AffinityOutcome::Homogeneous => {
                 formatter.write_str("host cores are one efficiency class; no binding applied")
             }
+            AffinityOutcome::ClassesUnreported => {
+                formatter.write_str("host reported no efficiency classes; no binding applied")
+            }
             AffinityOutcome::Refused { operation, code } => write!(
                 formatter,
                 "performance-core binding REFUSED at {operation} (error {code})"
@@ -163,7 +182,8 @@ pub fn prepare_measurement_host() -> HostPreparation {
 mod platform {
     use super::{AffinityOutcome, ThrottlingOutcome};
     use core::ffi::c_void;
-    use core::mem::{offset_of, size_of};
+    use core::mem::size_of;
+    use themis::CpuTopology;
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
@@ -174,15 +194,6 @@ mod platform {
             class: i32,
             information: *mut c_void,
             size: u32,
-        ) -> i32;
-        /// `relationship` is the C `LOGICAL_PROCESSOR_RELATIONSHIP`
-        /// enumeration, declared here as its unsigned four-byte
-        /// representation so the record's `Relationship` field compares
-        /// without a sign cast.
-        fn GetLogicalProcessorInformationEx(
-            relationship: u32,
-            buffer: *mut c_void,
-            returned_length: *mut u32,
         ) -> i32;
         fn GetProcessAffinityMask(
             process: isize,
@@ -198,11 +209,6 @@ mod platform {
     /// mask while leaving it clear in the state mask disables throttling
     /// outright rather than leaving the decision to the scheduler.
     const EXECUTION_SPEED: u32 = 0x1;
-    /// `RelationProcessorCore` in the `LOGICAL_PROCESSOR_RELATIONSHIP`
-    /// enumeration.
-    const RELATION_PROCESSOR_CORE: u32 = 0;
-    /// `ERROR_INSUFFICIENT_BUFFER`, the expected result of the sizing call.
-    const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 
     #[repr(C)]
     struct PowerThrottlingState {
@@ -217,62 +223,6 @@ mod platform {
     const POWER_THROTTLING_STATE_BYTES: u32 = 12;
     const _: () =
         assert!(size_of::<PowerThrottlingState>() == POWER_THROTTLING_STATE_BYTES as usize);
-
-    /// Mirrors `GROUP_AFFINITY`.
-    #[repr(C)]
-    struct GroupAffinity {
-        mask: usize,
-        group: u16,
-        reserved: [u16; 3],
-    }
-
-    /// Mirrors `PROCESSOR_RELATIONSHIP`. `group_mask` is declared
-    /// `ANYSIZE_ARRAY` by Windows; the single element pins the offset of the
-    /// first entry and the rest are read by stride.
-    #[repr(C)]
-    struct ProcessorRelationship {
-        flags: u8,
-        efficiency_class: u8,
-        reserved: [u8; 20],
-        group_count: u16,
-        group_mask: [GroupAffinity; 1],
-    }
-
-    /// Mirrors `SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX` for the
-    /// `RelationProcessorCore` union arm.
-    #[repr(C)]
-    struct ProcessorInformation {
-        relationship: u32,
-        size: u32,
-        processor: ProcessorRelationship,
-    }
-
-    /// Field offsets inside one variable-length record, derived from the
-    /// mirrored layouts rather than written as literals so a layout mistake is
-    /// a compile error and never a silently misread efficiency class.
-    const RELATIONSHIP_OFFSET: usize = offset_of!(ProcessorInformation, relationship);
-    const SIZE_OFFSET: usize = offset_of!(ProcessorInformation, size);
-    const EFFICIENCY_CLASS_OFFSET: usize = offset_of!(ProcessorInformation, processor)
-        + offset_of!(ProcessorRelationship, efficiency_class);
-    const GROUP_COUNT_OFFSET: usize = offset_of!(ProcessorInformation, processor)
-        + offset_of!(ProcessorRelationship, group_count);
-    const GROUP_MASK_OFFSET: usize =
-        offset_of!(ProcessorInformation, processor) + offset_of!(ProcessorRelationship, group_mask);
-    const GROUP_AFFINITY_STRIDE: usize = size_of::<GroupAffinity>();
-    /// Smallest record this parser will read fields out of.
-    const MINIMUM_RECORD_BYTES: usize = GROUP_MASK_OFFSET + GROUP_AFFINITY_STRIDE;
-
-    const _: () = assert!(RELATIONSHIP_OFFSET == 0);
-    const _: () = assert!(SIZE_OFFSET == 4);
-    const _: () = assert!(EFFICIENCY_CLASS_OFFSET == 9);
-    const _: () = assert!(GROUP_COUNT_OFFSET == 30);
-    const _: () = assert!(GROUP_MASK_OFFSET == 32);
-    const _: () = assert!(GROUP_AFFINITY_STRIDE == 16);
-
-    /// `SetProcessAffinityMask` addresses one processor group, so only group
-    /// zero's cores are candidates. Every host this harness runs on reports a
-    /// single group; a multi-group host simply keeps its default placement.
-    const AFFINITY_GROUP: u16 = 0;
 
     pub(super) fn opt_out_of_power_throttling() -> ThrottlingOutcome {
         let mut state = PowerThrottlingState {
@@ -302,14 +252,17 @@ mod platform {
     }
 
     pub(super) fn bind_to_performance_cores() -> AffinityOutcome {
-        let records = match processor_core_records() {
-            Ok(records) => records,
-            Err(outcome) => return outcome,
+        let Some(topology) = CpuTopology::detect() else {
+            return AffinityOutcome::ClassesUnreported;
         };
-        let Some(top_class) = max_efficiency_class(&records) else {
-            return AffinityOutcome::Homogeneous;
-        };
-        let performance_mask = mask_for_efficiency_class(&records, top_class);
+        match topology.is_hybrid() {
+            // Typed absence: the platform did not report classes, so there is
+            // no performance subset and this harness invents none.
+            None => return AffinityOutcome::ClassesUnreported,
+            Some(false) => return AffinityOutcome::Homogeneous,
+            Some(true) => {}
+        }
+        let performance_mask = performance_core_mask(&topology);
         let process_mask = match current_process_mask() {
             Ok(mask) => mask,
             Err(outcome) => return outcome,
@@ -319,8 +272,7 @@ mod platform {
             return AffinityOutcome::LauncherMaskPreserved { mask: process_mask };
         }
         if selected == process_mask {
-            // Nothing to narrow: either the host is homogeneous in practice or
-            // the launcher already supplied exactly this set.
+            // Nothing to narrow: the launcher already supplied exactly this set.
             return AffinityOutcome::Bound {
                 processors: selected.count_ones(),
                 mask: selected,
@@ -340,6 +292,29 @@ mod platform {
             processors: selected.count_ones(),
             mask: selected,
         }
+    }
+
+    /// The affinity mask of the host's most performant core class.
+    ///
+    /// Zero when nothing of that class is nameable in an affinity mask, which
+    /// `bind_to_performance_cores` reads through the same intersection it
+    /// applies to the launcher's mask.
+    ///
+    /// The topology query itself is platform-independent; only the reduction to
+    /// a mask is not. `SetProcessAffinityMask` addresses one processor group,
+    /// and themis numbers processors `group * 64 + bit`, so a processor whose
+    /// bit does not fit a `usize` belongs to a group this call cannot name --
+    /// which is exactly the shift `checked_shl` declines.
+    fn performance_core_mask(topology: &CpuTopology) -> usize {
+        let Some(fastest) = topology.highest_efficiency_class() else {
+            return 0;
+        };
+        let Some(processors) = topology.processors_in_efficiency_class(fastest) else {
+            return 0;
+        };
+        processors
+            .filter_map(|processor| 1usize.checked_shl(processor))
+            .fold(0, |mask, bit| mask | bit)
     }
 
     /// This process's current affinity mask.
@@ -366,148 +341,6 @@ mod platform {
             });
         }
         Ok(process_mask)
-    }
-
-    /// One core's efficiency class and its group-zero affinity mask.
-    struct CoreRecord {
-        efficiency_class: u8,
-        mask: usize,
-    }
-
-    /// Reads the host's `RelationProcessorCore` records.
-    ///
-    /// The buffer is allocated as `u64` so it carries the eight-byte alignment
-    /// the record layout requires; `Vec<u8>` would only guarantee one.
-    fn processor_core_records() -> Result<Vec<CoreRecord>, AffinityOutcome> {
-        let mut length = 0u32;
-        // SAFETY: documented Win32 sizing call; a null buffer with a zero
-        // length is the documented way to ask for the required size.
-        let sized = unsafe {
-            GetLogicalProcessorInformationEx(
-                RELATION_PROCESSOR_CORE,
-                core::ptr::null_mut(),
-                &raw mut length,
-            )
-        };
-        // SAFETY: documented Win32 call taking no arguments.
-        let sizing_error = unsafe { GetLastError() };
-        if sized != 0 || sizing_error != ERROR_INSUFFICIENT_BUFFER || length == 0 {
-            return Err(AffinityOutcome::Refused {
-                operation: "GetLogicalProcessorInformationEx sizing",
-                code: sizing_error,
-            });
-        }
-
-        let words = (length as usize).div_ceil(size_of::<u64>());
-        let mut storage = vec![0u64; words];
-        // SAFETY: documented Win32 call. The buffer is `length` bytes reachable
-        // from `storage`, eight-byte aligned by its `u64` element type, and
-        // `length` is updated in place with the bytes actually written.
-        let filled = unsafe {
-            GetLogicalProcessorInformationEx(
-                RELATION_PROCESSOR_CORE,
-                storage.as_mut_ptr().cast(),
-                &raw mut length,
-            )
-        };
-        if filled == 0 {
-            return Err(AffinityOutcome::Refused {
-                operation: "GetLogicalProcessorInformationEx",
-                // SAFETY: documented Win32 call taking no arguments.
-                code: unsafe { GetLastError() },
-            });
-        }
-
-        let bytes = storage.as_ptr().cast::<u8>();
-        let written = (length as usize).min(words * size_of::<u64>());
-        let mut records = Vec::new();
-        let mut offset = 0usize;
-        while offset + MINIMUM_RECORD_BYTES <= written {
-            // SAFETY: `offset + MINIMUM_RECORD_BYTES <= written` and `written`
-            // is within the allocation, so every field read below lies inside
-            // the buffer the operating system filled.
-            let (relationship, record_bytes, efficiency_class, group_count) = unsafe {
-                (
-                    read_u32(bytes, offset + RELATIONSHIP_OFFSET),
-                    read_u32(bytes, offset + SIZE_OFFSET) as usize,
-                    bytes.add(offset + EFFICIENCY_CLASS_OFFSET).read(),
-                    read_u16(bytes, offset + GROUP_COUNT_OFFSET) as usize,
-                )
-            };
-            if record_bytes < MINIMUM_RECORD_BYTES || offset + record_bytes > written {
-                break;
-            }
-            if relationship == RELATION_PROCESSOR_CORE {
-                for group in 0..group_count {
-                    let entry = offset + GROUP_MASK_OFFSET + group * GROUP_AFFINITY_STRIDE;
-                    if entry + GROUP_AFFINITY_STRIDE > offset + record_bytes {
-                        break;
-                    }
-                    // SAFETY: `entry + GROUP_AFFINITY_STRIDE` is bounded by the
-                    // record end, which the check above bounded by `written`.
-                    let (mask, group_index) = unsafe {
-                        (
-                            read_usize(bytes, entry),
-                            read_u16(bytes, entry + size_of::<usize>()),
-                        )
-                    };
-                    if group_index == AFFINITY_GROUP {
-                        records.push(CoreRecord {
-                            efficiency_class,
-                            mask,
-                        });
-                    }
-                }
-            }
-            offset += record_bytes;
-        }
-        Ok(records)
-    }
-
-    /// # Safety
-    ///
-    /// `base + offset .. + 4` must lie inside the allocation behind `base`.
-    unsafe fn read_u32(base: *const u8, offset: usize) -> u32 {
-        // SAFETY: guaranteed by this function's contract.
-        unsafe { base.add(offset).cast::<u32>().read_unaligned() }
-    }
-
-    /// # Safety
-    ///
-    /// `base + offset .. + 2` must lie inside the allocation behind `base`.
-    unsafe fn read_u16(base: *const u8, offset: usize) -> u16 {
-        // SAFETY: guaranteed by this function's contract.
-        unsafe { base.add(offset).cast::<u16>().read_unaligned() }
-    }
-
-    /// # Safety
-    ///
-    /// `base + offset .. + size_of::<usize>()` must lie inside the allocation
-    /// behind `base`.
-    unsafe fn read_usize(base: *const u8, offset: usize) -> usize {
-        // SAFETY: guaranteed by this function's contract.
-        unsafe { base.add(offset).cast::<usize>().read_unaligned() }
-    }
-
-    /// The highest efficiency class present, or `None` when every core reports
-    /// the same one (a homogeneous host has no performance subset to select).
-    fn max_efficiency_class(records: &[CoreRecord]) -> Option<u8> {
-        let mut classes = records.iter().map(|record| record.efficiency_class);
-        let first = classes.next()?;
-        let mut top = first;
-        let mut mixed = false;
-        for class in classes {
-            mixed |= class != first;
-            top = top.max(class);
-        }
-        mixed.then_some(top)
-    }
-
-    fn mask_for_efficiency_class(records: &[CoreRecord], class: u8) -> usize {
-        records
-            .iter()
-            .filter(|record| record.efficiency_class == class)
-            .fold(0usize, |mask, record| mask | record.mask)
     }
 }
 

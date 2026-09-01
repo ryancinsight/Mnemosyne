@@ -48,9 +48,12 @@ discarded warm-up run:
 | Full procedure | **1.9%** | **1 / 12** |
 
 1. **Hybrid-core placement — confirmed, but the obvious mask is the wrong one.**
-   The 285K's eight performance cores are **not** logical 0-7. Querying
-   `GetLogicalProcessorInformationEx(RelationProcessorCore)` and selecting the
-   highest `EfficiencyClass` yields mask `0xc03c03` — logical
+   The 285K's eight performance cores are **not** logical 0-7. Selecting the
+   highest efficiency class the platform reports — asked of
+   `themis::CpuTopology`, which reads
+   `GetLogicalProcessorInformationEx(RelationProcessorCore)` on Windows; the
+   harness parsed those records itself when this was measured — yields mask
+   `0xc03c03` — logical
    {0, 1, 10, 11, 12, 13, 22, 23}. Confirmed by measurement rather than by
    reading the parse: `allocator cycle latency/mnemosyne/small_32` runs at
    3.31-3.38 ns pinned to any subset of that mask (`0x3`, `0xc00`, `0xc00000`)
