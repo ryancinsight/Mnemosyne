@@ -2,36 +2,74 @@
 
 ## In progress
 
-- [ ] [patch] [perf] **MN-464 — the threshold baseline is noisier than the
-  thresholds it gates.** status=todo; owner=unclaimed; found 2026-09-01 while
-  regenerating `allocator_comparison.md`. Two independent problems, both
-  measured (evidence in `benchmarks/allocator_baseline_metadata.md`,
-  2026-09-01 section):
-  1. **Cross-configuration reference.** `allocator_baseline_excerpt.csv` was
-     measured under MSYS2 GNU `rustc 1.95.0`; the pinned toolchain is now
-     `1.97.0-x86_64-pc-windows-msvc`. Every `--enforce-thresholds` run
-     therefore compares an MSVC build against GNU reference values. The four
-     regressions it currently reports reproduce identically on *pre-sweep*
-     source under the current toolchain, so they measure the toolchain change.
-  2. **Noise exceeds the gate.** Three consecutive identical runs give a
-     median row-to-row spread of 12.6% against per-row ceilings of 1.05-1.25,
-     with individual rows reaching 67% and 30 rows flagged `unstable`. A gate
-     whose noise floor is above its trip point cannot distinguish a regression
-     from a rerun.
-  Refreshing the baseline from another run of the same procedure fixes
-  neither, which is why 2026-09-01 regenerated the report and left the
-  baseline alone. **Outcome:** a measurement procedure whose repeat-run spread
-  is below the tightest gate threshold, and a baseline captured with it under
-  the pinned toolchain. The likely levers are the ones apollo already uses for
-  its pinned probes — CPU affinity pinning (this is a hybrid P/E-core host, so
-  an unpinned sample can land on either core type), a raised sample floor for
-  the gated rows only, and reporting a median of repeats rather than one run.
-  **Acceptance oracle:** three consecutive runs of the new procedure agree
-  within the tightest gate threshold on every gated row; the refreshed
-  baseline is then captured and `--enforce-thresholds` passes at ~1.00x.
-  **Non-goals:** changing any benchmark body, workload or threshold value to
-  make the numbers agree — that is instrument tuning. **Dependencies:** none.
-  **Effort:** M.
+- [x] [patch] [perf] **MN-464 — the threshold baseline is noisier than the
+  thresholds it gates.** status=review; owner=atlas-session;
+  branch=`perf/mnemosyne-pinned-measurement`. **Delivered: the measurement
+  procedure.** Gate-row median spread across three identical runs falls from
+  **12.3% to 1.9%**, and gated rows over their own regression ceiling from
+  **5 / 12 to 1 / 12**. Three causes measured, two levers now inside the
+  benchmark process so `cargo bench` gets them too:
+  1. **Hybrid-core placement.** The 285K's performance cores are *not* logical
+     0-7 — `GetLogicalProcessorInformationEx` reports mask `0xc03c03`. Pinning
+     to `0xff` on the 0-7 assumption does not fix the spread (14.1% median);
+     selecting by `EfficiencyClass` does. Validated by measurement, not by
+     reading the parse: one row runs 3.31-3.38 ns on the selected cores and
+     4.09 ns on `0xf0`, which they exclude.
+  2. **Windows power throttling.** One unprotected run in four came out
+     uniformly 3-5x slow and 50 s longer — the `EcoQoS` signature. Cleared with
+     Apollo's `SetProcessInformation(ProcessPowerThrottling)` technique.
+  3. **Sample budget.** Criterion sizes a row's whole iteration count from its
+     warm-up, so a disturbance inside 100 ms mis-sizes every following sample.
+     The allocator under test now runs at 50 samples / 1 s / 2 s; comparator
+     columns keep the smoke budget and the suite stays at 232-244 s against its
+     300 s bound. **Ruled out:** run ordering alone (adding a warm-up run to the
+     unpinned arm *raised* spread to 20.5%) and cross-row allocator residue as a
+     general effect (11 of 12 rows agree to 0.3-4.8% in one shared process).
+  Mechanized as `scripts/allocator_measurement.py` plus `benchmark_summary
+  --repeat-spread`, which reads the same `GATE_ROWS` table the gate does, so the
+  acceptance oracle is executable rather than narrated. Evidence:
+  `benchmarks/allocator_baseline_metadata.md`, 2026-09-01 MN-464 section.
+  **Not delivered: the baseline capture** — the oracle demands *every* gated row
+  agree and one does not. Split to MN-467, blocked on MN-466. **Non-goals held:**
+  no benchmark body, workload, or threshold value changed.
+
+- [ ] [patch] [perf] **MN-466 — `huge_shrink_4m_to_2m` does not reproduce
+  itself, and only for Mnemosyne.** status=todo; owner=unclaimed; found
+  2026-09-01 by MN-464's procedure. With placement, throttling, and sample
+  budget all controlled, `realloc latency/mnemosyne/huge_shrink_4m_to_2m`
+  spreads **30.9%** across three identical runs (12.69 / 11.17 / 9.70 µs) and
+  51.6% across four (adding 8.37 µs), against a 15% ceiling. It is the only
+  gated row still over its ceiling. **This is the allocator, not the
+  instrument:** in the same four runs, the same 4 MiB→2 MiB shrink scenario
+  measures MiMalloc to 2.5% (274.6-276.4 ns), System to 3.8%, and RpMalloc to
+  10.5%. Something in Mnemosyne's huge-realloc path carries state across runs
+  that the other three do not — the standing hypothesis is segment-pool or
+  huge-mapping residue surviving process exit at the OS level, since the
+  within-process ordering is identical run to run. **Outcome:** either the row
+  reproduces within its ceiling, or the state dependence is characterized and
+  the row is deliberately removed from the gate with that reason recorded — not
+  left as a permanently untrustworthy gate row. **Acceptance oracle:**
+  `benchmark_summary --repeat-spread` passes over three runs of
+  `scripts/allocator_measurement.py`. **Non-goals:** widening the row's
+  threshold or variance ceiling to accommodate the spread; changing the
+  benchmark's workload. **Dependencies:** none. **Effort:** M.
+
+- [ ] [patch] [perf] **MN-467 — capture the threshold baseline under the pinned
+  procedure.** status=blocked; owner=unclaimed; blocker=MN-466;
+  re-open trigger=`benchmark_summary --repeat-spread` passes on all twelve
+  gated rows. Split from MN-464, which delivered the procedure but must not
+  refresh the baseline while one gated row still disagrees with itself by twice
+  its ceiling. **The refresh must be whole, not row-wise.** The committed
+  `allocator_baseline_excerpt.csv` was measured under MSYS2 GNU `rustc 1.95.0`;
+  runs are now MSVC `1.97.0`, pinned to performance cores, and unthrottled, so
+  the numbers are not comparable row for row — `threaded saturated small
+  allocation cycles/mnemosyne` alone moves from 77-85 µs to 63.3-63.6 µs purely
+  from core placement. Regenerate `allocator_comparison.md` in the same change,
+  since it will then be the first report produced under the procedure.
+  **Acceptance oracle:** `--repeat-spread` clean, baseline refreshed from a
+  procedure run, `--enforce-thresholds` passes at ~1.00x, and
+  `allocator_baseline_metadata.md` records the basis change so the old numbers
+  are discarded rather than compared against. **Effort:** S.
 
 - [ ] [patch] **MN-462 — the SnMalloc comparator column cannot be produced on
   any MSYS2-flavoured Windows host.** status=todo; owner=unclaimed; diagnosed
