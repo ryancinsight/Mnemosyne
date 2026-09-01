@@ -19,6 +19,16 @@
 
 ### Changed
 
+- The allocator benchmark harness asks `themis::CpuTopology` which processors
+  are performance cores instead of parsing the Windows
+  `GetLogicalProcessorInformationEx(RelationProcessorCore)` records itself.
+  themis owns that query for the whole stack, and its typed absence is carried
+  through rather than replaced by a guess: a host that reports no efficiency
+  classes is now distinguishable in the run's first line from a host that
+  reports one. Placement is unchanged on the development host, which still
+  binds to mask `0xc03c03`; the power-throttling opt-out and the Criterion
+  sample budgets are untouched.
+
 - The allocator benchmark suite now prepares its own process before taking a
   sample: it opts out of Windows power throttling and binds to the host's
   performance cores, selected by `EfficiencyClass` rather than by assuming the

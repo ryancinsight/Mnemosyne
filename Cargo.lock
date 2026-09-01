@@ -480,6 +480,7 @@ dependencies = [
  "rpmalloc",
  "serde_json",
  "snmalloc-rs",
+ "themis-topology",
  "tikv-jemallocator",
 ]
 
@@ -883,7 +884,7 @@ dependencies = [
 [[package]]
 name = "themis-topology"
 version = "0.10.1"
-source = "git+https://github.com/ryancinsight/themis#98d2902a37f15487e1149c244ad0232950790e33"
+source = "git+https://github.com/ryancinsight/themis#1f55611b2ea7dd6f8402b839d7f19bba2bd950fb"
 dependencies = [
  "melinoe",
 ]
