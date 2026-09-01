@@ -314,21 +314,35 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   Sixty-four alternating size-class waves stay within one derived 4-MiB mapping, preserve four pinned values, and return to the exact baseline; package Nextest passes 7/7 in 1.058 s.
   Two independent reviewer tasks returned no verdict; the routine static self-review found no blocking issue, and `gap_audit.md` records the mapped-memory evidence limit.
 
-- [ ] **MNEM-THP-TEST-1** [verification][patch] status=todo owner=unclaimed
-  scope=`crates/mnemosyne-backend/src/backends/unix.rs`,
-  `crates/mnemosyne-backend/src/recorders.rs`. Non-goals: changing when the
-  hint is issued. **Outcome:** the three huge-page-hint tests assert the
-  behavior their names claim. `sub_segment_allocation_skips_hugepage_hint`
-  (`unix.rs:324`) and `large_non_multiple_allocation_receives_hugepage_hint`
-  (`unix.rs:344`) each assert only allocate/write/deallocate round-trip;
-  replacing `hint_hugepage`'s body with a no-op leaves all three green.
-  **Acceptance oracle:** `hint_hugepage` records its decision through the
-  existing `recorders` telemetry (a `hugepage_hint_calls` counter, `#[cfg]`-
-  scoped exactly like the existing `page_reset_calls`), and each of the three
-  tests asserts the exact counter delta — 0 for the sub-segment case, 1 for
-  both ≥ `SEGMENT_SIZE` cases. A no-op `hint_hugepage` must then fail two of
-  the three. **Dependencies:** none. **Risk/change class:** [patch].
-  **Effort:** S.
+- [x] **MNEM-THP-TEST-1** [verification][patch] status=review; commit=`e694c1e`;
+  PR #83; lease=none; last-update=2026-09-01. `hint_hugepage` now records its
+  decision through `recorders::record_hugepage_hint` / the
+  `BackendMemoryStats::hugepage_hint_calls` counter, and each of the three
+  tests asserts its exact delta — 0, 1, 1.
+  **The acceptance oracle was executed, not argued.** With the hint disabled
+  (throwaway PR #84, since closed), the `Native tests (aarch64)` job reports
+  `large_non_multiple_allocation_receives_hugepage_hint` and
+  `segment_sized_allocation_survives_hugepage_hint` both failing with
+  `left: 0, right: 1`, and `sub_segment_allocation_skips_hugepage_hint` still
+  passing — 2 of 3, exactly as predicted. With the hint live, PR #83's
+  `Rust verification` (ubuntu-latest) and `Native tests (aarch64)` are both
+  green. The tests can fail, and do, for the stated reason.
+  Two deviations from the filed oracle, both recorded rather than silent: the
+  counter is *not* `#[cfg]`-scoped — `page_reset_calls`, the item's model, is
+  itself unconditional, and a public struct whose field set varies by target
+  is worse than a field that reads zero where the hint does not exist; only
+  the recorder *function* is scoped, to the one site that can call it, so no
+  target carries an unreachable recorder. And
+  `large_non_multiple_allocation_receives_hugepage_hint` gained the
+  `cfg(not(miri))` gate its siblings already had, because the hint is compiled
+  out under Miri and its counter cannot move there.
+  Verified on the Windows host: `cargo fmt --all --check` clean, host
+  `clippy --workspace --all-targets -D warnings` clean, `clippy` for
+  `x86_64-unknown-linux-gnu` (which is where the changed code actually
+  compiles) clean, nextest 39/39 on the affected packages. Linux execution is
+  CI's, by necessity — `unix.rs` does not compile on the development host and
+  no local Linux runtime exists (the WSL distro's `ext4.vhdx` is missing; no
+  container runtime installed).
 
 - [ ] **MNEM-DOCS-GAP-1** [docs][patch] status=todo owner=unclaimed
   scope=`docs/gap_analysis_external.md`, `docs/complexity_audit.md`. Non-goals:
