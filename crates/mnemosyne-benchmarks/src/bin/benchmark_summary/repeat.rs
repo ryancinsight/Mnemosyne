@@ -5,7 +5,7 @@
 //! module measures exactly that: given the Criterion output roots of several
 //! identical runs, it reports each gated row's spread
 //! `(max - min) / min` against that row's own ceiling, taken from the
-//! [`GATE_ROWS`](crate::config::GATE_ROWS) table the gate itself reads. It is
+//! [`GATE_ROWS`] table the gate itself reads. It is
 //! the acceptance oracle for a measurement procedure, and the precondition for
 //! refreshing `benchmarks/allocator_baseline_excerpt.csv`.
 //!
