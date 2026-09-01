@@ -2,6 +2,86 @@
 
 ## In progress
 
+- [ ] [patch] [perf] **MN-464 — the threshold baseline is noisier than the
+  thresholds it gates.** status=todo; owner=unclaimed; found 2026-09-01 while
+  regenerating `allocator_comparison.md`. Two independent problems, both
+  measured (evidence in `benchmarks/allocator_baseline_metadata.md`,
+  2026-09-01 section):
+  1. **Cross-configuration reference.** `allocator_baseline_excerpt.csv` was
+     measured under MSYS2 GNU `rustc 1.95.0`; the pinned toolchain is now
+     `1.97.0-x86_64-pc-windows-msvc`. Every `--enforce-thresholds` run
+     therefore compares an MSVC build against GNU reference values. The four
+     regressions it currently reports reproduce identically on *pre-sweep*
+     source under the current toolchain, so they measure the toolchain change.
+  2. **Noise exceeds the gate.** Three consecutive identical runs give a
+     median row-to-row spread of 12.6% against per-row ceilings of 1.05-1.25,
+     with individual rows reaching 67% and 30 rows flagged `unstable`. A gate
+     whose noise floor is above its trip point cannot distinguish a regression
+     from a rerun.
+  Refreshing the baseline from another run of the same procedure fixes
+  neither, which is why 2026-09-01 regenerated the report and left the
+  baseline alone. **Outcome:** a measurement procedure whose repeat-run spread
+  is below the tightest gate threshold, and a baseline captured with it under
+  the pinned toolchain. The likely levers are the ones apollo already uses for
+  its pinned probes — CPU affinity pinning (this is a hybrid P/E-core host, so
+  an unpinned sample can land on either core type), a raised sample floor for
+  the gated rows only, and reporting a median of repeats rather than one run.
+  **Acceptance oracle:** three consecutive runs of the new procedure agree
+  within the tightest gate threshold on every gated row; the refreshed
+  baseline is then captured and `--enforce-thresholds` passes at ~1.00x.
+  **Non-goals:** changing any benchmark body, workload or threshold value to
+  make the numbers agree — that is instrument tuning. **Dependencies:** none.
+  **Effort:** M.
+
+- [ ] [patch] **MN-462 — the SnMalloc comparator column cannot be produced on
+  any MSYS2-flavoured Windows host.** status=todo; owner=unclaimed; diagnosed
+  2026-09-01. `snmalloc-sys` 0.3.8's `build.rs` matches `config.is_windows()`
+  before `config.is_msvc()` and, inside that arm, branches on the `MSYSTEM`
+  environment variable — so a Git Bash / MSYS2 shell makes it pass
+  `-DCMAKE_CXX_FLAGS=-fuse-ld=lld -Wno-error=unknown-pragmas` to a cmake run
+  that has already selected the `Visual Studio 17 2022` generator and
+  `cl.exe`. `cl` rejects the GNU flag (`D8021`) and the CXX compiler probe
+  fails. Confirmed not to be a cmake-selection problem: the native CMake 4.3.1
+  fails identically, and `env -u MSYSTEM` does not clear the flags. This is
+  upstream's defect, so the options are a version bump once it is fixed, a
+  vetted `[patch]` fork, or accepting the column's absence — the last is the
+  status quo and is why the feature is opt-in. **Acceptance oracle:**
+  `cargo build -p mnemosyne-benchmarks --benches --release --features
+  snmalloc` succeeds on this host, or the comparator is recorded as
+  permanently unavailable here with the reason. **Effort:** S.
+
+- [ ] [patch] **MN-463 — the Windows Jemalloc column needs an MSVC-built
+  jemalloc.** status=todo; owner=unclaimed; diagnosed 2026-09-01. This is the
+  real GNU/MSVC mismatch, and it is now purely a library-provenance problem:
+  `build.rs` finds `D:\msys64\ucrt64\lib\libjemalloc_s.a`, but that is a
+  mingw-gcc archive whose objects reference `___chkstk_ms`, a GCC runtime
+  symbol MSVCRT does not export, so `link.exe` fails with `LNK2001` on six
+  objects and `LNK1120`. The `system-jemalloc` feature and its `build.rs`
+  probe were written when the pinned toolchain was MSYS2 GNU `1.95.0`; the
+  toolchain is now `x86_64-pc-windows-msvc`, so the probe locates a library it
+  can never link. **Outcome:** either the probe rejects a GNU archive against
+  an MSVC target with a clear diagnostic instead of emitting an unusable link
+  directive, or an MSVC-built jemalloc is sourced and the column returns. The
+  first is the smaller, correct increment: a build script that emits a link
+  line it knows will fail is worse than one that says why it cannot.
+  **Acceptance oracle:** on an MSVC host the feature either links or fails at
+  `build.rs` with the ABI reason named; the `Jemalloc (ns)` column is then
+  populated or documented, never silently empty. **Effort:** S.
+
+- [ ] [patch] **MN-465 — `mnemosyne-backend` does not lint clean for
+  `aarch64-unknown-linux-gnu`.** status=todo; owner=unclaimed; found
+  2026-09-01 in passing. `cargo clippy --workspace --all-targets --target
+  aarch64-unknown-linux-gnu -- -D warnings` fails with three
+  `clippy::unnecessary_cast` errors at `backends/cuda/loader.rs:85,87,129`
+  (`c"libcuda.so".as_ptr() as *const u8`). `c_char` is signed on
+  x86_64-linux and unsigned on aarch64-linux, so the cast is load-bearing on
+  the target CI lints and a no-op on the one it does not: the aarch64 CI job
+  runs `ubuntu-24.04-arm` *native tests*, not a cross-target lint, so nothing
+  catches it. The fix is a `c_char`-typed pointer rather than a hardcoded
+  `u8`, plus the missing target in the lint matrix — the cast is the instance,
+  the uncovered target is the generator. **Acceptance oracle:** the command
+  above is clean, and a job or matrix cell runs it. **Effort:** S.
+
 - [ ] [patch] **MN-CONFORMANCE-COMMENTED-CODE-2026-08-31 — restore the
   Atlas commented-code ratchet.** status=review; integrator=Codex
   `/root/mnemosyne_conformance`; lease=none; last-update=2026-08-31. Source
@@ -234,21 +314,35 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   Sixty-four alternating size-class waves stay within one derived 4-MiB mapping, preserve four pinned values, and return to the exact baseline; package Nextest passes 7/7 in 1.058 s.
   Two independent reviewer tasks returned no verdict; the routine static self-review found no blocking issue, and `gap_audit.md` records the mapped-memory evidence limit.
 
-- [ ] **MNEM-THP-TEST-1** [verification][patch] status=todo owner=unclaimed
-  scope=`crates/mnemosyne-backend/src/backends/unix.rs`,
-  `crates/mnemosyne-backend/src/recorders.rs`. Non-goals: changing when the
-  hint is issued. **Outcome:** the three huge-page-hint tests assert the
-  behavior their names claim. `sub_segment_allocation_skips_hugepage_hint`
-  (`unix.rs:324`) and `large_non_multiple_allocation_receives_hugepage_hint`
-  (`unix.rs:344`) each assert only allocate/write/deallocate round-trip;
-  replacing `hint_hugepage`'s body with a no-op leaves all three green.
-  **Acceptance oracle:** `hint_hugepage` records its decision through the
-  existing `recorders` telemetry (a `hugepage_hint_calls` counter, `#[cfg]`-
-  scoped exactly like the existing `page_reset_calls`), and each of the three
-  tests asserts the exact counter delta — 0 for the sub-segment case, 1 for
-  both ≥ `SEGMENT_SIZE` cases. A no-op `hint_hugepage` must then fail two of
-  the three. **Dependencies:** none. **Risk/change class:** [patch].
-  **Effort:** S.
+- [x] **MNEM-THP-TEST-1** [verification][patch] status=review; commit=`e694c1e`;
+  PR #83; lease=none; last-update=2026-09-01. `hint_hugepage` now records its
+  decision through `recorders::record_hugepage_hint` / the
+  `BackendMemoryStats::hugepage_hint_calls` counter, and each of the three
+  tests asserts its exact delta — 0, 1, 1.
+  **The acceptance oracle was executed, not argued.** With the hint disabled
+  (throwaway PR #84, since closed), the `Native tests (aarch64)` job reports
+  `large_non_multiple_allocation_receives_hugepage_hint` and
+  `segment_sized_allocation_survives_hugepage_hint` both failing with
+  `left: 0, right: 1`, and `sub_segment_allocation_skips_hugepage_hint` still
+  passing — 2 of 3, exactly as predicted. With the hint live, PR #83's
+  `Rust verification` (ubuntu-latest) and `Native tests (aarch64)` are both
+  green. The tests can fail, and do, for the stated reason.
+  Two deviations from the filed oracle, both recorded rather than silent: the
+  counter is *not* `#[cfg]`-scoped — `page_reset_calls`, the item's model, is
+  itself unconditional, and a public struct whose field set varies by target
+  is worse than a field that reads zero where the hint does not exist; only
+  the recorder *function* is scoped, to the one site that can call it, so no
+  target carries an unreachable recorder. And
+  `large_non_multiple_allocation_receives_hugepage_hint` gained the
+  `cfg(not(miri))` gate its siblings already had, because the hint is compiled
+  out under Miri and its counter cannot move there.
+  Verified on the Windows host: `cargo fmt --all --check` clean, host
+  `clippy --workspace --all-targets -D warnings` clean, `clippy` for
+  `x86_64-unknown-linux-gnu` (which is where the changed code actually
+  compiles) clean, nextest 39/39 on the affected packages. Linux execution is
+  CI's, by necessity — `unix.rs` does not compile on the development host and
+  no local Linux runtime exists (the WSL distro's `ext4.vhdx` is missing; no
+  container runtime installed).
 
 - [ ] **MNEM-DOCS-GAP-1** [docs][patch] status=todo owner=unclaimed
   scope=`docs/gap_analysis_external.md`, `docs/complexity_audit.md`. Non-goals:
@@ -1069,15 +1163,26 @@ Filed from the 2026-08-12 verification-posture review:
   native tests pass, and focused Clippy is warning-clean. Hosted full-suite
   Miri remains the merge gate.
 
-- [ ] [major] **MN-456 — preserve `RawHeap` mapping provenance.**
-  status=todo; integrator=unclaimed; dependencies=MN-436; scope=
-  `crates/mnemosyne-heap`, top-level heap consumers, focused tests and docs;
-  non-goal=changing allocation policy or benchmark workloads. Replace integer
-  segment recovery in `RawHeap` with allocation-derived pointers and migrate
-  any public surface required by the proof. Acceptance: strict-provenance Miri
-  exercises heap allocate/free/reallocate and drop through value-semantic tests,
-  native nextest remains within committed bounds, SemVer class is measured,
-  and no exposed-provenance reconstruction remains in the heap path.
+- [x] [patch] **MN-456 — preserve `RawHeap` mapping provenance.** Done by
+  MN-458's N2, commit `6c778b5`; **class corrected from [major] to [patch]**:
+  the change is `pub(crate)`-internal (`RawHeap::free_owned_unchecked`), so no
+  public surface migration was required and no SemVer break exists in
+  `mnemosyne-heap`. Verified 2026-09-01 against `raw_heap.rs:186-197`: the free
+  path derives the segment through `locate_segment` (`ptr.map_addr`, keeping
+  the mapping's provenance) and addresses the page through `locate_page`'s raw
+  place projection, replacing the masked `segment_addr as *mut Segment` cast.
+  `realloc_owned_unchecked` carries no independent recovery — it routes through
+  `free_owned_unchecked` / `alloc` / `usable_size`. A grep over
+  `crates/mnemosyne-heap/src` finds no remaining pointer reconstruction from an
+  integer; the surviving `as usize` casts are NUMA node ids (`numa.rs:130,214`)
+  and one test alignment check.
+  **Residual, tracked elsewhere:** the acceptance clause "strict-provenance
+  Miri exercises heap allocate/free/reallocate and drop through value-semantic
+  tests" is unmet, because `mnemosyne-heap` is outside the Miri gate entirely.
+  That is MN-459, which cites this crate's absence from the gate as the reason
+  N2's patterns survived the MN-437..MN-456 sweep. The residual is not
+  re-scoped into this item because closing it means fixing the crate's three
+  pre-existing Miri test-helper failures, which is MN-459's whole body of work.
 
 - [x] [arch] **MN-433 — concurrency model checking.** Done; the seam and all
   the planned models exist and gate in CI.

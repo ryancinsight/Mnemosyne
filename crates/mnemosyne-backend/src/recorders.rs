@@ -18,6 +18,7 @@ static GUARD_INSTALL_CALLS: AtomicUsize = AtomicUsize::new(0);
 static GUARD_INSTALL_BYTES: AtomicUsize = AtomicUsize::new(0);
 static DECOMMIT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static DECOMMIT_BYTES: AtomicUsize = AtomicUsize::new(0);
+static HUGEPAGE_HINT_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// Snapshot of OS mappings requested by Mnemosyne.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -68,6 +69,16 @@ pub struct BackendMemoryStats {
     /// Cumulative byte count passed to confirmed `decommit` calls (the commit
     /// charge / resident backing returned to the OS).
     pub decommit_bytes: usize,
+    /// Number of huge-page hints issued to the OS for freshly mapped regions.
+    ///
+    /// Counts the decision to advise, not a confirmed kernel outcome: the
+    /// hint is advisory, its return value is deliberately discarded, and a
+    /// kernel that ignores it still produces a valid mapping — so the
+    /// decision is the only thing the hint makes observable at all. Stays
+    /// zero on every target that issues no hint (everything but Linux, and
+    /// Linux under Miri), the same way `page_reset_calls` stays zero where
+    /// `page_reset` is unsupported.
+    pub hugepage_hint_calls: usize,
 }
 
 #[inline]
@@ -129,6 +140,18 @@ pub(crate) fn record_decommit(size: usize) {
     DECOMMIT_BYTES.fetch_add(size, Ordering::Relaxed);
 }
 
+/// Records a huge-page hint issued for a freshly mapped region.
+///
+/// Unlike the other recorders this takes no size and moves no byte counter:
+/// the advice changes neither the mapping's extent nor its backing, so the
+/// call count is the whole observable. Defined only where a hint is actually
+/// issued, so a target that cannot advise has no unreachable recorder.
+#[cfg(all(target_os = "linux", not(miri)))]
+#[inline]
+pub(crate) fn record_hugepage_hint() {
+    HUGEPAGE_HINT_CALLS.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Returns the current backend memory mapping counters.
 ///
 /// The snapshot uses relaxed atomics because these counters are telemetry only:
@@ -145,6 +168,7 @@ pub fn backend_memory_stats() -> BackendMemoryStats {
         guard_install_bytes: GUARD_INSTALL_BYTES.load(Ordering::Relaxed),
         decommit_calls: DECOMMIT_CALLS.load(Ordering::Relaxed),
         decommit_bytes: DECOMMIT_BYTES.load(Ordering::Relaxed),
+        hugepage_hint_calls: HUGEPAGE_HINT_CALLS.load(Ordering::Relaxed),
     }
 }
 
@@ -292,6 +316,35 @@ mod tests {
         );
         assert_eq!(after.unmap_calls, before.unmap_calls);
         assert_eq!(after.page_reset_calls, before.page_reset_calls);
+    }
+
+    /// The recorder is defined only where a hint is issued, so the test is
+    /// scoped to the same targets as the function it covers.
+    #[cfg(all(target_os = "linux", not(miri)))]
+    #[test]
+    fn hugepage_hint_telemetry_increments_only_its_own_call_counter() {
+        let _guard = TEST_LOCK
+            .lock()
+            .expect("backend telemetry test lock was poisoned");
+        // The hint carries no size and changes no mapping extent, so
+        // record_hugepage_hint must move its own counter and nothing else.
+        let before = backend_memory_stats();
+
+        record_hugepage_hint();
+        let after = backend_memory_stats();
+
+        assert_eq!(
+            after.hugepage_hint_calls,
+            before.hugepage_hint_calls + 1,
+            "hugepage_hint_calls counter did not advance"
+        );
+        assert_eq!(
+            after.current_mapped_bytes, before.current_mapped_bytes,
+            "an advisory hint must not move the mapped-byte accounting"
+        );
+        assert_eq!(after.map_calls, before.map_calls);
+        assert_eq!(after.page_reset_calls, before.page_reset_calls);
+        assert_eq!(after.decommit_calls, before.decommit_calls);
     }
 
     #[test]

@@ -103,6 +103,10 @@ unsafe fn hint_hugepage(ptr: *mut u8, length: usize) {
             // Safety: caller guarantees the mapping covers `length` bytes; madvise
             // is advisory and never invalidates the mapping on failure.
             let _ = unsafe { madvise(ptr as *mut c_void, length, MADV_HUGEPAGE) };
+            // The advice discards its result, so this counter is the only
+            // observable the hint has, and the only thing a test can assert
+            // the decision by.
+            crate::recorders::record_hugepage_hint();
         }
     }
     #[cfg(not(all(target_os = "linux", not(miri))))]
@@ -278,8 +282,23 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
+    extern crate std;
+
     use super::*;
+    use crate::recorders::backend_memory_stats;
     use mnemosyne_core::MemoryBackend;
+
+    /// Serializes the hint-counter snapshots. `hugepage_hint_calls` is a
+    /// process-global; nextest gives each test its own process, but a plain
+    /// `cargo test` run shares one, where a sibling's segment-sized mapping
+    /// could land between a test's two reads and turn an exact delta into a
+    /// flake.
+    static HINT_COUNTER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Reads the process-global hint counter.
+    fn hugepage_hints() -> usize {
+        backend_memory_stats().hugepage_hint_calls
+    }
 
     // The hugepage hint this exercises is itself `not(miri)`, and so is the
     // `SEGMENT_SIZE` import it needs, so under Miri the test would neither
@@ -293,11 +312,20 @@ mod tests {
         // returned region must succeed. This regression-guards the hint
         // path against accidentally treating a benign EINVAL from the
         // advice as a fatal mapping failure.
+        let _guard = HINT_COUNTER_LOCK
+            .lock()
+            .expect("hugepage hint counter lock was poisoned");
         let size = SEGMENT_SIZE;
+        let before = hugepage_hints();
         // Safety: SEGMENT_SIZE is a non-zero power-of-two multiple of the
         // system page size, satisfying the allocate contract.
         let ptr = unsafe { UnixBackend::allocate(size) };
         assert!(!ptr.is_null(), "segment-sized mapping must succeed");
+        assert_eq!(
+            hugepage_hints(),
+            before + 1,
+            "a mapping of exactly SEGMENT_SIZE must receive the hugepage hint"
+        );
 
         // Touch the boundary bytes to confirm the entire region is mapped.
         // Safety: ptr covers [0, size) bytes per the allocate contract.
@@ -326,10 +354,19 @@ mod tests {
         // (it would be unaligned to the THP boundary and produce noise in
         // kernel logs). This test confirms the path still allocates,
         // populates the boundary bytes, and releases cleanly.
+        let _guard = HINT_COUNTER_LOCK
+            .lock()
+            .expect("hugepage hint counter lock was poisoned");
         let size = PAGE_SIZE_FALLBACK;
+        let before = hugepage_hints();
         // Safety: size is a non-zero multiple of the system page size.
         let ptr = unsafe { UnixBackend::allocate(size) };
         assert!(!ptr.is_null());
+        assert_eq!(
+            hugepage_hints(),
+            before,
+            "a sub-SEGMENT_SIZE mapping must not receive the hugepage hint"
+        );
 
         unsafe {
             ptr.write_volatile(0xAA);
@@ -340,15 +377,28 @@ mod tests {
         assert!(released);
     }
 
+    // The hint is compiled out under Miri, so the counter cannot move there.
+    // Gated to match the code it covers, like its two siblings.
+    #[cfg(not(miri))]
     #[test]
     fn large_non_multiple_allocation_receives_hugepage_hint() {
         // Mappings larger than or equal to SEGMENT_SIZE that are not multiples of
         // SEGMENT_SIZE must receive the hint and round-trip correctly.
         // We use 3 MiB (which is 1.5 * SEGMENT_SIZE).
+        let _guard = HINT_COUNTER_LOCK
+            .lock()
+            .expect("hugepage hint counter lock was poisoned");
         let size = 3 * 1024 * 1024;
+        let before = hugepage_hints();
         // Safety: size is a non-zero multiple of the system page size.
         let ptr = unsafe { UnixBackend::allocate(size) };
         assert!(!ptr.is_null(), "large mapping must succeed");
+        assert_eq!(
+            hugepage_hints(),
+            before + 1,
+            "a mapping above SEGMENT_SIZE must receive the hugepage hint even \
+             when it is not a whole multiple of it"
+        );
 
         unsafe {
             ptr.write_volatile(0xAA);

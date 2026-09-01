@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- `BackendMemoryStats::hugepage_hint_calls` counts the huge-page hints issued
+  to the OS for freshly mapped regions. `hint_hugepage` discards `madvise`'s
+  result by design, so the decision to advise previously had no observable at
+  all and the three tests named after it could not fail; the counter is that
+  observable. Zero on every target that issues no hint (everything but Linux,
+  and Linux under Miri), the same way `page_reset_calls` reads zero where
+  `page_reset` is unsupported.
+
 - Enable the shared hosted mdBook test for the two included Mnemosyne
   allocator examples by staging the real `mnemosyne-memory` library target.
   Exact PR and merged-default CI, Miri, MSRV, mdBook, and Pages gates pass;
