@@ -2,6 +2,22 @@
 
 ## In progress
 
+- [ ] [patch] **MN-THEMIS-AFFINITY-CONSUMER-2026-09-01.**
+  status=in-progress; integrator=Codex
+  `01a0253c-6013-7552-99cc-36bbbcf77f6d`;
+  branch=`refactor/mnemosyne-affinity-provider`; lease=
+  `crates/mnemosyne-benchmarks/benches/allocator/host.rs`, dependency pin,
+  CHANGELOG, and this item; last-update=2026-09-01. Replace benchmark-local
+  efficiency absence chaining and `checked_shl` processor numbering with
+  Themis's presence-proven view and Windows group-mask value. Preserve
+  launcher-mask intersection, process-wide Win32 binding, every
+  `AffinityOutcome`, and the timed region. Acceptance: no local flattened-id
+  arithmetic remains; group zero is selected explicitly because
+  `SetProcessAffinityMask` cannot name a processor group; warning-clean Windows
+  and Linux checks, focused value tests, and benchmark smoke pass; standalone
+  lock resolves merged Themis provider
+  `64ac8ccee8a916b264f0f933de3f642b69ed5434`.
+
 - [x] [patch] **MN-468 — the benchmark harness parses its own performance-core
   mask.** status=review; integrator=atlas-session;
   branch=`refactor/mnemosyne-themis-core-class`; PR #86; lease discharged by the
