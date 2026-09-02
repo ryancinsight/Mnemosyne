@@ -145,8 +145,8 @@
   `build.rs` with the ABI reason named; the `Jemalloc (ns)` column is then
   populated or documented, never silently empty. **Effort:** S.
 
-- [ ] [patch] **MN-465 — `mnemosyne-backend` does not lint clean for
-  `aarch64-unknown-linux-gnu`.** status=todo; owner=unclaimed; found
+- [x] [patch] **MN-465 — `mnemosyne-backend` does not lint clean for
+  `aarch64-unknown-linux-gnu`.** status=done (2026-09-01, Claude); owner=claude; found
   2026-09-01 in passing. `cargo clippy --workspace --all-targets --target
   aarch64-unknown-linux-gnu -- -D warnings` fails with three
   `clippy::unnecessary_cast` errors at `backends/cuda/loader.rs:85,87,129`
@@ -159,6 +159,11 @@
   the uncovered target is the generator. **Acceptance oracle:** the command
   above is clean, and a job or matrix cell runs it. **Effort:** S.
 
+  **Delivered:** the four FFI declarations (`LoadLibraryA`, `GetProcAddress`,
+  `dlopen`, `dlsym`) take `*const c_char`, so `CStr::as_ptr()` passes with no
+  cast on either target; `cargo clippy --workspace --all-targets --target
+  aarch64-unknown-linux-gnu -- -D warnings` is clean locally, and the lint
+  job now runs it as a second step, closing the uncovered target.
 - [ ] [patch] **MN-CONFORMANCE-COMMENTED-CODE-2026-08-31 — restore the
   Atlas commented-code ratchet.** status=review; integrator=Codex
   `/root/mnemosyne_conformance`; lease=none; last-update=2026-08-31. Source

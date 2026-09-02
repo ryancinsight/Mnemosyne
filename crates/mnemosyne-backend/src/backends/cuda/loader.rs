@@ -6,20 +6,20 @@
 //! behind an atomic state machine so concurrent first callers observe exactly
 //! one initialization.
 
-use core::ffi::{CStr, c_void};
+use core::ffi::{CStr, c_char, c_void};
 use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
 #[cfg(target_family = "windows")]
 unsafe extern "system" {
-    fn LoadLibraryA(lpLibFileName: *const u8) -> *mut c_void;
-    fn GetProcAddress(hModule: *mut c_void, lpProcName: *const u8) -> *mut c_void;
+    fn LoadLibraryA(lpLibFileName: *const c_char) -> *mut c_void;
+    fn GetProcAddress(hModule: *mut c_void, lpProcName: *const c_char) -> *mut c_void;
     fn SwitchToThread() -> i32;
 }
 
 #[cfg(target_family = "unix")]
 unsafe extern "C" {
-    fn dlopen(filename: *const u8, flag: core::ffi::c_int) -> *mut c_void;
-    fn dlsym(handle: *mut c_void, symbol: *const u8) -> *mut c_void;
+    fn dlopen(filename: *const c_char, flag: core::ffi::c_int) -> *mut c_void;
+    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     fn sched_yield() -> core::ffi::c_int;
 }
 
@@ -75,16 +75,16 @@ pub(super) unsafe fn cuda_library() -> *mut c_void {
         #[cfg(target_family = "windows")]
         {
             // SAFETY: `lpLibFileName` is a valid NUL-terminated string.
-            unsafe { LoadLibraryA(c"nvcuda.dll".as_ptr() as *const u8) }
+            unsafe { LoadLibraryA(c"nvcuda.dll".as_ptr()) }
         }
         #[cfg(target_family = "unix")]
         {
             // SAFETY: both filenames are valid NUL-terminated strings; the
             // versioned `.so.1` name is the fallback for systems that do not
             // install the unversioned development symlink.
-            let p = unsafe { dlopen(c"libcuda.so".as_ptr() as *const u8, RTLD_LAZY) };
+            let p = unsafe { dlopen(c"libcuda.so".as_ptr(), RTLD_LAZY) };
             if p.is_null() {
-                unsafe { dlopen(c"libcuda.so.1".as_ptr() as *const u8, RTLD_LAZY) }
+                unsafe { dlopen(c"libcuda.so.1".as_ptr(), RTLD_LAZY) }
             } else {
                 p
             }
@@ -120,13 +120,13 @@ pub(super) unsafe fn resolve_sym(lib: *mut c_void, name: &CStr) -> *mut c_void {
     {
         // SAFETY: `lib` is a live module handle per the caller contract and
         // `name` is NUL-terminated.
-        unsafe { GetProcAddress(lib, name.as_ptr() as *const u8) }
+        unsafe { GetProcAddress(lib, name.as_ptr()) }
     }
     #[cfg(target_family = "unix")]
     {
         // SAFETY: `lib` is a live dlopen handle per the caller contract and
         // `name` is NUL-terminated.
-        unsafe { dlsym(lib, name.as_ptr() as *const u8) }
+        unsafe { dlsym(lib, name.as_ptr()) }
     }
     #[cfg(not(any(target_family = "windows", target_family = "unix")))]
     {
