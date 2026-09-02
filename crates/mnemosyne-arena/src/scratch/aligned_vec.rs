@@ -89,6 +89,27 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.capacity
     }
 
+    /// Creates an `AlignedVec` by copying a slice.
+    ///
+    /// Equivalent to `with_capacity(slice.len())` followed by
+    /// [`extend_from_slice`][Self::extend_from_slice].
+    #[inline]
+    pub fn from_slice(slice: &[T]) -> Self {
+        let mut v = Self::with_capacity(slice.len());
+        v.extend_from_slice(slice);
+        v
+    }
+
+    /// Creates an `AlignedVec` of exactly `len` elements all equal to `value`.
+    ///
+    /// Equivalent to `with_capacity(len)` followed by `resize(len, value)`.
+    #[inline]
+    pub fn filled(len: usize, value: T) -> Self {
+        let mut v = Self::with_capacity(len);
+        v.resize(len, value);
+        v
+    }
+
     /// Creates an `AlignedVec` of exactly `len` zero-initialized elements.
     ///
     /// Equivalent to `with_capacity(len)` followed by `ensure_len(len)`, but
