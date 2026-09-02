@@ -23,8 +23,10 @@ snmalloc = ["dep:snmalloc-rs"]
 # builds jemalloc from source, which does not link on windows-gnu, so the
 # Windows jemalloc column is gated behind this feature and the system lib.
 # `build.rs` locates the lib (via PATH `*/{ucrt64,mingw64}/bin` siblings or
-# `MNEMOSYNE_JEMALLOC_LIB_DIR`) and emits the `jemalloc_available` cfg. On
-# non-Windows targets jemalloc is always available through `tikv-jemallocator`.
+# `MNEMOSYNE_JEMALLOC_LIB_DIR`) and emits the `jemalloc_available` cfg. A
+# known MSYS2 GNU archive is rejected with an ABI diagnostic for MSVC targets.
+# On non-Windows targets jemalloc is always available through
+# `tikv-jemallocator`.
 system-jemalloc = []
 nightly_tls = ["mnemosyne/nightly_tls"]
 

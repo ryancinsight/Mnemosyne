@@ -10,19 +10,39 @@
 //!   `tikv-jemallocator` builds jemalloc from source and does not link on
 //!   windows-gnu. The library is located from `MNEMOSYNE_JEMALLOC_LIB_DIR` or
 //!   by scanning `PATH` for an MSYS2-style `*/{ucrt64,mingw64}/bin` entry and
-//!   checking its sibling `lib/` directory.
+//!   checking its sibling `lib/` directory. A known MSYS2 GNU archive is
+//!   rejected when the target environment is MSVC because it cannot link into
+//!   that ABI.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-fn find_jemalloc_lib_dir() -> Option<PathBuf> {
+fn is_msys2_gnu_lib_dir(path: &Path) -> bool {
+    path.parent().and_then(Path::file_name).is_some_and(|name| {
+        name.eq_ignore_ascii_case("ucrt64") || name.eq_ignore_ascii_case("mingw64")
+    })
+}
+
+fn validate_jemalloc_lib_dir(path: PathBuf, msvc_target: bool) -> Result<PathBuf, String> {
+    if msvc_target && is_msys2_gnu_lib_dir(&path) {
+        return Err(format!(
+            "found MSYS2 GNU jemalloc archive at `{}` for an MSVC target; provide an MSVC-compatible `libjemalloc_s.a` through MNEMOSYNE_JEMALLOC_LIB_DIR",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+fn find_jemalloc_lib_dir(msvc_target: bool) -> Result<Option<PathBuf>, String> {
     if let Ok(dir) = env::var("MNEMOSYNE_JEMALLOC_LIB_DIR") {
         let p = PathBuf::from(dir);
         if p.join("libjemalloc_s.a").exists() {
-            return Some(p);
+            return validate_jemalloc_lib_dir(p, msvc_target).map(Some);
         }
     }
-    let path = env::var_os("PATH")?;
+    let Some(path) = env::var_os("PATH") else {
+        return Ok(None);
+    };
     for entry in env::split_paths(&path) {
         // MSYS2 layout: `.../ucrt64/bin` (or `mingw64/bin`) has a sibling
         // `.../ucrt64/lib` holding `libjemalloc_s.a`.
@@ -31,11 +51,11 @@ fn find_jemalloc_lib_dir() -> Option<PathBuf> {
         {
             let lib = parent.join("lib");
             if lib.join("libjemalloc_s.a").exists() {
-                return Some(lib);
+                return validate_jemalloc_lib_dir(lib, msvc_target).map(Some);
             }
         }
     }
-    None
+    Ok(None)
 }
 
 fn main() {
@@ -57,18 +77,20 @@ fn main() {
         return;
     }
 
-    match find_jemalloc_lib_dir() {
-        Some(dir) => {
+    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    match find_jemalloc_lib_dir(target_env == "msvc") {
+        Ok(Some(dir)) => {
             println!("cargo::rustc-link-search=native={}", dir.display());
             println!("cargo::rustc-link-lib=static=jemalloc_s");
             println!("cargo::rustc-cfg=jemalloc_available");
         }
-        None => {
+        Ok(None) => {
             println!(
                 "cargo::warning=system-jemalloc feature enabled but libjemalloc_s.a was not \
                  found (scanned PATH for */{{ucrt64,mingw64}}/bin siblings). The jemalloc \
                  benchmark column will be skipped. Set MNEMOSYNE_JEMALLOC_LIB_DIR to override."
             );
         }
+        Err(message) => panic!("system-jemalloc configuration error: {message}"),
     }
 }
