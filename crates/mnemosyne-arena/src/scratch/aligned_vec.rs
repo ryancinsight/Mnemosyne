@@ -133,6 +133,77 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.ptr
     }
 
+    /// Sets the length to zero, retaining the underlying allocation for reuse.
+    ///
+    /// Elements are not zeroed; subsequent [`push`][Self::push] or
+    /// [`extend_from_slice`][Self::extend_from_slice] calls will overwrite them
+    /// before exposing them through [`as_slice`][Self::as_slice].
+    #[inline]
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    /// Shortens the buffer to `new_len` elements, retaining the allocation.
+    ///
+    /// If `new_len >= self.len()`, this is a no-op.
+    #[inline]
+    pub fn truncate(&mut self, new_len: usize) {
+        if new_len < self.len {
+            self.len = new_len;
+        }
+    }
+
+    /// Appends a single element, growing the allocation if required.
+    ///
+    /// Amortized O(1): the capacity doubles on reallocation.
+    #[inline]
+    pub fn push(&mut self, value: T) {
+        self.reserve(1);
+        // SAFETY: `reserve(1)` guarantees `self.capacity > self.len`, so
+        // `self.ptr.add(self.len)` is within the allocation. `T: Copy` means
+        // writing a single `T` value is the complete initialization — no
+        // destructor state exists to corrupt. The write does not overlap the
+        // already-initialized prefix `[0, self.len)` because the capacity check
+        // above has verified that `self.len < self.capacity`.
+        unsafe { core::ptr::write(self.ptr.add(self.len), value) };
+        self.len += 1;
+    }
+
+    /// Appends a slice of elements, growing the allocation if required.
+    ///
+    /// Equivalent to calling [`push`][Self::push] for each element but
+    /// performs a single bulk copy for the entire slice.
+    #[inline]
+    pub fn extend_from_slice(&mut self, slice: &[T]) {
+        let n = slice.len();
+        if n == 0 {
+            return;
+        }
+        self.reserve(n);
+        // SAFETY: `reserve(n)` guarantees `self.capacity >= self.len + n`, so
+        // `[self.len, self.len + n)` is within the allocation. `slice` is a
+        // valid initialized `[T]` reference; `T: Copy` makes the bytewise copy
+        // sound. The destination is beyond the initialized prefix so the source
+        // and destination ranges cannot overlap (they live in distinct
+        // allocations or at disjoint offsets into the same one).
+        unsafe {
+            core::ptr::copy_nonoverlapping(slice.as_ptr(), self.ptr.add(self.len), n);
+        }
+        self.len += n;
+    }
+
+    /// Appends every element produced by an iterator.
+    ///
+    /// Forwards to [`push`][Self::push] per element; an
+    /// [`extend_from_slice`][Self::extend_from_slice] call is preferred when a
+    /// contiguous source slice is available.
+    #[inline]
+    pub fn extend_from_iter(&mut self, iter: impl IntoIterator<Item = T>) {
+        for value in iter {
+            self.push(value);
+        }
+    }
+
     /// Consumes self and returns a `Vec<T>` with the initialized data.
     #[inline]
     pub fn into_vec(self) -> Vec<T> {
@@ -149,6 +220,17 @@ impl<T: ScratchElement> AlignedVec<T> {
             v.set_len(self.len);
         }
         v
+    }
+
+    /// Ensures the buffer can hold at least `self.len() + additional` elements
+    /// without reallocating. Does not change `len` or initialize memory.
+    #[inline]
+    fn reserve(&mut self, additional: usize) {
+        let needed = self.len.saturating_add(additional);
+        if needed > self.capacity {
+            let new_cap = needed.max(self.capacity.saturating_mul(2));
+            self.grow_to(new_cap);
+        }
     }
 
     #[cold]

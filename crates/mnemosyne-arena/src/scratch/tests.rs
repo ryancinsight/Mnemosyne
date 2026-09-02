@@ -45,6 +45,80 @@ fn aligned_vec_into_vec() {
 }
 
 #[test]
+fn aligned_vec_clear_resets_len_without_reallocating() {
+    let mut v = AlignedVec::<f32>::zeroed(16);
+    let ptr_before = v.as_mut_ptr();
+    let cap_before = v.capacity();
+    v.clear();
+    assert_eq!(v.len(), 0);
+    assert!(v.is_empty());
+    assert_eq!(v.capacity(), cap_before);
+    assert_eq!(v.as_mut_ptr(), ptr_before);
+}
+
+#[test]
+fn aligned_vec_push_appends_elements() {
+    let mut v = AlignedVec::<f64>::with_capacity(4);
+    for i in 0..4_u64 {
+        v.push(i as f64);
+    }
+    assert_eq!(v.len(), 4);
+    assert_eq!(&v[..], &[0.0, 1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn aligned_vec_push_grows_when_capacity_exceeded() {
+    let mut v = AlignedVec::<f32>::with_capacity(2);
+    v.push(1.0);
+    v.push(2.0);
+    v.push(3.0); // triggers growth
+    assert_eq!(v.len(), 3);
+    assert!(v.capacity() >= 3);
+    assert_eq!(&v[..], &[1.0_f32, 2.0, 3.0]);
+}
+
+#[test]
+fn aligned_vec_extend_from_slice_appends_all() {
+    let mut v = AlignedVec::<f64>::with_capacity(4);
+    v.extend_from_slice(&[1.0, 2.0, 3.0]);
+    v.extend_from_slice(&[4.0, 5.0]);
+    assert_eq!(v.len(), 5);
+    assert_eq!(&v[..], &[1.0, 2.0, 3.0, 4.0, 5.0]);
+}
+
+#[test]
+fn aligned_vec_clear_then_extend_reuses_allocation() {
+    let mut v = AlignedVec::<f64>::with_capacity(8);
+    v.extend_from_slice(&[10.0, 20.0, 30.0]);
+    let cap_after_first_fill = v.capacity();
+    let ptr_after_first_fill = v.as_mut_ptr();
+    v.clear();
+    v.extend_from_slice(&[1.0, 2.0]);
+    // Same allocation reused — no realloc when length is smaller.
+    assert_eq!(v.capacity(), cap_after_first_fill);
+    assert_eq!(v.as_mut_ptr(), ptr_after_first_fill);
+    assert_eq!(&v[..], &[1.0, 2.0]);
+}
+
+#[test]
+fn aligned_vec_truncate_shrinks_without_reallocating() {
+    let mut v = AlignedVec::<f32>::zeroed(8);
+    v.as_mut_slice().copy_from_slice(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+    let cap_before = v.capacity();
+    v.truncate(3);
+    assert_eq!(v.len(), 3);
+    assert_eq!(v.capacity(), cap_before);
+    assert_eq!(&v[..], &[1.0_f32, 2.0, 3.0]);
+}
+
+#[test]
+fn aligned_vec_extend_from_iter_appends_mapped_values() {
+    let mut v = AlignedVec::<f32>::with_capacity(4);
+    v.extend_from_iter((1..=4_u32).map(|x| x as f32 * 0.5));
+    assert_eq!(&v[..], &[0.5, 1.0, 1.5, 2.0]);
+}
+
+#[test]
 fn scratch_pool_single_borrow() {
     let pool = ScratchPool::<f64>::new();
     pool.with_scratch(128, |scratch| {
