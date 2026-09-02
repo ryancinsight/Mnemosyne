@@ -290,6 +290,14 @@ impl<T: ScratchElement + core::fmt::Debug> core::fmt::Debug for AlignedVec<T> {
     }
 }
 
+impl<T: ScratchElement> Clone for AlignedVec<T> {
+    fn clone(&self) -> Self {
+        let mut v = Self::with_capacity(self.len);
+        v.extend_from_slice(self.as_slice());
+        v
+    }
+}
+
 impl<T: ScratchElement + PartialEq> PartialEq for AlignedVec<T> {
     fn eq(&self, other: &Self) -> bool {
         self.as_slice() == other.as_slice()
