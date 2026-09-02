@@ -34,7 +34,7 @@ pub struct MemoryBackendWrapper;
 /// the call site.
 #[inline(always)]
 pub(crate) fn do_allocate<B: MemoryBackend>(size: usize) -> *mut u8 {
-    // Safety: forwarded to the platform backend; the size contract
+    // SAFETY: forwarded to the platform backend; the size contract
     // (page-aligned, non-zero) is upheld by the trait-level safety
     // expectation on `allocate`.
     let ptr = unsafe { B::allocate(size) };

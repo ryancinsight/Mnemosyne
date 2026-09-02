@@ -189,7 +189,7 @@ fn fresh_segment_install_increments_guard_telemetry_and_round_trips() {
     }
     let before = backend_memory_stats();
 
-    // Safety: arena-managed segment allocation.
+    // SAFETY: arena-managed segment allocation.
     let segment = unsafe { allocate_segment::<MemoryBackendWrapper>() }
         .expect("OS-backed segment allocation must succeed");
     let after_alloc = backend_memory_stats();

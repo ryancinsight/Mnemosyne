@@ -227,7 +227,7 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
 
     // Drain the orphan pool
     while let Some(segment) = pool.pop() {
-        // Safety: We popped it from the global pool, so we have exclusive ownership.
+        // SAFETY: We popped it from the global pool, so we have exclusive ownership.
         let dynamic_encrypted = unsafe { (*segment).free_list_encrypted };
         let mut total_allocations = 0;
 

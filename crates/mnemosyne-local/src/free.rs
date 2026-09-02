@@ -39,6 +39,8 @@ use mnemosyne_core::types::{Block, Page, Segment, locate_page, locate_segment};
 pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
     ptr: *mut u8,
 ) {
+    // SAFETY: forwarded under `thread_free`'s own contract — `ptr` came from this
+    // allocator and is freed once; `false` keeps the unclassified path.
     unsafe { thread_free_classified::<P, B, false>(ptr) }
 }
 
@@ -81,6 +83,10 @@ pub unsafe fn thread_free_layout<P: AllocPolicy, B: HasSegmentPool + LocalAlloca
     // (a disagreement would treat a huge allocation as small — UB). This now
     // also covers `align > MIN_BLOCK_SIZE` small allocations served by the
     // alignment-aware small path.
+    // SAFETY: `thread_free_layout`'s contract holds (`ptr` from this allocator, freed
+    // once, `size`/`align` as allocated), so the small-path classification below is
+    // the one `alloc` made and the chosen arm frees the block on the path that
+    // produced it.
     if size != 0 && crate::alloc::small_path_class(size, align).is_some() {
         unsafe { thread_free_classified::<P, B, true>(ptr) };
     } else {
@@ -135,6 +141,9 @@ unsafe fn thread_free_classified<
             } else {
                 unsafe { (*segment).huge_mapping_suffix_from(ptr) }
             };
+            // SAFETY: covered by the huge-allocation metadata argument above: `segment` is
+            // the originating mapping and `size` its extent from `ptr`, so the poison write
+            // and the release stay inside that mapping.
             unsafe { poison_freed_bytes::<P>(ptr, size) };
         }
         let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
@@ -143,23 +152,34 @@ unsafe fn thread_free_classified<
         return;
     }
 
+    // SAFETY: `page_ptr` is the live page metadata `locate_page` recovered for
+    // `ptr`'s segment and index; `block_size` is written once at page
+    // initialization and only read here.
     debug_assert_eq!(
         (ptr_val & (PAGE_SIZE - 1)) % unsafe { (*page_ptr).block_size },
         0,
         "small free ptr must be aligned to the page's block stride"
     );
 
+    // SAFETY: `ptr` is the block being freed — `block_size` bytes this free owns
+    // exclusively until the block re-enters a free list — so the poison write
+    // stays inside the block.
     if P::ENABLE_POISONING {
         unsafe { poison_freed_bytes::<P>(ptr, (*page_ptr).block_size) };
     }
 
     let block = ptr as *mut Block;
+    // SAFETY: `segment` is the live mapping `locate_segment` recovered for `ptr`;
+    // `owner` reads its ownership token, which is immutable while the segment
+    // is mapped.
     let owner = unsafe { Segment::owner(segment) };
 
     #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
     let (is_owner, owner_allocator) = {
         let tid = mnemosyne_core::types::current_thread_id();
         if owner.matches_thread_id(tid) {
+            // SAFETY: `segment` is live (above) and `owner` matched this thread's id, so
+            // the owner-allocator pointer names this thread's own allocator.
             (true, unsafe { Segment::owner_allocator(segment) })
         } else {
             (false, core::ptr::null_mut())
@@ -179,6 +199,8 @@ unsafe fn thread_free_classified<
     };
 
     if is_owner && !owner_allocator.is_null() {
+        // SAFETY: `page_ptr` is live (above) and this thread owns the segment, so no
+        // other thread writes `alloc_count` while it is read.
         let page_alloc_count = unsafe { (*page_ptr).alloc_count };
         if page_alloc_count == 0 {
             std::process::abort();
@@ -237,6 +259,9 @@ unsafe fn thread_free_classified<
                 // active→empty page-list transition are the shared commit in
                 // `do_local_free_internal`; the caller adds only the re-entrancy
                 // guard and the sweep-cadence bump around it.
+                // SAFETY: `owner_allocator` is non-null and belongs to this thread (the
+                // `is_owner` branch), so flipping its TLS re-entrancy flag is a same-thread
+                // write on a slot that outlives this call.
                 unsafe {
                     crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(owner_allocator, true)
                 };
@@ -314,6 +339,9 @@ unsafe fn thread_free_cold<B: HasSegmentPool + LocalAllocatorSelector<B>>(
     page: *mut Page,
     block: *mut Block,
 ) {
+    // SAFETY: `page` is the live page metadata the caller located for a block of
+    // this allocator, and `parent_segment_of` masks it to its live segment header;
+    // both reads are of initialization-time fields.
     let encrypted = unsafe { Segment::free_list_encrypted(Page::parent_segment_of(page)) };
     if B::ENABLE_CPU_CACHE
         && per_cpu::try_free_cpu(ptr, unsafe { (*page).size_class } as usize, encrypted)
@@ -323,10 +351,10 @@ unsafe fn thread_free_cold<B: HasSegmentPool + LocalAllocatorSelector<B>>(
         return;
     }
 
+    // SAFETY: `block` came from this allocator under the same
+    // backend; non-nullness is the allocator invariant. The page-
+    // local atomic free list takes ownership of the pointer.
     unsafe {
-        // SAFETY: `block` came from this allocator under the same
-        // backend; non-nullness is the allocator invariant. The page-
-        // local atomic free list takes ownership of the pointer.
         (*page)
             .thread_free
             .push_dynamic(NonNull::new_unchecked(block), encrypted);
@@ -408,6 +436,9 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
     segment: *mut Segment,
     page_index: usize,
 ) -> bool {
+    // SAFETY: `page` is valid per this function's contract, and the caller holds
+    // the owner's exclusive page-list access, so `alloc_count` has no concurrent
+    // writer.
     if unsafe { (*page).alloc_count } == 0 {
         std::process::abort();
     }
@@ -450,7 +481,12 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
     let page_ptr = unsafe { NonNull::new_unchecked(page) };
 
     with_page_list_token::<B, _>(|mut token| {
+        // SAFETY: `page_ptr` is non-null (built above from the contract-valid `page`)
+        // and belongs to the page lists the token brands.
         let branded_page = unsafe { token.page(page_ptr) };
+        // SAFETY: the transitions below take the token that proves exclusive access to
+        // this allocator's page lists, and `page`'s `list_state` names the list it
+        // currently sits in, so unlink/move operate on a linked node.
         if was_full {
             if becomes_empty && !alloc.is_current_segment(segment) {
                 // Case 1: Went from full directly to empty

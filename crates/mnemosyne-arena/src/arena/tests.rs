@@ -42,7 +42,7 @@ fn huge_allocation_metadata_slot_round_trips_across_alignments() {
     // alignment up to multi-page alignment.
     for &align in &[1usize, 2, 4, 8, 16, 64, 4096, 64 * 1024, 1024 * 1024] {
         let size = 4 * 1024 * 1024;
-        // Safety: size is non-zero and align is a power of two.
+        // SAFETY: size is non-zero and align is a power of two.
         let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align, true) };
         assert!(!user_ptr.is_null(), "allocation failed for align {align}");
         assert_eq!(
@@ -85,7 +85,7 @@ fn huge_allocation_metadata_slot_round_trips_across_alignments() {
             "metadata slot {metadata_addr:#x} not strictly before user_ptr {user_ptr:?} for align {align}"
         );
 
-        // Safety: round-trip release using the resolved segment pointer.
+        // SAFETY: round-trip release using the resolved segment pointer.
         let released =
             unsafe { deallocate_large_or_huge::<MemoryBackendWrapper>(user_ptr, recovered) };
         assert!(released, "huge release failed for align {align}");
@@ -98,7 +98,7 @@ fn huge_allocation_rejects_non_power_of_two_alignment() {
     use mnemosyne_backend::MemoryBackendWrapper;
 
     for &align in &[0usize, 3, 6, 12, 24, 48, 96] {
-        // Safety: this verifies local validation rejects invalid alignments
+        // SAFETY: this verifies local validation rejects invalid alignments
         // before any backend allocation can be observed by callers.
         let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(4096, align, true) };
         assert!(
@@ -124,7 +124,7 @@ fn huge_allocation_consumes_tight_mapping_size() {
     let expected = size + SEGMENT_ALIGN + core::cmp::max(align, PAGE_SIZE);
 
     let before = backend_memory_stats();
-    // Safety: power-of-two alignment, non-zero size.
+    // SAFETY: power-of-two alignment, non-zero size.
     let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align, true) };
     assert!(
         !user_ptr.is_null(),
@@ -152,7 +152,7 @@ fn huge_allocation_rejects_alignment_above_segment_size() {
     let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
     use mnemosyne_backend::MemoryBackendWrapper;
 
-    // Safety: this verifies local validation rejects alignments that would
+    // SAFETY: this verifies local validation rejects alignments that would
     // break segment-rounding free classification.
     let user_ptr =
         unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(4096, SEGMENT_SIZE * 2, true) };
@@ -167,7 +167,7 @@ fn huge_allocation_rejects_zero_size() {
     let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
     use mnemosyne_backend::MemoryBackendWrapper;
 
-    // Safety: this verifies local validation rejects zero-size direct
+    // SAFETY: this verifies local validation rejects zero-size direct
     // arena requests before backend allocation.
     let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(0, 8, true) };
     assert!(
@@ -181,7 +181,7 @@ fn huge_allocation_rejects_request_exceeding_layout_bound() {
     let _guard = TEST_LOCK.lock().expect("arena test lock was poisoned");
     use mnemosyne_backend::MemoryBackendWrapper;
 
-    // Safety: this verifies local validation rejects payloads whose
+    // SAFETY: this verifies local validation rejects payloads whose
     // required mapping would exceed the pointer-offset-safe allocation
     // bound before any backend allocation attempt.
     let user_ptr =

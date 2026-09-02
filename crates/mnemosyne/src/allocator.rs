@@ -12,7 +12,7 @@ use crate::{AllocPolicy, LocalAllocatorSelector, StandardPolicy};
 pub struct Mnemosyne;
 
 unsafe impl GlobalAlloc for Mnemosyne {
-    // Safety: thread_alloc handles alignment constraints, size validation, and
+    // SAFETY: thread_alloc handles alignment constraints, size validation, and
     // OS mapping, returning null on failure or a valid memory block pointer on success.
     #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -21,7 +21,7 @@ unsafe impl GlobalAlloc for Mnemosyne {
         // would be a redundant branch on the hottest path. The
         // single-source validation returns null for size 0, which is a
         // valid `GlobalAlloc::alloc` result.
-        // Safety: size and alignment are derived from a valid Layout, and
+        // SAFETY: size and alignment are derived from a valid Layout, and
         // the returned pointer is verified or null.
         unsafe {
             thread_alloc_layout::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
@@ -31,11 +31,11 @@ unsafe impl GlobalAlloc for Mnemosyne {
         }
     }
 
-    // Safety: The ptr must be valid and previously returned by alloc.
+    // SAFETY: The ptr must be valid and previously returned by alloc.
     // thread_free determines the owner segment/page and returns blocks safely.
     #[inline(always)]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // Safety: thread_free is safe because ptr is guaranteed by the GlobalAlloc
+        // SAFETY: thread_free is safe because ptr is guaranteed by the GlobalAlloc
         // contract to be a valid pointer allocated by this allocator.
         unsafe {
             thread_free_layout::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
@@ -108,23 +108,23 @@ impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector
 unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>>
     GlobalAlloc for MnemosyneAllocator<P, B>
 {
-    // Safety: thread_alloc handles alignment constraints, size validation, and
+    // SAFETY: thread_alloc handles alignment constraints, size validation, and
     // OS mapping, returning null on failure or a valid memory block pointer on success.
     #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         // `thread_alloc_layout` rejects `size == 0` via
         // `is_valid_layout_alloc_request`; the explicit zero guard would be
         // a redundant hot-path branch (see `Mnemosyne::alloc`).
-        // Safety: size and alignment are derived from a valid Layout, and
+        // SAFETY: size and alignment are derived from a valid Layout, and
         // the returned pointer is verified or null.
         unsafe { thread_alloc_layout::<P, B>(layout.size(), layout.align()) }
     }
 
-    // Safety: The ptr must be valid and previously returned by alloc.
+    // SAFETY: The ptr must be valid and previously returned by alloc.
     // thread_free determines the owner segment/page and returns blocks safely.
     #[inline(always)]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // Safety: thread_free is safe because ptr is guaranteed by the GlobalAlloc
+        // SAFETY: thread_free is safe because ptr is guaranteed by the GlobalAlloc
         // contract to be a valid pointer allocated by this allocator.
         unsafe { thread_free_layout::<P, B>(ptr, layout.size(), layout.align()) }
     }

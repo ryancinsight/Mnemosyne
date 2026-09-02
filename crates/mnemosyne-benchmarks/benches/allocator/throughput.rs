@@ -22,19 +22,19 @@ pub fn bench_usable_size(c: &mut Criterion) {
     ] {
         group.throughput(Throughput::Elements(1));
         bench_column(&mut group, "Mnemosyne", name, &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
+            // SAFETY: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe {
                 alloc_usable_dealloc(&mnemosyne::Mnemosyne, *layout, |ptr| {
-                    // Safety: `ptr` came from the Mnemosyne allocator above.
+                    // SAFETY: `ptr` came from the Mnemosyne allocator above.
                     mnemosyne::usable_size(ptr)
                 })
             })
         });
         bench_column(&mut group, "MiMalloc", name, &layout, |b, layout| {
-            // Safety: `layout` comes from the static valid benchmark layout table.
+            // SAFETY: `layout` comes from the static valid benchmark layout table.
             b.iter(|| unsafe {
                 alloc_usable_dealloc(&mimalloc::MiMalloc, *layout, |ptr| {
-                    // Safety: `ptr` came from the mimalloc allocator above.
+                    // SAFETY: `ptr` came from the mimalloc allocator above.
                     mimalloc::MiMalloc.usable_size(ptr)
                 })
             })
@@ -42,7 +42,7 @@ pub fn bench_usable_size(c: &mut Criterion) {
         #[cfg(feature = "snmalloc")]
         if !snmalloc_skips(name) {
             bench_column(&mut group, "SnMalloc", name, &layout, |b, layout| {
-                // Safety: `layout` comes from the static valid benchmark layout table.
+                // SAFETY: `layout` comes from the static valid benchmark layout table.
                 b.iter(|| unsafe {
                     alloc_usable_dealloc(&snmalloc_rs::SnMalloc, *layout, |ptr| {
                         match snmalloc_rs::SnMalloc.usable_size(ptr) {
@@ -58,10 +58,10 @@ pub fn bench_usable_size(c: &mut Criterion) {
         #[cfg(jemalloc_available)]
         {
             bench_column(&mut group, "Jemalloc", name, &layout, |b, layout| {
-                // Safety: `layout` comes from the static valid benchmark layout table.
+                // SAFETY: `layout` comes from the static valid benchmark layout table.
                 b.iter(|| unsafe {
                     alloc_usable_dealloc(&bench_jemalloc::Jemalloc, *layout, |ptr| {
-                        // Safety: `ptr` came from the jemalloc allocator above;
+                        // SAFETY: `ptr` came from the jemalloc allocator above;
                         // the call is covered by the enclosing `unsafe` block.
                         bench_jemalloc::usable_size(ptr)
                     })
@@ -82,27 +82,27 @@ pub fn bench_usable_size_query(c: &mut Criterion) {
     ] {
         group.throughput(Throughput::Elements(1));
 
-        // Safety: `layout` comes from the static valid benchmark layout table.
+        // SAFETY: `layout` comes from the static valid benchmark layout table.
         let mnemosyne_ptr =
             unsafe { require_allocated(mnemosyne::Mnemosyne.alloc(layout), "usable_size_query") };
         bench_column(&mut group, "Mnemosyne", name, &mnemosyne_ptr, |b, ptr| {
             b.iter(|| unsafe { mnemosyne::usable_size(black_box(*ptr)) })
         });
-        // Safety: pointer was allocated by Mnemosyne for `layout` above.
+        // SAFETY: pointer was allocated by Mnemosyne for `layout` above.
         unsafe { mnemosyne::Mnemosyne.dealloc(mnemosyne_ptr, layout) };
 
-        // Safety: `layout` comes from the static valid benchmark layout table.
+        // SAFETY: `layout` comes from the static valid benchmark layout table.
         let mimalloc_ptr =
             unsafe { require_allocated(mimalloc::MiMalloc.alloc(layout), "usable_size_query") };
         bench_column(&mut group, "MiMalloc", name, &mimalloc_ptr, |b, ptr| {
             b.iter(|| unsafe { mimalloc::MiMalloc.usable_size(black_box(*ptr)) })
         });
-        // Safety: pointer was allocated by MiMalloc for `layout` above.
+        // SAFETY: pointer was allocated by MiMalloc for `layout` above.
         unsafe { mimalloc::MiMalloc.dealloc(mimalloc_ptr, layout) };
 
         #[cfg(feature = "snmalloc")]
         if !snmalloc_skips(name) {
-            // Safety: `layout` comes from the static valid benchmark layout table.
+            // SAFETY: `layout` comes from the static valid benchmark layout table.
             let snmalloc_ptr = unsafe {
                 require_allocated(snmalloc_rs::SnMalloc.alloc(layout), "usable_size_query")
             };
@@ -114,20 +114,20 @@ pub fn bench_usable_size_query(c: &mut Criterion) {
                     },
                 )
             });
-            // Safety: pointer was allocated by SnMalloc for `layout` above.
+            // SAFETY: pointer was allocated by SnMalloc for `layout` above.
             unsafe { snmalloc_rs::SnMalloc.dealloc(snmalloc_ptr, layout) };
         }
 
         #[cfg(jemalloc_available)]
         {
-            // Safety: `layout` comes from the static valid benchmark layout table.
+            // SAFETY: `layout` comes from the static valid benchmark layout table.
             let jemalloc_ptr = unsafe {
                 require_allocated(bench_jemalloc::Jemalloc.alloc(layout), "usable_size_query")
             };
             bench_column(&mut group, "Jemalloc", name, &jemalloc_ptr, |b, ptr| {
                 b.iter(|| unsafe { bench_jemalloc::usable_size(black_box(*ptr)) })
             });
-            // Safety: pointer was allocated by Jemalloc for `layout` above.
+            // SAFETY: pointer was allocated by Jemalloc for `layout` above.
             unsafe { bench_jemalloc::Jemalloc.dealloc(jemalloc_ptr, layout) };
         }
     }

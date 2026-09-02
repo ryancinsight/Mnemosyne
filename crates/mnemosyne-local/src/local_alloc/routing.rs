@@ -31,7 +31,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
 
             // 2. Reclaim batched cross-thread frees only after the local list is empty.
-            // Safety: `page` is owned by this allocator and `try_reclaim_and_allocate`
+            // SAFETY: `page` is owned by this allocator and `try_reclaim_and_allocate`
             // upholds the `Page::reclaim_thread_free` contract on its behalf.
             if let Some(block) =
                 unsafe { try_reclaim_and_allocate::<P>(page, &mut self.cross_thread_reclaimed) }
@@ -88,7 +88,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         unsafe { self.record_defrag_operation::<P>(true) };
         // 1. Move the current active page to full_pages if it is indeed full.
         if let Some(active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
-            // Safety: `active_ptr` came from this allocator's own active list,
+            // SAFETY: `active_ptr` came from this allocator's own active list,
             // so the page is live and owned by this thread. It remains raw so
             // segment metadata access does not invalidate a page-scoped
             // `Unique` tag while remote frees can still read atomic metadata.
@@ -107,7 +107,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // 1b. Check if the new head of active_pages can satisfy the allocation.
         if let Some(active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
-            // Safety: as above; raw pointer keeps this off a `Unique` tag.
+            // SAFETY: as above; raw pointer keeps this off a `Unique` tag.
             let active_page = active_ptr.as_ptr();
             if let Some(block) = unsafe { try_allocate_page_local::<P>(active_page) } {
                 return block.as_ptr() as *mut u8;
@@ -128,11 +128,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 break;
             }
             checked += 1;
-            // Safety: `page_ptr` was walked from this allocator's own
+            // SAFETY: `page_ptr` was walked from this allocator's own
             // `full_pages[class]` list, so the page is live and exclusively
             // owned by this thread.
             let page = page_ptr.as_ptr();
-            // Safety: `page` is owned by this allocator. Since it is in full_pages,
+            // SAFETY: `page` is owned by this allocator. Since it is in full_pages,
             // we know it has no local free blocks. We only need to check for cross-thread frees to reclaim.
             let block_opt =
                 unsafe { try_reclaim_and_allocate::<P>(page, &mut self.cross_thread_reclaimed) };
@@ -166,11 +166,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // `get_new_page`, pointing to a freshly initialized `Page` inside a
         // segment owned exclusively by this thread, so the `&mut` is unaliased.
         let page = new_page_ptr;
-        // Safety: `get_new_page` guarantees a freshly initialized page whose
+        // SAFETY: `get_new_page` guarantees a freshly initialized page whose
         // free list holds at least one block.
         let block = unsafe { pop_page_free_block::<P>(page) };
 
-        // Safety: `page` is the freshly allocated page above with one block
+        // SAFETY: `page` is the freshly allocated page above with one block
         // just popped, so the count increment matches an actual allocation.
         // Addressed by segment so no page reference is minted.
         unsafe {
@@ -234,7 +234,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // Prefer never-used pages in the current segment.
         if self.current_segment.is_none() || self.next_page_index >= PAGES_PER_SEGMENT {
-            // Safety: acquires a policy-compatible segment from the OS/pools;
+            // SAFETY: acquires a policy-compatible segment from the OS/pools;
             // policy-incompatible orphans are returned to the orphan pool.
             if let Some(seg_ptr) = unsafe { acquire_policy_compatible_segment::<P, B>() } {
                 // Determine if this is an orphaned segment vs a fresh/reinitialized segment.
@@ -350,7 +350,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 } else {
                     self.fresh_segments += 1;
                     // Fresh segment initialization
-                    // Safety: seg_ptr is valid, exclusive to this thread, and initialized.
+                    // SAFETY: seg_ptr is valid, exclusive to this thread, and initialized.
                     // We set owner and insert it at the head of our owned segment list.
                     unsafe {
                         self.push_owned_segment::<P>(seg_ptr);
@@ -368,7 +368,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         };
         let seg = seg.as_ptr();
         let page_index = self.next_page_index;
-        // Safety: seg points to a valid Segment owned by us. We index into pages array.
+        // SAFETY: seg points to a valid Segment owned by us. We index into pages array.
         let page_ptr = unsafe { &raw mut (*seg).pages[page_index] };
         self.next_page_index += 1;
 

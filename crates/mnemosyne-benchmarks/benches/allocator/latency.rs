@@ -22,7 +22,7 @@ pub fn bench_allocator_cycles(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(layout.size() as u64));
         // `cycle` is the measured routine; passing it as a generic `fn` item
         // lets each comparator monomorphize independently (zero dispatch cost).
-        // Safety: `layout` comes from the static valid benchmark layout table.
+        // SAFETY: `layout` comes from the static valid benchmark layout table.
         fn cycle<A: GlobalAlloc>(a: &A, layout: &core::alloc::Layout) {
             unsafe { alloc_dealloc(a, *layout) }
         }
@@ -268,7 +268,7 @@ pub fn bench_allocator_bursts(c: &mut Criterion) {
         ("large/8192", LARGE_LAYOUT),
     ] {
         group.throughput(Throughput::Bytes((layout.size() * BATCH_ALLOCS) as u64));
-        // Safety: `layout` comes from the static valid benchmark layout table.
+        // SAFETY: `layout` comes from the static valid benchmark layout table.
         fn burst<A: GlobalAlloc>(a: &A, layout: &core::alloc::Layout) {
             unsafe { burst_alloc_dealloc(a, *layout) }
         }

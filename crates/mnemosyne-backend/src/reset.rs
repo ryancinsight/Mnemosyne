@@ -74,12 +74,12 @@ mod tests {
         // confirmed resets while leaving the mapping committed and
         // writable.
         let size = 64 * 1024;
-        // Safety: requesting a multiple of the system page size.
+        // SAFETY: requesting a multiple of the system page size.
         let ptr = unsafe { MemoryBackendWrapper::allocate(size) };
         assert!(!ptr.is_null());
 
         let stats_before = backend_memory_stats();
-        // Safety: ptr covers `size` bytes; the reset request is valid
+        // SAFETY: ptr covers `size` bytes; the reset request is valid
         // for the full mapping.
         let reset = unsafe { MemoryBackendWrapper::page_reset(ptr, size) };
         let stats_after = backend_memory_stats();
@@ -102,13 +102,13 @@ mod tests {
 
         // The mapping remains writable after reset. Touch a byte to prove
         // the kernel did not unmap the region.
-        // Safety: ptr is still a valid committed mapping of `size` bytes.
+        // SAFETY: ptr is still a valid committed mapping of `size` bytes.
         unsafe {
             ptr.write_volatile(0xCC);
             assert_eq!(ptr.read_volatile(), 0xCC);
         }
 
-        // Safety: ptr is the exact base of the mapping.
+        // SAFETY: ptr is the exact base of the mapping.
         let released = unsafe { MemoryBackendWrapper::deallocate(ptr, size) };
         assert!(released);
     }
@@ -123,7 +123,7 @@ mod tests {
 
         // Allocate a small mapping just for the size==0 check; size==0 must
         // be rejected before reaching the platform API.
-        // Safety: requesting a system-page-aligned size.
+        // SAFETY: requesting a system-page-aligned size.
         let ptr = unsafe { MemoryBackendWrapper::allocate(4096) };
         assert!(!ptr.is_null());
         let zero_reset = unsafe { MemoryBackendWrapper::page_reset(ptr, 0) };
@@ -142,17 +142,17 @@ mod tests {
         // decommitted range is intentionally never touched afterward, since on
         // Windows it faults until re-committed.
         let size = 128 * 1024;
-        // Safety: requesting a multiple of the system page size.
+        // SAFETY: requesting a multiple of the system page size.
         let ptr = unsafe { MemoryBackendWrapper::allocate(size) };
         assert!(!ptr.is_null());
 
         let half = size / 2;
-        // Safety: [ptr + half, ptr + size) is a page-aligned subrange of the
+        // SAFETY: [ptr + half, ptr + size) is a page-aligned subrange of the
         // mapping holding no live data.
         let tail = unsafe { ptr.add(half) };
 
         let before = backend_memory_stats();
-        // Safety: tail covers `half` bytes inside the live mapping.
+        // SAFETY: tail covers `half` bytes inside the live mapping.
         let decommitted = unsafe { MemoryBackendWrapper::decommit(tail, half) };
         let after = backend_memory_stats();
 
@@ -166,14 +166,14 @@ mod tests {
         );
 
         // The still-committed first half remains writable.
-        // Safety: [ptr, ptr + half) was not decommitted and stays committed.
+        // SAFETY: [ptr, ptr + half) was not decommitted and stays committed.
         unsafe {
             ptr.write_volatile(0x5A);
             assert_eq!(ptr.read_volatile(), 0x5A);
         }
 
         // The base reservation releases cleanly despite the decommitted tail.
-        // Safety: ptr is the exact base of the mapping.
+        // SAFETY: ptr is the exact base of the mapping.
         let released = unsafe { MemoryBackendWrapper::deallocate(ptr, size) };
         assert!(released, "release failed after decommitting a subrange");
     }

@@ -177,7 +177,7 @@ pub fn memory_stats() -> MemoryStats {
 
 /// Purges the global segment pool for a specific backend, releasing all retained/cached segments back to the OS.
 pub fn purge_generic<B: mnemosyne_arena::HasSegmentPool>() {
-    // Safety: Purging the segment pool releases only free segments that are
+    // SAFETY: Purging the segment pool releases only free segments that are
     // no longer actively referenced by any thread allocator cache.
     unsafe {
         mnemosyne_arena::purge_segment_pool::<B>();
@@ -197,7 +197,7 @@ pub fn purge() {
 /// mapping syscall, while the resident memory footprint of idle
 /// segments drops to the kernel's demand-fault baseline.
 pub fn reset_generic<B: mnemosyne_arena::HasSegmentPool>() {
-    // Safety: reset_segment_pool drains the retained pool, issues
+    // SAFETY: reset_segment_pool drains the retained pool, issues
     // page_reset on each segment's mapping, and pushes them back into
     // the cache; no segment is released or accessed by another path.
     unsafe {

@@ -21,7 +21,7 @@ fn page_address_derivation_index_in_segment() {
         .lock()
         .expect("local allocator test lock was poisoned");
 
-    // Safety: allocate a real segment-aligned segment from the backend.
+    // SAFETY: allocate a real segment-aligned segment from the backend.
     let seg = unsafe { allocate_segment::<DefaultBackend>() }.expect("segment allocation failed");
     assert_eq!(
         seg as usize % mnemosyne_core::constants::SEGMENT_ALIGN,
@@ -30,7 +30,7 @@ fn page_address_derivation_index_in_segment() {
     );
 
     for i in 0..PAGES_PER_SEGMENT {
-        // Safety: `seg` is a live initialized segment; page `i` is in bounds.
+        // SAFETY: `seg` is a live initialized segment; page `i` is in bounds.
         let page = unsafe { &(*seg).pages[i] };
         assert_eq!(
             page.index_in_segment(),
@@ -39,7 +39,7 @@ fn page_address_derivation_index_in_segment() {
         );
     }
 
-    // Safety: `seg` was returned by `allocate_segment` and is unaliased.
+    // SAFETY: `seg` was returned by `allocate_segment` and is unaliased.
     unsafe { deallocate_segment::<DefaultBackend>(seg) };
 }
 
@@ -51,7 +51,7 @@ fn stats_snapshot_counts_active_and_empty_page_lists() {
     let mut alloc = ThreadAllocator::<MockBackend>::new();
     let class = size_to_class(16).expect("16 bytes is a small allocation");
 
-    // Safety: `alloc` is initialized and the request is a valid small allocation.
+    // SAFETY: `alloc` is initialized and the request is a valid small allocation.
     let ptr = unsafe { alloc.alloc::<StandardPolicy>(16) };
     assert!(!ptr.is_null(), "initial 16-byte allocation failed");
 
@@ -107,7 +107,7 @@ fn test_page_recycling_different_classes() {
     let mut alloc = ThreadAllocator::<DefaultBackend>::new();
 
     // 1. Allocate a block of size class 0 (16 bytes now)
-    // Safety: alloc is initialized and valid.
+    // SAFETY: alloc is initialized and valid.
     let ptr1 = unsafe { alloc.alloc::<StandardPolicy>(16) };
     assert!(!ptr1.is_null(), "initial 16-byte allocation failed");
 
@@ -124,12 +124,12 @@ fn test_page_recycling_different_classes() {
 
     // Raw for the same reason as the site above: the segment-addressed write
     // below invalidates any `&mut Page` held across it.
-    // Safety: segment points to a valid segment containing pages.
+    // SAFETY: segment points to a valid segment containing pages.
     let page = unsafe { &raw mut (*segment).pages[page_index] };
 
     // 2. Free the block locally by modifying metadata as thread_free would.
     // Since we are not running through thread_free routing, we manually perform a local free.
-    // Safety: block ptr is valid and exclusive. We set up page free list.
+    // SAFETY: block ptr is valid and exclusive. We set up page free list.
     unsafe {
         let block = ptr1 as *mut Block;
         (*block).set_next::<StandardPolicy>((*page).free, 0);
@@ -145,7 +145,7 @@ fn test_page_recycling_different_classes() {
     // find the empty page (which was class 0),
     // unlink it from class 0, re-initialize it for class 1, and reuse it.
     alloc.next_page_index = PAGES_PER_SEGMENT;
-    // Safety: alloc is initialized and valid.
+    // SAFETY: alloc is initialized and valid.
     let ptr2 = unsafe { alloc.alloc::<StandardPolicy>(32) };
     assert!(!ptr2.is_null(), "recycled 32-byte allocation failed");
 
@@ -200,7 +200,7 @@ fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
 
     // Allocate the first 16-byte block to materialize the page and learn
     // its capacity.
-    // Safety: alloc is initialized and valid.
+    // SAFETY: alloc is initialized and valid.
     let first = unsafe { alloc.alloc::<StandardPolicy>(16) };
     assert!(!first.is_null(), "initial 16-byte allocation failed");
 
@@ -208,7 +208,7 @@ fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
     let segment_addr = first_val & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
     let segment = segment_addr as *mut Segment;
     let page_index = (first_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-    // Safety: segment points to a valid segment containing pages.
+    // SAFETY: segment points to a valid segment containing pages.
     let max_blocks = unsafe { (*segment).pages[page_index].max_blocks() };
     assert_eq!(
         max_blocks,
@@ -223,7 +223,7 @@ fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
     let mut count = 1usize;
     let mut last = first;
     while count < max_blocks {
-        // Safety: alloc is valid.
+        // SAFETY: alloc is valid.
         let ptr = unsafe { alloc.alloc::<StandardPolicy>(16) };
         assert!(!ptr.is_null(), "16-byte allocation {count} failed");
         let ptr_val = ptr as usize;
@@ -256,7 +256,7 @@ fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
 
     // One more allocation must succeed by refilling a fresh page rather
     // than returning a wrapped/duplicate pointer.
-    // Safety: alloc is valid.
+    // SAFETY: alloc is valid.
     let overflow = unsafe { alloc.alloc::<StandardPolicy>(16) };
     assert!(!overflow.is_null(), "post-saturation allocation failed");
     let overflow_val = overflow as usize;

@@ -55,7 +55,7 @@ fn test_secure_policy() {
 
     unsafe { allocator.dealloc(ptr, layout) };
 
-    // Safety: Under standard execution, accessing freed memory is undefined behavior.
+    // SAFETY: Under standard execution, accessing freed memory is undefined behavior.
     // However, in this controlled integration test, we verify that the poisoning logic
     // has overwritten the memory. The segment cache retains pages so the memory
     // remains mapped and readable for testing.

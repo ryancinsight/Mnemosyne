@@ -57,7 +57,7 @@ const ENOMEM: i32 = 12;
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     let request = if size == 0 { 1 } else { size };
-    // Safety: MALLOC_ALIGN is a nonzero power of two; thread_alloc validates
+    // SAFETY: MALLOC_ALIGN is a nonzero power of two; thread_alloc validates
     // the request and returns null on failure.
     unsafe {
         thread_alloc::<StandardPolicy, MemoryBackendWrapper>(request, MALLOC_ALIGN) as *mut c_void
@@ -103,13 +103,13 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
         return core::ptr::null_mut();
     };
     let request = if total == 0 { 1 } else { total };
-    // Safety: MALLOC_ALIGN is a valid alignment; thread_alloc returns null on failure.
+    // SAFETY: MALLOC_ALIGN is a valid alignment; thread_alloc returns null on failure.
     let ptr =
         unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(request, MALLOC_ALIGN) };
     if !ptr.is_null() {
         // Zero only the requested span. The user observes `total` bytes;
         // the size-class slack beyond it is irrelevant to the caller.
-        // Safety: ptr is valid for writes of `total` bytes (>= request).
+        // SAFETY: ptr is valid for writes of `total` bytes (>= request).
         unsafe { core::ptr::write_bytes(ptr, 0, total) };
     }
     ptr as *mut c_void
@@ -143,7 +143,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_vo
         return core::ptr::null_mut();
     }
 
-    // Safety: ptr is a live allocation from this shim.
+    // SAFETY: ptr is a live allocation from this shim.
     let current_usable = unsafe { usable_size(ptr as *mut u8) };
     if new_size <= current_usable {
         // The existing block already satisfies the request.
@@ -158,7 +158,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_vo
         // `min(current_usable, new_size)` is exactly `current_usable` — copy
         // the whole old usable region (a C caller may have written all of it).
         let copy_len = current_usable;
-        // Safety: both pointers are valid for `copy_len` bytes and do not
+        // SAFETY: both pointers are valid for `copy_len` bytes and do not
         // overlap (malloc returned a fresh block).
         unsafe {
             core::ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, copy_len);
@@ -189,7 +189,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
         return core::ptr::null_mut();
     }
     let request = if size == 0 { alignment } else { size };
-    // Safety: alignment is a validated power of two; thread_alloc returns null on failure.
+    // SAFETY: alignment is a validated power of two; thread_alloc returns null on failure.
     unsafe {
         thread_alloc::<StandardPolicy, MemoryBackendWrapper>(request, alignment) as *mut c_void
     }
@@ -227,12 +227,12 @@ pub unsafe extern "C" fn posix_memalign(
         return EINVAL;
     }
     let request = if size == 0 { alignment } else { size };
-    // Safety: alignment validated above; thread_alloc returns null on failure.
+    // SAFETY: alignment validated above; thread_alloc returns null on failure.
     let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(request, alignment) };
     if ptr.is_null() {
         return ENOMEM;
     }
-    // Safety: caller guarantees memptr is a writable slot.
+    // SAFETY: caller guarantees memptr is a writable slot.
     unsafe { *memptr = ptr as *mut c_void };
     0
 }
@@ -252,7 +252,7 @@ pub unsafe extern "C" fn posix_memalign(
 // suppressing only the C symbol costs no coverage.
 #[cfg_attr(not(test), unsafe(no_mangle))]
 pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
-    // Safety: usable_size tolerates null and classifies live shim pointers.
+    // SAFETY: usable_size tolerates null and classifies live shim pointers.
     unsafe { usable_size(ptr as *mut u8) }
 }
 
@@ -312,7 +312,7 @@ pub unsafe extern "C" fn mnemosyne_dump_profile(path: *const core::ffi::c_char) 
     if path.is_null() {
         return -1;
     }
-    // Safety: path must be a valid null-terminated C string.
+    // SAFETY: path must be a valid null-terminated C string.
     let c_str = unsafe { core::ffi::CStr::from_ptr(path) };
     let Ok(str_slice) = c_str.to_str() else {
         return -1;
@@ -361,7 +361,7 @@ pub unsafe extern "C" fn mnemosyne_dump_leaks(path: *const core::ffi::c_char) ->
     if path.is_null() {
         return -1;
     }
-    // Safety: path must be a valid null-terminated C string.
+    // SAFETY: path must be a valid null-terminated C string.
     let c_str = unsafe { core::ffi::CStr::from_ptr(path) };
     let Ok(str_slice) = c_str.to_str() else {
         return -1;

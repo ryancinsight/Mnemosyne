@@ -81,7 +81,7 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
 
         #[cfg(not(miri))]
         {
-            // Safety: Raw system call to VirtualAlloc to commit and reserve virtual memory.
+            // SAFETY: Raw system call to VirtualAlloc to commit and reserve virtual memory.
             // Size is validated at call sites to be non-zero and aligned.
             let ptr = unsafe {
                 VirtualAlloc(
@@ -121,7 +121,7 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
 
         #[cfg(not(miri))]
         {
-            // Safety: Raw system call to VirtualFree. The ptr must have been previously
+            // SAFETY: Raw system call to VirtualFree. The ptr must have been previously
             // returned by VirtualAlloc and not yet freed. MEM_RELEASE releases the whole region.
             let res = unsafe { VirtualFree(ptr as *mut c_void, 0, MEM_RELEASE) };
             debug_assert_ne!(res, 0, "VirtualFree failed");
@@ -146,7 +146,7 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
         }
         #[cfg(not(miri))]
         {
-            // Safety: ptr is inside an active VirtualAlloc-managed region and
+            // SAFETY: ptr is inside an active VirtualAlloc-managed region and
             // size is a multiple of the system page size; MEM_RESET keeps the
             // mapping committed and never invalidates the address range.
             let result =
@@ -176,7 +176,7 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
         }
         #[cfg(not(miri))]
         {
-            // Safety: ptr/size describe a page-aligned subrange of a live
+            // SAFETY: ptr/size describe a page-aligned subrange of a live
             // VirtualAlloc reservation; MEM_DECOMMIT keeps the reservation valid.
             let res = unsafe { VirtualFree(ptr as *mut c_void, size, MEM_DECOMMIT) };
             res != 0
@@ -198,7 +198,7 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
         #[cfg(not(miri))]
         {
             let mut old_protect: u32 = 0;
-            // Safety: ptr is inside an active VirtualAlloc-managed region and
+            // SAFETY: ptr is inside an active VirtualAlloc-managed region and
             // size is a multiple of the system page size. VirtualProtect
             // changes only the protection bits.
             let res = unsafe {

@@ -1,6 +1,6 @@
 use core::alloc::{GlobalAlloc, Layout};
 
-// Safety: all report layouts use fixed positive sizes and nonzero
+// SAFETY: all report layouts use fixed positive sizes and nonzero
 // power-of-two alignments.
 const LAYOUTS: [Layout; 5] = [
     unsafe { Layout::from_size_align_unchecked(32, 8) },
@@ -20,7 +20,7 @@ fn main() -> Result<(), &'static str> {
 
     for layout in LAYOUTS {
         for _ in 0..ALLOCS_PER_LAYOUT {
-            // Safety: `layout` comes from the static valid report layout table.
+            // SAFETY: `layout` comes from the static valid report layout table.
             let ptr = unsafe { mnemosyne::Mnemosyne.alloc(layout) };
             if ptr.is_null() {
                 return Err("Allocation returned a null pointer");
@@ -32,7 +32,7 @@ fn main() -> Result<(), &'static str> {
     let during = mnemosyne::memory_stats();
 
     for (ptr, layout) in allocations {
-        // Safety: each `(ptr, layout)` pair was allocated above by Mnemosyne
+        // SAFETY: each `(ptr, layout)` pair was allocated above by Mnemosyne
         // and is deallocated exactly once in this loop.
         unsafe {
             mnemosyne::Mnemosyne.dealloc(ptr, layout);
@@ -110,7 +110,7 @@ fn print_occupancy(phase: &str, stats: &mnemosyne::MemoryStats) {
 fn run_segment_eviction() -> Result<mnemosyne::MemoryStats, &'static str> {
     let mut segments = [core::ptr::null_mut::<mnemosyne_core::Segment>(); SEGMENT_EVICTION_ALLOCS];
     for segment in &mut segments {
-        // Safety: every returned segment is stored and later released exactly
+        // SAFETY: every returned segment is stored and later released exactly
         // once by this function.
         *segment = unsafe {
             mnemosyne_arena::allocate_segment::<mnemosyne_backend::MemoryBackendWrapper>()
@@ -118,7 +118,7 @@ fn run_segment_eviction() -> Result<mnemosyne::MemoryStats, &'static str> {
         };
     }
     for segment in segments {
-        // Safety: `segment` was allocated above and has not been deallocated.
+        // SAFETY: `segment` was allocated above and has not been deallocated.
         unsafe {
             mnemosyne_arena::deallocate_segment::<mnemosyne_backend::MemoryBackendWrapper>(segment);
         }
@@ -140,7 +140,7 @@ fn reset_segment_cache() -> Result<mnemosyne::MemoryStats, &'static str> {
 }
 
 fn purge_segment_cache() -> Result<mnemosyne::MemoryStats, &'static str> {
-    // Safety: this command owns the benchmark process and intentionally clears
+    // SAFETY: this command owns the benchmark process and intentionally clears
     // Mnemosyne's reusable segment pool before reading telemetry.
     unsafe {
         mnemosyne_arena::purge_segment_pool::<mnemosyne_backend::MemoryBackendWrapper>();

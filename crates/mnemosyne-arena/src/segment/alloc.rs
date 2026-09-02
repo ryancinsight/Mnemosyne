@@ -52,7 +52,7 @@ const _: () = assert!(SEGMENT_HEADER_GUARD_SIZE <= PAGE_SIZE);
 unsafe fn allocate_segment_from_pools<B: HasSegmentPool>() -> Option<*mut Segment> {
     // 1. Try to pop from the global segment pool
     if let Some(segment) = B::global_segment_pool().pop() {
-        // Safety: segment points to a valid allocated Segment. We re-initialize
+        // SAFETY: segment points to a valid allocated Segment. We re-initialize
         // the segment to erase stale epoch metadata and reset it for new allocations.
         unsafe {
             let raw_ptr = (*segment).raw_alloc_ptr;
@@ -63,7 +63,7 @@ unsafe fn allocate_segment_from_pools<B: HasSegmentPool>() -> Option<*mut Segmen
     }
 
     // 2. Try to pop from the global orphan pool.
-    // Safety: Returning popped orphaned segment as is, preserving active allocations.
+    // SAFETY: Returning popped orphaned segment as is, preserving active allocations.
     if let Some(segment) = B::global_orphan_pool().pop() {
         return Some(segment);
     }
@@ -104,7 +104,7 @@ unsafe fn initialize_allocated_segment(
     let aligned_addr = checked_align_up(raw_ptr as usize, SEGMENT_ALIGN)?;
     let aligned_ptr = raw_ptr.map_addr(|_| aligned_addr).cast::<Segment>();
 
-    // Safety: aligned_ptr is within the allocated region.
+    // SAFETY: aligned_ptr is within the allocated region.
     unsafe {
         Segment::initialize(aligned_ptr, raw_ptr, numa_node);
     }
@@ -182,14 +182,14 @@ pub(crate) unsafe fn decommit_mapping_slack<B: mnemosyne_core::MemoryBackend>(
 ///   `deallocate_segment` or released to the OS via `release_segment_mapping`.
 #[inline]
 pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
-    // Safety: allocate_segment_from_pools retrieves a valid segment from pools if available.
+    // SAFETY: allocate_segment_from_pools retrieves a valid segment from pools if available.
     if let Some(segment) = unsafe { allocate_segment_from_pools::<B>() } {
         return Some(segment);
     }
 
     // 3. Fall back to OS allocation
     // We allocate twice the segment size to ensure we can find an aligned boundary.
-    // Safety: SEGMENT_MAPPING_SIZE is non-zero and aligned. We call B::allocate.
+    // SAFETY: SEGMENT_MAPPING_SIZE is non-zero and aligned. We call B::allocate.
     let raw_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
     if raw_ptr.is_null() {
         return None;
@@ -203,7 +203,7 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
         match unsafe { initialize_allocated_segment(raw_ptr, numa_node) } {
             Some(val) => val,
             None => {
-                // Safety: Releasing raw memory back to the backend because alignment check overflowed.
+                // SAFETY: Releasing raw memory back to the backend because alignment check overflowed.
                 let _released = unsafe { B::deallocate(raw_ptr, SEGMENT_MAPPING_SIZE) };
                 return None;
             }
@@ -216,7 +216,7 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
             // Underflows (backward OOB writes) from Page 1 land in this guard region
             // instead of overwriting the segment metadata at the start of Page 0.
             //
-            // Safety: aligned_addr + PAGE_SIZE - SEGMENT_HEADER_GUARD_SIZE is inside the mapping
+            // SAFETY: aligned_addr + PAGE_SIZE - SEGMENT_HEADER_GUARD_SIZE is inside the mapping
             // and Page 0 is reserved strictly for Segment metadata (ending far before the guard).
             let header_guard_addr = aligned_addr + PAGE_SIZE - SEGMENT_HEADER_GUARD_SIZE;
             let header_guard = raw_ptr.map_addr(|_| header_guard_addr);
@@ -240,7 +240,7 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
             // silently skips, leaving the slack accessible. Backend telemetry
             // (`guard_install_calls`) surfaces the actual install count.
             //
-            // Safety: aligned_addr + SEGMENT_SIZE is inside the raw mapping
+            // SAFETY: aligned_addr + SEGMENT_SIZE is inside the raw mapping
             // because slack-after >= OS_PAGE_SIZE >= SEGMENT_TAIL_GUARD_SIZE on
             // supported targets. `make_guard` never invalidates the mapping.
             let tail_guard_addr = aligned_addr + SEGMENT_SIZE;
@@ -281,9 +281,9 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
 #[inline]
 pub unsafe fn deallocate_segment<B: HasSegmentPool>(segment: *mut Segment) {
     if !segment.is_null() {
-        // Safety: try_return_to_pool checks segment status and pushes it to global segment pool if space permits.
+        // SAFETY: try_return_to_pool checks segment status and pushes it to global segment pool if space permits.
         if !unsafe { try_return_to_pool::<B>(segment) } {
-            // Safety: segment is a valid allocated Segment. We extract raw_alloc_ptr
+            // SAFETY: segment is a valid allocated Segment. We extract raw_alloc_ptr
             // and deallocate the original OS mapping since the global pool is full.
             match unsafe { release_segment_mapping::<B>(segment) } {
                 SegmentRelease::Released => {}
@@ -361,7 +361,7 @@ pub unsafe fn release_segment_mapping<B: HasSegmentPool>(segment: *mut Segment) 
         !segment.is_null(),
         "release_segment_mapping received null segment"
     );
-    // Safety: segment is a valid allocated Segment. We extract raw_alloc_ptr
+    // SAFETY: segment is a valid allocated Segment. We extract raw_alloc_ptr
     // and deallocate the original OS mapping.
     let released = unsafe {
         let raw_ptr = (*segment).raw_alloc_ptr;
@@ -427,7 +427,7 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
     // the prior telemetry contract).
     pool.record_purge(purged);
 
-    // Safety: Releases all cached huge blocks back to the OS.
+    // SAFETY: Releases all cached huge blocks back to the OS.
     unsafe { B::global_huge_pool().purge::<B>() };
 }
 
