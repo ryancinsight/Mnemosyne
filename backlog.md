@@ -128,7 +128,9 @@
   permanently unavailable here with the reason. **Effort:** S.
 
 - [ ] [patch] **MN-463 — the Windows Jemalloc column needs an MSVC-built
-  jemalloc.** status=todo; owner=unclaimed; diagnosed 2026-09-01. This is the
+  jemalloc.** status=in-progress; owner=atlas-session; branch=
+  `fix/mnemosyne-jemalloc-abi-diagnostic`; lease=`crates/mnemosyne-benchmarks/build.rs`;
+  diagnosed 2026-09-01. This is the
   real GNU/MSVC mismatch, and it is now purely a library-provenance problem:
   `build.rs` finds `D:\msys64\ucrt64\lib\libjemalloc_s.a`, but that is a
   mingw-gcc archive whose objects reference `___chkstk_ms`, a GCC runtime
