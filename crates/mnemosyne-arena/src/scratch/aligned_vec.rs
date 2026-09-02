@@ -364,6 +364,96 @@ impl<T: ScratchElement + PartialEq> PartialEq<[T]> for AlignedVec<T> {
     }
 }
 
+impl<T: ScratchElement + Eq> Eq for AlignedVec<T> {}
+
+impl<T: ScratchElement + PartialOrd> PartialOrd for AlignedVec<T> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        self.as_slice().partial_cmp(other.as_slice())
+    }
+}
+
+impl<T: ScratchElement + Ord> Ord for AlignedVec<T> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.as_slice().cmp(other.as_slice())
+    }
+}
+
+impl<T: ScratchElement + core::hash::Hash> core::hash::Hash for AlignedVec<T> {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.as_slice().hash(state);
+    }
+}
+
+/// Consuming iterator that moves elements out of an `AlignedVec<T>`.
+///
+/// Created by [`AlignedVec::into_iter`] via the [`IntoIterator`] impl.
+/// Iterates the initialized elements in order; the remaining tail is freed
+/// when the iterator is dropped.
+pub struct IntoIter<T: ScratchElement> {
+    vec: AlignedVec<T>,
+    pos: usize,
+}
+
+impl<T: ScratchElement> Iterator for IntoIter<T> {
+    type Item = T;
+
+    #[inline]
+    fn next(&mut self) -> Option<T> {
+        if self.pos < self.vec.len() {
+            // SAFETY: `pos < len` guarantees the element at `pos` is
+            // initialized.  `T: ScratchElement: Copy` means reading (and
+            // logically moving) it by copy is sound; no destructor runs.
+            let value = unsafe { *self.vec.ptr.add(self.pos) };
+            self.pos += 1;
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.vec.len() - self.pos;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<T: ScratchElement> ExactSizeIterator for IntoIter<T> {}
+impl<T: ScratchElement> core::iter::FusedIterator for IntoIter<T> {}
+
+impl<T: ScratchElement> IntoIterator for AlignedVec<T> {
+    type Item = T;
+    type IntoIter = IntoIter<T>;
+
+    #[inline]
+    fn into_iter(self) -> IntoIter<T> {
+        IntoIter { vec: self, pos: 0 }
+    }
+}
+
+impl<'a, T: ScratchElement> IntoIterator for &'a AlignedVec<T> {
+    type Item = &'a T;
+    type IntoIter = core::slice::Iter<'a, T>;
+
+    #[inline]
+    fn into_iter(self) -> core::slice::Iter<'a, T> {
+        self.as_slice().iter()
+    }
+}
+
+impl<'a, T: ScratchElement> IntoIterator for &'a mut AlignedVec<T> {
+    type Item = &'a mut T;
+    type IntoIter = core::slice::IterMut<'a, T>;
+
+    #[inline]
+    fn into_iter(self) -> core::slice::IterMut<'a, T> {
+        self.as_mut_slice().iter_mut()
+    }
+}
+
 // SAFETY: `AlignedVec` uniquely owns its heap buffer with no aliasing or shared
 // ownership, so moving it to another thread is sound whenever the element type
 // is itself `Send`.

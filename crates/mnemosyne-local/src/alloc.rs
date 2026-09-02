@@ -192,6 +192,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                     // SAFETY: `ptr` is a freshly carved block of at least
                     // `adjusted_size` bytes; initialization writes only within it.
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+                    crate::bin_stats::record_alloc(class);
                     return ptr;
                 }
                 // SAFETY: same valid `page`; reclaim path adopts cross-thread
@@ -206,6 +207,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                     // SAFETY: as above, `ptr` is a fresh block of at least
                     // `adjusted_size` bytes owned by the caller.
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+                    crate::bin_stats::record_alloc(class);
                     return ptr;
                 }
             }

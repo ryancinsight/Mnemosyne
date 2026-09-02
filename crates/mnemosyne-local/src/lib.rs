@@ -68,6 +68,15 @@ pub mod tls;
 #[cfg(feature = "dealloc-probe")]
 pub mod dealloc_counters;
 
+/// Per-size-class allocation telemetry.
+///
+/// Process-wide `alloc_count`, `dealloc_count`, and `alloc_bytes` per size
+/// class, recorded with relaxed atomics on the fast path. One `LOCK XADD`
+/// overhead per alloc/free operation (≤ 1 ns on modern hardware). Use
+/// [`bin_stats::bin_snapshot`] or [`bin_stats::all_bin_snapshots`] to
+/// read snapshots for profiling and fragmentation monitoring.
+pub mod bin_stats;
+
 mod alloc;
 mod free;
 mod free_helpers;
@@ -81,6 +90,7 @@ mod validation;
 mod tests;
 
 pub use alloc::{thread_alloc, thread_alloc_layout};
+pub use bin_stats::{BinSnapshot, all_bin_snapshots, bin_snapshot};
 pub use fast_path_cache::{
     FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics, SizeClassCache,
 };
