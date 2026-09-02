@@ -194,3 +194,18 @@ impl<T: ScratchElement> Drop for AlignedVec<T> {
 // ownership, so moving it to another thread is sound whenever the element type
 // is itself `Send`.
 unsafe impl<T: ScratchElement + Send> Send for AlignedVec<T> {}
+
+impl<T: ScratchElement> core::ops::Deref for AlignedVec<T> {
+    type Target = [T];
+    #[inline]
+    fn deref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T: ScratchElement> core::ops::DerefMut for AlignedVec<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
