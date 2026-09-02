@@ -2,7 +2,7 @@
 
 extern crate std;
 
-#[allow(unused_imports)]
+#[expect(unused_imports)]
 use super::alloc::{
     SEGMENT_MAPPING_SIZE, SEGMENT_TAIL_GUARD_SIZE, allocate_segment, deallocate_segment,
     purge_segment_pool, release_segment_mapping, reset_segment_pool,

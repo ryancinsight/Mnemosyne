@@ -206,7 +206,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// # Errors
     /// Returns `Err(())` if layout calculations overflow or allocation fails.
     #[inline]
-    #[allow(clippy::result_unit_err)]
+    #[expect(clippy::result_unit_err)]
     pub fn reserve(
         &mut self,
         token: &mut ThreadLocalToken<'brand>,
@@ -231,7 +231,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// # Errors
     /// Returns `Err(())` if allocation fails.
     #[inline]
-    #[allow(clippy::result_unit_err)]
+    #[expect(clippy::result_unit_err)]
     pub fn shrink_to_fit(&mut self, token: &mut ThreadLocalToken<'brand>) -> Result<(), ()> {
         if core::mem::size_of::<T>() == 0 {
             return Ok(());

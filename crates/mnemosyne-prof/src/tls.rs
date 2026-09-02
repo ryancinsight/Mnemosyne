@@ -102,7 +102,7 @@ fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
 }
 
 #[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(miri)))]
-#[allow(dead_code)]
+#[expect(dead_code)]
 #[inline(always)]
 fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
     // SAFETY: `key` was returned by a successful `get_os_tls_key`, so it is a
@@ -127,7 +127,7 @@ fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
 }
 
 #[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(miri)))]
-#[allow(dead_code)]
+#[expect(dead_code)]
 #[inline(always)]
 fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
     // SAFETY: `key` is a valid allocated TLS slot index; the platform setter

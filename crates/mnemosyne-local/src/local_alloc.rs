@@ -1,5 +1,4 @@
 //! The thread-local allocator cache managing fast-path operations.
-#![allow(clippy::missing_const_for_thread_local)]
 
 use core::marker::PhantomData;
 use core::ptr::NonNull;
