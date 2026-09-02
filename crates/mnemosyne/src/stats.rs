@@ -175,6 +175,101 @@ pub fn memory_stats() -> MemoryStats {
     memory_stats_generic::<crate::StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>()
 }
 
+/// Returns a JSON representation of the current memory statistics and
+/// per-size-bin counters as an owned `String`.
+///
+/// The output is a single JSON object suitable for structured logging,
+/// dashboards, or diagnostic endpoints.  No external dependencies are
+/// required: the JSON is hand-rolled so this function is available in
+/// `no_std + alloc` contexts.
+///
+/// # Output shape
+///
+/// ```json
+/// {
+///   "current_mapped_bytes": 2097152,
+///   "peak_mapped_bytes": 4194304,
+///   ...
+///   "bins": [
+///     {"block_size": 16, "alloc_count": 1024, "dealloc_count": 1023, "live_estimate": 1},
+///     ...
+///   ]
+/// }
+/// ```
+pub fn memory_stats_json() -> alloc::string::String {
+    let s = memory_stats();
+    let bins = mnemosyne_local::all_bin_snapshots();
+    s.to_json_with_bins(&bins)
+}
+
+impl MemoryStats {
+    /// Serializes this snapshot plus per-bin counters to a JSON string.
+    ///
+    /// Use [`memory_stats_json`] for a convenient one-call version that
+    /// captures the current stats automatically.
+    pub fn to_json_with_bins(
+        &self,
+        bins: &[mnemosyne_local::BinSnapshot],
+    ) -> alloc::string::String {
+        use alloc::format;
+        use alloc::string::String;
+
+        let mut out = String::with_capacity(4096);
+        out.push('{');
+        macro_rules! kv_usize {
+            ($key:expr, $val:expr, $comma:expr) => {
+                if $comma {
+                    out.push(',');
+                }
+                out.push('"');
+                out.push_str($key);
+                out.push_str("\":");
+                out.push_str(&format!("{}", $val));
+            };
+        }
+        kv_usize!("current_mapped_bytes",    self.current_mapped_bytes, false);
+        kv_usize!("peak_mapped_bytes",        self.peak_mapped_bytes, true);
+        kv_usize!("map_calls",                self.map_calls, true);
+        kv_usize!("unmap_calls",              self.unmap_calls, true);
+        kv_usize!("page_reset_calls",         self.page_reset_calls, true);
+        kv_usize!("page_reset_bytes",         self.page_reset_bytes, true);
+        kv_usize!("decommit_bytes",
+            mnemosyne_backend::backend_memory_stats().decommit_bytes, true);
+        kv_usize!("purged_bytes",             self.purged_bytes, true);
+        kv_usize!("retained_free_segments",   self.retained_free_segments, true);
+        kv_usize!("max_retained_free_segments", self.max_retained_free_segments, true);
+        kv_usize!("retained_free_bytes",      self.retained_free_bytes, true);
+        kv_usize!("purged_segments",          self.purged_segments, true);
+        kv_usize!("purge_calls",              self.purge_calls, true);
+        kv_usize!("reset_segments",           self.reset_segments, true);
+        kv_usize!("reset_calls",              self.reset_calls, true);
+        kv_usize!("retained_huge_blocks",     self.retained_huge_blocks, true);
+        kv_usize!("retained_huge_bytes",      self.retained_huge_bytes, true);
+        kv_usize!("current_thread_live_allocations", self.current_thread_live_allocations, true);
+        kv_usize!("current_thread_owned_segments",   self.current_thread_owned_segments, true);
+        kv_usize!("cross_thread_reclaimed_blocks",   self.cross_thread_reclaimed_blocks, true);
+        kv_usize!("page_refills",             self.page_refills, true);
+        kv_usize!("recycled_pages",           self.recycled_pages, true);
+        kv_usize!("fresh_pages",              self.fresh_pages, true);
+        kv_usize!("fresh_segments",           self.fresh_segments, true);
+        kv_usize!("orphan_segments_adopted",  self.orphan_segments_adopted, true);
+        kv_usize!("recycle_sweeps",           self.recycle_sweeps, true);
+        // Per-bin array
+        out.push_str(",\"bins\":[");
+        for (i, bin) in bins.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&format!(
+                "{{\"block_size\":{},\"alloc_count\":{},\"dealloc_count\":{},\"live_estimate\":{}}}",
+                bin.block_size, bin.alloc_count, bin.dealloc_count, bin.live_estimate
+            ));
+        }
+        out.push_str("]}");
+        out
+    }
+}
+
 /// Purges the global segment pool for a specific backend, releasing all retained/cached segments back to the OS.
 pub fn purge_generic<B: mnemosyne_arena::HasSegmentPool>() {
     // SAFETY: Purging the segment pool releases only free segments that are

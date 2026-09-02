@@ -40,7 +40,12 @@ pub const MIN_BLOCK_SIZE: usize = 16;
 pub const MAX_ALLOC_SIZE: usize = isize::MAX as usize;
 
 /// The total number of small size classes.
-pub const NUM_SIZE_CLASSES: usize = 48;
+///
+/// Raised from 48 to 52 (MN-REF-1): the 8–16 KB range is now subdivided
+/// into 1024-byte steps instead of 2048-byte steps, reducing worst-case
+/// internal fragmentation from 25% to 12.5% for scientific workloads that
+/// allocate in the 8–16 KB band (FFT buffers, simulation cells, etc.).
+pub const NUM_SIZE_CLASSES: usize = 52;
 
 /// The maximum number of segments retained in the global pool (compile-time limit).
 pub const MAX_RETAINED_SEGMENTS_LIMIT: usize = 1024;
