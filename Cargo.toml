@@ -75,7 +75,7 @@ strip = "none"
 # every build warns about an unexpected condition name. Declared workspace-wide
 # because member crates inherit `[workspace.lints]` wholesale: a member cannot
 # carry its own `[lints.rust]` table alongside `lints.workspace = true`.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)', 'cfg(fuzzing)'] }
 
 [workspace.lints.clippy]
 pedantic = { level = "deny", priority = -1 }

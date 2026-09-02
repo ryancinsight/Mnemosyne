@@ -61,6 +61,13 @@ jobs:
       # AddressSanitizer cannot link against. Name the glibc target.
       - name: Fuzz c_shim_api for the committed budget
         run: |
+          # The shim suppresses its C symbol exports under `cfg(fuzzing)` (as under
+          # `cfg(test)`): exported, they interpose the process's malloc before the
+          # shim is ready and libFuzzer dies before its banner (run 33595785950).
+          # The target calls the shim by Rust path. Artifact and corpus
+          # directories exist up front so a crash file lands where the upload
+          # step looks.
+          mkdir -p fuzz/artifacts/c_shim_api fuzz/corpus/c_shim_api
           cargo fuzz run --target x86_64-unknown-linux-gnu c_shim_api -- \
             -max_total_time="$FUZZ_SECONDS" \
             -timeout=10 \
