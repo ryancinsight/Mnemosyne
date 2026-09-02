@@ -1,3 +1,6 @@
+//! Aligned, grow-only scratch vector whose newly grown range is zeroed so a
+//! reused buffer never exposes stale data.
+
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
@@ -67,16 +70,20 @@ impl<T: ScratchElement> AlignedVec<T> {
         unsafe { core::slice::from_raw_parts(self.ptr, self.len) }
     }
 
+    /// Number of initialized elements: the prefix `as_slice` exposes.
     #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Whether no element is initialized (`len() == 0`).
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
+    /// Elements the current allocation can hold before `ensure_len` must
+    /// reallocate; never less than `len()`.
     #[inline]
     pub fn capacity(&self) -> usize {
         self.capacity
@@ -106,6 +113,9 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.len = min_len;
     }
 
+    /// Raw pointer to the start of the aligned allocation. Valid for
+    /// `capacity()` elements, of which the first `len()` are initialized;
+    /// writes past `len()` do not extend the initialized prefix.
     #[inline]
     pub fn as_mut_ptr(&mut self) -> *mut T {
         self.ptr

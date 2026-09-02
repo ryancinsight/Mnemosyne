@@ -1,3 +1,5 @@
+//! Retained huge mappings, bucketed by size class within each NUMA node.
+
 use super::cache_aligned::CacheAlignedAtomicUsize;
 use super::numa_bucket::{NUMA_BUCKETS, bucket_index as numa_bucket, steal_from};
 use super::tagged_stack::TaggedSegmentStack;

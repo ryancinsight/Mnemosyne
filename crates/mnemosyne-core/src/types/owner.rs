@@ -1,3 +1,5 @@
+//! Segment ownership token: which thread allocator may mutate a segment.
+
 /// Permission identity for the thread allocator that owns a segment.
 ///
 /// This follows the GhostCell separation principle at allocator scale: segment

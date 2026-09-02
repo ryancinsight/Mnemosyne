@@ -1,3 +1,5 @@
+//! Segment metadata: the fixed-size mapping that owns a run of pages.
+
 use crate::constants::{PAGE_SIZE, PAGES_PER_SEGMENT};
 use crate::types::{Page, SegmentOwner};
 
