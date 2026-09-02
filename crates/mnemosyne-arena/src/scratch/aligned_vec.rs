@@ -89,6 +89,18 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.capacity
     }
 
+    /// Creates an `AlignedVec` of exactly `len` zero-initialized elements.
+    ///
+    /// Equivalent to `with_capacity(len)` followed by `ensure_len(len)`, but
+    /// expressed as a single constructor. All elements are zero (valid per the
+    /// [`ScratchElement`] invariant).
+    #[inline]
+    pub fn zeroed(len: usize) -> Self {
+        let mut v = Self::with_capacity(len);
+        v.ensure_len(len);
+        v
+    }
+
     /// Ensures capacity for at least `min_len` elements. Only grows; never
     /// shrinks. Only zeroes **newly** allocated elements, not existing ones.
     #[inline]
