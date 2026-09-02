@@ -113,7 +113,7 @@ fn usable_size_returns_payload_remainder_for_huge_allocations() {
     // more because the arena reserves alignment slack).
     let request = 4 * 1024 * 1024;
     for &align in &[8usize, 64 * 1024, 1024 * 1024, SEGMENT_SIZE] {
-        // Safety: power-of-two alignment, non-zero size.
+        // SAFETY: power-of-two alignment, non-zero size.
         let ptr = unsafe {
             mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(request, align, true)
         };
@@ -151,7 +151,7 @@ fn usable_size_does_not_over_report_past_mapping_end_for_huge_allocations() {
     // (raw_alloc_ptr + huge_size) and assert usable_size never exceeds it.
     let request = 4 * 1024 * 1024;
     for &align in &[8usize, 64 * 1024, 1024 * 1024, SEGMENT_SIZE] {
-        // Safety: power-of-two alignment, non-zero size.
+        // SAFETY: power-of-two alignment, non-zero size.
         let ptr = unsafe {
             mnemosyne_arena::allocate_large_or_huge::<MemoryBackendWrapper>(request, align, true)
         };

@@ -20,7 +20,7 @@ pub struct HandoffBuffer {
     slots: UnsafeCell<[usize; CROSS_THREAD_ALLOCS]>,
 }
 
-// Safety: the `slots` cell is never accessed concurrently. The producer writes
+// SAFETY: the `slots` cell is never accessed concurrently. The producer writes
 // exactly `batch.count` slots, then `send`s the batch over the `sync_channel`;
 // the worker only `read`s after `recv` returns that batch, and the producer
 // blocks on `done.recv()` before writing again. The channel send/recv pair
@@ -68,11 +68,11 @@ impl<A: GlobalAlloc + Send + Sync + 'static> HandoffWorker<A> {
         let handle = thread::spawn(move || {
             while let Ok(Some(batch)) = receiver.recv() {
                 for index in 0..batch.count {
-                    // Safety: the producer writes exactly `batch.count`
+                    // SAFETY: the producer writes exactly `batch.count`
                     // initialized slots before sending this command, and waits
                     // for `done` before reusing the buffer.
                     let ptr = unsafe { worker_buffer.read(index) };
-                    // Safety: each pointer in the batch was allocated by the
+                    // SAFETY: each pointer in the batch was allocated by the
                     // same allocator with `batch.layout` before handoff.
                     unsafe {
                         allocator.dealloc(ptr as *mut u8, batch.layout);
@@ -96,10 +96,10 @@ impl<A: GlobalAlloc + Send + Sync + 'static> HandoffWorker<A> {
     pub fn alloc_then_handoff(&self, layout: Layout, count: usize) {
         debug_assert!(count <= CROSS_THREAD_ALLOCS);
         for index in 0..count {
-            // Safety: `layout` is one of the static benchmark layouts.
+            // SAFETY: `layout` is one of the static benchmark layouts.
             let allocated = unsafe { self.allocator.alloc(black_box(layout)) };
             require_allocated(allocated, "cross-thread handoff allocation");
-            // Safety: `index < count <= CROSS_THREAD_ALLOCS`, and the worker
+            // SAFETY: `index < count <= CROSS_THREAD_ALLOCS`, and the worker
             // cannot read this buffer until the command is sent below.
             unsafe { self.buffer.write(index, allocated as usize) };
         }
@@ -149,7 +149,7 @@ impl<A: GlobalAlloc + Send + Sync + 'static> ThreadCycleWorkers<A> {
             let handle = thread::spawn(move || {
                 while let Ok(Some(iterations)) = receiver.recv() {
                     for _ in 0..iterations {
-                        // Safety: `layout` is a valid static layout and
+                        // SAFETY: `layout` is a valid static layout and
                         // `alloc_dealloc` validates non-null allocations.
                         unsafe {
                             alloc_dealloc(handle_allocator, layout);

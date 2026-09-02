@@ -297,7 +297,7 @@ impl<B: HasSegmentPool> Drop for ThreadExitReclaim<B> {
     fn drop(&mut self) {
         let cache = self.cache.get();
         if !cache.is_null() {
-            // Safety: `cache` was bound to the address of this thread's
+            // SAFETY: `cache` was bound to the address of this thread's
             // `#[thread_local]` allocator slot, whose storage outlives every
             // standard thread-local destructor on the same thread. The slot is
             // exclusive to this thread and `reclaim_owned_segments` clears the

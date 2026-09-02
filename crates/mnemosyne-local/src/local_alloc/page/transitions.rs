@@ -15,7 +15,7 @@ unsafe fn unlink_empty_page_with_token<'id, B: HasSegmentPool>(
     head_slot: &mut Option<NonNull<Page>>,
     target: NonNull<Page>,
 ) -> bool {
-    // Safety: the caller guarantees `target` is a valid page owned by this
+    // SAFETY: the caller guarantees `target` is a valid page owned by this
     // allocator; reading `list_state` is a plain field load.
     if unsafe { target.as_ref() }.list_state == 3 {
         let page = unsafe { token.page(target) };
@@ -74,7 +74,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let Some(target) = NonNull::new(page_ptr) else {
             return false;
         };
-        // Safety: `target` is non-null (checked above) and the caller
+        // SAFETY: `target` is non-null (checked above) and the caller
         // guarantees it points to a valid page owned by this allocator.
         if unsafe { target.as_ref() }.list_state == 2 {
             with_page_list_token::<B, _>(|mut token| {
@@ -106,7 +106,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         class: usize,
     ) -> bool {
         debug_assert!(class < NUM_SIZE_CLASSES);
-        // Safety: the caller guarantees `page_ptr` points to a valid page
+        // SAFETY: the caller guarantees `page_ptr` points to a valid page
         // owned by this allocator; reading `list_state` is a plain field load.
         if unsafe { page_ptr.as_ref() }.list_state != 2 {
             return false;
@@ -133,7 +133,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let Some(target) = NonNull::new(page_ptr) else {
             return;
         };
-        // Safety: `target` is non-null (checked above) and the caller
+        // SAFETY: `target` is non-null (checked above) and the caller
         // guarantees it points to a valid page owned by this allocator.
         let page = unsafe { target.as_ref() };
         debug_assert_eq!(page.size_class as usize, class);
@@ -166,7 +166,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let Some(target) = NonNull::new(page_ptr) else {
             return false;
         };
-        // Safety: `target` is non-null (checked above) and the caller
+        // SAFETY: `target` is non-null (checked above) and the caller
         // guarantees it points to a valid page owned by this allocator.
         if unsafe { target.as_ref() }.list_state == 3 {
             with_page_list_token::<B, _>(|mut token| {

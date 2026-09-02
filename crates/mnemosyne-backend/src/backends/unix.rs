@@ -100,7 +100,7 @@ unsafe fn hint_hugepage(ptr: *mut u8, length: usize) {
             && mnemosyne_core::options::ENABLE_HUGEPAGE_HINT
                 .load(core::sync::atomic::Ordering::Relaxed)
         {
-            // Safety: caller guarantees the mapping covers `length` bytes; madvise
+            // SAFETY: caller guarantees the mapping covers `length` bytes; madvise
             // is advisory and never invalidates the mapping on failure.
             let _ = unsafe { madvise(ptr as *mut c_void, length, MADV_HUGEPAGE) };
             // The advice discards its result, so this counter is the only
@@ -140,7 +140,7 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
     ///
     /// The size must be a multiple of the system page size (usually 4KB).
     unsafe fn allocate(size: usize) -> *mut u8 {
-        // Safety: Raw system call to mmap to establish a private anonymous page mapping.
+        // SAFETY: Raw system call to mmap to establish a private anonymous page mapping.
         // Size must be page-aligned and non-zero.
         let ptr = unsafe {
             mmap(
@@ -156,7 +156,7 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
             return core::ptr::null_mut();
         }
         let ptr = ptr as *mut u8;
-        // Safety: ptr is a valid mapping of `size` bytes. The hint is advisory
+        // SAFETY: ptr is a valid mapping of `size` bytes. The hint is advisory
         // and may be ignored by the kernel without affecting the mapping.
         unsafe { hint_hugepage(ptr, size) };
         ptr
@@ -172,7 +172,7 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
         if ptr.is_null() {
             return false;
         }
-        // Safety: Raw system call to munmap. The ptr must point to a valid mapped region
+        // SAFETY: Raw system call to munmap. The ptr must point to a valid mapped region
         // of the specified size.
         let res = unsafe { munmap(ptr as *mut c_void, size) };
         debug_assert_eq!(res, 0, "munmap failed");
@@ -196,7 +196,7 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
         // Miri's situation for this syscall.
         #[cfg(all(target_os = "linux", not(miri)))]
         {
-            // Safety: caller guarantees `ptr` is page-aligned inside an
+            // SAFETY: caller guarantees `ptr` is page-aligned inside an
             // active mapping and `size` is a non-zero multiple of the
             // system page size; madvise never invalidates the mapping.
             let res = unsafe { madvise(ptr as *mut c_void, size, MADV_DONTNEED) };
@@ -204,7 +204,7 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
         }
         #[cfg(all(any(target_os = "macos", target_os = "freebsd"), not(miri)))]
         {
-            // Safety: same contract as the Linux branch; macOS/FreeBSD
+            // SAFETY: same contract as the Linux branch; macOS/FreeBSD
             // MADV_FREE has identical "do not invalidate the mapping"
             // semantics.
             let res = unsafe { madvise(ptr as *mut c_void, size, MADV_FREE) };
@@ -228,7 +228,7 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
         if ptr.is_null() || size == 0 {
             return false;
         }
-        // Safety: caller guarantees `ptr` is page-aligned inside an active
+        // SAFETY: caller guarantees `ptr` is page-aligned inside an active
         // mapping and `size` is a non-zero multiple of the system page
         // size. `mprotect` does not invalidate the mapping; it only
         // changes access permissions.
@@ -258,13 +258,13 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
         // so it takes the same "unsupported target" `false` fallback.
         #[cfg(all(target_os = "linux", not(miri)))]
         {
-            // Safety: see `page_reset`; madvise never invalidates the mapping.
+            // SAFETY: see `page_reset`; madvise never invalidates the mapping.
             let res = unsafe { madvise(ptr as *mut c_void, size, MADV_DONTNEED) };
             res == 0
         }
         #[cfg(all(any(target_os = "macos", target_os = "freebsd"), not(miri)))]
         {
-            // Safety: see `page_reset`.
+            // SAFETY: see `page_reset`.
             let res = unsafe { madvise(ptr as *mut c_void, size, MADV_FREE) };
             res == 0
         }
@@ -317,7 +317,7 @@ mod tests {
             .expect("hugepage hint counter lock was poisoned");
         let size = SEGMENT_SIZE;
         let before = hugepage_hints();
-        // Safety: SEGMENT_SIZE is a non-zero power-of-two multiple of the
+        // SAFETY: SEGMENT_SIZE is a non-zero power-of-two multiple of the
         // system page size, satisfying the allocate contract.
         let ptr = unsafe { UnixBackend::allocate(size) };
         assert!(!ptr.is_null(), "segment-sized mapping must succeed");
@@ -328,7 +328,7 @@ mod tests {
         );
 
         // Touch the boundary bytes to confirm the entire region is mapped.
-        // Safety: ptr covers [0, size) bytes per the allocate contract.
+        // SAFETY: ptr covers [0, size) bytes per the allocate contract.
         unsafe {
             ptr.write_volatile(0xAA);
             ptr.add(size - 1).write_volatile(0x55);
@@ -336,7 +336,7 @@ mod tests {
             assert_eq!(ptr.add(size - 1).read_volatile(), 0x55);
         }
 
-        // Safety: ptr is the exact base of the size-byte mapping.
+        // SAFETY: ptr is the exact base of the size-byte mapping.
         let released = unsafe { UnixBackend::deallocate(ptr, size) };
         assert!(
             released,
@@ -359,7 +359,7 @@ mod tests {
             .expect("hugepage hint counter lock was poisoned");
         let size = PAGE_SIZE_FALLBACK;
         let before = hugepage_hints();
-        // Safety: size is a non-zero multiple of the system page size.
+        // SAFETY: size is a non-zero multiple of the system page size.
         let ptr = unsafe { UnixBackend::allocate(size) };
         assert!(!ptr.is_null());
         assert_eq!(
@@ -390,7 +390,7 @@ mod tests {
             .expect("hugepage hint counter lock was poisoned");
         let size = 3 * 1024 * 1024;
         let before = hugepage_hints();
-        // Safety: size is a non-zero multiple of the system page size.
+        // SAFETY: size is a non-zero multiple of the system page size.
         let ptr = unsafe { UnixBackend::allocate(size) };
         assert!(!ptr.is_null(), "large mapping must succeed");
         assert_eq!(

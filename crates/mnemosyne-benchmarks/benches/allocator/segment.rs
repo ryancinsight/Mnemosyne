@@ -16,7 +16,7 @@ unsafe fn segment_cache_eviction_cycle() {
         let mut segments =
             [core::ptr::null_mut::<mnemosyne_core::Segment>(); SEGMENT_EVICTION_ALLOCS];
         for segment in &mut segments {
-            // Safety: benchmark owns every returned segment pointer until it is
+            // SAFETY: benchmark owns every returned segment pointer until it is
             // deallocated later in this function.
             *segment = match mnemosyne_arena::allocate_segment::<
                 mnemosyne_backend::MemoryBackendWrapper,
@@ -27,7 +27,7 @@ unsafe fn segment_cache_eviction_cycle() {
         }
         black_box(&segments);
         for segment in segments {
-            // Safety: each `segment` was allocated above and is deallocated exactly once.
+            // SAFETY: each `segment` was allocated above and is deallocated exactly once.
             mnemosyne_arena::deallocate_segment::<mnemosyne_backend::MemoryBackendWrapper>(segment);
         }
         let stats =
@@ -42,7 +42,7 @@ unsafe fn segment_cache_eviction_cycle() {
 }
 
 pub fn bench_segment_cache_eviction(c: &mut Criterion) {
-    // Safety: benchmark setup clears only Mnemosyne's reusable segment pool.
+    // SAFETY: benchmark setup clears only Mnemosyne's reusable segment pool.
     unsafe {
         mnemosyne_arena::purge_segment_pool::<mnemosyne_backend::MemoryBackendWrapper>();
     }
@@ -50,12 +50,12 @@ pub fn bench_segment_cache_eviction(c: &mut Criterion) {
     let mut group = c.benchmark_group("Segment cache eviction");
     group.throughput(Throughput::Elements(SEGMENT_EVICTION_ALLOCS as u64));
     bench_sole_column(&mut group, "Mnemosyne", |b| {
-        // Safety: `segment_cache_eviction_cycle` owns every allocated segment.
+        // SAFETY: `segment_cache_eviction_cycle` owns every allocated segment.
         b.iter(|| unsafe { segment_cache_eviction_cycle() })
     });
     group.finish();
 
-    // Safety: benchmark teardown clears only Mnemosyne's reusable segment pool.
+    // SAFETY: benchmark teardown clears only Mnemosyne's reusable segment pool.
     unsafe {
         mnemosyne_arena::purge_segment_pool::<mnemosyne_backend::MemoryBackendWrapper>();
     }

@@ -12,13 +12,13 @@ pub(super) static MOCK_POOLS: mnemosyne_arena::segment::pool::BackendPools =
 impl MemoryBackend for MockBackend {
     unsafe fn allocate(size: usize) -> *mut u8 {
         ALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
-        // Safety: delegate to DefaultBackend
+        // SAFETY: delegate to DefaultBackend
         unsafe { DefaultBackend::allocate(size) }
     }
 
     unsafe fn deallocate(ptr: *mut u8, size: usize) -> bool {
         DEALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
-        // Safety: delegate to DefaultBackend
+        // SAFETY: delegate to DefaultBackend
         unsafe { DefaultBackend::deallocate(ptr, size) }
     }
 }

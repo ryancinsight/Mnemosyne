@@ -31,7 +31,7 @@ pub fn bench_realloc(c: &mut Criterion) {
         ),
     ] {
         group.throughput(Throughput::Elements(1));
-        // Safety: inputs come from the static valid benchmark layout table.
+        // SAFETY: inputs come from the static valid benchmark layout table.
         fn realloc<A: GlobalAlloc>(a: &A, input: &(Layout, usize)) {
             let (layout, new_size) = input;
             unsafe { alloc_realloc_dealloc(a, *layout, *new_size) }

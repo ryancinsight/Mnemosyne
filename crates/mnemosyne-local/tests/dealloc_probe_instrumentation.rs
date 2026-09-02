@@ -47,7 +47,7 @@ fn dealloc_probe_records_layout_small_frees_as_in_place() {
 
     let mut ptrs = [core::ptr::null_mut::<u8>(); N];
     for (i, slot) in ptrs.iter_mut().enumerate() {
-        // Safety: `BLOCK_SIZE` is a valid small request and `ALIGN` is a
+        // SAFETY: `BLOCK_SIZE` is a valid small request and `ALIGN` is a
         // power of two. `thread_alloc` returns null only on
         // out-of-memory, which we treat as a hard failure.
         let p = unsafe { thread_alloc::<Policy, Backend>(BLOCK_SIZE, ALIGN) };
@@ -58,9 +58,9 @@ fn dealloc_probe_records_layout_small_frees_as_in_place() {
     for (i, &p) in ptrs.iter().enumerate() {
         // Stamp before freeing so a write past the payload on a
         // wrong-class mapping would be caught by the assertion below.
-        // Safety: p is valid for `BLOCK_SIZE` writes.
+        // SAFETY: p is valid for `BLOCK_SIZE` writes.
         unsafe { core::ptr::write_bytes(p, 0xA5, BLOCK_SIZE) };
-        // Safety: each pointer was returned by `thread_alloc` above and
+        // SAFETY: each pointer was returned by `thread_alloc` above and
         // is freed exactly once; size/align matched the alloc request.
         unsafe { thread_free_layout::<Policy, Backend>(p, BLOCK_SIZE, ALIGN) };
         let _ = i;
@@ -114,7 +114,7 @@ fn dealloc_probe_records_layout_small_frees_as_in_place() {
 fn dealloc_probe_records_maximum_small_free_as_in_place() {
     reset();
 
-    // Safety: `MAX_SMALL_ALLOC_SIZE` is the validated upper bound of the
+    // SAFETY: `MAX_SMALL_ALLOC_SIZE` is the validated upper bound of the
     // small-allocation path and `ALIGN` is a power-of-two alignment accepted by
     // the allocator.
     let ptr = unsafe { thread_alloc::<Policy, Backend>(MAX_SMALL_ALLOC_SIZE, ALIGN) };
@@ -123,7 +123,7 @@ fn dealloc_probe_records_maximum_small_free_as_in_place() {
         "maximum small allocation returned a null pointer"
     );
 
-    // Safety: `ptr` was returned by the matching allocator and is released
+    // SAFETY: `ptr` was returned by the matching allocator and is released
     // exactly once with the original size and alignment.
     unsafe {
         thread_free_layout::<Policy, Backend>(ptr, MAX_SMALL_ALLOC_SIZE, ALIGN);

@@ -20,7 +20,7 @@ fn test_snmalloc_message_passing() {
     }
 
     let mut alloc_a = ThreadAllocator::<DefaultBackend>::new();
-    // Safety: alloc_a is initialized and valid.
+    // SAFETY: alloc_a is initialized and valid.
     let ptr = unsafe { alloc_a.alloc::<StandardPolicy>(32) };
     assert!(
         !ptr.is_null(),
@@ -31,7 +31,7 @@ fn test_snmalloc_message_passing() {
 
     // Verify that another thread can free A's block through the owning page queue.
     let handle = thread::spawn(move || {
-        // Safety: freeing block allocated by A
+        // SAFETY: freeing block allocated by A
         unsafe {
             crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(
                 ptr_usize as *mut u8,
@@ -48,7 +48,7 @@ fn test_snmalloc_message_passing() {
     let max_blocks = unsafe { (*segment).pages[page_index].max_blocks() };
     let mut probe_allocations = std::vec::Vec::with_capacity(max_blocks);
     for _ in 0..max_blocks {
-        // Safety: alloc_a is valid.
+        // SAFETY: alloc_a is valid.
         let ptr2 = unsafe { alloc_a.alloc::<StandardPolicy>(32) };
         assert!(
             !ptr2.is_null(),
@@ -86,7 +86,7 @@ fn cross_thread_free_does_not_charge_non_owner_defrag_counter() {
     use std::thread;
 
     let mut owner = ThreadAllocator::<DefaultBackend>::new();
-    // Safety: owner is initialized and valid.
+    // SAFETY: owner is initialized and valid.
     let ptr = unsafe { owner.alloc::<StandardPolicy>(32) };
     assert!(
         !ptr.is_null(),
@@ -100,7 +100,7 @@ fn cross_thread_free_does_not_charge_non_owner_defrag_counter() {
         })
         .expect("worker allocator slot unavailable before remote free");
 
-        // Safety: freeing block allocated by owner; this thread does not own
+        // SAFETY: freeing block allocated by owner; this thread does not own
         // the target page and must only enqueue it for owner-side reclamation.
         unsafe {
             crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(
@@ -126,7 +126,7 @@ fn cross_thread_free_does_not_charge_non_owner_defrag_counter() {
     let max_blocks = unsafe { (*segment).pages[page_index].max_blocks() };
     let mut probe_allocations = std::vec::Vec::with_capacity(max_blocks);
     for _ in 0..max_blocks {
-        // Safety: owner is valid.
+        // SAFETY: owner is valid.
         let ptr2 = unsafe { owner.alloc::<StandardPolicy>(32) };
         assert!(
             !ptr2.is_null(),
@@ -171,7 +171,7 @@ fn test_orphan_segment_reuse() {
     // Thread A allocates a block and exits
     thread::spawn(move || {
         let mut alloc_a = ThreadAllocator::<DefaultBackend>::new();
-        // Safety: alloc_a is valid.
+        // SAFETY: alloc_a is valid.
         let ptr = unsafe { alloc_a.alloc::<StandardPolicy>(32) };
         assert!(!ptr.is_null(), "orphan producer allocation failed");
         tx.send(ptr as usize)
@@ -186,7 +186,7 @@ fn test_orphan_segment_reuse() {
 
     // Thread B allocates a block. It should reuse the orphaned segment from A!
     let mut alloc_b = ThreadAllocator::<DefaultBackend>::new();
-    // Safety: alloc_b is valid.
+    // SAFETY: alloc_b is valid.
     let ptr_b = unsafe { alloc_b.alloc::<StandardPolicy>(64) };
     assert!(!ptr_b.is_null(), "orphan consumer allocation failed");
 
@@ -194,7 +194,7 @@ fn test_orphan_segment_reuse() {
     assert_eq!(alloc_b.stats().current_thread_owned_segments, 1);
 
     // Free the allocations
-    // Safety: pointers are valid and exclusive.
+    // SAFETY: pointers are valid and exclusive.
     unsafe {
         crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(live_ptr);
         crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(ptr_b);
@@ -228,7 +228,7 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
     use std::thread;
     use std::vec::Vec;
 
-    // Safety: TEST_LOCK is held; no concurrent allocator activity.
+    // SAFETY: TEST_LOCK is held; no concurrent allocator activity.
     unsafe { super::fixtures::drain_all_pools() };
 
     let (tx, rx) = mpsc::channel();
@@ -240,14 +240,14 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
     thread::spawn(move || {
         let mut alloc_a = ThreadAllocator::<DefaultBackend>::new();
         let ptrs: Vec<*mut u8> = (0..4)
-            // Safety: alloc_a is valid; BLOCK is a small size class.
+            // SAFETY: alloc_a is valid; BLOCK is a small size class.
             .map(|_| unsafe { alloc_a.alloc::<HardenedPolicy>(BLOCK) })
             .collect();
         assert!(
             ptrs.iter().all(|p| !p.is_null()),
             "hardened orphan producer allocation failed"
         );
-        // Safety: freeing two distinct pointers just allocated on this thread.
+        // SAFETY: freeing two distinct pointers just allocated on this thread.
         unsafe {
             crate::thread_free::<HardenedPolicy, DefaultBackend>(ptrs[1]);
             crate::thread_free::<HardenedPolicy, DefaultBackend>(ptrs[3]);
@@ -270,7 +270,7 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
     // with this thread's seed, so popping the producer-encoded `page.free`
     // chain decoded garbage and aborted on the free-list bounds check.
     let mut alloc_b = ThreadAllocator::<DefaultBackend>::new();
-    // Safety: alloc_b is valid; BLOCK is a small size class.
+    // SAFETY: alloc_b is valid; BLOCK is a small size class.
     let first = unsafe { alloc_b.alloc::<HardenedPolicy>(BLOCK) };
     assert!(
         !first.is_null(),
@@ -300,7 +300,7 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
     let mut consumer_ptrs = Vec::with_capacity(cap + 1);
     consumer_ptrs.push(first);
     for _ in 0..cap {
-        // Safety: alloc_b is valid; BLOCK is a small size class.
+        // SAFETY: alloc_b is valid; BLOCK is a small size class.
         let p = unsafe { alloc_b.alloc::<HardenedPolicy>(BLOCK) };
         assert!(
             !p.is_null(),
@@ -308,7 +308,7 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
         );
         consumer_ptrs.push(p);
         if freed.contains(&(p as usize)) {
-            // Safety: `p` was just returned by the allocator; 32 bytes are
+            // SAFETY: `p` was just returned by the allocator; 32 bytes are
             // writable block payload.
             unsafe {
                 core::ptr::write_bytes(p, 0xAB, BLOCK);
@@ -327,7 +327,7 @@ fn test_hardened_orphan_adoption_preserves_encoded_chains() {
         "adopted encoded free chain was not fully popped within {cap} allocations"
     );
 
-    // Safety: every pointer below was returned by this allocator family and is
+    // SAFETY: every pointer below was returned by this allocator family and is
     // freed exactly once (producer's live pair plus the consumer sweep).
     unsafe {
         for p in consumer_ptrs {
@@ -348,7 +348,7 @@ fn test_orphan_adoption_skips_policy_mismatched_segment() {
     use std::sync::mpsc;
     use std::thread;
 
-    // Safety: TEST_LOCK is held; no concurrent allocator activity.
+    // SAFETY: TEST_LOCK is held; no concurrent allocator activity.
     unsafe { super::fixtures::drain_all_pools() };
 
     let (tx, rx) = mpsc::channel();
@@ -356,7 +356,7 @@ fn test_orphan_adoption_skips_policy_mismatched_segment() {
     // Producer: orphan a plain (unencrypted) segment with one live block.
     thread::spawn(move || {
         let mut alloc_a = ThreadAllocator::<DefaultBackend>::new();
-        // Safety: alloc_a is valid; 32 is a small size class.
+        // SAFETY: alloc_a is valid; 32 is a small size class.
         let ptr = unsafe { alloc_a.alloc::<StandardPolicy>(32) };
         assert!(!ptr.is_null(), "standard orphan producer allocation failed");
         tx.send(ptr as usize)
@@ -374,7 +374,7 @@ fn test_orphan_adoption_skips_policy_mismatched_segment() {
     // would decode them with the per-page keys. The gate defers the orphan
     // back to the pool and takes a fresh segment instead.
     let mut alloc_hardened = ThreadAllocator::<DefaultBackend>::new();
-    // Safety: allocator is valid; 32 is a small size class.
+    // SAFETY: allocator is valid; 32 is a small size class.
     let ptr_h = unsafe { alloc_hardened.alloc::<HardenedPolicy>(32) };
     assert!(!ptr_h.is_null(), "hardened consumer allocation failed");
     let stats_h = alloc_hardened.stats();
@@ -387,7 +387,7 @@ fn test_orphan_adoption_skips_policy_mismatched_segment() {
 
     // A matching-policy consumer still finds the deferred orphan in the pool.
     let mut alloc_standard = ThreadAllocator::<DefaultBackend>::new();
-    // Safety: allocator is valid; 64 is a small size class.
+    // SAFETY: allocator is valid; 64 is a small size class.
     let ptr_s = unsafe { alloc_standard.alloc::<StandardPolicy>(64) };
     assert!(!ptr_s.is_null(), "standard consumer allocation failed");
     let stats_s = alloc_standard.stats();
@@ -397,7 +397,7 @@ fn test_orphan_adoption_skips_policy_mismatched_segment() {
     );
     assert_eq!(stats_s.current_thread_owned_segments, 1);
 
-    // Safety: pointers are valid, freed once, under their allocation policies.
+    // SAFETY: pointers are valid, freed once, under their allocation policies.
     unsafe {
         crate::thread_free::<StandardPolicy, DefaultBackend>(live_ptr);
         crate::thread_free::<HardenedPolicy, DefaultBackend>(ptr_h);
@@ -413,7 +413,7 @@ fn test_mixed_policy_free_and_realloc_preserve_segment_encoding() {
     use mnemosyne_core::policy::HardenedPolicy;
     use std::alloc::Layout;
 
-    // Safety: TEST_LOCK is held; no concurrent allocator activity.
+    // SAFETY: TEST_LOCK is held; no concurrent allocator activity.
     unsafe { super::fixtures::drain_all_pools() };
 
     // The public free-function surface uses separate zero-cost TLS slots for
@@ -476,7 +476,7 @@ fn test_mixed_policy_free_and_realloc_preserve_segment_encoding() {
         "hardened allocator must decode the block freed by standard-policy realloc"
     );
 
-    // Safety: every pointer is live and freed exactly once under a policy
+    // SAFETY: every pointer is live and freed exactly once under a policy
     // whose free path now consults the owning segment's mode.
     unsafe {
         crate::thread_free::<HardenedPolicy, DefaultBackend>(hardened_third);
@@ -639,7 +639,7 @@ fn cross_thread_free_pushes_block_to_page_thread_free_queue() {
     use std::thread;
 
     let mut owner = ThreadAllocator::<DefaultBackend>::new();
-    // Safety: owner is initialized and valid.
+    // SAFETY: owner is initialized and valid.
     let ptr = unsafe { owner.alloc::<StandardPolicy>(32) };
     assert!(
         !ptr.is_null(),
@@ -660,7 +660,7 @@ fn cross_thread_free_pushes_block_to_page_thread_free_queue() {
     );
 
     let handle = thread::spawn(move || unsafe {
-        // Safety: ptr was returned by Mnemosyne under DefaultBackend.
+        // SAFETY: ptr was returned by Mnemosyne under DefaultBackend.
         // Thread B is not the segment owner, so `thread_free<...>`
         // routes through `thread_free_cold`'s `page.thread_free.push`
         // rather than the in-place active/full/empty path.

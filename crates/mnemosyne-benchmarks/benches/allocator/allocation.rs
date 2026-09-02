@@ -26,7 +26,7 @@ impl<'a, A: GlobalAlloc> AllocatedBlock<'a, A> {
 
 impl<A: GlobalAlloc> Drop for AllocatedBlock<'_, A> {
     fn drop(&mut self) {
-        // Safety: `ptr` was allocated by `allocator` for `layout` in `new`.
+        // SAFETY: `ptr` was allocated by `allocator` for `layout` in `new`.
         unsafe { self.allocator.dealloc(self.ptr, self.layout) };
     }
 }
@@ -40,11 +40,11 @@ impl<A: GlobalAlloc> Drop for AllocatedBlock<'_, A> {
 /// accept deallocation of pointers it returns for that layout.
 pub unsafe fn alloc_dealloc<A: GlobalAlloc>(allocator: &A, layout: Layout) {
     unsafe {
-        // Safety: benchmark callers provide a valid `Layout`; null allocation
+        // SAFETY: benchmark callers provide a valid `Layout`; null allocation
         // results are rejected before the pointer is handed back to `dealloc`.
         let ptr = require_allocated(allocator.alloc(black_box(layout)), "alloc_dealloc");
         let ptr = black_box(ptr);
-        // Safety: `ptr` was returned by the same allocator for `layout` above.
+        // SAFETY: `ptr` was returned by the same allocator for `layout` above.
         allocator.dealloc(ptr, layout);
     }
 }
@@ -73,13 +73,13 @@ pub unsafe fn burst_alloc_dealloc<A: GlobalAlloc>(allocator: &A, layout: Layout)
     unsafe {
         let mut ptrs = [core::ptr::null_mut(); BATCH_ALLOCS];
         for ptr in &mut ptrs {
-            // Safety: benchmark callers provide a valid `Layout`; null allocation
+            // SAFETY: benchmark callers provide a valid `Layout`; null allocation
             // results are rejected before storing the pointer for later deallocation.
             *ptr = require_allocated(allocator.alloc(black_box(layout)), "burst_alloc_dealloc");
         }
         black_box(&ptrs);
         for ptr in ptrs {
-            // Safety: every pointer in `ptrs` was allocated by `allocator` with
+            // SAFETY: every pointer in `ptrs` was allocated by `allocator` with
             // `layout` in the loop above and has not yet been deallocated.
             allocator.dealloc(ptr, layout);
         }
@@ -101,7 +101,7 @@ where
     F: Fn(*mut u8) -> usize,
 {
     unsafe {
-        // Safety: benchmark callers provide a valid `Layout`; null allocation
+        // SAFETY: benchmark callers provide a valid `Layout`; null allocation
         // results are rejected before either usable-size probing or deallocation.
         let ptr = require_allocated(allocator.alloc(black_box(layout)), "alloc_usable_dealloc");
         let ptr = black_box(ptr);
@@ -113,7 +113,7 @@ where
             );
         }
         black_box(size);
-        // Safety: `ptr` was returned by the same allocator for `layout` above.
+        // SAFETY: `ptr` was returned by the same allocator for `layout` above.
         allocator.dealloc(black_box(ptr), layout);
     }
 }
@@ -133,22 +133,22 @@ pub unsafe fn alloc_realloc_dealloc<A: GlobalAlloc>(
     new_size: usize,
 ) {
     unsafe {
-        // Safety: benchmark callers provide a valid `Layout`; null allocation
+        // SAFETY: benchmark callers provide a valid `Layout`; null allocation
         // results are rejected before the pointer is passed to realloc.
         let ptr = require_allocated(
             allocator.alloc(black_box(old_layout)),
             "alloc_realloc_dealloc",
         );
-        // Safety: benchmark constants use valid size/alignment pairs.
+        // SAFETY: benchmark constants use valid size/alignment pairs.
         let new_layout = Layout::from_size_align_unchecked(new_size, old_layout.align());
-        // Safety: `ptr` was returned by `allocator` for `old_layout`, and
+        // SAFETY: `ptr` was returned by `allocator` for `old_layout`, and
         // `new_size` is valid for `old_layout.align()`.
         let new_ptr = require_allocated(
             allocator.realloc(ptr, old_layout, black_box(new_size)),
             "alloc_realloc_dealloc",
         );
         black_box(new_ptr);
-        // Safety: `new_ptr` was returned by the same allocator's realloc call.
+        // SAFETY: `new_ptr` was returned by the same allocator's realloc call.
         allocator.dealloc(new_ptr, new_layout);
     }
 }

@@ -104,7 +104,7 @@ impl AtomicFreeList {
             let current_ptr = current.map_addr(|_| current_addr);
             let next_count = ((current_value >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
 
-            // Safety: block_ptr is valid, writeable, aligned memory, exclusive
+            // SAFETY: block_ptr is valid, writeable, aligned memory, exclusive
             // to the pushing thread until the CAS publishes it.
             unsafe {
                 (*block_ptr).set_next_dynamic(NonNull::new(current_ptr), encrypted, cookie);
@@ -181,7 +181,7 @@ impl AtomicFreeList {
             if block_ptr == current {
                 crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
             }
-            // Safety: block_ptr is guaranteed to be valid, writeable, aligned memory,
+            // SAFETY: block_ptr is guaranteed to be valid, writeable, aligned memory,
             // exclusive to the thread calling push.
             unsafe {
                 (*block_ptr).set_next_dynamic(NonNull::new(current), encrypted, cookie);

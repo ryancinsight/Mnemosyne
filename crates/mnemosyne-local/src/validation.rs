@@ -9,12 +9,12 @@ use mnemosyne_core::policy::AllocPolicy;
 #[inline(always)]
 pub unsafe fn initialize_allocated_bytes<P: AllocPolicy>(ptr: *mut u8, size: usize) {
     if P::ZERO_INITIALIZE {
-        // Safety: the caller guarantees ptr is valid and writable for size bytes.
+        // SAFETY: the caller guarantees ptr is valid and writable for size bytes.
         unsafe {
             core::ptr::write_bytes(ptr, 0, size);
         }
     } else if P::ENABLE_POISONING {
-        // Safety: the caller guarantees ptr is valid and writable for size bytes.
+        // SAFETY: the caller guarantees ptr is valid and writable for size bytes.
         unsafe {
             core::ptr::write_bytes(ptr, P::POISON_ALLOC_BYTE, size);
         }
@@ -30,7 +30,7 @@ pub unsafe fn initialize_allocated_bytes<P: AllocPolicy>(ptr: *mut u8, size: usi
 #[inline(always)]
 pub unsafe fn poison_freed_bytes<P: AllocPolicy>(ptr: *mut u8, size: usize) {
     if P::ENABLE_POISONING {
-        // Safety: the caller guarantees ptr is valid and writable for size bytes.
+        // SAFETY: the caller guarantees ptr is valid and writable for size bytes.
         unsafe {
             core::ptr::write_bytes(ptr, P::POISON_FREE_BYTE, size);
         }

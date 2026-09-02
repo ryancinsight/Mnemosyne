@@ -253,7 +253,7 @@ impl Segment {
     ///
     /// `aligned_ptr` must be aligned to `SEGMENT_ALIGN` and valid for write.
     pub unsafe fn initialize(aligned_ptr: *mut Segment, raw_alloc_ptr: *mut u8, numa_node: u32) {
-        // Safety: aligned_ptr must point to a valid, exclusive, aligned memory segment.
+        // SAFETY: aligned_ptr must point to a valid, exclusive, aligned memory segment.
         // We initialize the segment fields and establish parent/child pointers safely.
         unsafe {
             let segment = &mut *aligned_ptr;

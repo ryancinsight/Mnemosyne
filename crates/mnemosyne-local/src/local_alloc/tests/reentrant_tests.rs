@@ -11,7 +11,7 @@ fn unguarded_fast_path_rejects_reentrant_borrow() {
 
     let outer_saw_reentrant_none = MockBackend::with_allocator(|_outer| {
         // Inside the guarded borrow: is_allocating is set.
-        // Safety: the probe closure performs no allocator re-entry.
+        // SAFETY: the probe closure performs no allocator re-entry.
         let reentrant = unsafe { MockBackend::with_allocator_unguarded(|_inner| 0xC0FFEE_usize) };
         reentrant.is_none()
     });
@@ -22,7 +22,7 @@ fn unguarded_fast_path_rejects_reentrant_borrow() {
     );
 
     // With no guard held, the unguarded path is permitted and runs `f`.
-    // Safety: the closure does not re-enter the allocator.
+    // SAFETY: the closure does not re-enter the allocator.
     let allowed = unsafe { MockBackend::with_allocator_unguarded(|_alloc| 7_usize) };
     assert_eq!(
         allowed,
@@ -48,7 +48,7 @@ fn unguarded_cold_branch_uses_the_cached_allocator_pointer() {
         .expect("local allocator test lock was poisoned");
 
     let observed = std::thread::spawn(|| {
-        // Safety: first allocator touch on this thread, so no borrow is live
+        // SAFETY: first allocator touch on this thread, so no borrow is live
         // and the closure performs no re-entry.
         unsafe { MockBackend::with_allocator_unguarded(|_alloc| 0xBEEF_usize) }
     })

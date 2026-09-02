@@ -1,6 +1,6 @@
 use core::alloc::Layout;
 
-// Safety: all benchmark layouts use nonzero power-of-two alignments and fixed
+// SAFETY: all benchmark layouts use nonzero power-of-two alignments and fixed
 // positive sizes.
 pub const SMALL_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(32, 8) };
 pub const SMALL_WITHIN_CLASS_LAYOUT: Layout = unsafe { Layout::from_size_align_unchecked(24, 8) };

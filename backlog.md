@@ -517,7 +517,7 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   what each counter accumulates, which prefix a pointer/length covers, what a
   cadence of zero means. `cargo doc --no-deps -D warnings`, clippy
   `-D warnings` and 68/68 tests green for both packages.
-- [ ] **MNEM-UNSAFE-DOC-1** [verification][patch] status=todo owner=unclaimed
+- [ ] **MNEM-UNSAFE-DOC-1** [verification][patch] status=in-progress owner=Claude
   scope=the 84 sites enumerated in `gap_audit.md`; largest clusters
   `mnemosyne-local/src/free.rs` (17), `local_alloc/page/transitions.rs` (11),
   `alloc.rs` (8), `mnemosyne-decay/src/lib.rs` (7),
@@ -533,7 +533,15 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   (terminology SSOT) and normalize in the same pass so the scan can be
   mechanized as a CI check. **Dependencies:** none. **Risk/change class:**
   [patch]. **Effort:** L.
-
+  **Ratchet started 2026-09-02:** `scripts/safety_comment_scan.py` is the
+  mechanized audit (production `unsafe {}` blocks without a `// SAFETY:` in the
+  preceding fourteen lines; test modules, `tests/`, `benches/`, `fuzz/` and the
+  benchmark crate excluded) and CI runs its `check` mode with a baseline that
+  only moves down. The spelling is normalized to `// SAFETY:` (85 `Safety:`
+  sites). The largest cluster, `mnemosyne-local/src/free.rs` (18 sites), is
+  discharged; baseline **61**, next clusters `local/alloc.rs` (8),
+  `decay/lib.rs` (7), `local/realloc.rs` (6), `local_alloc/page/transitions.rs`
+  (6), `page/lists.rs` (5).
 - [ ] **MNEM-PM-COMPACT-1** [pm-hygiene][patch] status=todo owner=unclaimed
   scope=`backlog.md`, `checklist.md`. Non-goals: deleting evidence — closed
   items keep their commit/PR references; touching any in-progress claim.

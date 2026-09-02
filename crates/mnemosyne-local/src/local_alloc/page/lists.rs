@@ -74,7 +74,7 @@ pub(crate) unsafe fn push_page_front<'id, B: HasSegmentPool>(
         (*raw_page.as_ptr()).prev_page = None;
     }
     if let Some(head) = *head_slot {
-        // Safety: the caller's token contract covers every page linked from
+        // SAFETY: the caller's token contract covers every page linked from
         // `head_slot`, so the head pointer is valid and exclusively reachable
         // through this list walk.
         unsafe {
@@ -115,7 +115,7 @@ pub(crate) unsafe fn unlink_page_from_list<'id, B: HasSegmentPool>(
     let prev = unsafe { (*raw_page.as_ptr()).prev_page };
 
     if let Some(prev_ptr) = prev {
-        // Safety: the caller's token contract covers adjacent pages in the
+        // SAFETY: the caller's token contract covers adjacent pages in the
         // same intrusive list, so `prev_ptr` is valid and exclusively
         // reachable through this list walk.
         unsafe {
@@ -127,7 +127,7 @@ pub(crate) unsafe fn unlink_page_from_list<'id, B: HasSegmentPool>(
     }
 
     if let Some(next_ptr) = next {
-        // Safety: the caller's token contract covers adjacent pages in the
+        // SAFETY: the caller's token contract covers adjacent pages in the
         // same intrusive list, so `next_ptr` is valid and exclusively
         // reachable through this list walk.
         unsafe {
@@ -182,7 +182,7 @@ pub(crate) unsafe fn move_page_between_lists_branded<'id, B: HasSegmentPool>(
 
     // Unlink page from the source list.
     if let Some(prev_ptr) = prev {
-        // Safety: the caller's token contract covers every page reachable from
+        // SAFETY: the caller's token contract covers every page reachable from
         // either list, so `prev_ptr` is valid and exclusively reachable here.
         unsafe {
             let prev_ptr = token.page(prev_ptr).ptr();
@@ -193,7 +193,7 @@ pub(crate) unsafe fn move_page_between_lists_branded<'id, B: HasSegmentPool>(
     }
 
     if let Some(next_ptr) = next {
-        // Safety: the caller's token contract covers every page reachable from
+        // SAFETY: the caller's token contract covers every page reachable from
         // either list, so `next_ptr` is valid and exclusively reachable here.
         unsafe {
             let next_ptr = token.page(next_ptr).ptr();
@@ -208,7 +208,7 @@ pub(crate) unsafe fn move_page_between_lists_branded<'id, B: HasSegmentPool>(
         (*raw_page.as_ptr()).prev_page = None;
     }
     if let Some(head_ptr) = head {
-        // Safety: the caller's token contract covers every page reachable from
+        // SAFETY: the caller's token contract covers every page reachable from
         // either list, so `head_ptr` is valid and exclusively reachable here.
         unsafe {
             let head_ptr = token.page(head_ptr).ptr();

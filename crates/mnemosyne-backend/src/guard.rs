@@ -22,7 +22,7 @@ pub(crate) fn do_make_guard<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool
     if ptr.is_null() || size == 0 {
         return false;
     }
-    // Safety: caller upholds the per-platform make_guard contract.
+    // SAFETY: caller upholds the per-platform make_guard contract.
     let guarded = unsafe { B::make_guard(ptr, size) };
     if guarded {
         record_guard_install(size);

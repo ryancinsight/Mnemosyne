@@ -315,7 +315,7 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
     } else {
         // It is a standard segment containing page allocations.
         // Return it to the global segment pool.
-        // Safety: deallocate_segment is safe as resolved_segment_ptr is valid and owned by us.
+        // SAFETY: deallocate_segment is safe as resolved_segment_ptr is valid and owned by us.
         unsafe { deallocate_segment::<B>(resolved_segment_ptr) };
         true
     }

@@ -54,7 +54,7 @@ pub mod bench_jemalloc {
         /// `GlobalAlloc` over the system jemalloc static library.
         pub struct SystemJemalloc;
 
-        // Safety: jemalloc's allocator is thread-safe and satisfies the
+        // SAFETY: jemalloc's allocator is thread-safe and satisfies the
         // `GlobalAlloc` contract; the sized `je_*x` calls forward layout size
         // and alignment exactly.
         unsafe impl GlobalAlloc for SystemJemalloc {
@@ -74,7 +74,7 @@ pub mod bench_jemalloc {
 
             unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
                 unsafe {
-                    // Safety: new_size is nonzero and align is the original
+                    // SAFETY: new_size is nonzero and align is the original
                     // power-of-two alignment, a valid layout.
                     let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
                     je_rallocx(ptr, new_size, flags(new_layout))
@@ -139,7 +139,7 @@ unsafe extern "system" fn fallback_virtual_alloc_2_from_app(
             ) -> *mut core::ffi::c_void;
         }
 
-        // Safety: the imported Win32 functions are called with static nul-terminated
+        // SAFETY: the imported Win32 functions are called with static nul-terminated
         // symbol names and the returned handles are checked for null before use.
         unsafe {
             let kernel32 = GetModuleHandleA(c"kernel32.dll".as_ptr() as *const u8);
@@ -147,7 +147,7 @@ unsafe extern "system" fn fallback_virtual_alloc_2_from_app(
                 let func_ptr =
                     GetProcAddress(kernel32, c"VirtualAlloc2FromApp".as_ptr() as *const u8);
                 if !func_ptr.is_null() {
-                    // Safety: `func_ptr` was resolved for `VirtualAlloc2FromApp`,
+                    // SAFETY: `func_ptr` was resolved for `VirtualAlloc2FromApp`,
                     // whose ABI matches `FuncType`.
                     return Some(core::mem::transmute::<*mut core::ffi::c_void, FuncType>(
                         func_ptr,
@@ -155,7 +155,7 @@ unsafe extern "system" fn fallback_virtual_alloc_2_from_app(
                 }
                 let func_ptr2 = GetProcAddress(kernel32, c"VirtualAlloc2".as_ptr() as *const u8);
                 if !func_ptr2.is_null() {
-                    // Safety: `func_ptr2` was resolved for `VirtualAlloc2`,
+                    // SAFETY: `func_ptr2` was resolved for `VirtualAlloc2`,
                     // whose ABI matches `FuncType`.
                     return Some(core::mem::transmute::<*mut core::ffi::c_void, FuncType>(
                         func_ptr2,
@@ -167,7 +167,7 @@ unsafe extern "system" fn fallback_virtual_alloc_2_from_app(
     });
 
     if let Some(func) = func_opt {
-        // Safety: `func` is a checked dynamic symbol matching `FuncType`.
+        // SAFETY: `func` is a checked dynamic symbol matching `FuncType`.
         unsafe {
             func(
                 h_process,
@@ -188,7 +188,7 @@ unsafe extern "system" fn fallback_virtual_alloc_2_from_app(
                 flProtect: u32,
             ) -> *mut core::ffi::c_void;
         }
-        // Safety: forwards the raw allocation request to the OS fallback with the
+        // SAFETY: forwards the raw allocation request to the OS fallback with the
         // same parameters supplied to the missing `VirtualAlloc2*` entry point.
         unsafe { VirtualAlloc(base_address, size, allocation_type, protect) }
     }
