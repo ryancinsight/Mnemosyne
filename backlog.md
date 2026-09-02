@@ -72,11 +72,9 @@
   agree and one does not. Split to MN-467, blocked on MN-466. **Non-goals held:**
   no benchmark body, workload, or threshold value changed.
 
-- [ ] [patch] [perf] **MN-466 — `huge_shrink_4m_to_2m` does not reproduce
-  itself, and only for Mnemosyne.** status=in-progress; owner=atlas-session;
-  branch=`perf/mnemosyne-huge-realloc-variance`;
-  lease=`scripts/allocator_measurement.py`, `crates/mnemosyne-arena`;
-  found
+- [x] [patch] [perf] **MN-466 — `huge_shrink_4m_to_2m` does not reproduce
+  itself, and only for Mnemosyne.** status=done (2026-09-02); owner=atlas-session;
+  branch=`perf/mnemosyne-huge-realloc-variance`; lease=discharged; found
   2026-09-01 by MN-464's procedure. With placement, throttling, and sample
   budget all controlled, `realloc latency/mnemosyne/huge_shrink_4m_to_2m`
   spreads **30.9%** across three identical runs (12.69 / 11.17 / 9.70 µs) and
@@ -92,9 +90,12 @@
   the row is deliberately removed from the gate with that reason recorded — not
   left as a permanently untrustworthy gate row. **Acceptance oracle:**
   `benchmark_summary --repeat-spread` passes over three runs of
-  `scripts/allocator_measurement.py`. **Non-goals:** widening the row's
-  threshold or variance ceiling to accommodate the spread; changing the
-  benchmark's workload. **Dependencies:** none. **Effort:** M.
+  `scripts/allocator_measurement.py`. **Outcome:** the exact three-run
+  procedure passes all 12 rows; `huge_shrink_4m_to_2m` measures 14.10% spread
+  against its 15.00% ceiling, so no allocator or gate change is justified.
+  **Non-goals:** widening the row's threshold or variance ceiling to
+  accommodate the spread; changing the benchmark's workload.
+  **Dependencies:** none. **Effort:** M.
 
 - [ ] [patch] [perf] **MN-467 — capture the threshold baseline under the pinned
   procedure.** status=blocked; owner=unclaimed; blocker=MN-466;
