@@ -133,6 +133,32 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.ptr
     }
 
+    /// Resizes the buffer in place to `new_len` elements.
+    ///
+    /// - If `new_len > self.len()`: new elements are filled with `value` and the
+    ///   allocation grows if needed.
+    /// - If `new_len <= self.len()`: the buffer is truncated without freeing.
+    #[inline]
+    pub fn resize(&mut self, new_len: usize, value: T) {
+        if new_len > self.len {
+            let additional = new_len - self.len;
+            self.reserve(additional);
+            // SAFETY: `reserve(additional)` guarantees `capacity >= new_len`.
+            // Each write targets a distinct index in `[self.len, new_len)` which
+            // is inside the allocation and beyond the currently-initialized prefix.
+            // `T: Copy` makes the write correct without any destructor bookkeeping.
+            unsafe {
+                let base = self.ptr.add(self.len);
+                for i in 0..additional {
+                    core::ptr::write(base.add(i), value);
+                }
+            }
+            self.len = new_len;
+        } else {
+            self.len = new_len;
+        }
+    }
+
     /// Sets the length to zero, retaining the underlying allocation for reuse.
     ///
     /// Elements are not zeroed; subsequent [`push`][Self::push] or
@@ -295,6 +321,13 @@ impl<T: ScratchElement> Clone for AlignedVec<T> {
         let mut v = Self::with_capacity(self.len);
         v.extend_from_slice(self.as_slice());
         v
+    }
+}
+
+impl<T: ScratchElement> Default for AlignedVec<T> {
+    #[inline]
+    fn default() -> Self {
+        Self::dangling()
     }
 }
 
