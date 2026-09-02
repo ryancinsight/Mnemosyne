@@ -275,6 +275,17 @@
   (`--profile miri`, concurrency binaries excluded as in CI), local 84/84
   under Stacked Borrows. Tree Borrows runs on the PR.
 
+  **Consumer effect (2026-09-01, apollo).** Moirai's per-worker local deques
+  are 16,384-byte direct Mnemosyne allocations, four per worker — the
+  `16384x96` block apollo's retained-footprint probe records at pool warmup.
+  Those sat exactly on the old ceiling's far side, so each one took the
+  huge path and its own ~2 MiB segment: apollo's record cites a
+  209,190,912-byte mapped-address delta for them. On the 16 KiB ceiling the
+  same 96 blocks report `class deltas 47:+96` and **mapped bytes +4,194,304**
+  — the class path packs them four to a page. A ~50x reduction in mapped
+  address space for the scheduler's queue payloads, landed in every consumer
+  by advancing the pin.
+
   `MAX_SMALL_ALLOC_SIZE = 8 * 1024`, so a request above 8 KiB leaves the
   thread-cache path for the large/huge path. Measured alloc+free pairs, best of
   150 blocks of 1000, warm, against `std::alloc::System` in the same binary:
