@@ -1,0 +1,66 @@
+# Runs the committed libFuzzer target against the C ABI — the crate's one
+# untrusted-input boundary — for a fixed budget. Scheduled rather than
+# per-event: a five-minute fuzz run gates nothing a pull request changes in
+# time to matter, and the crash it finds is a regression to commit to the
+# corpus, not a check to re-run. libFuzzer needs the nightly sanitizer
+# toolchain, selected explicitly so the repository's stable pin stays the
+# build toolchain everywhere else.
+name: Fuzz
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  # Budget of one fuzzing pass, in seconds; the job bound below leaves room
+  # for the sanitizer build on top of it.
+  FUZZ_SECONDS: "300"
+
+jobs:
+  c-shim-api:
+    name: Fuzz the C ABI (libFuzzer, nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RUSTUP_TOOLCHAIN: nightly
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the nightly toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: nightly
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
+        with:
+          tool: cargo-fuzz
+
+      - name: Fuzz c_shim_api for the committed budget
+        run: |
+          cargo fuzz run c_shim_api -- \
+            -max_total_time="$FUZZ_SECONDS" \
+            -timeout=10 \
+            -print_final_stats=1
+
+      - name: Keep the crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-artifacts-c_shim_api
+          path: fuzz/artifacts/c_shim_api
+          if-no-files-found: ignore
