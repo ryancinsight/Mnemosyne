@@ -158,7 +158,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// # Errors
     /// Returns `Err(())` if capacity overflow or allocation fails.
     #[inline]
-    #[allow(clippy::result_unit_err)] // Preserve the existing allocation-failure API.
+    #[expect(clippy::result_unit_err)] // Preserve the existing allocation-failure API.
     pub fn extend_from_slice(
         &mut self,
         token: &mut ThreadLocalToken<'brand>,
@@ -183,7 +183,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// # Errors
     /// Returns `Err(())` if capacity overflow or allocation fails.
     #[inline]
-    #[allow(clippy::result_unit_err)] // Preserve the existing allocation-failure API.
+    #[expect(clippy::result_unit_err)] // Preserve the existing allocation-failure API.
     pub fn resize(
         &mut self,
         token: &mut ThreadLocalToken<'brand>,
@@ -209,7 +209,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// # Errors
     /// Returns `Err(())` if allocation fails.
     #[inline]
-    #[allow(clippy::result_unit_err)] // Preserve the existing allocation-failure API.
+    #[expect(clippy::result_unit_err)] // Preserve the existing allocation-failure API.
     pub fn extend<I>(&mut self, token: &mut ThreadLocalToken<'brand>, iter: I) -> Result<(), ()>
     where
         I: IntoIterator<Item = T>,

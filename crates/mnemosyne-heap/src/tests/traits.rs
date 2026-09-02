@@ -216,11 +216,11 @@ fn test_branding_thread_bounds() {
     // mutation of the thread-local allocator cache.
 
     // We verify that *mut () itself is !Send + !Sync.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     trait ImplementsSend {}
     impl<T: Send> ImplementsSend for T {}
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     trait ImplementsSync {}
     impl<T: Sync> ImplementsSync for T {}
 

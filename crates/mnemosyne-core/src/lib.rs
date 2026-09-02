@@ -91,7 +91,7 @@ pub trait MemoryBackend: Send + Sync + 'static {
     /// allocation returned by `allocate`. After a successful reset the
     /// region may be re-faulted by the kernel; callers must not assume the
     /// previous bytes are still present.
-    #[allow(unused_variables)]
+    #[expect(unused_variables)]
     unsafe fn page_reset(ptr: *mut u8, size: usize) -> bool {
         false
     }
@@ -119,7 +119,7 @@ pub trait MemoryBackend: Send + Sync + 'static {
     /// successful guard install, every read or write to the range raises
     /// the platform's protection fault — callers must ensure no live
     /// allocator data lives in the range.
-    #[allow(unused_variables)]
+    #[expect(unused_variables)]
     unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
         false
     }
@@ -148,7 +148,7 @@ pub trait MemoryBackend: Send + Sync + 'static {
     /// returned by `allocate` **and** must hold no live allocator data — after a
     /// successful decommit the range faults on access until re-committed or
     /// released.
-    #[allow(unused_variables)]
+    #[expect(unused_variables)]
     unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
         false
     }

@@ -575,7 +575,7 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   replenishment. **Dependencies:** none — but do this before filing further
   items. **Risk/change class:** [patch]. **Effort:** M.
 
-- [ ] **MNEM-LINTFLOOR-1** [pm-hygiene][patch] status=todo owner=unclaimed
+- [x] **MNEM-LINTFLOOR-1** [pm-hygiene][patch] status=done owner=claude (2026-09-01)
   scope=`Cargo.toml` `[workspace.lints]` block,
   `crates/mnemosyne-core/src/kernel_budget.rs`,
   `crates/mnemosyne-local/src/tests.rs`. Non-goals: loosening any lint level;
@@ -592,6 +592,16 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   to the floor so the migration is mechanized thereafter. **Dependencies:**
   none. **Risk/change class:** [patch]. **Effort:** S.
 
+  **Delivered:** both unwrap sites now carry
+  `#![cfg_attr(test, expect(clippy::unwrap_used, reason = "MNEM-UNWRAP-1: ..."))]`
+  (6 + 18 = 24 unwraps, as the comment said), so the ratchet claim is true
+  and self-expiring. `allow_attributes = "deny"` joins the restriction floor,
+  and every other `#[allow]` in the workspace (18) became `#[expect]`; five of
+  those proved unfulfilled under clippy — `missing_const_for_thread_local`
+  suppressions in mnemosyne-prof, mnemosyne-arena, mnemosyne-local,
+  mnemosyne-heap tests, and the tls bench that no longer fired — and are
+  deleted. The comment describes the `cfg_attr(test, expect(...))` form.
+  Workspace Clippy `-D warnings` clean; 339/339.
 - [ ] **MNEM-BOOK-DEPTH-1** [docs][minor] status=todo owner=unclaimed
   scope=`docs/book/`. Non-goals: the two factual rewrites already landed
   (`size_classes.md`, `numa_placement.md`); adding chapters with no teaching

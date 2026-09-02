@@ -1,5 +1,4 @@
 #![cfg_attr(nightly_tls_active, feature(thread_local))]
-#![allow(clippy::missing_const_for_thread_local)]
 
 use core::sync::atomic::AtomicU32;
 use criterion::{Criterion, black_box, criterion_group, criterion_main};

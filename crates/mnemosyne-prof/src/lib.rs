@@ -4,7 +4,6 @@
 //! call on every allocation and deallocation.
 
 #![cfg_attr(nightly_tls_active, feature(thread_local))]
-#![allow(clippy::missing_const_for_thread_local)]
 #![deny(missing_docs)]
 
 use core::ffi::c_void;

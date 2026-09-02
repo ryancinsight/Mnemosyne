@@ -11,9 +11,9 @@
 //! every limiter resolves at compile time when the budget is a constant.
 #![cfg_attr(
     test,
-    allow(
+    expect(
         clippy::unwrap_used,
-        reason = "test scope: an unmet precondition in a test is a test failure"
+        reason = "MNEM-UNWRAP-1: test scope, an unmet precondition in a test is a test failure"
     )
 )]
 

@@ -131,6 +131,11 @@ redundant_else = "allow" # 1 (1 prod)
 
 # --- Restriction floor ---
 # `unwrap_used` is denied outright: no workspace-wide allow. The 24 existing
-# sites (0 in production) are pinned per file by `#![expect(..., reason = "MNEM-UNWRAP-1")]`,
-# which self-expires the moment a file's last unwrap goes.
+# sites (0 in production; 6 in mnemosyne-core's kernel_budget.rs, 18 in
+# mnemosyne-local's tests.rs) are pinned per file by
+# `#![cfg_attr(test, expect(clippy::unwrap_used, reason = "MNEM-UNWRAP-1: ..."))]`,
+# which self-expires the moment a file's last unwrap goes: an unfulfilled
+# expectation is itself a denied warning. `allow_attributes` below keeps every
+# other suppression on the same self-expiring form.
 unwrap_used = "deny"
+allow_attributes = "deny"
