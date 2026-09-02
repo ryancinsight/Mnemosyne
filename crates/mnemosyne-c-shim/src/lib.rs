@@ -49,12 +49,13 @@ const ENOMEM: i32 = 12;
 ///
 /// This is an `extern "C"` entry point. The returned pointer must be
 /// released with [`free`].
-// Not exported under `cfg(test)`: on ELF targets a `no_mangle` definition of
-// a libc allocator symbol interposes process-wide, so the test harness's own
-// startup allocations would route here before the shim is ready and the
-// binary dies before listing tests. The tests call these by Rust path, so
-// suppressing only the C symbol costs no coverage.
-#[cfg_attr(not(test), unsafe(no_mangle))]
+// Not exported under `cfg(test)` or `cfg(fuzzing)`: on ELF targets a
+// `no_mangle` definition of a libc allocator symbol interposes process-wide,
+// so the test harness's — or libFuzzer's — own startup allocations would route
+// here before the shim is ready and the binary dies before listing tests (or
+// printing the fuzzer banner). Tests and the fuzz target call these by Rust
+// path, so suppressing only the C symbol costs no coverage.
+#[cfg_attr(not(any(test, fuzzing)), unsafe(no_mangle))]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     let request = if size == 0 { 1 } else { size };
     // Safety: MALLOC_ALIGN is a nonzero power of two; thread_alloc validates
@@ -73,12 +74,13 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
 ///
 /// `ptr` must be null or a pointer returned by this shim and not yet
 /// freed.
-// Not exported under `cfg(test)`: on ELF targets a `no_mangle` definition of
-// a libc allocator symbol interposes process-wide, so the test harness's own
-// startup allocations would route here before the shim is ready and the
-// binary dies before listing tests. The tests call these by Rust path, so
-// suppressing only the C symbol costs no coverage.
-#[cfg_attr(not(test), unsafe(no_mangle))]
+// Not exported under `cfg(test)` or `cfg(fuzzing)`: on ELF targets a
+// `no_mangle` definition of a libc allocator symbol interposes process-wide,
+// so the test harness's — or libFuzzer's — own startup allocations would route
+// here before the shim is ready and the binary dies before listing tests (or
+// printing the fuzzer banner). Tests and the fuzz target call these by Rust
+// path, so suppressing only the C symbol costs no coverage.
+#[cfg_attr(not(any(test, fuzzing)), unsafe(no_mangle))]
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
     // thread_free is pointer-only (it derives the owning page/segment) and
     // tolerates null, so no layout is needed here.
@@ -92,12 +94,13 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 /// # Safety
 ///
 /// `extern "C"` entry point; release with [`free`].
-// Not exported under `cfg(test)`: on ELF targets a `no_mangle` definition of
-// a libc allocator symbol interposes process-wide, so the test harness's own
-// startup allocations would route here before the shim is ready and the
-// binary dies before listing tests. The tests call these by Rust path, so
-// suppressing only the C symbol costs no coverage.
-#[cfg_attr(not(test), unsafe(no_mangle))]
+// Not exported under `cfg(test)` or `cfg(fuzzing)`: on ELF targets a
+// `no_mangle` definition of a libc allocator symbol interposes process-wide,
+// so the test harness's — or libFuzzer's — own startup allocations would route
+// here before the shim is ready and the binary dies before listing tests (or
+// printing the fuzzer banner). Tests and the fuzz target call these by Rust
+// path, so suppressing only the C symbol costs no coverage.
+#[cfg_attr(not(any(test, fuzzing)), unsafe(no_mangle))]
 pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
     let Some(total) = nmemb.checked_mul(size) else {
         return core::ptr::null_mut();
@@ -128,12 +131,13 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
 ///
 /// `ptr` must be null or a live pointer from this shim; release the
 /// result with [`free`].
-// Not exported under `cfg(test)`: on ELF targets a `no_mangle` definition of
-// a libc allocator symbol interposes process-wide, so the test harness's own
-// startup allocations would route here before the shim is ready and the
-// binary dies before listing tests. The tests call these by Rust path, so
-// suppressing only the C symbol costs no coverage.
-#[cfg_attr(not(test), unsafe(no_mangle))]
+// Not exported under `cfg(test)` or `cfg(fuzzing)`: on ELF targets a
+// `no_mangle` definition of a libc allocator symbol interposes process-wide,
+// so the test harness's — or libFuzzer's — own startup allocations would route
+// here before the shim is ready and the binary dies before listing tests (or
+// printing the fuzzer banner). Tests and the fuzz target call these by Rust
+// path, so suppressing only the C symbol costs no coverage.
+#[cfg_attr(not(any(test, fuzzing)), unsafe(no_mangle))]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
     if ptr.is_null() {
         return unsafe { malloc(new_size) };
@@ -178,12 +182,13 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_vo
 /// # Safety
 ///
 /// `extern "C"` entry point; release with [`free`].
-// Not exported under `cfg(test)`: on ELF targets a `no_mangle` definition of
-// a libc allocator symbol interposes process-wide, so the test harness's own
-// startup allocations would route here before the shim is ready and the
-// binary dies before listing tests. The tests call these by Rust path, so
-// suppressing only the C symbol costs no coverage.
-#[cfg_attr(not(test), unsafe(no_mangle))]
+// Not exported under `cfg(test)` or `cfg(fuzzing)`: on ELF targets a
+// `no_mangle` definition of a libc allocator symbol interposes process-wide,
+// so the test harness's — or libFuzzer's — own startup allocations would route
+// here before the shim is ready and the binary dies before listing tests (or
+// printing the fuzzer banner). Tests and the fuzz target call these by Rust
+// path, so suppressing only the C symbol costs no coverage.
+#[cfg_attr(not(any(test, fuzzing)), unsafe(no_mangle))]
 pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
     if alignment == 0 || !alignment.is_power_of_two() || !size.is_multiple_of(alignment) {
         return core::ptr::null_mut();
@@ -207,12 +212,13 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
 /// # Safety
 ///
 /// `memptr` must be a valid, writable `*mut *mut c_void`.
-// Not exported under `cfg(test)`: on ELF targets a `no_mangle` definition of
-// a libc allocator symbol interposes process-wide, so the test harness's own
-// startup allocations would route here before the shim is ready and the
-// binary dies before listing tests. The tests call these by Rust path, so
-// suppressing only the C symbol costs no coverage.
-#[cfg_attr(not(test), unsafe(no_mangle))]
+// Not exported under `cfg(test)` or `cfg(fuzzing)`: on ELF targets a
+// `no_mangle` definition of a libc allocator symbol interposes process-wide,
+// so the test harness's — or libFuzzer's — own startup allocations would route
+// here before the shim is ready and the binary dies before listing tests (or
+// printing the fuzzer banner). Tests and the fuzz target call these by Rust
+// path, so suppressing only the C symbol costs no coverage.
+#[cfg_attr(not(any(test, fuzzing)), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_memalign(
     memptr: *mut *mut c_void,
     alignment: usize,
@@ -245,12 +251,13 @@ pub unsafe extern "C" fn posix_memalign(
 /// # Safety
 ///
 /// `ptr` must be null or a live pointer from this shim.
-// Not exported under `cfg(test)`: on ELF targets a `no_mangle` definition of
-// a libc allocator symbol interposes process-wide, so the test harness's own
-// startup allocations would route here before the shim is ready and the
-// binary dies before listing tests. The tests call these by Rust path, so
-// suppressing only the C symbol costs no coverage.
-#[cfg_attr(not(test), unsafe(no_mangle))]
+// Not exported under `cfg(test)` or `cfg(fuzzing)`: on ELF targets a
+// `no_mangle` definition of a libc allocator symbol interposes process-wide,
+// so the test harness's — or libFuzzer's — own startup allocations would route
+// here before the shim is ready and the binary dies before listing tests (or
+// printing the fuzzer banner). Tests and the fuzz target call these by Rust
+// path, so suppressing only the C symbol costs no coverage.
+#[cfg_attr(not(any(test, fuzzing)), unsafe(no_mangle))]
 pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
     // Safety: usable_size tolerates null and classifies live shim pointers.
     unsafe { usable_size(ptr as *mut u8) }
