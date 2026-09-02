@@ -37,11 +37,11 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 
 | Feature | Mnemosyne current state | Reference | Implication | Priority |
 | --- | --- | --- | --- | --- |
-| Per-page sharded free lists (`free`, `local_free`, `thread_free`) | Implemented; matches mimalloc semantics exactly | mimalloc | Parity achieved. | done |
+| Per-page sharded free lists (`free`, `thread_free`) | Implemented as a two-list variant: the page-local `free` list plus the cross-thread `thread_free` atomic list (`crates/mnemosyne-core/src/types/page/mod.rs:15,17`); mimalloc's intermediate `local_free` list is absent | mimalloc | Parity achieved. | done |
 | Cross-thread free queue per page | Implemented (page-local `AtomicFreeList`) | snmalloc | Parity achieved. | done |
 | Single-cache-line page metadata (≤ 64 B) | 64 B exactly, pinned by `page_struct_size_stays_within_one_cache_line` | mimalloc page (64 B), snmalloc slab (64 B+) | Parity. | done |
 | Bitmap free lists for very small classes | Not implemented (linked-list free lists for every class) | snmalloc 0.6 backend chunkmap | Bitmaps reduce per-block metadata for 16-byte class; cache-conflict risk. Investigate after profiling shows the 16/32 B classes are bandwidth-bound. | `[arch]` |
-| Page-local free list compaction on free | Linked list LIFO | mimalloc shifts free→local_free→thread_free in batched flushes | Mnemosyne already does the three-list dance; check whether batched flush ordering matches mimalloc's restoration logic. | `[minor]` |
+| Page-local free list compaction on free | Linked list LIFO | mimalloc shifts free→local_free→thread_free in batched flushes | Mnemosyne has no intermediate list to batch: cross-thread frees accumulate on `thread_free` and are drained onto `free` on the owner's next allocation (`local` cross-thread reclaim, O(k) amortized). | `[minor]` |
 | Encrypted free list pointers (`next` XOR per-page secret) | Implemented under `HardenedPolicy` | mimalloc-secure, Scudo, hardened_malloc | Detects type confusion / linear UAF. | done |
 | Per-page guard pages | Backend seam `make_guard(ptr, size) -> bool` implemented (Unix `mprotect(PROT_NONE)`, Windows `VirtualProtect(PAGE_NOACCESS)`); arena-level placement pending | hardened_malloc, Scudo, PartitionAlloc | Backend seam delivered. Arena-level placement (e.g. between size-class pages) is the remaining work. | partial |
 | Allocation-randomized first-fit | Not implemented (always LIFO from `page.free`) | hardened_malloc, Scudo | Increases UAF reuse latency; trades cache locality. Optional `SecurePolicy` knob. | `[minor]` |
@@ -51,7 +51,7 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | Feature | Mnemosyne current state | Reference | Implication | Priority |
 | --- | --- | --- | --- | --- |
 | Aligned 2 MiB segments (matches x86 large-page boundary) | Implemented (`SEGMENT_SIZE = 2 MiB`, `SEGMENT_ALIGN = 2 MiB`) | mimalloc 4 MiB / snmalloc 16 MiB | Parity; smaller segments trade fragmentation for adoption granularity. | done |
-| Bounded retained-segment pool (`MAX_RETAINED_SEGMENTS = PAGES_PER_SEGMENT = 32`) | Implemented | mimalloc page reset bound, snmalloc chunk reuse | Parity. | done |
+| Bounded retained-segment pool | Implemented (runtime `MnemosyneOptions::max_retained_segments`, default and cap `MAX_RETAINED_SEGMENTS_LIMIT = 1024`, `crates/mnemosyne-core/src/constants.rs:46`; clamped at set time) | mimalloc page reset bound, snmalloc chunk reuse | Parity. | done |
 | Explicit `purge()` (drains pool, releases to OS) | Implemented | mimalloc `mi_collect`, jemalloc `arena.purge` | Parity for explicit purge. | done |
 | **Decay-based purging** (background gradual `page_reset` via thread) | Implemented (`mnemosyne-decay` background thread) | jemalloc decay, mimalloc reset delay | Cuts RSS on idle workloads. | done |
 | **`MADV_DONTNEED` / `MADV_FREE` on idle pages** (not just whole segments) | Implemented at backend (Linux `MADV_DONTNEED`, macOS/FreeBSD `MADV_FREE`, Windows `VirtualAlloc(MEM_RESET)`) *and* arena layers; `mnemosyne::reset()` exposes the public knob | jemalloc, tcmalloc, mimalloc page reset | Parity for whole-cached-segment reset; sub-segment (per-page idle-list) reset remains a possible follow-on. | done |
@@ -68,8 +68,8 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | Tight worst-case mapping (`size + alignment + SEGMENT_ALIGN + PAGE_SIZE`) | Implemented and pinned by `huge_allocation_consumes_tight_mapping_size` | jemalloc base allocator, mimalloc huge | Parity with the tightest known derivation. | done |
 | Power-of-two alignment validation before backend call | Implemented (`is_valid_alloc_request`) | All references | Parity. | done |
 | Free classification by segment rounding (no side registry) | Implemented; alignments above `SEGMENT_ALIGN` rejected to preserve invariant | snmalloc chunkmap is a side registry; mimalloc uses segment rounding | Mnemosyne matches mimalloc's zero-copy classifier; snmalloc trades a small chunkmap for higher-alignment support. | done |
-| **Huge-page-aware large allocation** (use `madvise(MADV_HUGEPAGE)` on the 2 MiB region) | Not implemented | jemalloc, mimalloc | TLB win on >2 MiB allocations. | `[minor]` |
-| **Bounded retention of huge mappings** (recycle large pools instead of round-trip mapping) | Not implemented (every large alloc goes back to backend) | jemalloc retained extent cache | Saves mmap/munmap syscalls under churn. | `[minor]` |
+| **Huge-page-aware large allocation** (use `madvise(MADV_HUGEPAGE)` on the 2 MiB region) | Implemented (`UnixBackend::allocate` hints `MADV_HUGEPAGE` for every mapping of at least `SEGMENT_SIZE`, `crates/mnemosyne-backend/src/backends/unix.rs:91`; gated by `MnemosyneOptions::enable_hugepage_hint`) | jemalloc, mimalloc | TLB win on >2 MiB allocations. | `[minor]` |
+| **Bounded retention of huge mappings** (recycle large pools instead of round-trip mapping) | Implemented (`GlobalHugePool` retains huge blocks per NUMA bucket under a per-bucket byte budget, `crates/mnemosyne-arena/src/segment/pool/huge_pool.rs:166`) | jemalloc retained extent cache | Saves mmap/munmap syscalls under churn. | `[minor]` |
 
 ## 5. Gap matrix — thread-local cache architecture
 
@@ -78,8 +78,8 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | Thread-local cache via `thread_local!` macro | Implemented per backend via `LocalAllocatorSelector` | mimalloc, jemalloc TCs | Parity. | done |
 | Re-entrancy guard (`IS_ALLOCATING` flag) | Implemented per backend | mimalloc reentrancy bit | Parity. | done |
 | **Multiple heaps per thread (`MnemosyneHeap`)** | Implemented (`MnemosyneHeap` owns its `ThreadAllocator`) | mimalloc heap API, jemalloc arenas | Supports compartmentalization (per-request arenas, freed-as-a-group). | done |
-| **Per-CPU caching** (rather than per-thread) | Not implemented | tcmalloc per-CPU, snmalloc 0.6+ per-CPU | Reduces TLS overhead in heavily threaded workloads; needs `restartable sequences` on Linux. | `[arch]` |
-| **NUMA-aware arena selection** | Not implemented | jemalloc `arena.numa_node`, tcmalloc per-NUMA arenas | Cross-socket bandwidth wins on >16 core boxes. | `[major]` |
+| **Per-CPU caching** (rather than per-thread) | Implemented as a per-CPU L1 in front of the per-thread cache (`crates/mnemosyne-local/src/per_cpu`, single-CAS class stacks keyed by `current_cpu_id`); the per-thread path remains the owner of pages | tcmalloc per-CPU, snmalloc 0.6+ per-CPU | Reduces TLS overhead in heavily threaded workloads; needs `restartable sequences` on Linux. | `[arch]` |
+| **NUMA-aware arena selection** | Implemented (`GlobalSegmentPool` pops from the current NUMA bucket and steals from the other nodes when it is empty, `crates/mnemosyne-arena/src/segment/pool/segment_pool.rs:114-161`; buckets in `numa_bucket.rs`) | jemalloc `arena.numa_node`, tcmalloc per-NUMA arenas | Cross-socket bandwidth wins on >16 core boxes. | `[major]` |
 | Active/full page lists per size class | Implemented (`active_pages`, `full_pages`) | mimalloc full list | Parity. | done |
 | Linear scan of `full_pages` in `alloc_cold` capped at 8 | Implemented; documented bound | mimalloc full-pages traversal | Parity. The 8-cap is a design tuning knob. | done |
 | **Bucketed / ring-buffer recycle queue** instead of linear `try_recycle_page` | Linear scan over owned segments | mimalloc's `mi_segments_collect` is also linear but bounded by segment count; snmalloc uses per-class ring buffers | Reduces worst-case recycle latency under many owned segments. | `[minor]` |
@@ -105,9 +105,9 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | Per-thread allocator stats | Implemented (`ThreadAllocatorStats`) | mimalloc `mi_stats_*`, jemalloc opt.stats_print | Parity. | done |
 | Backend telemetry (mapped bytes, peak, map/unmap calls, purges) | Implemented (`BackendMemoryStats`, `ArenaMemoryStats`) | mimalloc reset stats, jemalloc decay stats | Parity. | done |
 | Per-size-class occupancy snapshot | Implemented (`SizeClassOccupancy`) | mimalloc `mi_heap_visit_blocks`, jemalloc `arena.<i>.stats.bins` | Parity for class-level aggregation. | done |
-| **Per-allocation profiling / heap snapshot** | Not implemented | jemalloc `prof.*`, mimalloc `mi_register_output` + custom profilers, tcmalloc heap profiler | Required for `pprof`-style flamegraphs; integrates with `tokio-console`, `eBPF`. | `[major]` |
+| **Per-allocation profiling / heap snapshot** | Implemented (`mnemosyne-prof` sampling profiler, `enable_profiling(sample_interval)`, `crates/mnemosyne-prof/src/lib.rs:86`) | jemalloc `prof.*`, mimalloc `mi_register_output` + custom profilers, tcmalloc heap profiler | Required for `pprof`-style flamegraphs; integrates with `tokio-console`, `eBPF`. | `[major]` |
 | **Allocation backtrace tracking (opt-in)** | Not implemented | jemalloc with `libunwind`, Bytehound | Production debugging for leaks. | `[minor]` |
-| **Tracing / event hook callback** (alloc/free user callback) | Not implemented | mimalloc `mi_register_output`, tcmalloc `MallocHook` | Enables flamegraphs without binary patching. | `[minor]` |
+| **Tracing / event hook callback** (alloc/free user callback) | Implemented (`mnemosyne_prof::register_alloc_hook` / `register_free_hook`, `crates/mnemosyne-prof/src/lib.rs:68,77`; C ABI `mnemosyne_register_alloc_hook` / `mnemosyne_register_free_hook`, `crates/mnemosyne-c-shim/src/lib.rs:266,279`) | mimalloc `mi_register_output`, tcmalloc `MallocHook` | Enables flamegraphs without binary patching. | `[minor]` |
 | **Per-heap RSS estimation** (resident vs. mapped) | Implemented for whole-process `current_mapped_bytes` but not per-heap RSS estimate | mimalloc `mi_heap_collect`, jemalloc `arena.<i>.stats.mapped` | Without page-reset support, RSS = mapped. | `[minor]` |
 
 ## 8. Gap matrix — configurability / tuning
@@ -125,7 +125,7 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | --- | --- | --- | --- | --- |
 | `#[global_allocator]` for Rust | Implemented (`Mnemosyne`, `MnemosyneAllocator<P, B>`) | jemallocator, mimalloc-rs, snmalloc-rs | Parity. | done |
 | **C ABI (`malloc`/`free`/`calloc`/`realloc`)** | Implemented (`mnemosyne-c-shim` cdylib) | jemalloc, mimalloc, snmalloc all ship C shims; mimalloc-rs / snmalloc-rs offer optional C-API | Enables `LD_PRELOAD` and use from C/C++ code linked into Rust binaries. | done |
-| **`posix_memalign` / `aligned_alloc` / `memalign`** | Indirectly via `GlobalAlloc` Layout | mimalloc, jemalloc | Same scope as C ABI above. | `[major]` |
+| **`posix_memalign` / `aligned_alloc` / `memalign`** | Exported directly by `mnemosyne-c-shim` (`aligned_alloc` `crates/mnemosyne-c-shim/src/lib.rs:187`, `posix_memalign` `:216`); `memalign` is not exported | mimalloc, jemalloc | Same scope as C ABI above. | `[major]` |
 | **`malloc_usable_size`** | Implemented as `mnemosyne::usable_size(ptr)` / `mnemosyne_local::usable_size(ptr)` | mimalloc `mi_usable_size`, jemalloc `malloc_usable_size` | Lets Rust `Vec` shrink without reallocating. Returns size-class block size for small, payload remainder for huge, 0 for null. | done |
 | Custom backend (`MemoryBackend` trait, `HasSegmentPool` trait) | Implemented; CPU + CUDA backends shipped | mimalloc has `mi_os_*` indirection; jemalloc has `extent_hooks` | Parity for opt-in backend; CUDA backend exceeds typical allocator scope. | done |
 | **HSA / ROCm / Metal / vRAM backends** | Not implemented (CUDA only beyond OS) | None at parity level; jemalloc has external arena hooks | Differentiator if implemented. | `[minor]` |
@@ -154,11 +154,10 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
    *RSS management* (decay-based purging, per-page reset, MADV_DONTNEED on
    idle pages).
 
-2. **The `MemoryBackend` trait already provides the seam needed for guard
-   pages and per-page reset** — a `page_reset(ptr, size)` and `make_guard(ptr,
-   size)` method on the trait would let `mnemosyne-arena` invoke them
-   without changing the policy ZSTs. This is the lowest-friction expansion
-   path for both the security and RSS gaps.
+2. **The `MemoryBackend` trait carries the `page_reset(ptr, size)` and
+   `make_guard(ptr, size)` seams** (delivered, §12), and `mnemosyne-arena`
+   invokes them without changing the policy ZSTs — the expansion path the
+   security and RSS gaps used.
 
 3. **The `SecurePolicy` ZST is the natural site for free-list encryption
    and randomized first-fit**, because both are payload-byte costs that
@@ -186,11 +185,11 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | Sprint slice | Item | Priority | Test guard |
 | --- | --- | --- | --- |
 | ~~Sprint A~~ **delivered** | `MemoryBackend::page_reset(ptr, size) -> bool` added with default `false` impl; unix backend uses `MADV_DONTNEED` (Linux) / `MADV_FREE` (macOS, FreeBSD); windows backend uses `VirtualAlloc(MEM_RESET)`; wrapper records `page_reset_calls` / `page_reset_bytes` telemetry without touching `current_mapped_bytes`. Arena `reset_segment_pool` walks the retained pool and resets each segment's mapping; `mnemosyne::reset()` is the public RSS-reduction knob complementing `purge()`. | `[minor]` | `page_reset_telemetry_increments_call_and_byte_counters_only`, `wrapper_page_reset_round_trips_on_active_mapping`, `wrapper_page_reset_rejects_null_and_zero`, `test_reset_keeps_segments_cached_and_records_telemetry` |
-| ~~Sprint A~~ **delivered (`9e89cf2`)** | `madvise(MADV_HUGEPAGE)` hint in `UnixBackend::allocate` when `size >= SEGMENT_SIZE && size % SEGMENT_SIZE == 0`. Linux-gated; advisory. | `[patch]` | `segment_sized_allocation_survives_hugepage_hint`, `sub_segment_allocation_skips_hugepage_hint` |
+| ~~Sprint A~~ **delivered (`9e89cf2`)** | `madvise(MADV_HUGEPAGE)` hint in `UnixBackend::allocate` when `size >= SEGMENT_SIZE` — any mapping of at least one segment, not only multiples. Linux-gated; advisory. | `[patch]` | `segment_sized_allocation_survives_hugepage_hint`, `sub_segment_allocation_skips_hugepage_hint`, `large_non_multiple_allocation_receives_hugepage_hint` |
 | ~~Sprint B~~ **delivered** | Implement `HardenedPolicy` ZST with XOR-encoded free-list `next` pointers (key per page from a TLS seed). Layer over `SecurePolicy`. | `[minor]` | `hardened_policy_detects_freelist_tamper`, `hardened_policy_round_trip_alloc_free` |
 | ~~Sprint B~~ **delivered** | `MemoryBackend::make_guard(ptr, size) -> bool` seam with `mprotect(PROT_NONE)` (Unix) / `VirtualProtect(PAGE_NOACCESS)` (Windows) plus telemetry; arena `allocate_segment` installs a 4 KiB tail guard at `aligned_addr + SEGMENT_SIZE` on every fresh segment so forward OOB writes past Page 31 trap. Inter-page guards remain a possible follow-on. | `[major]` | `guard_telemetry_increments_call_and_byte_counters_only`, `wrapper_make_guard_records_confirmed_install_and_keeps_mapping_reserved`, `wrapper_make_guard_rejects_null_and_zero`, `fresh_segment_install_increments_guard_telemetry_and_round_trips` |
-| ~~Sprint C~~ **delivered** | Add a `MnemosyneOptions` runtime configuration struct exposing `max_retained_segments`, `purge_cadence_ms`, `enable_hugepage_hint`. Parse `MNEMOSYNE_*` env vars at first allocation. | `[major]` | `runtime_options_override_default_retention` |
-| ~~Sprint C~~ **delivered** | Add C ABI shim crate `mnemosyne-c-shim` exposing `malloc`/`free`/`calloc`/`realloc`/`posix_memalign`/`aligned_alloc`/`malloc_usable_size`. | `[major]` | `c_shim_round_trip_matches_global_alloc` |
+| ~~Sprint C~~ **delivered** | Add a `MnemosyneOptions` runtime configuration struct exposing `max_retained_segments`, `purge_cadence_ms`, `enable_hugepage_hint`. Parse `MNEMOSYNE_*` env vars at first allocation. | `[major]` | no dedicated guard: the retention bound is exercised by `test_memory_stats_retention_bound` (`crates/mnemosyne/tests/global_alloc_tests/stats.rs`); the env-var override itself is untested |
+| ~~Sprint C~~ **delivered** | Add C ABI shim crate `mnemosyne-c-shim` exposing `malloc`/`free`/`calloc`/`realloc`/`posix_memalign`/`aligned_alloc`/`malloc_usable_size`. | `[major]` | `malloc_free_round_trip_is_aligned_and_writable` (`crates/mnemosyne-c-shim/src/tests.rs`) |
 | ~~Sprint D~~ **delivered** | Background decay-based purge: a single low-priority thread drains the segment pool on a configurable cadence with the runtime knob from Sprint C. | `[major]` | `decay_purger_reaches_steady_state` |
 | ~~Sprint D~~ **delivered** | Add `mi_heap_t`-style multi-heap API: `MnemosyneHeap<P, B>` owning its own `ThreadAllocator`, with `MnemosyneHeap::alloc(&self, layout)`. Default `Mnemosyne` global allocator delegates to a TLS heap. | `[arch]` | `multi_heap_isolates_allocation_streams`, `multi_heap_release_does_not_touch_other_heaps` |
 

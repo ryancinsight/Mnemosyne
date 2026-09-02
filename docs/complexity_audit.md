@@ -1,7 +1,7 @@
 # Complexity Audit
 
 Per-component, per-operation asymptotic complexity of the Mnemosyne allocator.
-Refreshed for the current 11-crate workspace after the bitmap-free-list
+Refreshed for the current 12-crate workspace after the bitmap-free-list
 experiment was rejected, and after the per-segment-occupancy-mask, per-CPU-cache,
 free-list-encryption, doubly-linked page-list, and module-split changes.
 
@@ -25,6 +25,8 @@ only to make the constant factor explicit.
 | `mnemosyne-heap` | Branded heaps (`brand`/`branded_box`/`branded_vec`) — compile-time aliasing safety |
 | `mnemosyne-decay` | Background decay-purge engine |
 | `mnemosyne-prof` | Sampling allocation profiler |
+| `mnemosyne-build-util` | Internal build-script utility: the single authoritative nightly-rustc |
+| `mnemosyne-benchmarks` | Criterion harness and allocator comparators (`publish = false`; no production path) |
 
 ## Per-allocation / per-free hot path
 
