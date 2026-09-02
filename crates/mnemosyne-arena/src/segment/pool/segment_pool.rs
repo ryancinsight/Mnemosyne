@@ -1,3 +1,6 @@
+//! The global segment pool: one [`NodeSegmentPool`] per NUMA bucket, with
+//! the telemetry counters summed across nodes.
+
 use crate::numa::current_numa_node;
 use crate::segment::pool::list::NodeSegmentPool;
 use crate::segment::pool::numa_bucket::{NUMA_BUCKETS, bucket_index as numa_bucket, steal_from};
@@ -168,16 +171,19 @@ impl GlobalSegmentPool {
         &self.nodes
     }
 
+    /// Segments currently cached across every node pool.
     #[inline]
     pub fn retained_count(&self) -> usize {
         self.nodes.iter().map(|n| n.retained_count()).sum()
     }
 
+    /// Cumulative segments returned to the OS by purges, summed over nodes.
     #[inline]
     pub fn purged_count(&self) -> usize {
         self.nodes.iter().map(|n| n.purged_count()).sum()
     }
 
+    /// Cumulative purge passes recorded, summed over nodes.
     #[inline]
     pub fn purge_call_count(&self) -> usize {
         self.nodes.iter().map(|n| n.purge_call_count()).sum()
@@ -189,11 +195,13 @@ impl GlobalSegmentPool {
         self.nodes[node].record_purge(count);
     }
 
+    /// Cumulative segments whose physical backing a confirmed `page_reset` released while they stayed cached, summed over nodes.
     #[inline]
     pub fn reset_segments_count(&self) -> usize {
         self.nodes.iter().map(|n| n.reset_segments_count()).sum()
     }
 
+    /// Cumulative reset passes recorded, summed over nodes.
     #[inline]
     pub fn reset_call_count(&self) -> usize {
         self.nodes.iter().map(|n| n.reset_call_count()).sum()

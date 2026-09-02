@@ -1,6 +1,7 @@
 //! Core allocator types, constants, size classes, and synchronization primitives for Mnemosyne.
 
 #![no_std]
+#![deny(missing_docs)]
 
 extern crate alloc;
 

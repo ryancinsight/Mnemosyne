@@ -28,8 +28,14 @@ pub static PURGE_CADENCE_MS: AtomicUsize = AtomicUsize::new(0);
 /// Runtime configuration options for the Mnemosyne allocator.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MnemosyneOptions {
+    /// Free segments the pool keeps for reuse before purging the rest back to
+    /// the OS; clamped at set time to `MAX_RETAINED_SEGMENTS_LIMIT`.
     pub max_retained_segments: usize,
+    /// Background purge cadence in milliseconds; zero disables background
+    /// decay entirely, leaving purges to the allocation path.
     pub purge_cadence_ms: usize,
+    /// Whether segment mappings advise the kernel to back them with huge
+    /// pages (`MADV_HUGEPAGE`); a hint only, honored on Linux.
     pub enable_hugepage_hint: bool,
 }
 
