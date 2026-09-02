@@ -476,30 +476,19 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   no local Linux runtime exists (the WSL distro's `ext4.vhdx` is missing; no
   container runtime installed).
 
-- [ ] **MNEM-DOCS-GAP-1** [docs][patch] status=todo owner=unclaimed
-  scope=`docs/gap_analysis_external.md`, `docs/complexity_audit.md`. Non-goals:
-  re-surveying the allocator literature; changing any priority tag whose
-  underlying assessment still holds. **Outcome:** the external gap analysis
-  stops asserting the tree's state incorrectly. Six verified drifts: §2 names
-  a `local_free` page field that does not exist; §3 states
-  `MAX_RETAINED_SEGMENTS = 32` when `MAX_RETAINED_SEGMENTS_LIMIT = 1024`
-  (`mnemosyne-core/src/constants.rs:40`); §4 calls huge-mapping retention "Not
-  implemented" although `huge_pool.rs` retains per NUMA bucket under a byte
-  budget; §5 calls NUMA-aware arena selection "Not implemented" although
-  `numa_bucket.rs` + `segment_pool.rs:112-162` implement it; §7 calls
-  per-allocation profiling and alloc/free hooks "Not implemented" although
-  `mnemosyne-prof` ships both; §9 calls `posix_memalign`/`aligned_alloc`
-  indirect although `mnemosyne-c-shim/src/lib.rs:187,216` export them. §11.2
-  speaks of `page_reset`/`make_guard` in the future conditional; §12 names two
-  test guards (`c_shim_round_trip_matches_global_alloc`,
-  `runtime_options_override_default_retention`) that return 0 grep hits; §12
-  repeats the wrong `size % SEGMENT_SIZE == 0` huge-page condition already
-  corrected in `README.md`. `docs/complexity_audit.md` says "11-crate
-  workspace" for 12 members and its map omits four crates. **Acceptance
-  oracle:** every row's state column is re-derived from a cited
-  `path:line`, and a grep for each named test guard resolves.
-  **Dependencies:** none. **Risk/change class:** [patch]. **Effort:** M.
-
+- [x] **MNEM-DOCS-GAP-1** [docs][patch] status=done owner=Claude
+  **Closed 2026-09-02:** every drifted row of `docs/gap_analysis_external.md`
+  re-derived from a cited `path:line` — the two-list free queue (no
+  `local_free`), the runtime retention option and its 1024 cap, the
+  `MADV_HUGEPAGE` hint (any mapping ≥ `SEGMENT_SIZE`, three guards), bounded
+  huge-mapping retention, NUMA-aware pool selection, per-CPU L1 caching, the
+  profiler and alloc/free hooks (Rust and C ABI), direct `aligned_alloc` /
+  `posix_memalign` exports, §11.2 in the present tense; §12 guards resolve
+  (`malloc_free_round_trip_is_aligned_and_writable` replaces the missing
+  c-shim name; the options row states that the env-var override has no
+  dedicated test — residual). `docs/complexity_audit.md` says 12 crates and
+  maps `mnemosyne-build-util` and `mnemosyne-benchmarks` (the two omitted
+  members, not four). Priority tags untouched.
 - [x] **MNEM-ADR-INDEX-1** [docs][patch] status=done owner=claude (2026-09-01)
   scope=`docs/adr/README.md`, new `scripts/` or `xtask`. Non-goals: rewriting
   ADR content. **Outcome:** the ADR index's generator claim becomes true.
