@@ -17,11 +17,16 @@ segment-tail-guards = []
 segment-header-guards = []
 eunomia = ["dep:eunomia"]
 std = ["mnemosyne-core/std"]
+## Blanket `ScratchElement` impl for any `bytemuck::Zeroable + Copy + Send + Sync + 'static` type.
+## Enables `AlignedVec` and `ScratchPool` for arbitrary POD structs whose zero-representation
+## is declared valid by their `Zeroable` impl (the same invariant `ScratchElement` encodes).
+bytemuck = ["dep:bytemuck"]
 
 [dependencies]
 mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.2.0" }
 mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.5.0" }
 eunomia = { workspace = true, optional = true }
+bytemuck = { version = "1.0", optional = true, features = ["derive"] }
 themis = { workspace = true }
 
 [lints]
