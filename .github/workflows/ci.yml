@@ -84,6 +84,20 @@ jobs:
       - name: Lint all affected targets
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
+      # `c_char` is signed on x86_64-linux and unsigned on aarch64-linux, so a
+      # cast that is load-bearing on one target is a lint error on the other.
+      # The aarch64 job runs native tests, not a lint, so nothing else covers
+      # it (MN-465). The check is scoped to the crate that declares the C
+      # signatures: a cross-target clippy needs no cross toolchain because it
+      # checks without linking, but a workspace-wide one would also build the
+      # benchmark comparators' C allocators for the target, which need an
+      # arm64 libc the hosted runner does not carry.
+      - name: Lint for aarch64-linux
+        run: |
+          rustup target add aarch64-unknown-linux-gnu
+          cargo clippy --locked -p mnemosyne-backend --all-targets --target aarch64-unknown-linux-gnu -- -D warnings
+
+
       # mnemosyne-c-shim is back in scope. Its test binary used to exit
       # without producing a test list on Linux: the shim defines malloc,
       # free and friends as no_mangle, which on ELF interposes libc
