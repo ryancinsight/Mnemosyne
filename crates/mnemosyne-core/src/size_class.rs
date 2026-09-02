@@ -1,6 +1,6 @@
 //! Size class calculations and mapping.
 
-use crate::constants::{MAX_SMALL_ALLOC_SIZE, NUM_SIZE_CLASSES, PAGE_SIZE};
+use crate::constants::{MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, NUM_SIZE_CLASSES, PAGE_SIZE};
 
 /// Maps an allocation size to its corresponding size class index.
 ///
@@ -24,7 +24,11 @@ pub const fn size_to_class_nonzero(size: usize) -> Option<usize> {
     if size > MAX_SMALL_ALLOC_SIZE {
         return None;
     }
-    let class = SIZE_TO_CLASS[size];
+    // Every class size is a multiple of `MIN_BLOCK_SIZE`, so a request rounded
+    // up to the next multiple of 16 lands in the same class as the request
+    // itself. Indexing by that 16-byte granule keeps the table at one entry
+    // per granule (1 KiB at a 16 KiB ceiling) instead of one per byte.
+    let class = SIZE_TO_CLASS[size.div_ceil(MIN_BLOCK_SIZE)];
     if class == u8::MAX {
         None
     } else {
@@ -32,16 +36,18 @@ pub const fn size_to_class_nonzero(size: usize) -> Option<usize> {
     }
 }
 
-const SIZE_TO_CLASS: [u8; MAX_SMALL_ALLOC_SIZE + 1] = {
-    let mut arr = [u8::MAX; MAX_SMALL_ALLOC_SIZE + 1];
+/// Class per 16-byte granule of request size: entry `g` serves every request
+/// in `(16 * (g - 1), 16 * g]`, and entry 0 the zero-size request.
+const SIZE_TO_CLASS: [u8; MAX_SMALL_ALLOC_SIZE / MIN_BLOCK_SIZE + 1] = {
+    let mut arr = [u8::MAX; MAX_SMALL_ALLOC_SIZE / MIN_BLOCK_SIZE + 1];
     arr[0] = 0;
-    let mut size = 1;
-    while size <= MAX_SMALL_ALLOC_SIZE {
-        arr[size] = match size_to_class_nonzero_arithmetic(size) {
+    let mut granule = 1;
+    while granule <= MAX_SMALL_ALLOC_SIZE / MIN_BLOCK_SIZE {
+        arr[granule] = match size_to_class_nonzero_arithmetic(granule * MIN_BLOCK_SIZE) {
             Some(class) => class as u8,
             None => u8::MAX,
         };
-        size += 1;
+        granule += 1;
     }
     arr
 };
@@ -56,7 +62,7 @@ const fn size_to_class_nonzero_arithmetic(size: usize) -> Option<usize> {
         sub: u16,
     }
 
-    const LOOKUP: [SizeClassLookup; 14] = [
+    const LOOKUP: [SizeClassLookup; 15] = [
         SizeClassLookup {
             base: 0,
             shift: 4,
@@ -127,6 +133,11 @@ const fn size_to_class_nonzero_arithmetic(size: usize) -> Option<usize> {
             shift: 9,
             sub: 2049,
         }, // idx = 13
+        SizeClassLookup {
+            base: 44,
+            shift: 11,
+            sub: 8193,
+        }, // idx = 14: 8193..=16384 in 2048-byte steps
     ];
 
     let bits = usize::BITS - (size - 1).leading_zeros();
@@ -143,7 +154,7 @@ pub const fn round_up_size(size: usize) -> Option<usize> {
     if size == 0 {
         return Some(0);
     }
-    if size > 8192 {
+    if size > MAX_SMALL_ALLOC_SIZE {
         return None;
     }
     match size_to_class_nonzero(size) {
@@ -155,7 +166,7 @@ pub const fn round_up_size(size: usize) -> Option<usize> {
 const CLASS_TO_SIZE: [u16; NUM_SIZE_CLASSES] = [
     16, 32, 48, 64, 80, 96, 112, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512,
     640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048, 2560, 3072, 3584, 4096,
-    4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192,
+    4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192, 10240, 12288, 14336, 16384,
 ];
 
 const CLASS_TO_MAX_BLOCKS: [u16; NUM_SIZE_CLASSES] = {
@@ -222,7 +233,11 @@ mod tests {
         assert_eq!(size_to_class(2048), Some(31));
         assert_eq!(size_to_class(2049), Some(32));
         assert_eq!(size_to_class(8192), Some(43));
-        assert_eq!(size_to_class(8193), None);
+        assert_eq!(size_to_class(8193), Some(44));
+        assert_eq!(size_to_class(10240), Some(44));
+        assert_eq!(size_to_class(10241), Some(45));
+        assert_eq!(size_to_class(16384), Some(47));
+        assert_eq!(size_to_class(16385), None);
 
         for c in 0..NUM_SIZE_CLASSES {
             let sz = class_to_size(c);
@@ -237,7 +252,7 @@ mod tests {
         // class's upper bound must map to the next class, and the upper
         // bound itself must map to the class. Catches off-by-one errors at
         // the four piecewise transitions in `size_to_class`: 128/129,
-        // 512/513, 2048/2049, and 8192/8193.
+        // 512/513, 2048/2049, 8192/8193, and 16384/16385.
         for c in 0..NUM_SIZE_CLASSES {
             let upper = class_to_size(c);
             assert_eq!(

@@ -2,10 +2,14 @@ use core::alloc::{GlobalAlloc, Layout};
 
 // Safety: all report layouts use fixed positive sizes and nonzero
 // power-of-two alignments.
-const LAYOUTS: [Layout; 3] = [
+const LAYOUTS: [Layout; 5] = [
     unsafe { Layout::from_size_align_unchecked(32, 8) },
     unsafe { Layout::from_size_align_unchecked(1024, 8) },
     unsafe { Layout::from_size_align_unchecked(8192, 8) },
+    // The window above the small-class ceiling: what these two rows cost in
+    // mapped bytes is the memory half of MN-461.
+    unsafe { Layout::from_size_align_unchecked(12288, 8) },
+    unsafe { Layout::from_size_align_unchecked(16384, 8) },
 ];
 const ALLOCS_PER_LAYOUT: usize = 128;
 const SEGMENT_EVICTION_ALLOCS: usize = mnemosyne_arena::MAX_RETAINED_SEGMENTS + 8;
