@@ -7,7 +7,7 @@
   `5b4997b9ecae60ee51b7bf276dbdb1dcf67fa0b7`; local gates green.
 
 - [x] [patch] **MN-468 — the benchmark harness parses its own performance-core
-  mask.** status=review; integrator=atlas-session;
+  mask.** status=done 2026-09-02; integrator=atlas-session;
   branch=`refactor/mnemosyne-themis-core-class`; PR #86; lease discharged by the
   delivery commit; last-update=2026-09-01.
   `themis-topology` gained processor efficiency class (themis#35, ADR 0004), so
@@ -40,9 +40,13 @@
   The remaining breach is MN-466. **Residual risk:** a clean full-suite repeat on
   a quiet host was not obtainable — the host did not clear within a 10-minute
   wait — so the six-launch row probe stands in for it.
+  **Closed 2026-09-02.** PR #86 merged 2026-09-01; `dde4012`
+  (`refactor(mnemosyne-benchmarks): Source core class from themis`) and
+  `e62d011` are on `main`. The claim had gone stale in `review` with the work
+  already landed; re-verified against the tree rather than re-run.
 
 - [x] [patch] [perf] **MN-464 — the threshold baseline is noisier than the
-  thresholds it gates.** status=review; owner=atlas-session;
+  thresholds it gates.** status=done 2026-09-02; owner=atlas-session;
   branch=`perf/mnemosyne-pinned-measurement`. **Delivered: the measurement
   procedure.** Gate-row median spread across three identical runs falls from
   **12.3% to 1.9%**, and gated rows over their own regression ceiling from
@@ -71,6 +75,9 @@
   **Not delivered: the baseline capture** — the oracle demands *every* gated row
   agree and one does not. Split to MN-467, blocked on MN-466. **Non-goals held:**
   no benchmark body, workload, or threshold value changed.
+  **Closed 2026-09-02** for its delivered scope: `scripts/allocator_measurement.py`
+  and the `--repeat-spread` check (`0cfd33e`) are on `main`, and the undelivered
+  half is already carried by MN-467. The claim had gone stale in `review`.
 
 - [x] [patch] [perf] **MN-466 — `huge_shrink_4m_to_2m` does not reproduce
   itself, and only for Mnemosyne.** status=done (2026-09-02); owner=atlas-session;
