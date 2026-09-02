@@ -4,6 +4,7 @@
 mod cache_aligned;
 pub mod huge_pool;
 pub mod list;
+mod node_huge_bucket;
 mod numa_bucket;
 pub mod segment_pool;
 mod tagged_stack;
