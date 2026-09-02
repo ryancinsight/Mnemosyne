@@ -429,7 +429,12 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   four minors (0.x breaking) and list the unlisted breaks; the release-tag gate
   enforces it.
 
-- [ ] **MNEM-FUZZ-CI-1** [patch] status=todo owner=unclaimed
+- [x] **MNEM-FUZZ-CI-1** [patch] status=done 2026-09-02 owner=Claude — delivered
+  by PRs #97, #101, #107 (`fuzz.yml`: nightly cargo-fuzz on the gnu target,
+  `cfg(fuzzing)` suppressing the C-shim exports libFuzzer would interpose).
+  Evidence: dispatched run 33600789737 on `main` `fdf66542e`, job "Fuzz the C
+  ABI (libFuzzer, nightly)" success — 666,192 runs in 301 s (2,213 exec/s),
+  cov 860 / ft 3,321, corpus 1,206 inputs, no crash, no leak, no timeout.
   scope=`.github/workflows/ci.yml`, `fuzz/`. Non-goals: writing new fuzz
   targets (separate item if the arena/segment surface warrants one).
   **Outcome:** the committed `c_shim_api` libFuzzer target actually runs. It
