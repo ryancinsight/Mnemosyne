@@ -125,6 +125,91 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.len = min_len;
     }
 
+    /// Creates a buffer of exactly `len` elements, every one equal to `value`.
+    ///
+    /// The zero-valued case has a cheaper path in [`zeroed`][Self::zeroed],
+    /// which writes bytes rather than elements.
+    #[inline]
+    pub fn filled(len: usize, value: T) -> Self {
+        let mut buffer = Self::with_capacity(len);
+        buffer.resize(len, value);
+        buffer
+    }
+
+    /// Creates a buffer holding a copy of `slice`.
+    #[inline]
+    pub fn from_slice(slice: &[T]) -> Self {
+        let mut buffer = Self::with_capacity(slice.len());
+        buffer.extend_from_slice(slice);
+        buffer
+    }
+
+    /// Appends one element, growing the allocation if it is full.
+    ///
+    /// Amortized O(1): a growth doubles the capacity, so `n` pushes onto an
+    /// empty buffer perform O(log n) reallocations and O(n) element writes.
+    #[inline]
+    pub fn push(&mut self, value: T) {
+        self.reserve(1);
+        // SAFETY: `reserve(1)` leaves `capacity > len`, so `ptr.add(len)` is
+        // inside the allocation and past the initialized prefix `[0, len)`.
+        // `T: Copy` (a `ScratchElement` supertrait), so the write is the whole
+        // initialization and overwrites no live value.
+        unsafe { core::ptr::write(self.ptr.add(self.len), value) };
+        self.len += 1;
+    }
+
+    /// Appends every element of `slice` in one bulk copy.
+    #[inline]
+    pub fn extend_from_slice(&mut self, slice: &[T]) {
+        if slice.is_empty() {
+            return;
+        }
+        self.reserve(slice.len());
+        // SAFETY: `reserve(n)` leaves `capacity >= len + n`, so the destination
+        // range `[len, len + n)` is inside the allocation and past the
+        // initialized prefix. `slice` is a live initialized `[T]`, and it
+        // cannot overlap that range: it is either a distinct allocation or an
+        // initialized region of this one, which the destination excludes.
+        unsafe {
+            core::ptr::copy_nonoverlapping(slice.as_ptr(), self.ptr.add(self.len), slice.len());
+        }
+        self.len += slice.len();
+    }
+
+    /// Sets the length to `new_len`, filling any new elements with `value`.
+    ///
+    /// Shrinking keeps the allocation; `ScratchElement` is `Copy`, so the
+    /// dropped tail needs no destructor run.
+    #[inline]
+    pub fn resize(&mut self, new_len: usize, value: T) {
+        if new_len > self.len {
+            let additional = new_len - self.len;
+            self.reserve(additional);
+            // SAFETY: `reserve(additional)` leaves `capacity >= new_len`. Each
+            // write targets a distinct index in `[len, new_len)`, inside the
+            // allocation and past the initialized prefix; `T: Copy`, so each
+            // write fully initializes its element.
+            unsafe {
+                let base = self.ptr.add(self.len);
+                for offset in 0..additional {
+                    core::ptr::write(base.add(offset), value);
+                }
+            }
+        }
+        self.len = new_len;
+    }
+
+    /// Grows the allocation so `additional` more elements fit without another
+    /// reallocation. Leaves `len` and the buffer contents alone.
+    #[inline]
+    fn reserve(&mut self, additional: usize) {
+        let needed = self.len.saturating_add(additional);
+        if needed > self.capacity {
+            self.grow_to(needed.max(self.capacity.saturating_mul(2)));
+        }
+    }
+
     /// Raw pointer to the start of the aligned allocation. Valid for
     /// `capacity()` elements, of which the first `len()` are initialized;
     /// writes past `len()` do not extend the initialized prefix.
@@ -206,6 +291,12 @@ impl<T: ScratchElement> Drop for AlignedVec<T> {
 // ownership, so moving it to another thread is sound whenever the element type
 // is itself `Send`.
 unsafe impl<T: ScratchElement + Send> Send for AlignedVec<T> {}
+
+// SAFETY: every shared path through `&AlignedVec<T>` — `as_slice`, `Deref` —
+// yields `&[T]` and nothing else, so a shared reference grants no way to reach
+// the owning `*mut T` mutably. Sharing one across threads is therefore exactly
+// as sound as sharing `&[T]`, which holds when `T: Sync`.
+unsafe impl<T: ScratchElement + Sync> Sync for AlignedVec<T> {}
 
 impl<T: ScratchElement> core::ops::Deref for AlignedVec<T> {
     type Target = [T];
