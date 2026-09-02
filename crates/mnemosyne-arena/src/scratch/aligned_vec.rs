@@ -369,6 +369,12 @@ impl<T: ScratchElement + PartialEq> PartialEq<[T]> for AlignedVec<T> {
 // is itself `Send`.
 unsafe impl<T: ScratchElement + Send> Send for AlignedVec<T> {}
 
+// SAFETY: Sharing a `&AlignedVec<T>` across threads is sound when `T: Sync`
+// because all shared access goes through the read-only `as_slice()`/`Deref`
+// path. The raw `*mut T` field is an owning pointer; no aliased mutable
+// reference can be created from a `&AlignedVec<T>` reference.
+unsafe impl<T: ScratchElement + Sync> Sync for AlignedVec<T> {}
+
 impl<T: ScratchElement> core::ops::Deref for AlignedVec<T> {
     type Target = [T];
     #[inline]
