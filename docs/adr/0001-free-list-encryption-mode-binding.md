@@ -1,4 +1,4 @@
-# ADR 0001 — Binding free-list encryption mode to avoid mixed-policy corruption
+# ADR 0001: Binding free-list encryption mode to avoid mixed-policy corruption
 
 - Status: Accepted
 - Change class: [arch]

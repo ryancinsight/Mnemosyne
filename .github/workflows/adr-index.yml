@@ -11,12 +11,10 @@ on:
     branches: [main]
     paths:
       - 'docs/adr/**'
-      - 'scripts/adr-index.py'
       - '.github/workflows/adr-index.yml'
   pull_request:
     paths:
       - 'docs/adr/**'
-      - 'scripts/adr-index.py'
       - '.github/workflows/adr-index.yml'
 
 permissions:
@@ -28,20 +26,11 @@ concurrency:
 
 jobs:
   index:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: ADR index is current
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # Two failures, one command:
-      #
-      # - two records claiming the same number. Nothing detected this before,
-      #   so a collision surfaced only as a merge conflict during a rebase, one
-      #   number at a time, after the work was already written.
-      # - an index that no longer matches the files. It is generated, and the
-      #   resolution for a conflict on it is to regenerate rather than to merge
-      #   two appended rows by hand.
-      - name: Check the ADR index
-        run: python3 scripts/adr-index.py check
+    # atlas owns the one generator (ATLAS-ADR-FORM-NORMALIZATION-2026-09-02); strict: the ADRs carry the canonical heading form and numbering.
+    uses: ryancinsight/atlas/.github/workflows/adr-index-guard.yml@acc117f9c4e4b5c70c58a0d98f9e56a1ac7cc0cc
+    permissions:
+      contents: read
+    with:
+      strict: true
