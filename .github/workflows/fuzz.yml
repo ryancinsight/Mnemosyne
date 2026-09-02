@@ -50,9 +50,14 @@ jobs:
         with:
           tool: cargo-fuzz
 
+      # cargo-fuzz defaults `--target` to the triple it was itself built for,
+      # and the prebuilt binary the install action ships is a static musl
+      # build — so without an explicit target the fuzz build resolves to
+      # x86_64-unknown-linux-musl, whose statically linked libc
+      # AddressSanitizer cannot link against. Name the glibc target.
       - name: Fuzz c_shim_api for the committed budget
         run: |
-          cargo fuzz run c_shim_api -- \
+          cargo fuzz run --target x86_64-unknown-linux-gnu c_shim_api -- \
             -max_total_time="$FUZZ_SECONDS" \
             -timeout=10 \
             -print_final_stats=1
