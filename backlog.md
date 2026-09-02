@@ -408,34 +408,26 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   **Dependencies:** none.
   **Risk/change class:** [patch]. **Effort:** M.
 
-- [ ] **MNEM-SUPPLY-1** [security][patch] status=todo owner=unclaimed
-  scope=`.github/workflows/ci.yml`, new `deny.toml`. Non-goals: changing any
-  dependency version; adopting Dependabot/Renovate (separate item).
-  **Outcome:** the workspace has advisory, license, ban, duplicate,
-  unused-dependency, and yanked-crate enforcement. Today `grep -rli` over
-  `.github/workflows` finds no `cargo-deny`, `cargo-audit`,
-  `cargo-machete`, `cargo-geiger`, or `cargo-semver-checks` step, and no
-  `deny.toml`/`audit.toml` exists — for eleven crates.io-published package
-  identities. **Acceptance oracle:** a `supply-chain` job runs `cargo deny
-  check advisories bans licenses sources` and `cargo machete` green against a
-  committed `deny.toml`, and `cargo semver-checks check-release` runs on any
-  PR touching a `pub` item (see MNEM-SEMVER-1). Triage exposure from `cargo
-  tree -e normal`, never lockfile presence. **Dependencies:** none.
-  **Risk/change class:** [patch]. **Effort:** M.
+- [x] **MNEM-SUPPLY-1** [security][patch] status=done owner=Claude
+  **Closed 2026-09-02 (stale entry):** delivered before this item was worked —
+  `80b1a2a` (PR #73, 2026-08-26) added the `supply-chain` job (`cargo deny check
+  advisories bans licenses sources`, `cargo machete`) and `deny.toml`
+  (`[advisories]`, `[licenses]`, `[bans]`, `[sources]`); green on every run since.
+  Dependabot/Renovate remains a separate item, as scoped.
 
-- [ ] **MNEM-SEMVER-1** [patch] status=todo owner=unclaimed
-  scope=`.github/workflows/ci.yml`. Non-goals: changing any public API.
-  **Outcome:** `cargo-semver-checks` becomes a standing gate rather than a
-  manually-run step recorded in closed backlog entries. The audit found no
-  semver job in any workflow, while `CHANGELOG.md` Unreleased already carries
-  two entries marked **Breaking** (`Segment::next_free_segment` becoming
-  `AtomicPtr`, and `ensure_options_initialized` leaving the crate root).
-  **Acceptance oracle:** the job runs on every PR touching a published crate's
-  `pub` surface, and its classification is authoritative over the PR's
-  declared change class — a detected break under a `[patch]`/`[minor]` label
-  fails the gate. Verify by confirming it flags the two Unreleased breaks.
-  **Dependencies:** MNEM-SUPPLY-1 may host the same job. **Risk/change
-  class:** [patch]. **Effort:** S.
+- [x] **MNEM-SEMVER-1** [patch] status=done owner=Claude
+  **Closed 2026-09-02 (stale entry):** `b75fe12` (MN-460, 2026-09-01) adopted the
+  shared Atlas SemVer gate over all eleven published packages — PR runs compare
+  against the base sha, release runs against the previous release tag.
+  **Release-readiness finding (local `cargo semver-checks --workspace`,
+  2026-09-02, tree `7ffd08e`):** against the published `0.x` baselines the tree
+  carries major-class breaks in mnemosyne-arena (1), mnemosyne-local (4, incl.
+  `ensure_options_initialized` removed), mnemosyne-memory (1) and
+  mnemosyne-memory-core (5) — the CHANGELOG Unreleased **Breaking** entries plus
+  three unlisted ones (`constructible_struct_adds_field` in arena and core,
+  `struct_pub_field_now_doc_hidden` in core). The next release must bump those
+  four minors (0.x breaking) and list the unlisted breaks; the release-tag gate
+  enforces it.
 
 - [ ] **MNEM-FUZZ-CI-1** [patch] status=todo owner=unclaimed
   scope=`.github/workflows/ci.yml`, `fuzz/`. Non-goals: writing new fuzz
