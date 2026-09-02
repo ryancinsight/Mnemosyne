@@ -311,8 +311,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                 // own active-list head and `pg` is a live,
                                 // owner-exclusive page of this segment, so the
                                 // predicate's head read is valid.
-                                let is_only_active =
-                                    crate::free::is_sole_active_page(self.active_pages[class], pg);
+                                let is_only_active = crate::free_helpers::is_sole_active_page(
+                                    self.active_pages[class],
+                                    pg,
+                                );
                                 if !is_only_active {
                                     let pg_ptr = NonNull::new_unchecked(pg);
                                     let branded_page = token.page(pg_ptr);
