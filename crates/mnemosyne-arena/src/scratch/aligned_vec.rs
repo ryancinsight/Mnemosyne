@@ -154,6 +154,15 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.ptr
     }
 
+    /// Returns a raw pointer to the start of the initialized slice.
+    ///
+    /// Equivalent to `self.as_slice().as_ptr()`. Safe to call on shared
+    /// references; the pointer is valid for `len()` elements.
+    #[inline]
+    pub fn as_ptr(&self) -> *const T {
+        self.ptr
+    }
+
     /// Resizes the buffer in place to `new_len` elements.
     ///
     /// - If `new_len > self.len()`: new elements are filled with `value` and the
@@ -477,5 +486,67 @@ impl<T: ScratchElement> core::ops::DerefMut for AlignedVec<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut [T] {
         self.as_mut_slice()
+    }
+}
+
+// ── Conversions ─────────────────────────────────────────────────────────────
+
+impl<T: ScratchElement> From<&[T]> for AlignedVec<T> {
+    /// Creates an `AlignedVec<T>` by copying elements from a slice.
+    ///
+    /// Equivalent to [`AlignedVec::from_slice`] and provided here to satisfy
+    /// the standard `From<&[T]>` convention that lets `into()` calls work
+    /// uniformly at conversion boundaries.
+    #[inline]
+    fn from(slice: &[T]) -> Self {
+        Self::from_slice(slice)
+    }
+}
+
+impl<T: ScratchElement> From<alloc::vec::Vec<T>> for AlignedVec<T> {
+    /// Converts a `Vec<T>` into an `AlignedVec<T>` by copying the elements.
+    ///
+    /// The source `Vec` is dropped after the copy.  A true zero-copy
+    /// conversion is not possible in general because `Vec` uses the global
+    /// allocator while `AlignedVec` requires a specific alignment guarantee
+    /// that the global allocator does not provide.  When Mnemosyne is the
+    /// global allocator the performance difference is one copy operation;
+    /// use [`AlignedVec::from_slice`] directly when you already have a slice.
+    #[inline]
+    fn from(v: alloc::vec::Vec<T>) -> Self {
+        Self::from_slice(&v)
+    }
+}
+
+impl<T: ScratchElement> From<AlignedVec<T>> for alloc::vec::Vec<T> {
+    /// Converts an `AlignedVec<T>` into a `Vec<T>` by copying the elements.
+    ///
+    /// Delegates to [`AlignedVec::into_vec`].
+    #[inline]
+    fn from(v: AlignedVec<T>) -> alloc::vec::Vec<T> {
+        v.into_vec()
+    }
+}
+
+// ── Cross-type equality ──────────────────────────────────────────────────────
+
+impl<T: ScratchElement + PartialEq> PartialEq<alloc::vec::Vec<T>> for AlignedVec<T> {
+    #[inline]
+    fn eq(&self, other: &alloc::vec::Vec<T>) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl<T: ScratchElement + PartialEq> PartialEq<AlignedVec<T>> for alloc::vec::Vec<T> {
+    #[inline]
+    fn eq(&self, other: &AlignedVec<T>) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl<T: ScratchElement + PartialEq, const N: usize> PartialEq<[T; N]> for AlignedVec<T> {
+    #[inline]
+    fn eq(&self, other: &[T; N]) -> bool {
+        self.as_slice() == other.as_slice()
     }
 }

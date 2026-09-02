@@ -243,6 +243,7 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
         let cpu_ptr = per_cpu::try_alloc_cpu::<P>(class);
         if !cpu_ptr.is_null() {
             unsafe { initialize_allocated_bytes::<P>(cpu_ptr, adjusted_size) };
+            crate::bin_stats::record_alloc(class);
             return cpu_ptr;
         }
     }
@@ -272,6 +273,7 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
         return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
     }
     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+    crate::bin_stats::record_alloc(class);
     ptr
 }
 

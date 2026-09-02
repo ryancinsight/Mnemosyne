@@ -198,6 +198,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline]
     pub unsafe fn initialize_segment_keys(&mut self, segment: *mut Segment) {
         let seed = super::super::get_tls_seed();
+        let process_key = super::super::get_process_key();
         let segment_addr = segment as usize;
         // SAFETY: `segment` is a valid, writable `Segment` (caller contract)
         // owned exclusively by this allocator. `i` ranges over
@@ -206,7 +207,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         unsafe {
             (*segment).free_list_encrypted = true;
             for i in 0..PAGES_PER_SEGMENT {
-                (*segment).keys[i] = (segment_addr.wrapping_add(i * PAGE_SIZE)) ^ seed;
+                // Triangular XOR: page address ^ per-thread seed ^ process key.
+                // All three components are required to reconstruct a key:
+                //   - page address: observable (same thread) but predictable with ASLR bypass
+                //   - per-thread seed: random per thread, potentially disclosable
+                //   - process key: random per process, independent of thread seeds
+                (*segment).keys[i] =
+                    (segment_addr.wrapping_add(i * PAGE_SIZE)) ^ seed ^ process_key;
             }
         }
     }
