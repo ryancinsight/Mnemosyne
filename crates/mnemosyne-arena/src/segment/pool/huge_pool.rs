@@ -1,6 +1,10 @@
 //! Retained huge mappings, bucketed by size class within each NUMA node.
 
-use super::node_huge_bucket::{NodeHugeBucket, NodeHugePool};
+// The bucket types stay reachable at their original path: this module is
+// `pub`, so moving them out of the file would have removed
+// `pool::huge_pool::NodeHugeBucket` from the public surface — a break the
+// semver gate flagged, and not one a file-size refactor may make.
+pub use super::node_huge_bucket::{NodeHugeBucket, NodeHugePool};
 use super::numa_bucket::{NUMA_BUCKETS, bucket_index as numa_bucket, steal_from};
 use mnemosyne_core::types::Segment;
 
