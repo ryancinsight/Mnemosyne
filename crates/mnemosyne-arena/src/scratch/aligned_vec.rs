@@ -284,6 +284,24 @@ impl<T: ScratchElement> Drop for AlignedVec<T> {
     }
 }
 
+impl<T: ScratchElement + core::fmt::Debug> core::fmt::Debug for AlignedVec<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list().entries(self.as_slice().iter()).finish()
+    }
+}
+
+impl<T: ScratchElement + PartialEq> PartialEq for AlignedVec<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl<T: ScratchElement + PartialEq> PartialEq<[T]> for AlignedVec<T> {
+    fn eq(&self, other: &[T]) -> bool {
+        self.as_slice() == other
+    }
+}
+
 // SAFETY: `AlignedVec` uniquely owns its heap buffer with no aliasing or shared
 // ownership, so moving it to another thread is sound whenever the element type
 // is itself `Send`.
