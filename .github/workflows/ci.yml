@@ -89,8 +89,15 @@ jobs:
       # The aarch64 job runs native tests, not a lint, so nothing else covers
       # it (MN-465). A cross-target clippy needs no cross toolchain: it checks,
       # it does not link.
+      # The cross C compiler is for build scripts, not linking: the jemalloc
+      # comparator (`tikv-jemalloc-sys`) runs `configure` for the target even
+      # under clippy, and fails without a target toolchain.
       - name: Lint for aarch64-linux
+        env:
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
         run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y gcc-aarch64-linux-gnu
           rustup target add aarch64-unknown-linux-gnu
           cargo clippy --locked --workspace --all-targets --target aarch64-unknown-linux-gnu -- -D warnings
 
