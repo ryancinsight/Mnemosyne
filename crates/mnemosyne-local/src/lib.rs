@@ -70,6 +70,7 @@ pub mod dealloc_counters;
 
 mod alloc;
 mod free;
+mod free_helpers;
 mod options;
 mod realloc;
 mod tls_slot;

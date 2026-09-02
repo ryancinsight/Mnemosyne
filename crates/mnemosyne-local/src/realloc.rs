@@ -278,7 +278,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                                 // current head and cookie, and `page_alloc_count`
                                 // is its live count (`>= 1`), so the shared commit
                                 // stays inside this owned page.
-                                crate::free::commit_in_place_free(
+                                crate::free_helpers::commit_in_place_free(
                                     block,
                                     page_ref,
                                     page_free,
