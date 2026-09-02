@@ -73,7 +73,10 @@
   no benchmark body, workload, or threshold value changed.
 
 - [ ] [patch] [perf] **MN-466 — `huge_shrink_4m_to_2m` does not reproduce
-  itself, and only for Mnemosyne.** status=todo; owner=unclaimed; found
+  itself, and only for Mnemosyne.** status=in-progress; owner=atlas-session;
+  branch=`perf/mnemosyne-huge-realloc-variance`;
+  lease=`scripts/allocator_measurement.py`, `crates/mnemosyne-arena`;
+  found
   2026-09-01 by MN-464's procedure. With placement, throttling, and sample
   budget all controlled, `realloc latency/mnemosyne/huge_shrink_4m_to_2m`
   spreads **30.9%** across three identical runs (12.69 / 11.17 / 9.70 µs) and
