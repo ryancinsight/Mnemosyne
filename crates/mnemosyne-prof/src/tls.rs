@@ -101,8 +101,15 @@ fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
     }
 }
 
-#[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(miri)))]
-#[expect(dead_code)]
+// x86_64 Windows reads and writes the slot inline through the TEB
+// (`get_profiler_state`); every other target routes through the
+// platform getter/setter, so the pair exists exactly there.
+#[cfg(all(
+    not(nightly_tls_active),
+    not(feature = "std_tls"),
+    not(miri),
+    not(all(windows, target_arch = "x86_64"))
+))]
 #[inline(always)]
 fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
     // SAFETY: `key` was returned by a successful `get_os_tls_key`, so it is a
@@ -126,8 +133,13 @@ fn get_os_tls_value(key: u32) -> *mut core::ffi::c_void {
     }
 }
 
-#[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(miri)))]
-#[expect(dead_code)]
+// Same target partition as `get_os_tls_value`.
+#[cfg(all(
+    not(nightly_tls_active),
+    not(feature = "std_tls"),
+    not(miri),
+    not(all(windows, target_arch = "x86_64"))
+))]
 #[inline(always)]
 fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
     // SAFETY: `key` is a valid allocated TLS slot index; the platform setter
