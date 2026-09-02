@@ -1,3 +1,6 @@
+//! Element types admitted into scratch buffers: sealed plain-old-data
+//! scalars for which an all-zero bit pattern is a valid value.
+
 /// Default alignment for scratch buffers (64 bytes = one AVX-512 cache line).
 pub const DEFAULT_SCRATCH_ALIGN: usize = 64;
 

@@ -6,15 +6,21 @@ use super::pool::HasSegmentPool;
 /// Snapshot of arena-level segment cache state.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ArenaMemoryStats {
+    /// Free segments the pool currently holds for reuse.
     pub retained_free_segments: usize,
     /// Runtime retention cap currently enforced by the segment pool
     /// (`mnemosyne_core::options::MAX_RETAINED_SEGMENTS`, clamped at set time
     /// to the compile-time `MAX_RETAINED_SEGMENTS_LIMIT`), not the
     /// compile-time limit itself.
     pub max_retained_free_segments: usize,
+    /// Bytes mapped by the retained free segments
+    /// (`retained_free_segments * SEGMENT_MAPPING_SIZE`).
     pub retained_free_bytes: usize,
+    /// Cumulative segments returned to the OS by purges.
     pub purged_segments: usize,
+    /// Cumulative purge passes.
     pub purge_calls: usize,
+    /// Bytes unmapped by those purges (`purged_segments * SEGMENT_MAPPING_SIZE`).
     pub purged_bytes: usize,
     /// Number of segments whose physical backing was released by a
     /// confirmed `page_reset` while the segment itself remained cached

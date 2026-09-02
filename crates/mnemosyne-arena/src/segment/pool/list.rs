@@ -169,16 +169,19 @@ impl NodeSegmentPool {
         if popped.is_null() { None } else { Some(popped) }
     }
 
+    /// Segments currently cached in this node pool.
     #[inline]
     pub fn retained_count(&self) -> usize {
         self.stack.len()
     }
 
+    /// Cumulative segments this pool returned to the OS through purges.
     #[inline]
     pub fn purged_count(&self) -> usize {
         self.purged.load(Ordering::Relaxed)
     }
 
+    /// Cumulative purge passes recorded against this pool.
     #[inline]
     pub fn purge_call_count(&self) -> usize {
         self.purge_calls.load(Ordering::Relaxed)
@@ -190,11 +193,13 @@ impl NodeSegmentPool {
         self.purged.fetch_add(count, Ordering::Relaxed);
     }
 
+    /// Cumulative segments whose physical backing a confirmed `page_reset` released while they stayed cached in this pool.
     #[inline]
     pub fn reset_segments_count(&self) -> usize {
         self.reset_segments.load(Ordering::Relaxed)
     }
 
+    /// Cumulative reset passes recorded against this pool.
     #[inline]
     pub fn reset_call_count(&self) -> usize {
         self.reset_calls.load(Ordering::Relaxed)

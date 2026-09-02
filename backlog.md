@@ -519,21 +519,15 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   hand-kept table byte for byte, so the header claim is now true; an `ADR index`
   workflow runs `check` (regenerate-and-diff) on PRs and pushes touching
   `docs/adr/**`. ADR 0001 already read `Accepted`.
-- [ ] **MNEM-MISSINGDOCS-1** [arch][patch] status=todo owner=unclaimed
-  scope=`crates/mnemosyne-core/src/lib.rs`,
-  `crates/mnemosyne-arena/src/lib.rs` and whatever public items the deny then
-  flags. Non-goals: the other ten crates (already conforming);
-  `mnemosyne-benchmarks` (`publish = false`). **Outcome:** every published
-  crate denies undocumented public API. These two are the only published
-  crates without `#![deny(missing_docs)]`, and they hold the core layout types
-  (`Block`/`Page`/`Segment`), size classes, validation predicates, the policy
-  ZSTs, and the whole segment/arena/scratch surface. **Acceptance oracle:**
-  both `lib.rs` files carry `#![deny(missing_docs)]` and `cargo doc --no-deps`
-  is warning-clean for both packages under `RUSTDOCFLAGS=-D warnings`. Each
-  doc added must state the item's contract, not restate its signature.
-  **Dependencies:** none. **Risk/change class:** [patch]. **Effort:** M —
-  size it by first running the deny locally and counting the flagged items.
-
+- [x] **MNEM-MISSINGDOCS-1** [arch][patch] status=done owner=Claude
+  **Closed 2026-09-02:** `mnemosyne-memory-core` and `mnemosyne-arena` carry
+  `#![deny(missing_docs)]`; the 31 items the deny flagged (7 core: three
+  `MnemosyneOptions` fields and the four `types` submodules; 24 arena: the
+  scratch and segment-pool modules, `AlignedVec` accessors, node/global pool
+  telemetry counters, `ArenaMemoryStats` fields) are documented by contract —
+  what each counter accumulates, which prefix a pointer/length covers, what a
+  cadence of zero means. `cargo doc --no-deps -D warnings`, clippy
+  `-D warnings` and 68/68 tests green for both packages.
 - [ ] **MNEM-UNSAFE-DOC-1** [verification][patch] status=todo owner=unclaimed
   scope=the 84 sites enumerated in `gap_audit.md`; largest clusters
   `mnemosyne-local/src/free.rs` (17), `local_alloc/page/transitions.rs` (11),

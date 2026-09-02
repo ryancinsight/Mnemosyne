@@ -1,3 +1,5 @@
+//! Free-block list node: the intrusive link written into a freed block.
+
 use core::ptr::NonNull;
 
 /// A node representing a free block.

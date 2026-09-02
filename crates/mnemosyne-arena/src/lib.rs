@@ -1,6 +1,7 @@
 //! Shared arena and segment management logic for Mnemosyne.
 
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
+#![deny(missing_docs)]
 
 #[cfg(any(feature = "std", test))]
 extern crate std;

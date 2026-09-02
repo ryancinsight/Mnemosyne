@@ -1,3 +1,6 @@
+//! Global segment caches: per-NUMA-node pools of retained segments and huge
+//! mappings, with cross-node stealing when the local node is empty.
+
 mod cache_aligned;
 pub mod huge_pool;
 pub mod list;

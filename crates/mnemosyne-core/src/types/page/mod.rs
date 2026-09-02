@@ -1,3 +1,6 @@
+//! Page metadata: a size-classed run of blocks inside a segment, with its
+//! local and cross-thread free lists.
+
 use crate::sync::AtomicFreeList;
 use crate::types::Block;
 use crate::types::Segment;
