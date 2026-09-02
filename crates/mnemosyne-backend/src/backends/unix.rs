@@ -35,6 +35,25 @@ const MAP_FAILED: *mut c_void = -1isize as *mut c_void;
 #[cfg(all(target_os = "linux", not(miri)))]
 const MADV_DONTNEED: c_int = 4;
 
+/// Linux `MADV_FREE` advice constant (kernel ≥ 4.5).
+///
+/// Marks the addressed range as reclaimable by the kernel, but the pages
+/// stay resident until the kernel is under memory pressure.  Unlike
+/// `MADV_DONTNEED` this does **not** trigger an IPI broadcast to flush the
+/// TLB on all CPUs — critical for high-throughput scientific workloads that
+/// free large working-set segments frequently.  Subsequent reads may return
+/// the prior contents or zero.  Defined as `8` on Linux.
+#[cfg(all(target_os = "linux", not(miri)))]
+const MADV_FREE: c_int = 8;
+
+/// Cache of whether the running kernel supports `MADV_FREE` (kernel ≥ 4.5).
+///
+/// Initialised lazily on the first `decommit` call. `2` = uninitialised,
+/// `1` = supported, `0` = not supported (fall back to `MADV_DONTNEED`).
+#[cfg(all(target_os = "linux", not(miri)))]
+static MADV_FREE_SUPPORTED: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(2);
+
 /// macOS / BSD `MADV_FREE` advice constant.
 ///
 /// Tells the kernel that the addressed range no longer needs to retain
@@ -258,8 +277,39 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
         // so it takes the same "unsupported target" `false` fallback.
         #[cfg(all(target_os = "linux", not(miri)))]
         {
+            // Prefer MADV_FREE (kernel >= 4.5): pages are reclaimed lazily
+            // under pressure without an IPI broadcast, which is critical for
+            // scientific workloads that release large segments frequently.
+            // MADV_DONTNEED triggers an IPI to all CPUs to flush TLBs; MADV_FREE
+            // defers that cost to the kernel's reclaim path or avoids it entirely
+            // when the process re-touches the range before reclaim.
+            //
+            // Probe the kernel once; subsequent calls skip the EINVAL check.
             // SAFETY: see `page_reset`; madvise never invalidates the mapping.
-            let res = unsafe { madvise(ptr as *mut c_void, size, MADV_DONTNEED) };
+            use core::sync::atomic::Ordering;
+            let cached = MADV_FREE_SUPPORTED.load(Ordering::Relaxed);
+            let use_free = if cached == 2 {
+                // First call: probe whether MADV_FREE is available.
+                let r = unsafe { madvise(ptr as *mut c_void, size, MADV_FREE) };
+                if r == 0 {
+                    MADV_FREE_SUPPORTED.store(1, Ordering::Relaxed);
+                    return true;
+                }
+                // EINVAL means MADV_FREE is not supported on this kernel.
+                MADV_FREE_SUPPORTED.store(0, Ordering::Relaxed);
+                false
+            } else {
+                cached == 1
+            };
+            let advice = if use_free { MADV_FREE } else { MADV_DONTNEED };
+            let res = unsafe { madvise(ptr as *mut c_void, size, advice) };
+            if res == 0 && use_free {
+                // Track the lazy-purge subset: decommit_calls/bytes are
+                // recorded centrally by reset::do_decommit after this
+                // returns true; only the MADV_FREE portion needs a separate
+                // counter here.
+                crate::recorders::record_purge_only(size);
+            }
             res == 0
         }
         #[cfg(all(any(target_os = "macos", target_os = "freebsd"), not(miri)))]
