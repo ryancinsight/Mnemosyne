@@ -127,8 +127,10 @@
   snmalloc` succeeds on this host, or the comparator is recorded as
   permanently unavailable here with the reason. **Effort:** S.
 
-- [ ] [patch] **MN-463 — the Windows Jemalloc column needs an MSVC-built
-  jemalloc.** status=todo; owner=unclaimed; diagnosed 2026-09-01. This is the
+- [x] [patch] **MN-463 — the Windows Jemalloc column needs an MSVC-built
+  jemalloc.** status=done (2026-09-02); owner=atlas-session; branch=
+  `fix/mnemosyne-jemalloc-abi-diagnostic`; lease=discharged; diagnosed
+  2026-09-01. This is the
   real GNU/MSVC mismatch, and it is now purely a library-provenance problem:
   `build.rs` finds `D:\msys64\ucrt64\lib\libjemalloc_s.a`, but that is a
   mingw-gcc archive whose objects reference `___chkstk_ms`, a GCC runtime
@@ -143,7 +145,11 @@
   line it knows will fail is worse than one that says why it cannot.
   **Acceptance oracle:** on an MSVC host the feature either links or fails at
   `build.rs` with the ABI reason named; the `Jemalloc (ns)` column is then
-  populated or documented, never silently empty. **Effort:** S.
+  populated or documented, never silently empty. **Outcome:** `build.rs` now
+  rejects a detected MSYS2 `ucrt64`/`mingw64` archive for MSVC before link
+  directives are emitted. `cargo check --offline --no-default-features` and
+  clippy pass; the feature-on build fails with the named ABI diagnostic.
+  **Effort:** S.
 
 - [x] [patch] **MN-465 — `mnemosyne-backend` does not lint clean for
   `aarch64-unknown-linux-gnu`.** status=done (2026-09-01, Claude); owner=claude; found
