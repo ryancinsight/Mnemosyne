@@ -1,5 +1,36 @@
 # Checklist
 
+## MN-SCRATCH-RELEASE-2026-09-03 (owner: unclaimed)
+
+`ScratchPool` grows a slot with `ensure_len` and never lowers it. Nothing in
+`pool.rs` shrinks, truncates, or resets one, so each of the `MAX_POOL_SLOTS`
+slots stays at the high-water mark of whatever that thread ever ran. The pool
+is released when its thread exits -- `AlignedVec` implements `Drop` and the
+pool lives in a `thread_local!` -- so this is a working-set high-water mark,
+not a leak. It costs whatever a long-lived worker pool holds.
+
+- [ ] **Measured downstream, 2026-09-03.** Apollo's `worker_scratch_retention`
+      probe drives an FFT through its executor pool and reads a
+      pointer-identity ledger while the workers are still alive. At
+      n = 16,384 the first parallel forward retains 7,528,076 bytes, of which
+      `278528 x 25` -- **6,963,200 bytes** -- is one padded planar scratch
+      buffer per worker (24) plus the calling thread. A second pass over the
+      same workers retains nothing, confirming a high-water mark rather than
+      per-call growth. The same window shows the plan tables at x1/x2 and
+      Moirai's injectors at `36864 x 24`, so scratch is the dominant
+      per-worker term once sharing is in place.
+- [ ] Decide whether a release policy belongs here at all: the buffer is 1.06x
+      the signal it transposes, so the size is not waste; the question is only
+      whether a slot should survive an idle period at its mark.
+- [ ] If it should, choose the trigger. The allocator already carries adaptive
+      decay; whether scratch should participate in it, expose an explicit
+      `release`/`shrink_to` for a caller that knows it is between phases, or
+      decay on its own schedule is the design decision, and each has a
+      different cost on `with_scratch`, which is a hot path.
+- [ ] Acceptance oracle: a probe holding long-lived workers shows the
+      high-water slots released after the chosen trigger fires, with
+      `with_scratch` unchanged on the steady-state path (paired benchmark).
+
 ## MN-CONFORMANCE-COMMENTED-CODE-2026-08-31 (owner: codex)
 
 - [x] Reproduce the exact Atlas ratchet raise and identify the added prose
