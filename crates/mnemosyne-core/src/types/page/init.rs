@@ -81,10 +81,16 @@ impl Page {
     pub unsafe fn pop_block<P: crate::policy::AllocPolicy>(page: *mut Self) -> NonNull<Block> {
         if let Some(block) = unsafe { Self::try_pop_bump_block(page) } {
             block
+        // SAFETY: the caller guarantees `page` is a live, exclusively-owned
+        // page header, so reading its free-list head is a plain load of
+        // initialized page metadata.
         } else if let Some(block) = unsafe { (*page).free } {
             let block_addr = block.as_ptr() as usize;
             let page_addr = page.addr();
             let segment_addr = page_addr & !(crate::constants::SEGMENT_SIZE - 1);
+            // SAFETY: `page` is the live page selected by the caller, so its
+            // recorded page index and block size fields are initialized and may
+            // be used to reconstruct the page bounds within the segment.
             let page_start = segment_addr
                 + (unsafe { (*page).page_index as usize } << crate::constants::PAGE_SHIFT);
             let block_size = unsafe { (*page).block_size };
@@ -97,6 +103,8 @@ impl Page {
                 );
             }
             let segment = page.map_addr(|_| segment_addr).cast::<Segment>();
+            // SAFETY: `page` still names the same live page, so rereading its
+            // stored page index to derive the free-list cookie stays in-bounds.
             let page_index = unsafe { (*page).page_index as usize };
             // SAFETY: `page` retains the parent mapping provenance and its
             // initialized index is in range, satisfying `cookie_for`.

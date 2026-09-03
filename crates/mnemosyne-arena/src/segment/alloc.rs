@@ -460,13 +460,22 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
                     // every still-unprocessed segment for this node, then stop
                     // sweeping it (matching the prior stop-on-failure behavior so
                     // pool metadata never claims a purge for a mapping we own).
+                    // SAFETY: `segment` is still detached from this node's
+                    // `take_all` chain, so this pass owns it exclusively while
+                    // handing it back to the same node cache.
                     unsafe { node.push_unbounded(segment) };
                     while !head.is_null() {
                         let s = head;
+                        // SAFETY: the remainder of `head` is the still-detached
+                        // suffix from `take_all`, so loading `next_free_segment`
+                        // walks valid retained nodes before we requeue them.
                         head = unsafe {
                             (*s).next_free_segment
                                 .load(core::sync::atomic::Ordering::Relaxed)
                         };
+                        // SAFETY: `s` is one detached node from that suffix, so
+                        // pushing it back simply transfers ownership to the same
+                        // node-local retained cache.
                         unsafe { node.push_unbounded(s) };
                     }
                     break;

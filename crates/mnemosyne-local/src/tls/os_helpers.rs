@@ -134,6 +134,9 @@ pub(crate) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
 #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
 #[inline(always)]
 pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
+    // SAFETY: the caller supplies a real `TlsAlloc` key, so the Windows x64
+    // TEB layout at GS:0x1480 / GS:0x30+0x1780 contains either the inline or
+    // expansion slot for this thread.
     unsafe {
         if index < 64 {
             let val: *mut core::ffi::c_void;
@@ -173,6 +176,9 @@ pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
 #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
 #[inline(always)]
 pub(crate) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
+    // SAFETY: `index` is a real Windows TLS key for the current thread, so the
+    // TEB inline/expansion slot selected below is the slot OS TLS APIs would
+    // update for this same key.
     unsafe {
         if index < 64 {
             // SAFETY: `index < 64` is a `TlsAlloc`-allocated slot in the

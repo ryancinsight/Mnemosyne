@@ -18,7 +18,11 @@ pub unsafe fn miri_cleanup_pools<B: mnemosyne_arena::HasSegmentPool>() {
     }
 
     for segment in orphaned {
+        // SAFETY: each `segment` was popped out of the orphan pool into this
+        // private vector, so this cleanup pass exclusively owns its header.
         let mut occupied = unsafe { (*segment).page_occupied_mask };
+        // SAFETY: the same detached segment header carries the free-list
+        // encryption mode used to reclaim any remote frees below.
         let encrypted = unsafe { (*segment).free_list_encrypted };
         while occupied != 0 {
             let page_index = occupied.trailing_zeros() as usize;

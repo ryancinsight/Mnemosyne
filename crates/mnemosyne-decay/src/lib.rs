@@ -243,6 +243,9 @@ pub fn decay_step() {
 
 fn decay_step_for_backend<B: HasSegmentPool>() {
     decay_orphan_pool::<B>();
+    // SAFETY: decay owns the serialized maintenance pass over retained
+    // backend-local segment caches; orphaned live segments were handled above,
+    // so purging the shared pool cannot race this thread's detached work.
     unsafe {
         mnemosyne_arena::purge_segment_pool::<B>();
     }
@@ -271,14 +274,22 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
             let page = unsafe { &raw mut (*segment).pages[i] };
             // Reclaim any cross-thread frees to update the alloc_count, using
             // the segment-aware variant to avoid redundant segment-address masking.
+            // SAFETY: `segment` was popped from the orphan pool, so this decay
+            // pass has exclusive access to its pages while reclaiming
+            // thread-free blocks back into the owning page metadata.
             unsafe {
                 Page::reclaim_thread_free_if_present_in_segment(segment, i, dynamic_encrypted);
             }
+            // SAFETY: `page` is the page entry selected from the live `segment`
+            // mapping above; decay only reads the post-reclaim allocation count.
             total_allocations += unsafe { (*page).alloc_count };
         }
 
         if total_allocations == 0 {
             // No allocations left! Deallocate segment mapping completely back to OS
+            // SAFETY: the orphan-pool pop transferred exclusive ownership of
+            // this segment to decay, and `total_allocations == 0` proves no
+            // live blocks remain before returning the mapping to the arena.
             unsafe {
                 Segment::set_owner(segment, SegmentOwner::NONE);
                 (*segment).next_owned_segment = core::ptr::null_mut();
@@ -287,6 +298,9 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
             }
         } else {
             // Segment still has live allocations, retain it in the local intrusive list
+            // SAFETY: `retained_head` is decay's private intrusive chain, so
+            // linking this still-live segment onto it mutates only detached
+            // nodes we exclusively own in this pass.
             unsafe {
                 (*segment)
                     .next_free_segment
@@ -299,11 +313,15 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
     // Push back retained segments to the orphan pool
     let mut curr = retained_head;
     while !curr.is_null() {
+        // SAFETY: `curr` walks decay's private retained chain built above, so
+        // loading its next link reads a valid detached segment node.
         let next = unsafe {
             (*curr)
                 .next_free_segment
                 .load(core::sync::atomic::Ordering::Relaxed)
         };
+        // SAFETY: `curr` is still owned by this pass; clearing its private link
+        // and pushing it back transfers the segment back into the orphan pool.
         unsafe {
             (*curr)
                 .next_free_segment

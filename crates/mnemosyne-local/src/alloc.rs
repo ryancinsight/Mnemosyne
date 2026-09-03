@@ -57,6 +57,9 @@ pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
         return core::ptr::null_mut();
     }
 
+    // SAFETY: the early return above rejects every request that violates
+    // Mnemosyne's size/alignment preconditions before we enter the unchecked
+    // allocator fast path.
     let ptr = unsafe { thread_alloc_checked::<P, B>(size, align) };
     if mnemosyne_prof::is_active() && !ptr.is_null() {
         mnemosyne_prof::on_alloc(ptr, size);
@@ -109,6 +112,9 @@ pub unsafe fn thread_alloc_layout<P: AllocPolicy, B: HasSegmentPool + LocalAlloc
         align != 0 && align.is_power_of_two(),
         "Layout-validated allocation received invalid alignment {align}"
     );
+    // SAFETY: `Layout` validation plus `is_valid_layout_alloc_request` above
+    // guarantee the nonzero, power-of-two alignment and allocator bounds that
+    // `thread_alloc_checked` assumes.
     let ptr = unsafe { thread_alloc_checked::<P, B>(size, align) };
     if mnemosyne_prof::is_active() && !ptr.is_null() {
         mnemosyne_prof::on_alloc(ptr, size);
@@ -159,6 +165,9 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
     let class = match small_path_class(size, align) {
         Some(c) => c,
         None => {
+            // SAFETY: `adjusted_size`/`align` come from a request already
+            // validated by the public entrypoint; routing to the large/huge
+            // allocator preserves those same bounds.
             return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
         }
     };
@@ -227,6 +236,9 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
             )
         }
     } else {
+        // SAFETY: `class` came from `small_path_class`, `adjusted_size`/`align`
+        // are still the validated request parameters, and `None` accurately
+        // reports that no initialized TLS allocator slot was available.
         unsafe { thread_alloc_cold::<P, B>(class, adjusted_size, align, None) }
     }
 }
@@ -242,6 +254,9 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
     if B::ENABLE_CPU_CACHE {
         let cpu_ptr = per_cpu::try_alloc_cpu::<P>(class);
         if !cpu_ptr.is_null() {
+            // SAFETY: `try_alloc_cpu` returned a freshly-owned block for
+            // `class`, so writing the policy's initialization pattern within
+            // `adjusted_size` bytes stays inside the allocation.
             unsafe { initialize_allocated_bytes::<P>(cpu_ptr, adjusted_size) };
             crate::bin_stats::record_alloc(class);
             return cpu_ptr;
@@ -253,6 +268,9 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
         None => B::get_allocator_ptr_for_policy::<P>(),
     };
     if slot_ptr.is_null() {
+        // SAFETY: the validated request cannot use the thread-local allocator
+        // without a live TLS slot, so we fall back to the large/huge path with
+        // the same checked `adjusted_size`/`align`.
         return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
     }
     // SAFETY: this thread's live TLS slot address (== the allocator address).
@@ -282,8 +300,14 @@ unsafe fn allocate_large_or_huge_initialized<P: AllocPolicy, B: HasSegmentPool>(
     size: usize,
     align: usize,
 ) -> *mut u8 {
+    // SAFETY: every caller reaches this helper only after validating the
+    // request's size/alignment invariants; this wrapper just forwards them to
+    // the arena allocator and then initializes the result if one is returned.
     let ptr = unsafe { allocate_large_or_huge::<B>(size, align, P::ENABLE_POISONING) };
     if !ptr.is_null() {
+        // SAFETY: a non-null result is a fresh allocation of at least `size`
+        // bytes, so policy-specific initialization stays within the returned
+        // block.
         unsafe { initialize_allocated_bytes::<P>(ptr, size) };
     }
     ptr

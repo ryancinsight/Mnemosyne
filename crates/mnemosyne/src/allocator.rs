@@ -71,6 +71,8 @@ unsafe impl GlobalAlloc for Mnemosyne {
     /// `GlobalAlloc::realloc`.
     #[inline(always)]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        // SAFETY: `GlobalAlloc::realloc` supplies the same live-pointer and
+        // `Layout` invariants that `thread_realloc` requires.
         unsafe {
             thread_realloc::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
                 ptr, layout, new_size,
@@ -140,6 +142,9 @@ unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
     /// Same contract as `Mnemosyne::realloc`.
     #[inline(always)]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        // SAFETY: the `GlobalAlloc::realloc` caller provides a live allocation
+        // and matching `Layout`; this forwards those exact invariants to the
+        // policy/backend-specific realloc path.
         unsafe { thread_realloc::<P, B>(ptr, layout, new_size) }
     }
 }

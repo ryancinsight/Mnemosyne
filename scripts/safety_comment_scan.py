@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CRATES = ROOT / "crates"
 WINDOW = 14
-BASELINE = 61  # only ever edited downward
+BASELINE = 0  # only ever edited downward
 EXCLUDED_CRATES = {"mnemosyne-benchmarks"}
 UNSAFE_OPEN = re.compile(r"\bunsafe\s*\{")
 CFG_TEST = re.compile(r"#\[cfg\(test\)\]")

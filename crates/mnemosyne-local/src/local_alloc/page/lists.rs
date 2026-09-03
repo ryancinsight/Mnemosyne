@@ -69,6 +69,8 @@ pub(crate) unsafe fn push_page_front<'id, B: HasSegmentPool>(
     list_state: u8,
 ) {
     let raw_page = page_ptr.ptr();
+    // SAFETY: `page_ptr` is branded by `token`, so this list operation has
+    // exclusive access to the page header fields being rewritten.
     unsafe {
         (*raw_page.as_ptr()).next_page = *head_slot;
         (*raw_page.as_ptr()).prev_page = None;
@@ -111,6 +113,8 @@ pub(crate) unsafe fn unlink_page_from_list<'id, B: HasSegmentPool>(
     page_ptr: BrandedPage<'id>,
 ) {
     let raw_page = page_ptr.ptr();
+    // SAFETY: `page_ptr` is the branded node currently linked in this list, so
+    // reading its adjacent links observes initialized list metadata.
     let next = unsafe { (*raw_page.as_ptr()).next_page };
     let prev = unsafe { (*raw_page.as_ptr()).prev_page };
 
@@ -177,6 +181,8 @@ pub(crate) unsafe fn move_page_between_lists_branded<'id, B: HasSegmentPool>(
     new_state: u8,
 ) {
     let raw_page = page_ptr.ptr();
+    // SAFETY: `page_ptr` is branded and currently linked in `from_head_slot`,
+    // so its source-list neighbour pointers are initialized and may be read.
     let next = unsafe { (*raw_page.as_ptr()).next_page };
     let prev = unsafe { (*raw_page.as_ptr()).prev_page };
 

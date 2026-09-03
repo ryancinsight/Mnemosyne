@@ -29,6 +29,8 @@ pub(crate) fn do_page_reset<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool
     if ptr.is_null() || size == 0 {
         return false;
     }
+    // SAFETY: the guards above exclude null/empty inputs, so this forwards the
+    // caller's live mapping range directly to the backend reset primitive.
     let reset = unsafe { B::page_reset(ptr, size) };
     if reset {
         record_page_reset(size);
@@ -47,6 +49,8 @@ pub(crate) fn do_decommit<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool {
     if ptr.is_null() || size == 0 {
         return false;
     }
+    // SAFETY: as in `do_page_reset`, the wrapper has already ruled out null
+    // pointers and zero-length ranges before delegating to the backend.
     let decommitted = unsafe { B::decommit(ptr, size) };
     if decommitted {
         record_decommit(size);

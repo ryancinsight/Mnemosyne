@@ -367,6 +367,9 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
                 cached == 1
             };
             let advice = if use_free { MADV_FREE } else { MADV_DONTNEED };
+            // SAFETY: `ptr..ptr+size` is still the caller's live mapping, and
+            // both advice values are non-destructive page-state hints for that
+            // exact range.
             let res = unsafe { madvise(ptr as *mut c_void, size, advice) };
             if res == 0 && use_free {
                 // Track the lazy-purge subset: decommit_calls/bytes are
@@ -522,6 +525,8 @@ mod tests {
             assert_eq!(ptr.add(size - 1).read_volatile(), 0x55);
         }
 
+        // SAFETY: `ptr` is still the exact base returned by `allocate(size)` in
+        // this test, and the mapping has not been released yet.
         let released = unsafe { UnixBackend::deallocate(ptr, size) };
         assert!(
             released,

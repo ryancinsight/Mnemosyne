@@ -58,6 +58,8 @@ pub(crate) fn do_deallocate<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool
     if ptr.is_null() {
         return false;
     }
+    // SAFETY: callers hand this wrapper the exact live mapping base and size;
+    // it only forwards that range to the backend deallocator.
     let released = unsafe { B::deallocate(ptr, size) };
     if released {
         record_unmap(size);

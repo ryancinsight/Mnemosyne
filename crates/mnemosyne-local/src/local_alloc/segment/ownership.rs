@@ -155,7 +155,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
         }
         with_owned_segment_token::<B, _>(|mut token| {
+            // SAFETY: `segment` is the live mapping just assigned to this
+            // allocator, and the owned-segment token may therefore brand it for
+            // intrusive ownership-list operations.
             let branded_segment = unsafe { token.segment(segment) };
+            // SAFETY: `self` uniquely owns the owned-segments list, so pushing
+            // the newly acquired branded segment onto its head preserves list
+            // ownership invariants.
             unsafe {
                 push_owned_segment_front(&mut token, &mut self.owned_segments_head, branded_segment)
             };
@@ -228,7 +234,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline]
     pub(crate) unsafe fn unlink_owned_segment(&mut self, segment: *mut Segment) {
         with_owned_segment_token::<B, _>(|mut token| {
+            // SAFETY: the caller guarantees `segment` is currently linked in
+            // this allocator's owned-segment list, and the token brands it for
+            // that intrusive list domain.
             let branded_segment = unsafe { token.segment(segment) };
+            // SAFETY: `self.owned_segments_head` is this allocator's exclusive
+            // ownership list, so unlinking the branded node mutates only list
+            // metadata this allocator controls.
             unsafe {
                 unlink_owned_segment_from_list(
                     &mut token,

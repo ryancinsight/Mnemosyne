@@ -30,7 +30,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline(always)]
     pub(crate) unsafe fn push_active_page(&mut self, page_ptr: NonNull<Page>, class: usize) {
         with_page_list_token::<B, _>(|mut token| {
+            // SAFETY: the caller guarantees `page_ptr` is a live page owned by
+            // this allocator, and `with_page_list_token` vouches that the token
+            // may project that page into the branded list domain.
             let page = unsafe { token.page(page_ptr) };
+            // SAFETY: `class` names this page's size-class list, and the
+            // branded page plus unique `&mut self` give exclusive authority to
+            // link it onto the active list.
             unsafe {
                 push_page_front(
                     &mut token,
@@ -45,7 +51,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline(always)]
     pub(crate) unsafe fn push_full_page(&mut self, page_ptr: NonNull<Page>, class: usize) {
         with_page_list_token::<B, _>(|mut token| {
+            // SAFETY: `page_ptr` is a valid page owned by this allocator, and
+            // the token is the proof object required to brand it for list
+            // operations.
             let page = unsafe { token.page(page_ptr) };
+            // SAFETY: the caller selected the matching `class`, so inserting
+            // the branded page at the front of that full-list preserves list
+            // ownership and metadata invariants.
             unsafe {
                 push_page_front(
                     &mut token,
@@ -60,7 +72,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline(always)]
     pub(crate) unsafe fn push_empty_page(&mut self, page_ptr: NonNull<Page>) {
         with_page_list_token::<B, _>(|mut token| {
+            // SAFETY: `page_ptr` is a live page belonging to this allocator,
+            // and the page-list token can therefore brand it for empty-list
+            // bookkeeping.
             let page = unsafe { token.page(page_ptr) };
+            // SAFETY: `self.empty_pages` is this allocator's empty-page list, so
+            // linking the branded page onto its head is exclusive and keeps the
+            // page in the correct list state.
             unsafe { push_page_front(&mut token, &mut self.empty_pages, page, 3) };
         });
     }

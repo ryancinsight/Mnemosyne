@@ -67,7 +67,9 @@ unsafe fn init_segment_layout(
         "payload end {payload_end:#x} must remain inside backend mapping end {mapping_end:#x}"
     );
 
-    // Write the back-pointer and update alloc_count (live for both paths).
+    // SAFETY: `aligned_ptr` is the segment header inside the live backend
+    // mapping, and the metadata slot immediately before `user_ptr` was
+    // reserved by the layout math above for this back-pointer write.
     unsafe {
         (*aligned_ptr).pages[0].alloc_count = size;
         let metadata_slot = (user_ptr as *mut *mut Segment).sub(1);
@@ -136,10 +138,14 @@ unsafe fn initialize_large_or_huge_segment(
     is_cache_hit: bool,
 ) -> Option<(*mut u8, usize, usize, usize)> {
     if is_cache_hit {
+        // SAFETY: a cache hit means `raw_ptr` still holds the previously
+        // initialized large/huge segment header required by the cached path.
         unsafe {
             initialize_large_or_huge_segment_cached(raw_ptr, total_alloc_size, alignment, size)
         }
     } else {
+        // SAFETY: a cache miss means `raw_ptr` is the fresh backend mapping
+        // just returned for this allocation attempt, satisfying the fresh path.
         unsafe {
             initialize_large_or_huge_segment_fresh(raw_ptr, total_alloc_size, alignment, size)
         }
