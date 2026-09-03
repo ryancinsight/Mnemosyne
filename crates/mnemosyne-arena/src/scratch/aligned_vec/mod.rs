@@ -5,6 +5,12 @@ mod bytes;
 mod length;
 mod traits;
 
+// `IntoIter` lived in `aligned_vec.rs` before the split and is public API.
+// Moving it into a private submodule removes it from
+// `scratch::aligned_vec::IntoIter` -- a major break for a refactor that
+// changes no bodies -- so the path is preserved here.
+pub use traits::IntoIter;
+
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
