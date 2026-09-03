@@ -1,10 +1,9 @@
 //! Per-size-class allocation telemetry.
 //!
 //! Tracks process-wide allocation and deallocation counts per size class using
-//! relaxed atomic counters.  The overhead per alloc/free is one `fetch_add` on
-//! a per-class `AtomicU64`; on modern CPUs this is a single `LOCK XADD` with
-//! no memory-ordering constraints (relaxed), which adds ≤ 1 ns to the fast
-//! path.
+//! relaxed atomic counters. The allocation-byte total is derived from the
+//! immutable class stride, so recording an allocation needs one atomic update
+//! instead of a second counter RMW on the hot path.
 //!
 //! The counters are always enabled (no feature gate).  They are not
 //! synchronised with each other — a snapshot can observe counts from
@@ -20,22 +19,25 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::size_class::class_to_size;
 
-// Three process-wide per-class atomic arrays.  Kept together so they fit on
-// the same cache lines when iterated in `bin_stats`.
+// Two process-wide per-class atomic arrays. Allocation bytes are derived from
+// the immutable class stride when a snapshot is read.
 static ALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] = [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
 static DEALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] =
     [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
-static ALLOC_BYTES: [AtomicU64; NUM_SIZE_CLASSES] = [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
+
+#[inline]
+fn allocation_bytes(alloc_count: u64, block_size: usize) -> u64 {
+    alloc_count.saturating_mul(block_size as u64)
+}
 
 /// Records one allocation from `class`.
 ///
 /// `# Safety` is not required; the function bounds-checks `class` internally.
-/// Called on the alloc hot path: one relaxed `fetch_add` per class array.
+/// Called on the alloc hot path: one relaxed `fetch_add` for the class count.
 #[inline(always)]
 pub(crate) fn record_alloc(class: usize) {
     if class < NUM_SIZE_CLASSES {
         ALLOC_COUNT[class].fetch_add(1, Ordering::Relaxed);
-        ALLOC_BYTES[class].fetch_add(class_to_size(class) as u64, Ordering::Relaxed);
     }
 }
 
@@ -55,6 +57,8 @@ pub struct BinSnapshot {
     /// Total frees returned to this size class.
     pub dealloc_count: u64,
     /// Cumulative bytes allocated (size-class block size × alloc_count).
+    ///
+    /// The product saturates at `u64::MAX` rather than wrapping.
     pub alloc_bytes: u64,
     /// Block size of this size class in bytes.
     pub block_size: usize,
@@ -74,12 +78,11 @@ pub fn bin_snapshot(class: usize) -> Option<BinSnapshot> {
     }
     let alloc_count = ALLOC_COUNT[class].load(Ordering::Relaxed);
     let dealloc_count = DEALLOC_COUNT[class].load(Ordering::Relaxed);
-    let alloc_bytes = ALLOC_BYTES[class].load(Ordering::Relaxed);
     let block_size = class_to_size(class);
     Some(BinSnapshot {
         alloc_count,
         dealloc_count,
-        alloc_bytes,
+        alloc_bytes: allocation_bytes(alloc_count, block_size),
         block_size,
         live_estimate: alloc_count.saturating_sub(dealloc_count),
     })
@@ -91,14 +94,36 @@ pub fn all_bin_snapshots() -> [BinSnapshot; NUM_SIZE_CLASSES] {
     core::array::from_fn(|class| {
         let alloc_count = ALLOC_COUNT[class].load(Ordering::Relaxed);
         let dealloc_count = DEALLOC_COUNT[class].load(Ordering::Relaxed);
-        let alloc_bytes = ALLOC_BYTES[class].load(Ordering::Relaxed);
         let block_size = class_to_size(class);
         BinSnapshot {
             alloc_count,
             dealloc_count,
-            alloc_bytes,
+            alloc_bytes: allocation_bytes(alloc_count, block_size),
             block_size,
             live_estimate: alloc_count.saturating_sub(dealloc_count),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NUM_SIZE_CLASSES, all_bin_snapshots, bin_snapshot};
+
+    #[test]
+    fn derived_allocation_bytes_match_the_class_stride() {
+        for snapshot in all_bin_snapshots() {
+            assert_eq!(
+                snapshot.alloc_bytes,
+                snapshot
+                    .alloc_count
+                    .saturating_mul(snapshot.block_size as u64),
+                "allocation bytes must be derived from the immutable class stride"
+            );
+        }
+    }
+
+    #[test]
+    fn snapshots_preserve_the_public_range_contract() {
+        assert!(bin_snapshot(NUM_SIZE_CLASSES).is_none());
+    }
 }
