@@ -119,8 +119,28 @@ impl Block {
         }
     }
 
-    /// Writes the backward-edge free canary `FREE_CANARY_MAGIC ^ page_cookie`
-    /// to the word immediately following the `next_encoded` field.
+    /// Computes the address-bound canary value for a block.
+    ///
+    /// The canary incorporates the block's own address so a valid canary from
+    /// one block cannot be copied to another. Specifically:
+    /// `canary = FREE_CANARY_MAGIC ^ page_cookie ^ (block_addr >> 4)`.
+    ///
+    /// The `>> 4` strips the four least-significant (always-zero for
+    /// `MIN_BLOCK_SIZE = 16`-aligned blocks) bits so the address contribution
+    /// is drawn from the *meaningful* address bits rather than constant zeros.
+    ///
+    /// Inspired by snmalloc's per-slab backward-edge binding (0.7.x).
+    #[inline(always)]
+    fn canary_value(block: *const Block, page_cookie: usize) -> usize {
+        FREE_CANARY_MAGIC ^ page_cookie ^ (block.addr() >> 4)
+    }
+
+    /// Writes the backward-edge free canary to the word immediately following
+    /// the `next_encoded` field.
+    ///
+    /// The canary value is `FREE_CANARY_MAGIC ^ page_cookie ^ (block_addr >> 4)`:
+    /// it binds to the block's own address so a valid canary cannot be copied
+    /// from one block to another.
     ///
     /// Called by the free path under `HardenedPolicy` to mark the block as
     /// free so a subsequent double-free attempt can be detected. The canary
@@ -139,7 +159,7 @@ impl Block {
         // the canary slot is within the allocation.
         unsafe {
             let canary_ptr = block.cast::<usize>().add(1);
-            canary_ptr.write(FREE_CANARY_MAGIC ^ page_cookie);
+            canary_ptr.write(Self::canary_value(block, page_cookie));
         }
     }
 
@@ -157,7 +177,7 @@ impl Block {
     pub unsafe fn check_double_free(block: *const Block, page_cookie: usize) -> bool {
         // SAFETY: same requirements as `write_free_canary`.
         let observed = unsafe { block.cast::<usize>().add(1).read() };
-        observed == (FREE_CANARY_MAGIC ^ page_cookie)
+        observed == Self::canary_value(block, page_cookie)
     }
 
     /// Clears the backward-edge free canary.
