@@ -3,6 +3,8 @@
 #![no_std]
 #![deny(missing_docs)]
 
+extern crate alloc;
+
 mod allocator;
 mod options;
 pub mod scratch;
@@ -34,8 +36,8 @@ pub use mnemosyne_prof::{
 pub use options::{configure, get_options};
 pub use scratch::AlignedVec;
 pub use stats::{
-    MemoryStats, decay, memory_stats, memory_stats_generic, purge, purge_generic, reset,
-    reset_generic,
+    MemoryStats, decay, memory_stats, memory_stats_generic, memory_stats_json, purge,
+    purge_generic, reset, reset_generic,
 };
 
 /// Forces the Mnemosyne thread-local allocator to initialize for the current

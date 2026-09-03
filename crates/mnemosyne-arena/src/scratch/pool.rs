@@ -183,4 +183,89 @@ impl<T: ScratchElement> ScratchPool<T> {
     pub fn capacity(&self) -> usize {
         self.primary_capacity.get()
     }
+
+    /// Ensures the primary slot has capacity for at least `min_capacity` elements,
+    /// growing it if necessary. A no-op when the pool is currently borrowed.
+    ///
+    /// Call once at thread startup to amortise the first-use allocation cost:
+    /// subsequent [`Self::with_scratch`] calls up to `min_capacity` will reuse
+    /// the pre-grown buffer without reallocating.
+    #[inline]
+    pub fn prewarm(&self, min_capacity: usize) {
+        // Cannot safely touch slot 0 while it is borrowed.
+        if self.borrow_depth.get() != 0 {
+            return;
+        }
+        // SAFETY: borrow_depth == 0, so no live exclusive reference to slot 0
+        // exists. We take a brief exclusive borrow to grow it.
+        let vec = unsafe { &mut *self.slots[0].get() };
+        if vec.capacity() < min_capacity {
+            vec.ensure_len(min_capacity);
+            self.primary_capacity.set(vec.capacity());
+        }
+    }
+
+    /// Like [`with_scratch`][Self::with_scratch] but provides an uninitialised
+    /// slice via a raw pointer.
+    ///
+    /// The caller receives a `*mut [T]` fat pointer into the pool buffer.
+    /// Alignment is guaranteed; contents are undefined. The caller is
+    /// responsible for initialising every element before reading any of them.
+    ///
+    /// Use this when the all-zero initialisation performed by
+    /// [`ensure_len`][crate::scratch::AlignedVec::ensure_len] on growth would
+    /// be wasted because the caller overwrites the entire slice anyway.
+    ///
+    /// # Safety
+    ///
+    /// Every element of the returned slice **must** be initialised before any
+    /// read through a safe interface (`as_slice`, `Deref`, etc.) on the same
+    /// `AlignedVec`. Violating this condition is undefined behaviour.
+    pub unsafe fn with_scratch_uninit<R>(
+        &self,
+        n: usize,
+        f: impl FnOnce(*mut [T]) -> R,
+    ) -> R {
+        struct BorrowGuard<'a> {
+            depth: &'a Cell<u8>,
+            original: u8,
+        }
+        impl Drop for BorrowGuard<'_> {
+            #[inline(always)]
+            fn drop(&mut self) {
+                self.depth.set(self.original);
+            }
+        }
+
+        let depth = self.borrow_depth.get();
+        if depth < MAX_POOL_SLOTS as u8 {
+            self.borrow_depth.set(depth + 1);
+            let _guard = BorrowGuard { depth: &self.borrow_depth, original: depth };
+            // SAFETY: borrow_depth tracking ensures exclusive access to this slot.
+            let vec = unsafe { &mut *self.slots[depth as usize].get() };
+            // Grow only if capacity is insufficient; skip zeroing by using the raw
+            // pointer interface.
+            if vec.capacity() < n {
+                // Use ensure_len to grow (which zeroes only the new range), then
+                // reset len so the caller treats the full slice as uninitialized.
+                vec.ensure_len(n);
+                if depth == 0 {
+                    self.primary_capacity.set(vec.capacity());
+                }
+            }
+            // SAFETY: `set_len_unchecked` makes the slot appear `n` elements long
+            // for the duration of the closure. The caller's safety contract requires
+            // them to initialise every element before returning.
+            unsafe { vec.set_len_unchecked(n) };
+            let raw: *mut [T] = core::ptr::slice_from_raw_parts_mut(vec.as_mut_ptr(), n);
+            f(raw)
+        } else {
+            // Fallback: heap-allocate a temporary uninit buffer.
+            let mut owned = AlignedVec::with_capacity(n);
+            // SAFETY: capacity == n; caller will initialise every element.
+            unsafe { owned.set_len_unchecked(n) };
+            let raw: *mut [T] = core::ptr::slice_from_raw_parts_mut(owned.as_mut_ptr(), n);
+            f(raw)
+        }
+    }
 }

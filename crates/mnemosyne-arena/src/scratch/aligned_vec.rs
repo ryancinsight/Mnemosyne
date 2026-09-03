@@ -396,3 +396,68 @@ impl<T: ScratchElement> core::borrow::BorrowMut<[T]> for AlignedVec<T> {
         self.as_mut_slice()
     }
 }
+
+impl<T: ScratchElement> Clone for AlignedVec<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self::from_slice(self.as_slice())
+    }
+}
+
+impl<T: ScratchElement + PartialEq> PartialEq for AlignedVec<T> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl<T: ScratchElement + Eq> Eq for AlignedVec<T> {}
+
+impl<T: ScratchElement + PartialEq> PartialEq<[T]> for AlignedVec<T> {
+    #[inline]
+    fn eq(&self, other: &[T]) -> bool {
+        self.as_slice() == other
+    }
+}
+
+impl<T: ScratchElement + core::fmt::Debug> core::fmt::Debug for AlignedVec<T> {
+    #[inline]
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.as_slice().fmt(f)
+    }
+}
+
+impl<T: ScratchElement + core::hash::Hash> core::hash::Hash for AlignedVec<T> {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.as_slice().hash(state);
+    }
+}
+
+impl<T: ScratchElement> Default for AlignedVec<T> {
+    #[inline]
+    fn default() -> Self {
+        Self::dangling()
+    }
+}
+
+impl<T: ScratchElement> From<&[T]> for AlignedVec<T> {
+    #[inline]
+    fn from(slice: &[T]) -> Self {
+        Self::from_slice(slice)
+    }
+}
+
+impl<T: ScratchElement> From<alloc::vec::Vec<T>> for AlignedVec<T> {
+    #[inline]
+    fn from(v: alloc::vec::Vec<T>) -> Self {
+        Self::from_slice(&v)
+    }
+}
+
+impl<T: ScratchElement> From<AlignedVec<T>> for alloc::vec::Vec<T> {
+    #[inline]
+    fn from(av: AlignedVec<T>) -> Self {
+        av.into_vec()
+    }
+}
