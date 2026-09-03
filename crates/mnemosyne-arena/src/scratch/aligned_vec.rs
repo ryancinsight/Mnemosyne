@@ -665,3 +665,31 @@ impl<T: ScratchElement + PartialEq, const N: usize> PartialEq<[T; N]> for Aligne
         self.as_slice() == other.as_slice()
     }
 }
+
+impl<T: ScratchElement> core::convert::AsRef<[T]> for AlignedVec<T> {
+    #[inline]
+    fn as_ref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T: ScratchElement> core::convert::AsMut<[T]> for AlignedVec<T> {
+    #[inline]
+    fn as_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
+
+impl<T: ScratchElement> core::borrow::Borrow<[T]> for AlignedVec<T> {
+    #[inline]
+    fn borrow(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T: ScratchElement> core::borrow::BorrowMut<[T]> for AlignedVec<T> {
+    #[inline]
+    fn borrow_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
