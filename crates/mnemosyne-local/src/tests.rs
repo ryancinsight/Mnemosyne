@@ -1008,3 +1008,37 @@ fn test_thread_free_cycle_aborts_process() {
         panic!("Subprocess succeeded but was expected to abort!");
     }
 }
+
+#[test]
+// Tests that `thread_free_layout` aborts when passed a wrong size under
+// `HardenedPolicy` (sized-free validation: snmalloc `sanity_checks` /
+// C23 `free_sized` pattern). Miri cannot spawn a subprocess, so skipped.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
+fn test_hardened_wrong_size_free_aborts_process() {
+    use mnemosyne_core::policy::HardenedPolicy;
+    use std::env;
+    use std::process::Command;
+    use std::string::String;
+
+    if env::var("RUN_HARDENED_WRONG_SIZE_FREE_ABORT_TEST").is_ok() {
+        unsafe {
+            let ptr = thread_alloc_layout::<HardenedPolicy, MemoryBackendWrapper>(32, 8);
+            assert!(!ptr.is_null(), "HardenedPolicy alloc returned null");
+            // 64 bytes is a different class than 32 bytes; abort expected.
+            thread_free_layout::<HardenedPolicy, MemoryBackendWrapper>(ptr, 64, 8);
+        }
+        return;
+    }
+    let current_exe = env::current_exe().unwrap();
+    let output = Command::new(current_exe)
+        .arg("tests::test_hardened_wrong_size_free_aborts_process")
+        .arg("--exact")
+        .env("RUN_HARDENED_WRONG_SIZE_FREE_ABORT_TEST", "1")
+        .output()
+        .unwrap();
+    if output.status.success() {
+        std::println!("Subprocess stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        std::println!("Subprocess stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        panic!("Subprocess succeeded but was expected to abort!");
+    }
+}
