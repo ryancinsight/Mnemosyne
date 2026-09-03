@@ -247,9 +247,17 @@ pub fn decay() {
 ///
 /// Intended for diagnostic logging and health-check endpoints. The format
 /// may evolve between versions; callers should not depend on field order.
+///
+/// Calls [`flush_tls_stats`][mnemosyne_local::flush_tls_stats] before
+/// sampling so that allocations made on the calling thread but not yet flushed
+/// to the global counters appear in the snapshot.
 pub fn memory_stats_json() -> alloc::string::String {
     use alloc::format;
     use alloc::string::String;
+
+    // Flush the calling thread's accumulated bin stats into the global
+    // atomics so the snapshot reflects all activity on this thread.
+    mnemosyne_local::flush_tls_stats();
 
     let s = memory_stats();
     let bins = mnemosyne_local::all_bin_snapshots();
