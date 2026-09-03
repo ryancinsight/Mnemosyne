@@ -83,6 +83,7 @@ fn test_decay_purger_spawns_and_cleans_orphans() {
     // d. Deallocate the segment completely back to the OS.
     PURGE_CADENCE_MS.store(10, Ordering::Release);
     mnemosyne_decay::init_decay_engine();
+    mnemosyne_decay::request_decay_step();
     assert!(
         mnemosyne_decay::wait_for_decay_step(generation_before_free, BACKGROUND_DECAY_TIMEOUT),
         "background decay did not complete a sweep"
@@ -94,6 +95,7 @@ fn test_decay_purger_spawns_and_cleans_orphans() {
     );
 
     PURGE_CADENCE_MS.store(0, Ordering::Release);
+    mnemosyne_decay::init_decay_engine();
     assert!(
         mnemosyne_decay::wait_for_decay_shutdown(BACKGROUND_DECAY_TIMEOUT),
         "background decay worker did not shut down"
@@ -128,6 +130,7 @@ fn decay_shutdown_timeout_does_not_report_running_worker_as_stopped() {
     );
 
     PURGE_CADENCE_MS.store(0, Ordering::Release);
+    mnemosyne_decay::init_decay_engine();
     assert!(mnemosyne_decay::wait_for_decay_shutdown(
         BACKGROUND_DECAY_TIMEOUT
     ));
@@ -141,6 +144,7 @@ fn decay_purger_concurrent_restart_preserves_value_progress() {
 
     PURGE_CADENCE_MS.store(1, Ordering::Release);
     mnemosyne_decay::init_decay_engine();
+    mnemosyne_decay::request_decay_step();
     let generation_before_restart = mnemosyne_decay::decay_step_generation();
 
     let restart = thread::spawn(|| {
@@ -155,12 +159,14 @@ fn decay_purger_concurrent_restart_preserves_value_progress() {
 
     PURGE_CADENCE_MS.store(1, Ordering::Release);
     mnemosyne_decay::init_decay_engine();
+    mnemosyne_decay::request_decay_step();
     assert!(
         mnemosyne_decay::wait_for_decay_step(generation_before_restart, BACKGROUND_DECAY_TIMEOUT),
         "a concurrent restart must preserve completed decay progress"
     );
 
     PURGE_CADENCE_MS.store(0, Ordering::Release);
+    mnemosyne_decay::init_decay_engine();
     assert!(mnemosyne_decay::wait_for_decay_shutdown(
         BACKGROUND_DECAY_TIMEOUT
     ));
@@ -199,6 +205,7 @@ fn decay_purger_reaches_steady_state() {
     // corresponding completed sweep.
     PURGE_CADENCE_MS.store(10, Ordering::Release);
     mnemosyne_decay::init_decay_engine();
+    mnemosyne_decay::request_decay_step();
     assert!(
         mnemosyne_decay::wait_for_decay_step(generation_before_workload, BACKGROUND_DECAY_TIMEOUT,),
         "background decay did not complete the first steady-state sweep"
@@ -211,6 +218,7 @@ fn decay_purger_reaches_steady_state() {
 
     // 4. Shutdown purger by setting cadence to 0
     PURGE_CADENCE_MS.store(0, Ordering::Release);
+    mnemosyne_decay::init_decay_engine();
     assert!(
         mnemosyne_decay::wait_for_decay_shutdown(BACKGROUND_DECAY_TIMEOUT),
         "background decay worker did not shut down"
@@ -236,6 +244,7 @@ fn decay_purger_reaches_steady_state() {
 
     PURGE_CADENCE_MS.store(10, Ordering::Release);
     mnemosyne_decay::init_decay_engine();
+    mnemosyne_decay::request_decay_step();
     assert!(
         mnemosyne_decay::wait_for_decay_step(generation_before_restart, BACKGROUND_DECAY_TIMEOUT),
         "background decay did not complete the restart sweep"
@@ -248,6 +257,7 @@ fn decay_purger_reaches_steady_state() {
 
     // Reset options
     PURGE_CADENCE_MS.store(0, Ordering::Release);
+    mnemosyne_decay::init_decay_engine();
     assert!(
         mnemosyne_decay::wait_for_decay_shutdown(BACKGROUND_DECAY_TIMEOUT),
         "background decay worker did not shut down after restart"
