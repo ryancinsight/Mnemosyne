@@ -71,10 +71,13 @@ pub mod dealloc_counters;
 /// Per-size-class allocation telemetry.
 ///
 /// Process-wide `alloc_count`, `dealloc_count`, and `alloc_bytes` per size
-/// class, recorded with relaxed atomics on the fast path. One `LOCK XADD`
-/// overhead per alloc/free operation (≤ 1 ns on modern hardware). Use
-/// [`bin_stats::bin_snapshot`] or [`bin_stats::all_bin_snapshots`] to
-/// read snapshots for profiling and fragmentation monitoring.
+/// class. The fast path updates bounded per-thread counters and batches
+/// relaxed atomic updates, avoiding a shared cache-line RMW per alloc/free.
+/// Snapshots flush the calling thread; other threads may retain at most one
+/// partial batch per direct-mapped counter until another operation or thread
+/// teardown flushes it. Use [`bin_stats::bin_snapshot`] or
+/// [`bin_stats::all_bin_snapshots`] to read snapshots for profiling and
+/// fragmentation monitoring.
 pub mod bin_stats;
 
 mod alloc;

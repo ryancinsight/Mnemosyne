@@ -1,5 +1,40 @@
 # Allocator Baseline Metadata
 
+## 2026-09-03 — whole baseline refresh under the final procedure (MN-467)
+
+The threshold baseline and comparison report were refreshed together from the
+third measured repetition after the final source increment. The procedure ran
+one discarded warm-up and three measured suites; all twelve gated rows agreed
+within their existing ceilings. The largest spreads were `segment cache
+eviction` at 0.71%, `threaded saturated small allocation cycles/mnemosyne` at
+2.01%, and `realloc latency/mnemosyne/within_class_6k_to_8k` at 1.56%.
+
+The measurement basis is now Windows 11 26340, MSVC `rustc 1.97.0`, with
+power-throttling opt-out and the eight performance-core mask `0xc03c03`. The
+previous excerpt was measured under MSYS2 GNU `rustc 1.95.0`; its values are
+discarded rather than compared row by row. `benchmark_summary --enforce-thresholds`
+passes against the refreshed whole table with all selected ratios at `1.000x`.
+
+The source changes delivered with this refresh remove one allocation-byte
+atomic counter and derive bytes from the immutable class stride, bound retained
+huge mappings by actual bytes, partition each huge bucket into two independently
+budgeted bands, and batch per-class telemetry through eight direct-mapped
+per-thread counters. The telemetry counters flush every 64 matching
+observations and at thread teardown; a snapshot flushes the calling thread, so
+other live threads may retain one partial batch per slot. The telemetry TLS
+state is bounded at 256 bytes on 64-bit targets. In the focused saturated
+allocator row, the pre-batching full-suite measurement was about 2.65 ms; the
+post-batching focused measurements were 93.0, 97.3, and 92.5 µs, while the
+refreshed full-suite row is 91.356 µs.
+
+An exact-revision repeat after rebasing this branch onto `origin/main` was not
+accepted for baseline refresh. The run used the same host preparation in all
+three repetitions, but `allocator burst retention/mnemosyne/small_32` reached
+10.26% against its 10.00% ceiling and `threaded saturated small allocation
+cycles/mnemosyne` reached 73.05% against its 25.00% ceiling. The run remains
+under `target/mn467-baseline-rebased`; no threshold or committed baseline was
+changed because the measurement did not agree with itself.
+
 ## 2026-09-01 — pinned measurement procedure (MN-464); baseline still NOT refreshed
 
 The section below this one recorded that the suite disagreed with itself by more

@@ -558,34 +558,6 @@ fn test_huge_pool_bucket_count_derived_from_max_cached_size() {
     assert_eq!(HUGE_SIZE_BUCKETS, 11);
 }
 
-#[test]
-fn test_huge_bucket_block_cap_bounds_retained_bytes() {
-    use super::pool::GlobalHugePool;
-    use super::pool::huge_pool::{HUGE_SIZE_BUCKETS, bucket_block_cap};
-
-    const BUDGET: usize = GlobalHugePool::MAX_CACHED_HUGE_BYTES_PER_BUCKET;
-
-    // Small-huge buckets keep the full count cap (no perf regression there):
-    // 256 MiB / 16 KiB = 16384, clamped to MAX_CACHED_HUGE_BLOCKS.
-    assert_eq!(bucket_block_cap(0), GlobalHugePool::MAX_CACHED_HUGE_BLOCKS);
-    // 1 MiB blocks (bucket 6): 256 MiB / 1 MiB = 256.
-    assert_eq!(bucket_block_cap(6), 256);
-    // 16 MiB blocks (last live bucket, 10): 256 MiB / 16 MiB = 16.
-    assert_eq!(bucket_block_cap(HUGE_SIZE_BUCKETS - 1), 16);
-
-    // Invariant: every live bucket's retained bytes (cap × max block size)
-    // stay within the per-bucket budget, and never exceed the flat count cap.
-    for idx in 0..HUGE_SIZE_BUCKETS {
-        let cap = bucket_block_cap(idx);
-        assert!((1..=GlobalHugePool::MAX_CACHED_HUGE_BLOCKS).contains(&cap));
-        let max_block = 1usize << (idx + 14);
-        assert!(
-            cap * max_block <= BUDGET,
-            "bucket {idx}: cap {cap} x {max_block} exceeds budget {BUDGET}"
-        );
-    }
-}
-
 /// Boxes a minimal `Segment` carrying only the page-0 `block_size` metadata
 /// the huge-pool implementation reads.
 ///
@@ -678,6 +650,68 @@ fn test_huge_pool_exact_bucket_restores_rejected_head() {
             let _ = Box::from_raw(segment);
         }
     }
+}
+
+#[test]
+fn test_huge_pool_admission_uses_actual_bucket_bytes() {
+    use super::pool::huge_pool::huge_bucket_index;
+
+    const BUCKET: usize = 9;
+    const SMALL_BLOCK_SIZE: usize = 4 * 1024 * 1024 + 64 * 1024;
+    const LARGE_BLOCK_SIZE: usize = 6 * 1024 * 1024 + 64 * 1024;
+
+    assert_eq!(huge_bucket_index(SMALL_BLOCK_SIZE), BUCKET);
+    assert_eq!(huge_bucket_index(LARGE_BLOCK_SIZE), BUCKET);
+
+    let pool = GlobalHugePool::new();
+    let small_count = GlobalHugePool::MAX_CACHED_HUGE_BYTES_PER_BAND / SMALL_BLOCK_SIZE;
+    let mut small_segments = Vec::with_capacity(small_count);
+    for index in 0..small_count {
+        let segment = boxed_huge_segment(0x80000 + index * 0x1000, SMALL_BLOCK_SIZE);
+        unsafe {
+            assert!(
+                pool.try_push(segment, 0),
+                "small same-bucket segment {index} must be cached"
+            );
+        }
+        small_segments.push(segment);
+    }
+
+    // This saturates the lower-band byte budget, but the upper-band budget
+    // still admits the larger mapping. Partitioning the budget prevents a
+    // common smaller mapping class from starving a neighboring reuse class.
+    let large_segment = boxed_huge_segment(0x100000, LARGE_BLOCK_SIZE);
+    unsafe {
+        assert!(
+            pool.try_push(large_segment, 0),
+            "a larger mapping must fit while the byte budget has room"
+        );
+    }
+    assert_eq!(pool.retained_blocks(), small_count + 1);
+    assert_eq!(
+        pool.retained_bytes(),
+        small_count * SMALL_BLOCK_SIZE + LARGE_BLOCK_SIZE
+    );
+
+    let popped_large = unsafe { pool.pop(LARGE_BLOCK_SIZE, 0) }
+        .expect("the larger same-bucket mapping must remain retrievable");
+    assert_eq!(popped_large, large_segment);
+    assert_eq!(pool.retained_blocks(), small_count);
+    assert_eq!(pool.retained_bytes(), small_count * SMALL_BLOCK_SIZE);
+
+    for expected in small_segments.into_iter().rev() {
+        let popped = unsafe { pool.pop(SMALL_BLOCK_SIZE, 0) }
+            .expect("every small mapping must remain retrievable");
+        assert_eq!(popped, expected);
+        unsafe {
+            let _ = Box::from_raw(popped);
+        }
+    }
+    unsafe {
+        let _ = Box::from_raw(popped_large);
+    }
+    assert_eq!(pool.retained_blocks(), 0);
+    assert_eq!(pool.retained_bytes(), 0);
 }
 
 #[test]

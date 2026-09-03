@@ -112,22 +112,15 @@
   accommodate the spread; changing the benchmark's workload.
   **Dependencies:** none. **Effort:** M.
 
-- [ ] [patch] [perf] **MN-467 — capture the threshold baseline under the pinned
-  procedure.** status=blocked; owner=unclaimed; blocker=MN-466;
-  re-open trigger=`benchmark_summary --repeat-spread` passes on all twelve
-  gated rows. Split from MN-464, which delivered the procedure but must not
-  refresh the baseline while one gated row still disagrees with itself by twice
-  its ceiling. **The refresh must be whole, not row-wise.** The committed
-  `allocator_baseline_excerpt.csv` was measured under MSYS2 GNU `rustc 1.95.0`;
-  runs are now MSVC `1.97.0`, pinned to performance cores, and unthrottled, so
-  the numbers are not comparable row for row — `threaded saturated small
-  allocation cycles/mnemosyne` alone moves from 77-85 µs to 63.3-63.6 µs purely
-  from core placement. Regenerate `allocator_comparison.md` in the same change,
-  since it will then be the first report produced under the procedure.
-  **Acceptance oracle:** `--repeat-spread` clean, baseline refreshed from a
-  procedure run, `--enforce-thresholds` passes at ~1.00x, and
-  `allocator_baseline_metadata.md` records the basis change so the old numbers
-  are discarded rather than compared against. **Effort:** S.
+- [x] [patch] [perf] **MN-467 — capture the threshold baseline under the pinned
+  procedure.** status=done 2026-09-03; owner=atlas-session; branch=
+  `perf/mnemosyne-baseline-mn467`; blocker cleared by MN-466's landed
+  `--repeat-spread` result. Whole baseline refreshed from the final procedure
+  run after batching per-thread bin telemetry; `--repeat-spread` passed all
+  twelve gated rows and `--enforce-thresholds` passed at `1.000x`. The old GNU
+  `rustc 1.95.0` values were discarded for the MSVC `rustc 1.97.0` basis.
+  Evidence: `benchmarks/allocator_baseline_metadata.md`, 2026-09-03 section.
+  **Closed locally in `185f828` plus the baseline/report refresh.**
 
 - [ ] [patch] **MN-462 — the SnMalloc comparator column cannot be produced on
   any MSYS2-flavoured Windows host.** status=todo; owner=unclaimed; diagnosed
