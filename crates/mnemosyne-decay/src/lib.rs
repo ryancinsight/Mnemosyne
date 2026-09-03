@@ -61,55 +61,80 @@ pub fn init_decay_engine() {
     }
 }
 
-fn decay_thread_loop(mut cadence: usize, worker_generation: usize) {
+/// Adaptive decay interval bounds.
+///
+/// The background thread doubles its sleep when a step releases nothing (idle
+/// backing-off up to `ADAPTIVE_MAX_MS`) and halves it when a step releases
+/// more than `ADAPTIVE_SPEED_UP_THRESHOLD` bytes (active). The configured
+/// `PURGE_CADENCE_MS` acts as both the starting interval and the target
+/// steady-state cadence, clamped within `[base / 4, base * 10]` so the
+/// adaptation never escapes the operator's intended frequency by more than
+/// one order of magnitude.
+const ADAPTIVE_MAX_MS: u64 = 5_000;
+const ADAPTIVE_SPEED_UP_THRESHOLD: usize = 1 << 20; // 1 MiB freed in one step
+
+/// Returns the cumulative bytes returned to the OS by the current process.
+///
+/// Used to measure how much memory a single [`decay_step`] released:
+/// read before and after the step; the delta is the step's yield.
+#[inline]
+fn os_returned_bytes() -> usize {
+    let s = mnemosyne_backend::backend_memory_stats();
+    s.decommit_bytes.wrapping_add(s.page_reset_bytes)
+}
+
+fn decay_thread_loop(initial_cadence: usize, worker_generation: usize) {
+    // `current_interval` tracks the adaptive sleep duration; it starts at the
+    // configured cadence and evolves independently of `PURGE_CADENCE_MS`
+    // reloads (which reset it to the new base at every step).
+    let mut current_interval = initial_cadence as u64;
+
     loop {
-        thread::sleep(Duration::from_millis(cadence as u64));
+        thread::sleep(Duration::from_millis(current_interval));
 
+        // Measure OS-returned bytes before and after the step.
+        let before = os_returned_bytes();
         decay_step();
+        let freed = os_returned_bytes().wrapping_sub(before);
 
-        cadence = PURGE_CADENCE_MS.load(Ordering::Acquire);
-        if cadence != 0 {
-            continue;
+        let base = PURGE_CADENCE_MS.load(Ordering::Acquire);
+        if base == 0 {
+            // Shutdown path — identical handshake to the original code.
+            let was_spawned = SPAWNED.swap(false, Ordering::AcqRel);
+            debug_assert!(
+                was_spawned,
+                "decay purger exiting without holding the SPAWNED claim"
+            );
+            let cadence = PURGE_CADENCE_MS.load(Ordering::Acquire);
+            if cadence != 0
+                && SPAWNED
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+            {
+                current_interval = cadence as u64;
+                continue;
+            }
+            break;
         }
 
-        // Shutdown handshake. A naive `SPAWNED.store(false) + break` loses a
-        // wakeup: a concurrent `configure()` can store a non-zero cadence and
-        // call `init_decay_engine` *between* the zero read above and the
-        // release of `SPAWNED` — its swap observes `SPAWNED == true`, skips
-        // the spawn, and this thread then exits, leaving `SPAWNED == false`
-        // with a non-zero cadence and no purger running.
+        // Adaptive interval: back off when idle, speed up when active.
         //
-        // The handshake closes every interleaving. Release ownership with an
-        // `AcqRel` RMW, then re-check the cadence and try to re-claim:
-        // - If a concurrent `init_decay_engine` swap preceded this `swap` in
-        //   `SPAWNED`'s modification order, it read `true` and skipped the
-        //   spawn; this acquire RMW reads the `true` that swap wrote, so the
-        //   caller's earlier cadence store happens-before the re-load below —
-        //   the non-zero cadence is observed, the CAS finds the `false` this
-        //   thread just wrote, succeeds, and the loop continues. No purger is
-        //   lost.
-        // - If this `swap` preceded the concurrent one, that swap reads
-        //   `false` and spawns a fresh purger; the CAS below then finds
-        //   `true` and fails, so this thread exits. Exactly one purger runs.
-        // - With no concurrent caller the re-load sees the same zero and the
-        //   CAS is never attempted; a later `init_decay_engine` reads the
-        //   released `false` and spawns normally.
-        let was_spawned = SPAWNED.swap(false, Ordering::AcqRel);
-        debug_assert!(
-            was_spawned,
-            "decay purger exiting without holding the SPAWNED claim"
-        );
-        cadence = PURGE_CADENCE_MS.load(Ordering::Acquire);
-        if cadence != 0
-            && SPAWNED
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-        {
-            // Re-claimed: the cadence became non-zero during shutdown and no
-            // replacement thread was spawned; keep purging.
-            continue;
-        }
-        break;
+        // The four-sided clamp keeps the adapted interval within one decade
+        // of the configured cadence so the operator's setting is honoured:
+        //   - idle:   multiply by 2, cap at min(ADAPTIVE_MAX_MS, base * 10)
+        //   - active: divide by 2, floor at max(1, base / 4)
+        //   - otherwise: reset to base (cadence may have changed at runtime)
+        let base_u64 = base as u64;
+        current_interval = if freed == 0 {
+            current_interval
+                .saturating_mul(2)
+                .min(ADAPTIVE_MAX_MS)
+                .min(base_u64.saturating_mul(10))
+        } else if freed > ADAPTIVE_SPEED_UP_THRESHOLD {
+            (current_interval / 2).max(1).max(base_u64 / 4)
+        } else {
+            base_u64
+        };
     }
 
     publish_decay_worker_exit(worker_generation);

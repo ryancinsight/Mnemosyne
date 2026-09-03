@@ -209,6 +209,26 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
             }
         };
 
+    // Bind the aligned segment mapping to the allocating thread's NUMA node.
+    // `mbind(MPOL_BIND)` enforces first-touch locality so pages are allocated
+    // from the correct socket rather than relying on the OS default policy.
+    // This call goes to the kernel only once per fresh segment (cold path);
+    // segments recycled from the pool retain their prior NUMA binding and skip
+    // this site entirely (they return early above via `allocate_segment_from_pools`).
+    //
+    // SAFETY: `aligned_ptr` points to the segment-aligned base of the
+    // `SEGMENT_MAPPING_SIZE` mapping that is exclusively owned at this point
+    // (not yet published to any pool or thread), `SEGMENT_SIZE` is the
+    // usable extent of the aligned portion, and `numa_node` was read from
+    // Themis's thread-local cache immediately before this call.
+    unsafe {
+        crate::numa::bind_segment_to_numa_node(
+            raw_ptr.map_addr(|_| aligned_ptr as usize),
+            SEGMENT_SIZE,
+            numa_node,
+        )
+    };
+
     #[cfg(feature = "segment-header-guards")]
     {
         if B::SUPPORTS_MAKE_GUARD {

@@ -18,6 +18,8 @@ static GUARD_INSTALL_CALLS: AtomicUsize = AtomicUsize::new(0);
 static GUARD_INSTALL_BYTES: AtomicUsize = AtomicUsize::new(0);
 static DECOMMIT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static DECOMMIT_BYTES: AtomicUsize = AtomicUsize::new(0);
+/// Bytes decommitted with MADV_FREE (lazy, no IPI) — subset of DECOMMIT_BYTES.
+static PURGE_BYTES: AtomicUsize = AtomicUsize::new(0);
 static HUGEPAGE_HINT_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// Snapshot of OS mappings requested by Mnemosyne.
@@ -69,6 +71,13 @@ pub struct BackendMemoryStats {
     /// Cumulative byte count passed to confirmed `decommit` calls (the commit
     /// charge / resident backing returned to the OS).
     pub decommit_bytes: usize,
+    /// Subset of `decommit_bytes` that used `MADV_FREE` (lazy, no IPI).
+    ///
+    /// On Linux ≥ 4.5, `decommit` prefers `MADV_FREE` over `MADV_DONTNEED`
+    /// to avoid IPI broadcast storms during segment release. This counter
+    /// tracks the lazy purge path separately from eager resets, matching the
+    /// mimalloc `purged` / `reset` counter split. Zero on non-Linux targets.
+    pub purged_bytes: usize,
     /// Number of huge-page hints issued to the OS for freshly mapped regions.
     ///
     /// Counts the decision to advise, not a confirmed kernel outcome: the
@@ -152,6 +161,19 @@ pub(crate) fn record_hugepage_hint() {
     HUGEPAGE_HINT_CALLS.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Marks `size` bytes as having been decommitted via MADV_FREE (lazy purge).
+///
+/// Called by the Linux decommit path when it successfully uses MADV_FREE
+/// rather than MADV_DONTNEED. Does NOT call `record_decommit` — the caller
+/// (`reset::do_decommit`) handles the decommit_calls/decommit_bytes counters
+/// centrally for all backends. This only tracks the subset that used the
+/// lazy IPI-free path.
+#[cfg(all(target_os = "linux", not(miri)))]
+#[inline]
+pub(crate) fn record_purge_only(size: usize) {
+    PURGE_BYTES.fetch_add(size, Ordering::Relaxed);
+}
+
 /// Returns the current backend memory mapping counters.
 ///
 /// The snapshot uses relaxed atomics because these counters are telemetry only:
@@ -168,6 +190,7 @@ pub fn backend_memory_stats() -> BackendMemoryStats {
         guard_install_bytes: GUARD_INSTALL_BYTES.load(Ordering::Relaxed),
         decommit_calls: DECOMMIT_CALLS.load(Ordering::Relaxed),
         decommit_bytes: DECOMMIT_BYTES.load(Ordering::Relaxed),
+        purged_bytes: PURGE_BYTES.load(Ordering::Relaxed),
         hugepage_hint_calls: HUGEPAGE_HINT_CALLS.load(Ordering::Relaxed),
     }
 }

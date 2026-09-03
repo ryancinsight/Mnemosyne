@@ -14,6 +14,55 @@ melinoe::thread_cached! {
     mod tls_seed: usize;
 }
 
+/// Process-wide random component for the freelist XOR key.
+///
+/// Combined with the per-thread seed in [`initialize_segment_keys`] so that
+/// knowing one thread's TLS seed is insufficient to predict another thread's
+/// freelist keys (defense in depth against information-disclosure chains).
+///
+/// Initialized lazily on the first call to [`get_process_key`] using the same
+/// `RandomState` entropy source as [`get_tls_seed`]. Reads after initialization
+/// are relaxed loads — the acquire/release pairing at initialization is
+/// sufficient: no allocator operation can race on the raw pointer *value* once
+/// it is committed.
+static PROCESS_KEY: AtomicUsize = AtomicUsize::new(0);
+
+/// Returns the process-wide component of the freelist XOR key, initializing it
+/// once on the first call.
+///
+/// Zero is a valid, but weak, process key; `0` is specifically excluded and
+/// replaced with a fixed non-zero constant `0xABCDABCDABCDABCD` as a fallback.
+#[inline(always)]
+pub(crate) fn get_process_key() -> usize {
+    let existing = PROCESS_KEY.load(Ordering::Relaxed);
+    if existing != 0 {
+        return existing;
+    }
+    init_process_key()
+}
+
+/// Cold initialization path for the process key.
+#[cold]
+#[inline(never)]
+fn init_process_key() -> usize {
+    use std::hash::{BuildHasher, Hasher};
+    let state = std::collections::hash_map::RandomState::new();
+    let mut hasher = state.build_hasher();
+    // Mix in a distinct write value from `get_tls_seed` so the two keys
+    // are statistically independent even if `RandomState` reuses internal
+    // state across threads.
+    hasher.write_usize(usize::MAX);
+    let mut key = hasher.finish() as usize;
+    if key == 0 {
+        key = 0xABCDABCDABCDABCD;
+    }
+    // CAS: if another thread already set it, use their value; otherwise use ours.
+    match PROCESS_KEY.compare_exchange(0, key, Ordering::Release, Ordering::Relaxed) {
+        Ok(_) => key,
+        Err(existing) => existing,
+    }
+}
+
 #[inline(always)]
 pub(crate) fn get_tls_seed() -> usize {
     tls_seed::get_or_init(|| {

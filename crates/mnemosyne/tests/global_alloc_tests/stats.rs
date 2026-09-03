@@ -116,7 +116,8 @@ fn test_purge() {
     let stats_before = memory_stats();
     assert!(
         stats_before.retained_free_segments > 0,
-        "Expected at least one segment to be retained in the pool"
+        "Expected at least one segment to be retained in the pool, got retained={}",
+        stats_before.retained_free_segments,
     );
 
     purge();

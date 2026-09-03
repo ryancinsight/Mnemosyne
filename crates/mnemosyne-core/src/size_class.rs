@@ -135,9 +135,9 @@ const fn size_to_class_nonzero_arithmetic(size: usize) -> Option<usize> {
         }, // idx = 13
         SizeClassLookup {
             base: 44,
-            shift: 11,
+            shift: 10,
             sub: 8193,
-        }, // idx = 14: 8193..=16384 in 2048-byte steps
+        }, // idx = 14: 8193..=16384 in 1024-byte steps (MN-REF-1: was shift=11 / 2048-byte steps)
     ];
 
     let bits = usize::BITS - (size - 1).leading_zeros();
@@ -164,9 +164,17 @@ pub const fn round_up_size(size: usize) -> Option<usize> {
 }
 
 const CLASS_TO_SIZE: [u16; NUM_SIZE_CLASSES] = [
-    16, 32, 48, 64, 80, 96, 112, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512,
-    640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048, 2560, 3072, 3584, 4096,
-    4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192, 10240, 12288, 14336, 16384,
+    // 16–128 bytes: 16-byte steps (classes 0–7)
+    16, 32, 48, 64, 80, 96, 112, 128, // 129–512 bytes: 32-byte steps (classes 8–19)
+    160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512,
+    // 513–2048 bytes: 128-byte steps (classes 20–31)
+    640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048,
+    // 2049–8192 bytes: 512-byte steps (classes 32–43)
+    2560, 3072, 3584, 4096, 4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192,
+    // 8193–16384 bytes: 1024-byte steps (classes 44–51)
+    // MN-REF-1: was 2048-byte steps (4 classes); now 1024-byte steps (8 classes).
+    // Reduces worst-case internal fragmentation in the 8–16 KB band from 25% to 12.5%.
+    9216, 10240, 11264, 12288, 13312, 14336, 15360, 16384,
 ];
 
 const CLASS_TO_MAX_BLOCKS: [u16; NUM_SIZE_CLASSES] = {
@@ -233,10 +241,23 @@ mod tests {
         assert_eq!(size_to_class(2048), Some(31));
         assert_eq!(size_to_class(2049), Some(32));
         assert_eq!(size_to_class(8192), Some(43));
-        assert_eq!(size_to_class(8193), Some(44));
-        assert_eq!(size_to_class(10240), Some(44));
-        assert_eq!(size_to_class(10241), Some(45));
-        assert_eq!(size_to_class(16384), Some(47));
+        // MN-REF-1: 8K–16K now uses 1024-byte steps instead of 2048-byte steps.
+        assert_eq!(size_to_class(8193), Some(44)); // class 44 = 9216
+        assert_eq!(size_to_class(9216), Some(44));
+        assert_eq!(size_to_class(9217), Some(45)); // class 45 = 10240
+        assert_eq!(size_to_class(10240), Some(45));
+        assert_eq!(size_to_class(10241), Some(46)); // class 46 = 11264
+        assert_eq!(size_to_class(11264), Some(46));
+        assert_eq!(size_to_class(11265), Some(47)); // class 47 = 12288
+        assert_eq!(size_to_class(12288), Some(47));
+        assert_eq!(size_to_class(12289), Some(48)); // class 48 = 13312
+        assert_eq!(size_to_class(13312), Some(48));
+        assert_eq!(size_to_class(13313), Some(49)); // class 49 = 14336
+        assert_eq!(size_to_class(14336), Some(49));
+        assert_eq!(size_to_class(14337), Some(50)); // class 50 = 15360
+        assert_eq!(size_to_class(15360), Some(50));
+        assert_eq!(size_to_class(15361), Some(51)); // class 51 = 16384
+        assert_eq!(size_to_class(16384), Some(51));
         assert_eq!(size_to_class(16385), None);
 
         for c in 0..NUM_SIZE_CLASSES {

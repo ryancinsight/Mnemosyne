@@ -3,6 +3,8 @@
 #![no_std]
 #![deny(missing_docs)]
 
+extern crate alloc;
+
 mod allocator;
 mod options;
 pub mod scratch;
@@ -22,8 +24,9 @@ pub use mnemosyne_heap::{
     ReallocFailure, ThreadLocalToken, scope as branded_scope,
 };
 pub use mnemosyne_local::{
-    FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics, LocalAllocatorSelector,
-    SizeClassCache, SizeClassOccupancy, usable_size,
+    BinSnapshot, FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics,
+    LocalAllocatorSelector, SizeClassCache, SizeClassOccupancy, all_bin_snapshots, bin_snapshot,
+    usable_size,
 };
 pub use mnemosyne_prof::{
     disable_leak_detector, disable_profiling, dump_leaks, dump_profile, enable_leak_detector,
@@ -33,8 +36,8 @@ pub use mnemosyne_prof::{
 pub use options::{configure, get_options};
 pub use scratch::AlignedVec;
 pub use stats::{
-    MemoryStats, decay, memory_stats, memory_stats_generic, purge, purge_generic, reset,
-    reset_generic,
+    MemoryStats, decay, memory_stats, memory_stats_generic, memory_stats_json, purge,
+    purge_generic, reset, reset_generic,
 };
 
 /// Forces the Mnemosyne thread-local allocator to initialize for the current

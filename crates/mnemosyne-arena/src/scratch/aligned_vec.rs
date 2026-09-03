@@ -218,6 +218,111 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.ptr
     }
 
+    /// Returns a raw pointer to the start of the initialized slice.
+    ///
+    /// Equivalent to `self.as_slice().as_ptr()`. Safe to call on shared
+    /// references; the pointer is valid for `len()` elements.
+    #[inline]
+    pub fn as_ptr(&self) -> *const T {
+        self.ptr
+    }
+
+    /// Zero-copy view of the initialized elements as raw bytes.
+    ///
+    /// Available with `features = ["bytemuck"]` because this method requires
+    /// `T: bytemuck::Pod` — the guarantee that no byte in the element's
+    /// representation is uninitialized (padding bytes are not Pod-safe).
+    ///
+    /// The result length is `self.len() * size_of::<T>()`.
+    #[cfg(feature = "bytemuck")]
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8]
+    where
+        T: bytemuck::Pod,
+    {
+        bytemuck::cast_slice(self.as_slice())
+    }
+
+    /// Zero-copy mutable view of the initialized elements as raw bytes.
+    ///
+    /// See [`as_bytes`][Self::as_bytes] for the requirements and the
+    /// relationship between the returned slice length and `len()`.
+    #[cfg(feature = "bytemuck")]
+    #[inline]
+    pub fn as_bytes_mut(&mut self) -> &mut [u8]
+    where
+        T: bytemuck::Pod,
+    {
+        bytemuck::cast_slice_mut(self.as_mut_slice())
+    }
+
+    /// Zero-copy reinterpretation of the initialized elements as a slice of
+    /// a different type `U`.
+    ///
+    /// Available with `features = ["bytemuck"]`. Both `T` and `U` must be
+    /// `bytemuck::Pod`. The call panics when `size_of::<T>() * len()` is not
+    /// a multiple of `size_of::<U>()` — the same contract as
+    /// `bytemuck::cast_slice`.
+    ///
+    /// # Use cases
+    ///
+    /// - View `AlignedVec<Complex32>` (interleaved re/im as f32 pairs) as
+    ///   `&[f32]` for partial in-place transforms or GPU upload.
+    /// - View `AlignedVec<u32>` GPU index data as `&[u8]` for zero-copy
+    ///   DMA staging, without an intermediate `Vec<u8>` copy.
+    #[cfg(feature = "bytemuck")]
+    #[inline]
+    pub fn cast_slice<U: bytemuck::Pod>(&self) -> &[U]
+    where
+        T: bytemuck::Pod,
+    {
+        bytemuck::cast_slice(self.as_slice())
+    }
+
+    /// Zero-copy mutable reinterpretation of the initialized elements as `U`.
+    ///
+    /// See [`cast_slice`][Self::cast_slice] for requirements and panics.
+    #[cfg(feature = "bytemuck")]
+    #[inline]
+    pub fn cast_slice_mut<U: bytemuck::Pod>(&mut self) -> &mut [U]
+    where
+        T: bytemuck::Pod,
+    {
+        bytemuck::cast_slice_mut(self.as_mut_slice())
+    }
+
+    /// Sets the length to zero, retaining the underlying allocation for reuse.
+    ///
+    /// Elements are not zeroed; subsequent [`push`][Self::push] or
+    /// [`extend_from_slice`][Self::extend_from_slice] calls will overwrite them
+    /// before exposing them through [`as_slice`][Self::as_slice].
+    #[inline]
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    /// Shortens the buffer to `new_len` elements, retaining the allocation.
+    ///
+    /// If `new_len >= self.len()`, this is a no-op.
+    #[inline]
+    pub fn truncate(&mut self, new_len: usize) {
+        if new_len < self.len {
+            self.len = new_len;
+        }
+    }
+
+    /// Appends every element produced by an iterator.
+    ///
+    /// Forwards to [`push`][Self::push] per element; an
+    /// [`extend_from_slice`][Self::extend_from_slice] call is preferred when a
+    /// contiguous source slice is available.
+    #[inline]
+    pub fn extend_from_iter(&mut self, iter: impl IntoIterator<Item = T>) {
+        for value in iter {
+            self.push(value);
+        }
+    }
+
     /// Consumes self and returns a `Vec<T>` with the initialized data.
     #[inline]
     pub fn into_vec(self) -> Vec<T> {
@@ -287,6 +392,129 @@ impl<T: ScratchElement> Drop for AlignedVec<T> {
     }
 }
 
+impl<T: ScratchElement + core::fmt::Debug> core::fmt::Debug for AlignedVec<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_list().entries(self.as_slice().iter()).finish()
+    }
+}
+
+impl<T: ScratchElement> Clone for AlignedVec<T> {
+    fn clone(&self) -> Self {
+        let mut v = Self::with_capacity(self.len);
+        v.extend_from_slice(self.as_slice());
+        v
+    }
+}
+
+impl<T: ScratchElement> Default for AlignedVec<T> {
+    #[inline]
+    fn default() -> Self {
+        Self::dangling()
+    }
+}
+
+impl<T: ScratchElement + PartialEq> PartialEq for AlignedVec<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl<T: ScratchElement + PartialEq> PartialEq<[T]> for AlignedVec<T> {
+    fn eq(&self, other: &[T]) -> bool {
+        self.as_slice() == other
+    }
+}
+
+impl<T: ScratchElement + Eq> Eq for AlignedVec<T> {}
+
+impl<T: ScratchElement + PartialOrd> PartialOrd for AlignedVec<T> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        self.as_slice().partial_cmp(other.as_slice())
+    }
+}
+
+impl<T: ScratchElement + Ord> Ord for AlignedVec<T> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.as_slice().cmp(other.as_slice())
+    }
+}
+
+impl<T: ScratchElement + core::hash::Hash> core::hash::Hash for AlignedVec<T> {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.as_slice().hash(state);
+    }
+}
+
+/// Consuming iterator that moves elements out of an `AlignedVec<T>`.
+///
+/// Created by [`AlignedVec::into_iter`] via the [`IntoIterator`] impl.
+/// Iterates the initialized elements in order; the remaining tail is freed
+/// when the iterator is dropped.
+pub struct IntoIter<T: ScratchElement> {
+    vec: AlignedVec<T>,
+    pos: usize,
+}
+
+impl<T: ScratchElement> Iterator for IntoIter<T> {
+    type Item = T;
+
+    #[inline]
+    fn next(&mut self) -> Option<T> {
+        if self.pos < self.vec.len() {
+            // SAFETY: `pos < len` guarantees the element at `pos` is
+            // initialized.  `T: ScratchElement: Copy` means reading (and
+            // logically moving) it by copy is sound; no destructor runs.
+            let value = unsafe { *self.vec.ptr.add(self.pos) };
+            self.pos += 1;
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.vec.len() - self.pos;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<T: ScratchElement> ExactSizeIterator for IntoIter<T> {}
+impl<T: ScratchElement> core::iter::FusedIterator for IntoIter<T> {}
+
+impl<T: ScratchElement> IntoIterator for AlignedVec<T> {
+    type Item = T;
+    type IntoIter = IntoIter<T>;
+
+    #[inline]
+    fn into_iter(self) -> IntoIter<T> {
+        IntoIter { vec: self, pos: 0 }
+    }
+}
+
+impl<'a, T: ScratchElement> IntoIterator for &'a AlignedVec<T> {
+    type Item = &'a T;
+    type IntoIter = core::slice::Iter<'a, T>;
+
+    #[inline]
+    fn into_iter(self) -> core::slice::Iter<'a, T> {
+        self.as_slice().iter()
+    }
+}
+
+impl<'a, T: ScratchElement> IntoIterator for &'a mut AlignedVec<T> {
+    type Item = &'a mut T;
+    type IntoIter = core::slice::IterMut<'a, T>;
+
+    #[inline]
+    fn into_iter(self) -> core::slice::IterMut<'a, T> {
+        self.as_mut_slice().iter_mut()
+    }
+}
+
 // SAFETY: `AlignedVec` uniquely owns its heap buffer with no aliasing or shared
 // ownership, so moving it to another thread is sound whenever the element type
 // is itself `Send`.
@@ -310,5 +538,67 @@ impl<T: ScratchElement> core::ops::DerefMut for AlignedVec<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut [T] {
         self.as_mut_slice()
+    }
+}
+
+// ── Conversions ─────────────────────────────────────────────────────────────
+
+impl<T: ScratchElement> From<&[T]> for AlignedVec<T> {
+    /// Creates an `AlignedVec<T>` by copying elements from a slice.
+    ///
+    /// Equivalent to [`AlignedVec::from_slice`] and provided here to satisfy
+    /// the standard `From<&[T]>` convention that lets `into()` calls work
+    /// uniformly at conversion boundaries.
+    #[inline]
+    fn from(slice: &[T]) -> Self {
+        Self::from_slice(slice)
+    }
+}
+
+impl<T: ScratchElement> From<alloc::vec::Vec<T>> for AlignedVec<T> {
+    /// Converts a `Vec<T>` into an `AlignedVec<T>` by copying the elements.
+    ///
+    /// The source `Vec` is dropped after the copy.  A true zero-copy
+    /// conversion is not possible in general because `Vec` uses the global
+    /// allocator while `AlignedVec` requires a specific alignment guarantee
+    /// that the global allocator does not provide.  When Mnemosyne is the
+    /// global allocator the performance difference is one copy operation;
+    /// use [`AlignedVec::from_slice`] directly when you already have a slice.
+    #[inline]
+    fn from(v: alloc::vec::Vec<T>) -> Self {
+        Self::from_slice(&v)
+    }
+}
+
+impl<T: ScratchElement> From<AlignedVec<T>> for alloc::vec::Vec<T> {
+    /// Converts an `AlignedVec<T>` into a `Vec<T>` by copying the elements.
+    ///
+    /// Delegates to [`AlignedVec::into_vec`].
+    #[inline]
+    fn from(v: AlignedVec<T>) -> alloc::vec::Vec<T> {
+        v.into_vec()
+    }
+}
+
+// ── Cross-type equality ──────────────────────────────────────────────────────
+
+impl<T: ScratchElement + PartialEq> PartialEq<alloc::vec::Vec<T>> for AlignedVec<T> {
+    #[inline]
+    fn eq(&self, other: &alloc::vec::Vec<T>) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl<T: ScratchElement + PartialEq> PartialEq<AlignedVec<T>> for alloc::vec::Vec<T> {
+    #[inline]
+    fn eq(&self, other: &AlignedVec<T>) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl<T: ScratchElement + PartialEq, const N: usize> PartialEq<[T; N]> for AlignedVec<T> {
+    #[inline]
+    fn eq(&self, other: &[T; N]) -> bool {
+        self.as_slice() == other.as_slice()
     }
 }
