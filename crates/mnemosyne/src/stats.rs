@@ -261,11 +261,23 @@ impl MemoryStats {
                 out.push(',');
             }
             out.push_str(&format!(
-                "{{\"block_size\":{},\"alloc_count\":{},\"dealloc_count\":{},\"live_estimate\":{}}}",
-                bin.block_size, bin.alloc_count, bin.dealloc_count, bin.live_estimate
+                "{{\"block_size\":{},\"alloc_count\":{},\"dealloc_count\":{},\
+                 \"live_estimate\":{},\"fragmentation_ratio\":{:.4}}}",
+                bin.block_size, bin.alloc_count, bin.dealloc_count,
+                bin.live_estimate, bin.fragmentation_ratio()
             ));
         }
-        out.push_str("]}");
+        // Process-wide bin aggregates (SSOT: bin_stats module)
+        let total_allocs = mnemosyne_local::total_alloc_count();
+        let live_bytes  = mnemosyne_local::total_live_bytes();
+        let hottest     = mnemosyne_local::hottest_class();
+        out.push_str(&format!(
+            "],\"bin_totals\":{{\"total_alloc_count\":{},\"total_live_bytes\":{},\
+             \"hottest_class\":{}}}",
+            total_allocs, live_bytes,
+            hottest.map(|c| c as i64).unwrap_or(-1)
+        ));
+        out.push('}');
         out
     }
 }

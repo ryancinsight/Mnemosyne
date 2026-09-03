@@ -88,9 +88,46 @@ pub unsafe fn thread_free_layout<P: AllocPolicy, B: HasSegmentPool + LocalAlloca
     // once, `size`/`align` as allocated), so the small-path classification below is
     // the one `alloc` made and the chosen arm frees the block on the path that
     // produced it.
-    if size != 0 && crate::alloc::small_path_class(size, align).is_some() {
+    let is_small = size != 0 && crate::alloc::small_path_class(size, align).is_some();
+
+    // Sized-free validation (C23 `free_sized` / snmalloc `sanity_checks`):
+    // under `ENABLE_POISONING` verify that the caller's size rounds to the
+    // same class as the block's recorded block_size.  A mismatch indicates a
+    // wrong-size free — either a use-after-free or a layout-mismatch bug —
+    // and is detected before the free list is modified.  Under
+    // `StandardPolicy` the `if constexpr` branch is dead and costs nothing.
+    if P::ENABLE_POISONING && !ptr.is_null() && is_small && size > 0 {
+        // SAFETY: `ptr` is the non-null allocator-owned pointer per the
+        // `# Safety` contract; `locate_segment` recovers the live header and a
+        // bounded page index, both guarantees of the function's own contract.
+        let (segment, page_index) = unsafe { mnemosyne_core::types::locate_segment(ptr) };
+        if page_index > 0 {
+            // SAFETY: `page_index` is in `[1, PAGES_PER_SEGMENT)` so `segment`
+            // is a real header and `pages[page_index]` was initialized by
+            // `Segment::initialize`; reading `block_size` is a valid, unaliased
+            // load under this caller's exclusive ownership of `ptr`.
+            let recorded_size =
+                unsafe { (*segment).pages.get_unchecked(page_index).block_size };
+            if recorded_size > 0 {
+                let caller_class = crate::alloc::small_path_class(size, align);
+                let block_class = mnemosyne_core::size_class::size_to_class_nonzero(
+                    recorded_size,
+                );
+                if caller_class != block_class {
+                    std::process::abort();
+                }
+            }
+        }
+    }
+
+    if is_small {
+        // SAFETY: `thread_free_layout`'s contract holds (`ptr` from this
+        // allocator, freed once, `size`/`align` as allocated), so the
+        // small-path classification is the one `alloc` made.
         unsafe { thread_free_classified::<P, B, true>(ptr) };
     } else {
+        // SAFETY: as above; `LAYOUT_PROVES_SMALL = false` routes to the
+        // large/huge path when the class lookup missed or size is zero.
         unsafe { thread_free_classified::<P, B, false>(ptr) };
     }
 }
