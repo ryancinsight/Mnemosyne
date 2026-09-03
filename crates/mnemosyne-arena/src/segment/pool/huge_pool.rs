@@ -252,6 +252,9 @@ impl GlobalHugePool {
                         };
                         match lower {
                             Some(segment) => Some(segment),
+                            // SAFETY: `bucket` is a live pool bucket and the
+                            // helper transfers exclusive ownership only when
+                            // it finds a fitting retained segment.
                             None => unsafe {
                                 Self::pop_fitting_from_exact_bucket(
                                     bucket,
