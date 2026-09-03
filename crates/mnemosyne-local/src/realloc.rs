@@ -228,6 +228,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                     let allocated = unsafe { alloc.alloc_class::<P>(class) };
                     new_ptr = allocated;
                     if !new_ptr.is_null() {
+                        crate::bin_stats::record_alloc(class);
                         unsafe {
                             // SAFETY: `new_ptr` is a fresh block of at least
                             // `new_adjusted` bytes; init writes only within it.

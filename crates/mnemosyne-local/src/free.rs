@@ -169,6 +169,17 @@ unsafe fn thread_free_classified<
         unsafe { poison_freed_bytes::<P>(ptr, (*page_ptr).block_size) };
     }
 
+    // Record per-size-class dealloc telemetry before the block re-enters the
+    // free list. `size_to_class_nonzero` is a single table lookup (O(1));
+    // Relaxed atomics mean no memory-fence overhead on the hot path.
+    {
+        use mnemosyne_core::size_class::size_to_class_nonzero;
+        let block_size = unsafe { (*page_ptr).block_size };
+        if let Some(class) = size_to_class_nonzero(block_size) {
+            crate::bin_stats::record_dealloc(class);
+        }
+    }
+
     let block = ptr as *mut Block;
     // SAFETY: `segment` is the live mapping `locate_segment` recovered for `ptr`;
     // `owner` reads its ownership token, which is immutable while the segment

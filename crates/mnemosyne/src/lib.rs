@@ -22,8 +22,9 @@ pub use mnemosyne_heap::{
     ReallocFailure, ThreadLocalToken, scope as branded_scope,
 };
 pub use mnemosyne_local::{
-    FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics, LocalAllocatorSelector,
-    SizeClassCache, SizeClassOccupancy, usable_size,
+    BinSnapshot, FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics,
+    LocalAllocatorSelector, SizeClassCache, SizeClassOccupancy, all_bin_snapshots, bin_snapshot,
+    hottest_class, reset_bin_stats, summary_line, total_alloc_count, total_live_bytes, usable_size,
 };
 pub use mnemosyne_prof::{
     disable_leak_detector, disable_profiling, dump_leaks, dump_profile, enable_leak_detector,

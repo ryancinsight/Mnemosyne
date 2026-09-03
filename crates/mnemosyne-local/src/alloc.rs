@@ -192,6 +192,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                     // SAFETY: `ptr` is a freshly carved block of at least
                     // `adjusted_size` bytes; initialization writes only within it.
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+                    crate::bin_stats::record_alloc(class);
                     return ptr;
                 }
                 // SAFETY: same valid `page`; reclaim path adopts cross-thread
@@ -206,6 +207,7 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
                     // SAFETY: as above, `ptr` is a fresh block of at least
                     // `adjusted_size` bytes owned by the caller.
                     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+                    crate::bin_stats::record_alloc(class);
                     return ptr;
                 }
             }
@@ -241,6 +243,7 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
         let cpu_ptr = per_cpu::try_alloc_cpu::<P>(class);
         if !cpu_ptr.is_null() {
             unsafe { initialize_allocated_bytes::<P>(cpu_ptr, adjusted_size) };
+            crate::bin_stats::record_alloc(class);
             return cpu_ptr;
         }
     }
@@ -270,6 +273,7 @@ unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSe
         return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
     }
     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+    crate::bin_stats::record_alloc(class);
     ptr
 }
 

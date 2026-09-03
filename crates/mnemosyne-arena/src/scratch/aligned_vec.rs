@@ -218,6 +218,62 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.ptr
     }
 
+    /// Returns a shared pointer to the first element (same as
+    /// `self.as_slice().as_ptr()`).
+    #[inline]
+    pub fn as_ptr(&self) -> *const T {
+        self.ptr
+    }
+
+    /// Overwrites all `len()` initialized elements with `value`.
+    ///
+    /// Does not grow the buffer; only the `[0, len())` prefix is touched.
+    #[inline]
+    pub fn fill(&mut self, value: T) {
+        // SAFETY: `[0, self.len)` is fully initialized POD `T`; overwriting
+        // each element with a `Copy` value needs no destructor and stays inside
+        // the allocation.
+        unsafe {
+            for i in 0..self.len {
+                core::ptr::write(self.ptr.add(i), value);
+            }
+        }
+    }
+
+    /// Ensures length ≥ `min_len` then overwrites the whole `[0, min_len)`
+    /// prefix with `value`.
+    ///
+    /// Equivalent to `resize(min_len, value)` followed by `fill(value)` but
+    /// avoids a redundant second pass over elements that `resize` already wrote.
+    #[inline]
+    pub fn resize_fill(&mut self, min_len: usize, value: T) {
+        self.resize(min_len, value);
+        // `resize` already wrote `value` into any newly-added range; overwrite
+        // the pre-existing prefix so the entire `[0, min_len)` slice is uniform.
+        if min_len <= self.len {
+            self.fill(value);
+        }
+    }
+
+    /// Sets the logical length to `new_len` without initializing the extended
+    /// range or running any destructors on the shrunk tail.
+    ///
+    /// # Safety
+    ///
+    /// * `new_len <= self.capacity()`.
+    /// * If `new_len > self.len()` the caller must ensure every element in
+    ///   `[old_len, new_len)` is initialized before the next call that reads
+    ///   through `as_slice()` or `Deref`. Violating either condition is UB.
+    #[inline]
+    pub unsafe fn set_len_unchecked(&mut self, new_len: usize) {
+        debug_assert!(
+            new_len <= self.capacity,
+            "set_len_unchecked: new_len={new_len} exceeds capacity={}",
+            self.capacity
+        );
+        self.len = new_len;
+    }
+
     /// Consumes self and returns a `Vec<T>` with the initialized data.
     #[inline]
     pub fn into_vec(self) -> Vec<T> {
@@ -309,6 +365,34 @@ impl<T: ScratchElement> core::ops::Deref for AlignedVec<T> {
 impl<T: ScratchElement> core::ops::DerefMut for AlignedVec<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
+
+impl<T: ScratchElement> core::convert::AsRef<[T]> for AlignedVec<T> {
+    #[inline]
+    fn as_ref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T: ScratchElement> core::convert::AsMut<[T]> for AlignedVec<T> {
+    #[inline]
+    fn as_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
+
+impl<T: ScratchElement> core::borrow::Borrow<[T]> for AlignedVec<T> {
+    #[inline]
+    fn borrow(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T: ScratchElement> core::borrow::BorrowMut<[T]> for AlignedVec<T> {
+    #[inline]
+    fn borrow_mut(&mut self) -> &mut [T] {
         self.as_mut_slice()
     }
 }
