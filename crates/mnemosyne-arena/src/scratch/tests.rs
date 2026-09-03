@@ -419,3 +419,58 @@ fn aligned_vec_bool_is_scratch_element() {
     v.clear();
     assert!(v.is_empty());
 }
+
+// ── Phase 12: drain / DoubleEndedIterator ─────────────────────────────────────
+
+#[test]
+fn aligned_vec_drain_yields_range_and_collapses() {
+    let mut v = AlignedVec::<i32>::from_slice(&[10, 20, 30, 40, 50]);
+    let drained: std::vec::Vec<i32> = v.drain(1, 3).collect();
+    assert_eq!(drained, &[20, 30]);
+    assert_eq!(v.as_slice(), &[10, 40, 50]);
+}
+
+#[test]
+fn aligned_vec_drain_full_range() {
+    let mut v = AlignedVec::<u8>::from_slice(&[1, 2, 3]);
+    let d: std::vec::Vec<u8> = v.drain(0, 3).collect();
+    assert_eq!(d, &[1, 2, 3]);
+    assert!(v.is_empty());
+}
+
+#[test]
+fn aligned_vec_drain_empty_range_is_noop() {
+    let mut v = AlignedVec::<u32>::from_slice(&[5, 6, 7]);
+    let d: std::vec::Vec<u32> = v.drain(1, 1).collect();
+    assert!(d.is_empty());
+    assert_eq!(v.as_slice(), &[5, 6, 7]);
+}
+
+#[test]
+fn aligned_vec_drain_drop_without_consume() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4, 5]);
+    {
+        let _drain = v.drain(1, 4); // drop without consuming
+    }
+    assert_eq!(v.as_slice(), &[1, 5]);
+}
+
+#[test]
+fn aligned_vec_into_iter_rev() {
+    let v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4]);
+    let reversed: std::vec::Vec<i32> = v.into_iter().rev().collect();
+    assert_eq!(reversed, &[4, 3, 2, 1]);
+}
+
+#[test]
+fn aligned_vec_into_iter_front_and_back() {
+    let v = AlignedVec::<u32>::from_slice(&[1, 2, 3, 4, 5]);
+    let mut it = v.into_iter();
+    assert_eq!(it.next(), Some(1));
+    assert_eq!(it.next_back(), Some(5));
+    assert_eq!(it.next(), Some(2));
+    assert_eq!(it.next_back(), Some(4));
+    assert_eq!(it.next(), Some(3));
+    assert_eq!(it.next(), None);
+    assert_eq!(it.next_back(), None);
+}

@@ -1008,3 +1008,20 @@ fn test_thread_free_cycle_aborts_process() {
         panic!("Subprocess succeeded but was expected to abort!");
     }
 }
+#[test]
+fn flush_tls_stats_moves_pending_counts_to_globals() {
+    use super::bin_stats;
+    // Make a few allocations to seed TLS accumulators (well below FLUSH_THRESHOLD).
+    let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(16, 8) };
+    assert!(!ptr.is_null());
+    unsafe { thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr) };
+
+    // Flush TLS into globals, then check that the global counters are non-zero.
+    bin_stats::flush_tls_stats();
+    let snapshot = bin_stats::all_bin_snapshots();
+    let total_allocs: u64 = snapshot.iter().map(|s| s.alloc_count).sum();
+    assert!(
+        total_allocs > 0,
+        "after flush_tls_stats global alloc count should be non-zero"
+    );
+}

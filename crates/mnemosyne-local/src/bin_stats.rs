@@ -1,22 +1,25 @@
 //! Per-size-class allocation telemetry.
 //!
 //! Tracks process-wide allocation and deallocation counts per size class using
-//! relaxed atomic counters. The overhead per alloc/free is one `fetch_add` on
-//! a per-class `AtomicU64`; on modern CPUs this is a single `LOCK XADD` with
-//! no memory-ordering constraints (relaxed), adding ≤ 1 ns to the fast path.
+//! relaxed atomic counters. The hot path uses **thread-local accumulators** that
+//! flush to the global atomics every [`FLUSH_THRESHOLD`] operations per class,
+//! reducing `LOCK XADD` overhead by up to 64× under multi-threaded workloads.
 //!
 //! The counters are always enabled (no feature gate). They are not
 //! synchronised with each other — a snapshot can observe counts from
 //! different points in time — but they are individually monotone-non-decreasing,
 //! so the live-allocation estimate `alloc_count - dealloc_count` always
 //! under-estimates rather than producing a negative artefact.
+//!
+//! **Thread-exit note**: thread-local accumulators are not flushed at thread
+//! exit (no destructor), so a small under-count (≤ `FLUSH_THRESHOLD` per class
+//! per dead thread) may occur. This is intentional and acceptable for telemetry.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::size_class::class_to_size;
 
-// Three process-wide per-class atomic arrays. Kept together so they fit on
-// the same cache lines when iterated in `all_bin_snapshots`.
+// Three process-wide per-class atomic arrays.
 static ALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] =
     [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
 static DEALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] =
@@ -24,24 +27,128 @@ static DEALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] =
 static ALLOC_BYTES: [AtomicU64; NUM_SIZE_CLASSES] =
     [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
 
+// ── Thread-local accumulator ──────────────────────────────────────────────────
+
+/// How many per-class operations to accumulate before flushing to the global
+/// atomic counters. Higher values reduce lock pressure at the cost of a
+/// slightly coarser telemetry resolution.
+const FLUSH_THRESHOLD: u32 = 64;
+
+/// Per-thread bin counter accumulator.
+///
+/// Stores accumulated counts as `u32`; at `FLUSH_THRESHOLD` the batch is
+/// added to the corresponding `AtomicU64` global with a single `LOCK XADD`.
+#[derive(Clone, Copy)]
+struct TlsBinAccumulator {
+    alloc_count:  [u32; NUM_SIZE_CLASSES],
+    dealloc_count: [u32; NUM_SIZE_CLASSES],
+}
+
+impl TlsBinAccumulator {
+    const fn zeroed() -> Self {
+        Self {
+            alloc_count:  [0; NUM_SIZE_CLASSES],
+            dealloc_count: [0; NUM_SIZE_CLASSES],
+        }
+    }
+}
+
+std::thread_local! {
+    // `Cell<T>` gives O(1) get/set without any borrow-flag overhead for
+    // the common single-threaded TLS access pattern.  We replace the whole
+    // struct on flush rather than modifying it through a reference so that
+    // `Cell` — not `RefCell` — suffices, removing the borrow-check branch.
+    static TLS: std::cell::Cell<TlsBinAccumulator> =
+        const { std::cell::Cell::new(TlsBinAccumulator::zeroed()) };
+}
+
+#[cold]
+#[inline(never)]
+fn flush_alloc(class: usize, accumulated: u32) {
+    ALLOC_COUNT[class].fetch_add(accumulated as u64, Ordering::Relaxed);
+    ALLOC_BYTES[class].fetch_add(
+        accumulated as u64 * class_to_size(class) as u64,
+        Ordering::Relaxed,
+    );
+}
+
+#[cold]
+#[inline(never)]
+fn flush_dealloc(class: usize, accumulated: u32) {
+    DEALLOC_COUNT[class].fetch_add(accumulated as u64, Ordering::Relaxed);
+}
+
 /// Records one allocation from `class`.
 ///
-/// Bounds-checked internally; out-of-range class indices are silently ignored.
-/// Called on the alloc hot path: one relaxed `fetch_add` per class array.
+/// Bounds-checked; out-of-range class indices are silently ignored.
+/// Hot path: one thread-local read-modify-write; atomic `LOCK XADD` only
+/// every `FLUSH_THRESHOLD` allocations per class.
 #[inline(always)]
 pub(crate) fn record_alloc(class: usize) {
     if class < NUM_SIZE_CLASSES {
-        ALLOC_COUNT[class].fetch_add(1, Ordering::Relaxed);
-        ALLOC_BYTES[class].fetch_add(class_to_size(class) as u64, Ordering::Relaxed);
+        TLS.with(|cell| {
+            let mut acc = cell.get();
+            let n = acc.alloc_count[class].wrapping_add(1);
+            if n >= FLUSH_THRESHOLD {
+                acc.alloc_count[class] = 0;
+                cell.set(acc);
+                flush_alloc(class, n);
+            } else {
+                acc.alloc_count[class] = n;
+                cell.set(acc);
+            }
+        });
     }
 }
 
 /// Records one deallocation into `class`.
+///
+/// Hot path: thread-local accumulation with atomic flush every
+/// `FLUSH_THRESHOLD` deallocations per class.
 #[inline(always)]
 pub(crate) fn record_dealloc(class: usize) {
     if class < NUM_SIZE_CLASSES {
-        DEALLOC_COUNT[class].fetch_add(1, Ordering::Relaxed);
+        TLS.with(|cell| {
+            let mut acc = cell.get();
+            let n = acc.dealloc_count[class].wrapping_add(1);
+            if n >= FLUSH_THRESHOLD {
+                acc.dealloc_count[class] = 0;
+                cell.set(acc);
+                flush_dealloc(class, n);
+            } else {
+                acc.dealloc_count[class] = n;
+                cell.set(acc);
+            }
+        });
     }
+}
+
+/// Flushes the calling thread's accumulator to the global counters immediately.
+///
+/// Useful before reading a stats snapshot on the same thread so that the
+/// snapshot reflects all allocations made on this thread, not just those that
+/// already exceeded `FLUSH_THRESHOLD`.
+#[inline]
+pub fn flush_tls_stats() {
+    TLS.with(|cell| {
+        let acc = cell.get();
+        for class in 0..NUM_SIZE_CLASSES {
+            let a = acc.alloc_count[class];
+            if a > 0 {
+                ALLOC_COUNT[class].fetch_add(a as u64, Ordering::Relaxed);
+                ALLOC_BYTES[class].fetch_add(
+                    a as u64 * class_to_size(class) as u64,
+                    Ordering::Relaxed,
+                );
+            }
+            let d = acc.dealloc_count[class];
+            if d > 0 {
+                DEALLOC_COUNT[class].fetch_add(d as u64, Ordering::Relaxed);
+            }
+        }
+        // Reset the accumulator so we don't double-count on the next flush.
+        cell.set(TlsBinAccumulator::zeroed());
+    });
 }
 
 /// Per-size-class allocation statistics snapshot.

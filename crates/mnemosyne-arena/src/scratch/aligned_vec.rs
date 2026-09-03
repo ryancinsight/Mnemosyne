@@ -129,6 +129,28 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.len = write;
     }
 
+    /// Removes the elements in the given range from the buffer, returns them
+    /// as an iterator, and shifts the elements after the range to fill the gap.
+    ///
+    /// The returned iterator yields elements in front-to-back order.  If the
+    /// iterator is dropped before being fully consumed, any unread elements are
+    /// silently discarded (they have already been removed from the buffer).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `start > end` or `end > self.len()`.
+    #[inline]
+    pub fn drain(&mut self, start: usize, end: usize) -> Drain<'_, T> {
+        assert!(start <= end, "drain: start > end");
+        assert!(end <= self.len, "drain: end > len");
+        Drain {
+            buf: self,
+            start,
+            end,
+            current: start,
+        }
+    }
+
     /// Elements the current allocation can hold before `ensure_len` must
     /// reallocate; never less than `len()`.
     #[inline]
@@ -374,6 +396,72 @@ impl<T: ScratchElement> AlignedVec<T> {
     }
 }
 
+// ── Drain iterator ───────────────────────────────────────────────────────────
+
+/// A draining iterator returned by [`AlignedVec::drain`].
+///
+/// Elements in `[start, end)` are yielded by value.  When the iterator is
+/// dropped — whether fully consumed or not — any remaining un-yielded elements
+/// in the drain range are discarded and the elements after the range are
+/// shifted left to close the gap.
+pub struct Drain<'a, T: ScratchElement> {
+    buf: &'a mut AlignedVec<T>,
+    start: usize,
+    end: usize,
+    current: usize,
+}
+
+impl<T: ScratchElement> Iterator for Drain<'_, T> {
+    type Item = T;
+
+    #[inline]
+    fn next(&mut self) -> Option<T> {
+        if self.current < self.end {
+            // SAFETY: `current < end <= buf.len()`, so this element is inside
+            // the initialized region; `T: Copy` — bitwise read is sound.
+            let val = unsafe { core::ptr::read(self.buf.as_ptr().add(self.current)) };
+            self.current += 1;
+            Some(val)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.end - self.current;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<T: ScratchElement> ExactSizeIterator for Drain<'_, T> {}
+
+impl<T: ScratchElement> Drop for Drain<'_, T> {
+    fn drop(&mut self) {
+        // Shift elements in [end, buf.len) left by `(end - start)` positions
+        // to fill the drained range, then reduce the length.
+        let drain_len = self.end - self.start;
+        if drain_len == 0 {
+            return;
+        }
+        let tail_len = self.buf.len - self.end;
+        if tail_len > 0 {
+            // SAFETY: The source range `[end, end + tail_len)` and the destination
+            // range `[start, start + tail_len)` do not overlap when `end > start`
+            // (the drain range is non-empty), and both lie within the initialized
+            // allocation.  `T: Copy` — no destructor hazard.
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    self.buf.ptr.add(self.end),
+                    self.buf.ptr.add(self.start),
+                    tail_len,
+                );
+            }
+        }
+        self.buf.len -= drain_len;
+    }
+}
+
 impl<T: ScratchElement> Drop for AlignedVec<T> {
     fn drop(&mut self) {
         if self.capacity > 0 {
@@ -565,6 +653,26 @@ impl<T: ScratchElement> Iterator for AlignedVecIntoIter<T> {
 }
 
 impl<T: ScratchElement> ExactSizeIterator for AlignedVecIntoIter<T> {}
+
+impl<T: ScratchElement> core::iter::DoubleEndedIterator for AlignedVecIntoIter<T> {
+    #[inline]
+    fn next_back(&mut self) -> Option<T> {
+        let end = self.buf.len();
+        if self.pos < end {
+            // Logically "pop" from the back by reducing len by 1.
+            // SAFETY: `end - 1 < len` so the element is in the initialized
+            // region; `T: Copy` — bitwise read is sound.
+            let new_end = end - 1;
+            // SAFETY: `set_len_unchecked` contract: new_end <= capacity (it's
+            // the old len minus 1) and the element at `new_end` is initialized.
+            unsafe { self.buf.set_len_unchecked(new_end) };
+            let val = unsafe { core::ptr::read(self.buf.as_ptr().add(new_end)) };
+            Some(val)
+        } else {
+            None
+        }
+    }
+}
 
 impl<T: ScratchElement> IntoIterator for AlignedVec<T> {
     type Item = T;
