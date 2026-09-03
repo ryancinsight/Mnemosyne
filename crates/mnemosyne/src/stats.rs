@@ -263,9 +263,8 @@ pub fn memory_stats_json() -> alloc::string::String {
     let bins = mnemosyne_local::all_bin_snapshots();
     let total_allocs = mnemosyne_local::total_alloc_count();
     let live_bytes = mnemosyne_local::total_live_bytes();
-    let hottest = mnemosyne_local::hottest_class()
-        .map(|c| c as i64)
-        .unwrap_or(-1);
+    let hottest: i64 = mnemosyne_local::hottest_class()
+        .map_or(-1, |c| c as i64);
 
     let mut out = String::with_capacity(8192);
     out.push('{');
@@ -276,7 +275,7 @@ pub fn memory_stats_json() -> alloc::string::String {
             out.push('"');
             out.push_str($key);
             out.push_str("\":");
-            out.push_str(&format!("{}", $val));
+            out.push_str(&alloc::string::ToString::to_string(&$val));
         };
     }
 
@@ -305,22 +304,24 @@ pub fn memory_stats_json() -> alloc::string::String {
     kv!("fresh_segments",            s.fresh_segments, true);
 
     // Per-bin array with fragmentation ratio.
+    use core::fmt::Write as _;
     out.push_str(",\"bins\":[");
     for (i, bin) in bins.iter().enumerate() {
         if i > 0 { out.push(','); }
-        out.push_str(&format!(
+        let _ = write!(
+            out,
             "{{\"block_size\":{},\"alloc_count\":{},\"dealloc_count\":{},\
              \"live_estimate\":{},\"fragmentation_ratio\":{:.4}}}",
             bin.block_size, bin.alloc_count, bin.dealloc_count,
             bin.live_estimate, bin.fragmentation_ratio()
-        ));
+        );
     }
 
     // Aggregate totals.
-    out.push_str(&format!(
-        "],\"bin_totals\":{{\"total_alloc_count\":{},\"total_live_bytes\":{},\
-         \"hottest_class\":{}}}}}",
-        total_allocs, live_bytes, hottest
-    ));
+    let _ = write!(
+        out,
+        "],\"bin_totals\":{{\"total_alloc_count\":{total_allocs},\
+         \"total_live_bytes\":{live_bytes},\"hottest_class\":{hottest}}}}}"
+    );
     out
 }
