@@ -27,6 +27,14 @@ allocator row, the pre-batching full-suite measurement was about 2.65 ms; the
 post-batching focused measurements were 93.0, 97.3, and 92.5 µs, while the
 refreshed full-suite row is 91.356 µs.
 
+An exact-revision repeat after rebasing this branch onto `origin/main` was not
+accepted for baseline refresh. The run used the same host preparation in all
+three repetitions, but `allocator burst retention/mnemosyne/small_32` reached
+10.26% against its 10.00% ceiling and `threaded saturated small allocation
+cycles/mnemosyne` reached 73.05% against its 25.00% ceiling. The run remains
+under `target/mn467-baseline-rebased`; no threshold or committed baseline was
+changed because the measurement did not agree with itself.
+
 ## 2026-09-01 — pinned measurement procedure (MN-464); baseline still NOT refreshed
 
 The section below this one recorded that the suite disagreed with itself by more
