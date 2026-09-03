@@ -293,7 +293,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
         // runs under the exclusive `alloc` borrow with the `is_allocating`
         // guard set.
         let became_empty =
-            unsafe { do_local_free_internal::<B>(alloc, block, page, segment, page_index) };
+            unsafe { do_local_free_internal::<P, B>(alloc, block, page, segment, page_index) };
 
         if became_empty {
             // SAFETY: `alloc` is the exclusively-borrowed allocator; recording

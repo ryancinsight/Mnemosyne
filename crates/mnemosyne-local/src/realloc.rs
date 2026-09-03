@@ -292,7 +292,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                                 // `segment` at `page_index`, and `alloc` owns
                                 // them — exactly `do_local_free_internal`'s
                                 // contract for the page-list transition path.
-                                let _became_empty = do_local_free_internal::<B>(
+                                let _became_empty = do_local_free_internal::<P, B>(
                                     alloc, block, page_ref, segment, page_index,
                                 );
                             }

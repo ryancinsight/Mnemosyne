@@ -41,6 +41,37 @@ pub trait MemoryBackend: Send + Sync + 'static {
     /// Indicates whether the backend enables the lock-free per-CPU block cache.
     const ENABLE_CPU_CACHE: bool = false;
 
+    /// When `true`, the platform supports Transparent Huge Pages (THP) and
+    /// the allocator should prefer to reset the **full** 2 MiB segment
+    /// (including the page-0 metadata header) rather than the 31 user-page
+    /// portion alone when returning a segment to the free pool.
+    ///
+    /// Resetting the full 2 MiB THP-aligned region avoids splitting a kernel
+    /// THP page at the 64 KiB boundary between the header and user pages —
+    /// a split forces the kernel to "unthp" the mapping, raising TLB pressure
+    /// for subsequent accesses. When `false` the header is skipped, preserving
+    /// its metadata for the common case where no THP split would occur.
+    ///
+    /// Enabled only on Linux where THP is available. The segment is always
+    /// re-initialised on the allocation path, so losing the header contents
+    /// to a lazy kernel reclaim is safe.
+    ///
+    /// Inspired by mimalloc v3.5.1 `MI_ALLOW_THP=FULL` / `MIMALLOC_MINIMAL_PURGE_SIZE=2MiB`.
+    const THP_SEGMENT_RESET: bool = false;
+
+    /// Returns `true` when THP (Transparent Huge Pages) is believed active
+    /// on the current host, meaning the platform can collapse the 2 MiB
+    /// SEGMENT_ALIGN-aligned regions this allocator produces into huge pages.
+    ///
+    /// Used together with [`Self::THP_SEGMENT_RESET`] to decide whether
+    /// `reset_segment_pool` should reset the full 2 MiB segment or only the
+    /// 31 user-page sub-range. The default returns `false`; platforms with
+    /// THP support override it.
+    #[inline(always)]
+    fn thp_is_active() -> bool {
+        false
+    }
+
     /// Allocates page-aligned memory from the OS.
     ///
     /// # Safety

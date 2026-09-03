@@ -41,6 +41,25 @@ pub trait AllocPolicy: private::Sealed + Send + Sync + 'static {
 
     /// If true, randomize the allocation order of blocks in a page.
     const RANDOMIZE_ALLOCATION: bool = false;
+
+    /// If true, a full page only becomes active again once at least
+    /// `capacity / WAKE_DENOMINATOR` blocks are free — not on the first
+    /// freed block. This creates a hysteresis zone that maximises temporal
+    /// distance between address reuse, making UAF and LIFO-spray exploits
+    /// harder. Under `StandardPolicy` (false) every freed block from a
+    /// full page immediately makes the page active again for maximum
+    /// throughput.
+    ///
+    /// Corresponds to snmalloc's `waking` field (0.7.x, ISMM 2024) and its
+    /// `random_larger_thresholds` security mitigation.
+    const DELAY_PAGE_WAKE: bool = false;
+
+    /// Denominator for the page-wake hysteresis (ignored when
+    /// [`Self::DELAY_PAGE_WAKE`] is `false`). A full page becomes active
+    /// only after `free_count >= capacity / WAKE_DENOMINATOR` blocks are
+    /// freed from it. Larger values mean more blocks must be freed before
+    /// the page wakes.
+    const WAKE_DENOMINATOR: u16 = 4;
 }
 
 /// Zero-Sized Type (ZST) representing the standard allocation policy with maximum performance.
@@ -84,6 +103,11 @@ impl AllocPolicy for HardenedPolicy {
     const ZERO_INITIALIZE: bool = true;
     const ENABLE_FREE_LIST_ENCRYPTION: bool = true;
     const RANDOMIZE_ALLOCATION: bool = true;
+    /// Waking hysteresis: a full page does not become active until at least
+    /// `capacity / 4` blocks are free. This prevents rapid LIFO address
+    /// reuse and increases the temporal window between free and realloc,
+    /// making use-after-free and LIFO heap-spray exploits harder to land.
+    const DELAY_PAGE_WAKE: bool = true;
 }
 
 /// Compile-time assertions that `StandardPolicy` carries no non-ZST overhead.

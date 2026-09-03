@@ -260,6 +260,12 @@ impl<T: ScratchElement> ScratchPool<T> {
             } else if n > vec.len() {
                 // Within existing capacity but beyond current logical length:
                 // extend without zeroing (the capacity was already committed).
+                // SAFETY: `n <= vec.capacity()` (checked by the outer `else`
+                // branch: capacity >= n because we only reach this arm when the
+                // capacity check above passed without `ensure_len`).  The caller
+                // of `with_scratch_uninit` is obligated to initialise every
+                // element in `[..n]` before reading it; the function signature's
+                // `# Safety` contract documents this obligation.
                 unsafe { vec.set_len_unchecked(n) };
             }
             let ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(vec.as_mut_ptr(), n);
@@ -267,6 +273,9 @@ impl<T: ScratchElement> ScratchPool<T> {
         } else {
             let mut owned = AlignedVec::with_capacity(n);
             // Capacity-only allocation; do not zero.
+            // SAFETY: `with_capacity(n)` allocates exactly `n` elements worth of
+            // backing storage, so `n <= owned.capacity()`.  The caller's
+            // `# Safety` obligation covers initialisation of all `n` slots.
             unsafe { owned.set_len_unchecked(n) };
             let ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(owned.as_mut_ptr(), n);
             f(ptr)

@@ -503,8 +503,34 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
                 (*segment)
                     .next_free_segment
                     .store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
-                let reset_ptr = segment.cast::<u8>().add(PAGE_SIZE);
-                let reset_size = SEGMENT_SIZE - PAGE_SIZE;
+                // THP-aware reset (mimalloc v3.5.1 technique): on platforms
+                // where THP is active, reset the full 2 MiB aligned segment
+                // (including the page-0 header) to avoid splitting a THP page
+                // at the 64 KiB header/user-page boundary. The header is
+                // re-initialized on every pop from the pool, so losing its
+                // content to a lazy kernel reclaim is always safe.
+                //
+                // On platforms without THP or when MADV_FREE is unavailable
+                // (eager zeroing would corrupt the header before the pool
+                // re-link below), skip page 0 so the chain links remain intact.
+                let (reset_ptr, reset_size) = if B::THP_SEGMENT_RESET && B::thp_is_active() {
+                    // Full-segment reset: page 0 + user pages. Safe because
+                    // MADV_FREE is lazy; the pool push below writes next_free_segment
+                    // into page 0 *after* the advice, so the write is non-lazy
+                    // and stays committed.
+                    // SAFETY: `segment` is the base of the aligned 2 MiB mapping
+                    // (page 0 starts here); SEGMENT_SIZE is the full mapping
+                    // extent; page_reset is advisory and never invalidates the
+                    // address range.
+                    (segment.cast::<u8>(), SEGMENT_SIZE)
+                } else {
+                    // Skip page 0 (segment header) to preserve the metadata
+                    // for the pool link we write immediately below.
+                    // SAFETY: `segment + PAGE_SIZE` is inside the mapping; the
+                    // remaining SEGMENT_SIZE - PAGE_SIZE bytes are user pages
+                    // holding no live data.
+                    (segment.cast::<u8>().add(PAGE_SIZE), SEGMENT_SIZE - PAGE_SIZE)
+                };
                 if B::page_reset(reset_ptr, reset_size) {
                     reset_count += 1;
                 }

@@ -152,6 +152,30 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
         target_os = "macos",
         target_os = "freebsd"
     ));
+    /// Prefer full-segment resets on Linux where THP is available. This
+    /// avoids splitting a 2 MiB THP page at the 64 KiB page-0/user-page
+    /// boundary, keeping the kernel's huge-page pool intact and reducing TLB
+    /// pressure on segment-intensive workloads (mimalloc v3.5.1 technique).
+    const THP_SEGMENT_RESET: bool = cfg!(target_os = "linux");
+
+    /// Returns `true` when the hugepage hint is enabled (i.e. MADV_HUGEPAGE
+    /// was accepted for at least one segment-sized mapping) and MADV_FREE is
+    /// supported. When both are true, THP is likely active and we prefer
+    /// full-segment resets to avoid splitting THP pages.
+    #[inline]
+    fn thp_is_active() -> bool {
+        #[cfg(all(target_os = "linux", not(miri)))]
+        {
+            use core::sync::atomic::Ordering;
+            // MADV_FREE support means lazy reclaim is used (not eager zeroing),
+            // so resetting the full 2 MiB segment is safe even under pressure.
+            MADV_FREE_SUPPORTED.load(Ordering::Relaxed) == 1
+                && mnemosyne_core::options::ENABLE_HUGEPAGE_HINT
+                    .load(Ordering::Relaxed)
+        }
+        #[cfg(not(all(target_os = "linux", not(miri))))]
+        false
+    }
 
     /// Allocates virtual memory pages of the given size.
     ///

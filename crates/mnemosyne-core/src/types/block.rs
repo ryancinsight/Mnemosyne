@@ -135,10 +135,12 @@ impl Block {
     /// writable.
     #[inline(always)]
     pub unsafe fn write_free_canary(block: *mut Block, page_cookie: usize) {
-        let canary_ptr = block.cast::<usize>().add(1);
         // SAFETY: caller guarantees the block is at least two words wide and
         // the canary slot is within the allocation.
-        unsafe { canary_ptr.write(FREE_CANARY_MAGIC ^ page_cookie) };
+        unsafe {
+            let canary_ptr = block.cast::<usize>().add(1);
+            canary_ptr.write(FREE_CANARY_MAGIC ^ page_cookie);
+        }
     }
 
     /// Returns `true` when the word at `block + size_of::<Block>()` matches
@@ -153,9 +155,8 @@ impl Block {
     /// Same requirements as [`write_free_canary`](Block::write_free_canary).
     #[inline(always)]
     pub unsafe fn check_double_free(block: *const Block, page_cookie: usize) -> bool {
-        let canary_ptr = block.cast::<usize>().add(1);
-        // SAFETY: same as `write_free_canary`.
-        let observed = unsafe { canary_ptr.read() };
+        // SAFETY: same requirements as `write_free_canary`.
+        let observed = unsafe { block.cast::<usize>().add(1).read() };
         observed == (FREE_CANARY_MAGIC ^ page_cookie)
     }
 
@@ -171,9 +172,8 @@ impl Block {
     /// Same requirements as [`write_free_canary`](Block::write_free_canary).
     #[inline(always)]
     pub unsafe fn clear_free_canary(block: *mut Block) {
-        let canary_ptr = block.cast::<usize>().add(1);
-        // SAFETY: same as `write_free_canary`.
-        unsafe { canary_ptr.write(0) };
+        // SAFETY: same requirements as `write_free_canary`.
+        unsafe { block.cast::<usize>().add(1).write(0) };
     }
 }
 

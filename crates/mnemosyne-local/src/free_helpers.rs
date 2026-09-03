@@ -60,6 +60,9 @@ pub(crate) unsafe fn commit_in_place_free(
     page_alloc_count: usize,
 ) {
     // Backward-edge canary: abort on double-free under encryption.
+    // SAFETY: `block` is the block being freed; `cookie` is the page key computed
+    // by the caller.  The canary slot is at `block + size_of::<Block>()` which is
+    // within the block's allocation (minimum block size ≥ 2 pointer widths).
     if encrypted && unsafe { Block::check_double_free(block, cookie) } {
         std::process::abort();
     }
@@ -71,6 +74,8 @@ pub(crate) unsafe fn commit_in_place_free(
         (*page).alloc_count = page_alloc_count - 1;
     }
     // Write free canary after publishing the block on the free list.
+    // SAFETY: same contract as `check_double_free` above — `block` is within its
+    // allocation and `size_of::<Block>()` below the end of it.
     if encrypted {
         unsafe { Block::write_free_canary(block, cookie) };
     }
