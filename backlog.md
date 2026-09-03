@@ -1,10 +1,10 @@
 # Backlog
 
-## MN-EUNOMIA-IDENTITY-2026-09-03 — Unify optional Eunomia source identity [patch] — in-progress <a id="mn-eunomia-identity-2026-09-03"></a>
+## MN-EUNOMIA-IDENTITY-2026-09-03 — Unify optional Eunomia source identity [patch] — done <a id="mn-eunomia-identity-2026-09-03"></a>
 
-- **Integrator:** Codex; **branch:** `feat/phase10-improvements`; **lease:** `Cargo.toml`, `Cargo.lock`.
+- **Integrator:** Codex; **branch:** `feat/phase10-improvements`; **lease:** none.
 - **Outcome:** align Mnemosyne’s optional Eunomia workspace edge with provider PR #87 (`fdbf122`) so Leto, Hermes, and Hephaestus share one nominal numeric type identity without conversions.
-- **Acceptance:** standalone lockfile and `eunomia` feature gates resolve one provider source and pass; no compatibility layer is added. **Last-update:** 2026-09-03.
+- **Acceptance:** standalone lockfile and `eunomia` feature gates resolve one provider source; strict Clippy, focused provider checks, 100/100 nextest tests, doctests, and warning-denied rustdoc pass; stale unused-macro/import expectations and a tautological assertion are removed; no compatibility layer is added. Full workspace verification remains environment-blocked by the existing MSVC jemalloc guard. **Last-update:** 2026-09-03.
 
 ## In progress
 

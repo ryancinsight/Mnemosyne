@@ -4,7 +4,7 @@ extern crate std;
 use super::aligned_vec::AlignedVec;
 use super::bank::ScratchBank;
 use super::element::DEFAULT_SCRATCH_ALIGN;
-use super::pool::{MAX_POOL_SLOTS, ScratchPool};
+use super::pool::{ScratchPool, MAX_POOL_SLOTS};
 
 #[test]
 fn aligned_vec_capacity_and_alignment() {
@@ -348,7 +348,7 @@ fn aligned_vec_retain_all_or_none() {
     assert_eq!(v.as_slice(), &[10, 20, 30]);
     v.retain(|_| false);
     assert_eq!(v.len(), 0);
-    assert!(!v.is_empty() || v.len() == 0);
+    assert!(v.is_empty());
 }
 
 #[test]

@@ -34,6 +34,7 @@ pub trait ScratchElement: sealed::ScratchElementSealed + Copy + Send + Sync + 's
     const ALIGN_BYTES: usize;
 }
 
+#[cfg(not(feature = "bytemuck"))]
 macro_rules! impl_scratch_element {
     ($($t:ty),* $(,)?) => {
         $(

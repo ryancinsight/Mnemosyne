@@ -252,7 +252,6 @@ pub fn decay() {
 /// sampling so that allocations made on the calling thread but not yet flushed
 /// to the global counters appear in the snapshot.
 pub fn memory_stats_json() -> alloc::string::String {
-    use alloc::format;
     use alloc::string::String;
 
     // Flush the calling thread's accumulated bin stats into the global
@@ -263,15 +262,16 @@ pub fn memory_stats_json() -> alloc::string::String {
     let bins = mnemosyne_local::all_bin_snapshots();
     let total_allocs = mnemosyne_local::total_alloc_count();
     let live_bytes = mnemosyne_local::total_live_bytes();
-    let hottest: i64 = mnemosyne_local::hottest_class()
-        .map_or(-1, |c| c as i64);
+    let hottest: i64 = mnemosyne_local::hottest_class().map_or(-1, |c| c as i64);
 
     let mut out = String::with_capacity(8192);
     out.push('{');
 
     macro_rules! kv {
         ($key:expr, $val:expr, $comma:expr) => {
-            if $comma { out.push(','); }
+            if $comma {
+                out.push(',');
+            }
             out.push('"');
             out.push_str($key);
             out.push_str("\":");
@@ -279,41 +279,62 @@ pub fn memory_stats_json() -> alloc::string::String {
         };
     }
 
-    kv!("current_mapped_bytes",     s.current_mapped_bytes, false);
-    kv!("peak_mapped_bytes",         s.peak_mapped_bytes, true);
-    kv!("map_calls",                 s.map_calls, true);
-    kv!("unmap_calls",               s.unmap_calls, true);
-    kv!("page_reset_calls",          s.page_reset_calls, true);
-    kv!("page_reset_bytes",          s.page_reset_bytes, true);
-    kv!("retained_free_segments",    s.retained_free_segments, true);
-    kv!("max_retained_free_segments",s.max_retained_free_segments, true);
-    kv!("retained_free_bytes",       s.retained_free_bytes, true);
-    kv!("purged_segments",           s.purged_segments, true);
-    kv!("purge_calls",               s.purge_calls, true);
-    kv!("purged_bytes",              s.purged_bytes, true);
-    kv!("reset_segments",            s.reset_segments, true);
-    kv!("reset_calls",               s.reset_calls, true);
-    kv!("retained_huge_blocks",      s.retained_huge_blocks, true);
-    kv!("retained_huge_bytes",       s.retained_huge_bytes, true);
-    kv!("current_thread_live_allocations", s.current_thread_live_allocations, true);
-    kv!("current_thread_owned_segments",   s.current_thread_owned_segments, true);
-    kv!("cross_thread_reclaimed_blocks",   s.cross_thread_reclaimed_blocks, true);
-    kv!("page_refills",              s.page_refills, true);
-    kv!("recycled_pages",            s.recycled_pages, true);
-    kv!("fresh_pages",               s.fresh_pages, true);
-    kv!("fresh_segments",            s.fresh_segments, true);
+    kv!("current_mapped_bytes", s.current_mapped_bytes, false);
+    kv!("peak_mapped_bytes", s.peak_mapped_bytes, true);
+    kv!("map_calls", s.map_calls, true);
+    kv!("unmap_calls", s.unmap_calls, true);
+    kv!("page_reset_calls", s.page_reset_calls, true);
+    kv!("page_reset_bytes", s.page_reset_bytes, true);
+    kv!("retained_free_segments", s.retained_free_segments, true);
+    kv!(
+        "max_retained_free_segments",
+        s.max_retained_free_segments,
+        true
+    );
+    kv!("retained_free_bytes", s.retained_free_bytes, true);
+    kv!("purged_segments", s.purged_segments, true);
+    kv!("purge_calls", s.purge_calls, true);
+    kv!("purged_bytes", s.purged_bytes, true);
+    kv!("reset_segments", s.reset_segments, true);
+    kv!("reset_calls", s.reset_calls, true);
+    kv!("retained_huge_blocks", s.retained_huge_blocks, true);
+    kv!("retained_huge_bytes", s.retained_huge_bytes, true);
+    kv!(
+        "current_thread_live_allocations",
+        s.current_thread_live_allocations,
+        true
+    );
+    kv!(
+        "current_thread_owned_segments",
+        s.current_thread_owned_segments,
+        true
+    );
+    kv!(
+        "cross_thread_reclaimed_blocks",
+        s.cross_thread_reclaimed_blocks,
+        true
+    );
+    kv!("page_refills", s.page_refills, true);
+    kv!("recycled_pages", s.recycled_pages, true);
+    kv!("fresh_pages", s.fresh_pages, true);
+    kv!("fresh_segments", s.fresh_segments, true);
 
     // Per-bin array with fragmentation ratio.
     use core::fmt::Write as _;
     out.push_str(",\"bins\":[");
     for (i, bin) in bins.iter().enumerate() {
-        if i > 0 { out.push(','); }
+        if i > 0 {
+            out.push(',');
+        }
         let _ = write!(
             out,
             "{{\"block_size\":{},\"alloc_count\":{},\"dealloc_count\":{},\
              \"live_estimate\":{},\"fragmentation_ratio\":{:.4}}}",
-            bin.block_size, bin.alloc_count, bin.dealloc_count,
-            bin.live_estimate, bin.fragmentation_ratio()
+            bin.block_size,
+            bin.alloc_count,
+            bin.dealloc_count,
+            bin.live_estimate,
+            bin.fragmentation_ratio()
         );
     }
 
