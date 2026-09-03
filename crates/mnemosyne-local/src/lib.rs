@@ -18,6 +18,9 @@ pub unsafe fn miri_cleanup_pools<B: mnemosyne_arena::HasSegmentPool>() {
     }
 
     for segment in orphaned {
+        // SAFETY: the cleanup loop popped `segment` out of the orphan pool
+        // under the serialized Miri test lock, so its header fields can be
+        // read without concurrent mutation.
         let mut occupied = unsafe { (*segment).page_occupied_mask };
         let encrypted = unsafe { (*segment).free_list_encrypted };
         while occupied != 0 {

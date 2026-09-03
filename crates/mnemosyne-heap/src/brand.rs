@@ -381,6 +381,8 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedCell<'brand, T> {
 /// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
 ///     let val = heap.alloc_init(&token, 42)
 ///         .expect("branded box send-bound allocation failed");
+///     // SAFETY: `val` came from `heap.alloc_init` in this scope, so it carries
+///     // the same heap brand and ownership that `BrandedBox::from_raw` requires.
 ///     let boxed = unsafe { mnemosyne_heap::BrandedBox::from_raw(&heap, val) };
 ///     // BrandedBox is !Send, so sending it to another thread is a compile error:
 ///     thread::spawn(move || {

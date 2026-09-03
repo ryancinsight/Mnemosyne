@@ -30,7 +30,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline(always)]
     pub(crate) unsafe fn push_active_page(&mut self, page_ptr: NonNull<Page>, class: usize) {
         with_page_list_token::<B, _>(|mut token| {
+            // SAFETY: `page_ptr` names a live page owned by this allocator, and
+            // `token` is the matching list-permission witness for branding it.
             let page = unsafe { token.page(page_ptr) };
+            // SAFETY: `class` indexes this allocator's `active_pages` array and
+            // `page` is branded by the same token, so linking it at the front
+            // preserves the intrusive-list ownership invariant.
             unsafe {
                 push_page_front(
                     &mut token,
@@ -45,7 +50,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline(always)]
     pub(crate) unsafe fn push_full_page(&mut self, page_ptr: NonNull<Page>, class: usize) {
         with_page_list_token::<B, _>(|mut token| {
+            // SAFETY: `page_ptr` names a live page owned by this allocator, and
+            // `token` is the matching list-permission witness for branding it.
             let page = unsafe { token.page(page_ptr) };
+            // SAFETY: `class` indexes this allocator's `full_pages` array and
+            // `page` is branded by the same token, so linking it at the front
+            // preserves the intrusive-list ownership invariant.
             unsafe {
                 push_page_front(
                     &mut token,
@@ -60,7 +70,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline(always)]
     pub(crate) unsafe fn push_empty_page(&mut self, page_ptr: NonNull<Page>) {
         with_page_list_token::<B, _>(|mut token| {
+            // SAFETY: `page_ptr` names a live page owned by this allocator, and
+            // `token` is the matching list-permission witness for branding it.
             let page = unsafe { token.page(page_ptr) };
+            // SAFETY: `page` is branded by the same token that guards
+            // `self.empty_pages`, so pushing it to that intrusive list is sound.
             unsafe { push_page_front(&mut token, &mut self.empty_pages, page, 3) };
         });
     }

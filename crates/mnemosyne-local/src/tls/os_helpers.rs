@@ -134,6 +134,8 @@ pub(crate) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
 #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
 #[inline(always)]
 pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
+    // SAFETY: the caller guarantees `index` is a live `TlsAlloc` slot, and the
+    // hard-coded GS offsets are the Windows x86_64 TEB TLS locations.
     unsafe {
         if index < 64 {
             let val: *mut core::ffi::c_void;
@@ -173,6 +175,8 @@ pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
 #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
 #[inline(always)]
 pub(crate) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
+    // SAFETY: the caller guarantees `index` is a live `TlsAlloc` slot, and the
+    // writes target only that slot in the Windows x86_64 TEB TLS storage.
     unsafe {
         if index < 64 {
             // SAFETY: `index < 64` is a `TlsAlloc`-allocated slot in the

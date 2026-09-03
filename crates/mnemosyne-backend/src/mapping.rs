@@ -58,6 +58,8 @@ pub(crate) fn do_deallocate<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool
     if ptr.is_null() {
         return false;
     }
+    // SAFETY: callers pass the same non-null backend mapping pointer and size
+    // they received from `B::allocate`, so releasing through `B` matches the allocation.
     let released = unsafe { B::deallocate(ptr, size) };
     if released {
         record_unmap(size);

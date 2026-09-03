@@ -81,6 +81,8 @@ impl Page {
     pub unsafe fn pop_block<P: crate::policy::AllocPolicy>(page: *mut Self) -> NonNull<Block> {
         if let Some(block) = unsafe { Self::try_pop_bump_block(page) } {
             block
+        // SAFETY: `page` satisfies this function's contract, so its free-list
+        // head and page metadata fields are initialized for a live page.
         } else if let Some(block) = unsafe { (*page).free } {
             let block_addr = block.as_ptr() as usize;
             let page_addr = page.addr();
@@ -97,6 +99,9 @@ impl Page {
                 );
             }
             let segment = page.map_addr(|_| segment_addr).cast::<Segment>();
+            // SAFETY: the live `page` pointer was projected from its complete
+            // segment mapping, so its stored `page_index` still names an
+            // in-bounds page slot in that same segment for cookie lookup.
             let page_index = unsafe { (*page).page_index as usize };
             // SAFETY: `page` retains the parent mapping provenance and its
             // initialized index is in range, satisfying `cookie_for`.
@@ -107,6 +112,16 @@ impl Page {
             // `Block` exclusively owned by this thread; reading its encoded
             // next-link with the matching `cookie` is sound.
             unsafe { (*page).free = (*block.as_ptr()).get_next::<P>(cookie) };
+            // Clear the backward-edge canary when the block is re-allocated so
+            // a future free of the same block does not false-alarm on a stale
+            // canary from the previous free. Only necessary under encryption
+            // (the policy that writes the canary).
+            if P::ENABLE_FREE_LIST_ENCRYPTION {
+                // SAFETY: `block.as_ptr()` is a valid, MIN_BLOCK_SIZE-aligned
+                // block per the bounds check above; the canary slot at
+                // `block + size_of::<Block>()` is within the allocation.
+                unsafe { Block::clear_free_canary(block.as_ptr()) };
+            }
             block
         } else {
             abort_on_corruption("pop_block called on an exhausted page");

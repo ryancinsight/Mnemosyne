@@ -68,6 +68,9 @@ unsafe fn init_segment_layout(
     );
 
     // Write the back-pointer and update alloc_count (live for both paths).
+    // SAFETY: `aligned_ptr` is the segment header inside the live mapping, and
+    // the metadata slot immediately before `user_ptr` stays inside the reserved
+    // prefix computed above.
     unsafe {
         (*aligned_ptr).pages[0].alloc_count = size;
         let metadata_slot = (user_ptr as *mut *mut Segment).sub(1);
@@ -140,6 +143,9 @@ unsafe fn initialize_large_or_huge_segment(
             initialize_large_or_huge_segment_cached(raw_ptr, total_alloc_size, alignment, size)
         }
     } else {
+        // SAFETY: `is_cache_hit == false` means `raw_ptr` names a fresh backend
+        // mapping whose header has not yet been initialized, matching the
+        // fresh-initialization helper's contract.
         unsafe {
             initialize_large_or_huge_segment_fresh(raw_ptr, total_alloc_size, alignment, size)
         }

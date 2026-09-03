@@ -29,6 +29,8 @@ pub(crate) fn do_page_reset<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool
     if ptr.is_null() || size == 0 {
         return false;
     }
+    // SAFETY: the guard above excludes null and empty ranges, so this forwards
+    // a live mapping interval to the backend's page-reset primitive.
     let reset = unsafe { B::page_reset(ptr, size) };
     if reset {
         record_page_reset(size);
@@ -47,6 +49,8 @@ pub(crate) fn do_decommit<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool {
     if ptr.is_null() || size == 0 {
         return false;
     }
+    // SAFETY: the guard above excludes null and empty ranges, so this forwards
+    // a live mapping interval to the backend's decommit primitive.
     let decommitted = unsafe { B::decommit(ptr, size) };
     if decommitted {
         record_decommit(size);

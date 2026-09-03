@@ -136,10 +136,15 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
 
         if can_reuse {
             if P::ZERO_INITIALIZE && is_grow {
+                // SAFETY: `can_reuse` means the existing allocation is large
+                // enough for `new_size`, so the tail `[layout.size(), new_size)`
+                // lies within the same live block.
                 unsafe {
                     core::ptr::write_bytes(ptr.add(layout.size()), 0, new_size - layout.size());
                 }
             } else if P::ENABLE_POISONING && is_grow {
+                // SAFETY: as above, the reused allocation already covers the
+                // grown size, so poisoning the newly exposed tail stays in-bounds.
                 unsafe {
                     core::ptr::write_bytes(
                         ptr.add(layout.size()),
@@ -160,9 +165,13 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
             if new_size == 0 {
                 return core::ptr::null_mut();
             }
+            // SAFETY: a null `ptr` makes this branch equivalent to `alloc`;
+            // `layout.align()` comes from a valid `Layout` and `new_size > 0`.
             return unsafe { thread_alloc_layout::<P, B>(new_size, layout.align()) };
         }
         // new_size == 0 && !ptr.is_null()
+        // SAFETY: the function contract says `ptr` is a live allocation from
+        // this allocator, and `realloc(p, 0)` is defined to free it.
         unsafe { thread_free::<P, B>(ptr) };
         return core::ptr::null_mut();
     }
@@ -308,6 +317,8 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     }
 
     if new_ptr.is_null() {
+        // SAFETY: the caller already proved `layout.align()` is valid, and the
+        // slow path needs a fresh allocation for the nonzero `new_size`.
         new_ptr = unsafe { thread_alloc_layout::<P, B>(new_size, layout.align()) };
         if new_ptr.is_null() {
             return core::ptr::null_mut();
@@ -315,6 +326,9 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     }
 
     if !local_free_done {
+        // SAFETY: `new_ptr` is a fresh replacement block, so it cannot overlap
+        // `ptr`; copying `min(layout.size(), new_size)` bytes stays within both
+        // allocations, and freeing `ptr` afterwards preserves ownership.
         unsafe {
             core::ptr::copy_nonoverlapping(ptr, new_ptr, core::cmp::min(layout.size(), new_size));
             thread_free::<P, B>(ptr);

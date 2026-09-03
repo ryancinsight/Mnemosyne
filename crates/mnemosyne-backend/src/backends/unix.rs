@@ -133,6 +133,23 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
         target_os = "macos",
         target_os = "freebsd"
     ));
+    /// Prefer full-segment resets on Linux where THP can back the full 2 MiB
+    /// mapping with one huge page (mimalloc v3.5.1 technique).
+    const THP_SEGMENT_RESET: bool = cfg!(target_os = "linux");
+
+    /// Returns `true` when THP is active: Linux, hugepage hint enabled, and
+    /// MADV_DONTNEED available (immediate physical-page release so the header
+    /// is safely re-initialized when the segment is next popped).
+    #[inline]
+    fn thp_is_active() -> bool {
+        #[cfg(all(target_os = "linux", not(miri)))]
+        {
+            mnemosyne_core::options::ENABLE_HUGEPAGE_HINT
+                .load(core::sync::atomic::Ordering::Relaxed)
+        }
+        #[cfg(not(all(target_os = "linux", not(miri))))]
+        false
+    }
 
     /// Allocates virtual memory pages of the given size.
     ///
@@ -407,6 +424,8 @@ mod tests {
             assert_eq!(ptr.add(size - 1).read_volatile(), 0x55);
         }
 
+        // SAFETY: `ptr`/`size` are the still-live mapping returned by
+        // `UnixBackend::allocate(size)` earlier in this test.
         let released = unsafe { UnixBackend::deallocate(ptr, size) };
         assert!(
             released,

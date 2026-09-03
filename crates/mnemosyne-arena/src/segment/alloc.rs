@@ -192,9 +192,34 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
     // SAFETY: SEGMENT_MAPPING_SIZE is non-zero and aligned. We call B::allocate.
     let raw_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
     if raw_ptr.is_null() {
-        return None;
+        // OOM recovery: purge the retained pool once and retry. This handles
+        // the common "working-set spike" scenario where the pool is holding
+        // address space the OS now needs elsewhere.
+        // SAFETY: `purge_segment_pool` only releases segments exclusively owned
+        // by the pool, never by any live thread cache.
+        unsafe { purge_segment_pool::<B>() };
+        let retry_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
+        if retry_ptr.is_null() {
+            return None;
+        }
+        // Continue the init path with the retried pointer.
+        return unsafe { init_segment_from_raw::<B>(retry_ptr) };
     }
 
+    unsafe { init_segment_from_raw::<B>(raw_ptr) }
+}
+
+/// Initialises a freshly OS-allocated segment mapping and returns its aligned
+/// pointer, or `None` on an alignment-arithmetic overflow (releases mapping).
+///
+/// Extracted so the normal path and the OOM-retry path share one init body.
+///
+/// # Safety
+///
+/// `raw_ptr` must be a non-null, exclusively-owned `SEGMENT_MAPPING_SIZE`
+/// mapping returned by `B::allocate`.
+#[inline(never)]
+unsafe fn init_segment_from_raw<B: HasSegmentPool>(raw_ptr: *mut u8) -> Option<*mut Segment> {
     let numa_node = current_numa_node();
     // SAFETY: `raw_ptr` is the non-null `SEGMENT_MAPPING_SIZE` mapping just
     // returned by `B::allocate`, which is exclusively owned and writable —
@@ -409,13 +434,22 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
                     // every still-unprocessed segment for this node, then stop
                     // sweeping it (matching the prior stop-on-failure behavior so
                     // pool metadata never claims a purge for a mapping we own).
+                    // SAFETY: the failed release left `segment` live and still
+                    // exclusively owned by this purge sweep, so it can be
+                    // returned to the node-local retained pool.
                     unsafe { node.push_unbounded(segment) };
                     while !head.is_null() {
                         let s = head;
+                        // SAFETY: `head` walks the local `next_free_segment`
+                        // chain captured from this same node, so loading the
+                        // next scratch link stays within that chain.
                         head = unsafe {
                             (*s).next_free_segment
                                 .load(core::sync::atomic::Ordering::Relaxed)
                         };
+                        // SAFETY: each `s` on that chain is still exclusively
+                        // owned by this purge pass because release already
+                        // failed before any of them were handed elsewhere.
                         unsafe { node.push_unbounded(s) };
                     }
                     break;
@@ -483,8 +517,23 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
                 (*segment)
                     .next_free_segment
                     .store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
-                let reset_ptr = segment.cast::<u8>().add(PAGE_SIZE);
-                let reset_size = SEGMENT_SIZE - PAGE_SIZE;
+                // THP-aware reset (mimalloc v3.5.1 technique): when THP is active
+                // on Linux, reset the full 2 MiB segment (including the page-0
+                // metadata header) so the kernel can keep the whole mapping backed
+                // by one 2 MiB THP page. Splitting at the 64 KiB header boundary
+                // forces the kernel to split the THP, raising TLB pressure.
+                // MADV_FREE is lazy: the header stays readable until memory
+                // pressure; the pool-link write below is non-lazy and stays committed.
+                // When THP is absent, skip page 0 to avoid an unnecessary reset of
+                // segment metadata.
+                let (reset_ptr, reset_size) =
+                    if B::THP_SEGMENT_RESET && B::thp_is_active() {
+                        // Full-segment reset: page 0 + user pages.
+                        (segment.cast::<u8>(), SEGMENT_SIZE)
+                    } else {
+                        // Standard: skip the page-0 metadata header.
+                        (segment.cast::<u8>().add(PAGE_SIZE), SEGMENT_SIZE - PAGE_SIZE)
+                    };
                 if B::page_reset(reset_ptr, reset_size) {
                     reset_count += 1;
                 }

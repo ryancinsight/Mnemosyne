@@ -216,6 +216,8 @@ pub fn decay_step() {
 
 fn decay_step_for_backend<B: HasSegmentPool>() {
     decay_orphan_pool::<B>();
+    // SAFETY: this maintenance step only touches backend-owned retained
+    // segments for `B`; no caller-provided pointers are involved.
     unsafe {
         mnemosyne_arena::purge_segment_pool::<B>();
     }
@@ -244,14 +246,22 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
             let page = unsafe { &raw mut (*segment).pages[i] };
             // Reclaim any cross-thread frees to update the alloc_count, using
             // the segment-aware variant to avoid redundant segment-address masking.
+            // SAFETY: `segment` was popped from the orphan pool, so this sweep
+            // owns the header exclusively; `i` came from `page_occupied_mask`,
+            // which marks only initialized page slots in this segment.
             unsafe {
                 Page::reclaim_thread_free_if_present_in_segment(segment, i, dynamic_encrypted);
             }
+            // SAFETY: `page` is the live page metadata entry at occupied index
+            // `i`, so reading its allocation count is an in-bounds field load.
             total_allocations += unsafe { (*page).alloc_count };
         }
 
         if total_allocations == 0 {
             // No allocations left! Deallocate segment mapping completely back to OS
+            // SAFETY: this sweep owns `segment` exclusively and just proved that
+            // every occupied page has `alloc_count == 0`, so returning the
+            // whole mapping to the arena cannot race live users.
             unsafe {
                 Segment::set_owner(segment, SegmentOwner::NONE);
                 (*segment).next_owned_segment = core::ptr::null_mut();
@@ -260,6 +270,9 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
             }
         } else {
             // Segment still has live allocations, retain it in the local intrusive list
+            // SAFETY: `segment` is exclusively owned by this sweep, so its
+            // `next_free_segment` link can be reused as a scratch pointer in the
+            // local retained list.
             unsafe {
                 (*segment)
                     .next_free_segment
@@ -272,11 +285,16 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
     // Push back retained segments to the orphan pool
     let mut curr = retained_head;
     while !curr.is_null() {
+        // SAFETY: `curr` walks the local retained list we just built via
+        // `next_free_segment`, so loading its successor stays within that list.
         let next = unsafe {
             (*curr)
                 .next_free_segment
                 .load(core::sync::atomic::Ordering::Relaxed)
         };
+        // SAFETY: each retained node is still exclusively owned by this sweep;
+        // clearing the scratch link before re-enqueuing restores the orphan-pool
+        // invariants for that segment.
         unsafe {
             (*curr)
                 .next_free_segment
