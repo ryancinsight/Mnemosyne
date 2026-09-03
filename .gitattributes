@@ -1,1 +1,22 @@
+# Text files use LF line endings.
+#
+# `* text=auto` alone leaves normalization to a content heuristic, which can
+# skip a file and turn a later edit into a whole-file line-ending diff. The
+# explicit rules below pin the types this repository actually carries, so a
+# blob's line endings do not depend on each contributor's `core.autocrlf`.
 * text=auto
+
+*.md text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.ps1 text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+
+# Git hooks carry no extension, so `*.sh` misses them and `text=auto` would
+# check them out CRLF on Windows, where the shebang then fails to resolve. A
+# hook that cannot execute is a gate that does not gate.
+.githooks/** text eol=lf

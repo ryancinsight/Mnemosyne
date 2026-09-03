@@ -89,27 +89,6 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.capacity
     }
 
-    /// Creates an `AlignedVec` by copying a slice.
-    ///
-    /// Equivalent to `with_capacity(slice.len())` followed by
-    /// [`extend_from_slice`][Self::extend_from_slice].
-    #[inline]
-    pub fn from_slice(slice: &[T]) -> Self {
-        let mut v = Self::with_capacity(slice.len());
-        v.extend_from_slice(slice);
-        v
-    }
-
-    /// Creates an `AlignedVec` of exactly `len` elements all equal to `value`.
-    ///
-    /// Equivalent to `with_capacity(len)` followed by `resize(len, value)`.
-    #[inline]
-    pub fn filled(len: usize, value: T) -> Self {
-        let mut v = Self::with_capacity(len);
-        v.resize(len, value);
-        v
-    }
-
     /// Creates an `AlignedVec` of exactly `len` zero-initialized elements.
     ///
     /// Equivalent to `with_capacity(len)` followed by `ensure_len(len)`, but
@@ -144,6 +123,91 @@ impl<T: ScratchElement> AlignedVec<T> {
             core::ptr::write_bytes(dst, 0, min_len - self.len);
         }
         self.len = min_len;
+    }
+
+    /// Creates a buffer of exactly `len` elements, every one equal to `value`.
+    ///
+    /// The zero-valued case has a cheaper path in [`zeroed`][Self::zeroed],
+    /// which writes bytes rather than elements.
+    #[inline]
+    pub fn filled(len: usize, value: T) -> Self {
+        let mut buffer = Self::with_capacity(len);
+        buffer.resize(len, value);
+        buffer
+    }
+
+    /// Creates a buffer holding a copy of `slice`.
+    #[inline]
+    pub fn from_slice(slice: &[T]) -> Self {
+        let mut buffer = Self::with_capacity(slice.len());
+        buffer.extend_from_slice(slice);
+        buffer
+    }
+
+    /// Appends one element, growing the allocation if it is full.
+    ///
+    /// Amortized O(1): a growth doubles the capacity, so `n` pushes onto an
+    /// empty buffer perform O(log n) reallocations and O(n) element writes.
+    #[inline]
+    pub fn push(&mut self, value: T) {
+        self.reserve(1);
+        // SAFETY: `reserve(1)` leaves `capacity > len`, so `ptr.add(len)` is
+        // inside the allocation and past the initialized prefix `[0, len)`.
+        // `T: Copy` (a `ScratchElement` supertrait), so the write is the whole
+        // initialization and overwrites no live value.
+        unsafe { core::ptr::write(self.ptr.add(self.len), value) };
+        self.len += 1;
+    }
+
+    /// Appends every element of `slice` in one bulk copy.
+    #[inline]
+    pub fn extend_from_slice(&mut self, slice: &[T]) {
+        if slice.is_empty() {
+            return;
+        }
+        self.reserve(slice.len());
+        // SAFETY: `reserve(n)` leaves `capacity >= len + n`, so the destination
+        // range `[len, len + n)` is inside the allocation and past the
+        // initialized prefix. `slice` is a live initialized `[T]`, and it
+        // cannot overlap that range: it is either a distinct allocation or an
+        // initialized region of this one, which the destination excludes.
+        unsafe {
+            core::ptr::copy_nonoverlapping(slice.as_ptr(), self.ptr.add(self.len), slice.len());
+        }
+        self.len += slice.len();
+    }
+
+    /// Sets the length to `new_len`, filling any new elements with `value`.
+    ///
+    /// Shrinking keeps the allocation; `ScratchElement` is `Copy`, so the
+    /// dropped tail needs no destructor run.
+    #[inline]
+    pub fn resize(&mut self, new_len: usize, value: T) {
+        if new_len > self.len {
+            let additional = new_len - self.len;
+            self.reserve(additional);
+            // SAFETY: `reserve(additional)` leaves `capacity >= new_len`. Each
+            // write targets a distinct index in `[len, new_len)`, inside the
+            // allocation and past the initialized prefix; `T: Copy`, so each
+            // write fully initializes its element.
+            unsafe {
+                let base = self.ptr.add(self.len);
+                for offset in 0..additional {
+                    core::ptr::write(base.add(offset), value);
+                }
+            }
+        }
+        self.len = new_len;
+    }
+
+    /// Grows the allocation so `additional` more elements fit without another
+    /// reallocation. Leaves `len` and the buffer contents alone.
+    #[inline]
+    fn reserve(&mut self, additional: usize) {
+        let needed = self.len.saturating_add(additional);
+        if needed > self.capacity {
+            self.grow_to(needed.max(self.capacity.saturating_mul(2)));
+        }
     }
 
     /// Raw pointer to the start of the aligned allocation. Valid for
@@ -227,32 +291,6 @@ impl<T: ScratchElement> AlignedVec<T> {
         bytemuck::cast_slice_mut(self.as_mut_slice())
     }
 
-    /// Resizes the buffer in place to `new_len` elements.
-    ///
-    /// - If `new_len > self.len()`: new elements are filled with `value` and the
-    ///   allocation grows if needed.
-    /// - If `new_len <= self.len()`: the buffer is truncated without freeing.
-    #[inline]
-    pub fn resize(&mut self, new_len: usize, value: T) {
-        if new_len > self.len {
-            let additional = new_len - self.len;
-            self.reserve(additional);
-            // SAFETY: `reserve(additional)` guarantees `capacity >= new_len`.
-            // Each write targets a distinct index in `[self.len, new_len)` which
-            // is inside the allocation and beyond the currently-initialized prefix.
-            // `T: Copy` makes the write correct without any destructor bookkeeping.
-            unsafe {
-                let base = self.ptr.add(self.len);
-                for i in 0..additional {
-                    core::ptr::write(base.add(i), value);
-                }
-            }
-            self.len = new_len;
-        } else {
-            self.len = new_len;
-        }
-    }
-
     /// Sets the length to zero, retaining the underlying allocation for reuse.
     ///
     /// Elements are not zeroed; subsequent [`push`][Self::push] or
@@ -271,45 +309,6 @@ impl<T: ScratchElement> AlignedVec<T> {
         if new_len < self.len {
             self.len = new_len;
         }
-    }
-
-    /// Appends a single element, growing the allocation if required.
-    ///
-    /// Amortized O(1): the capacity doubles on reallocation.
-    #[inline]
-    pub fn push(&mut self, value: T) {
-        self.reserve(1);
-        // SAFETY: `reserve(1)` guarantees `self.capacity > self.len`, so
-        // `self.ptr.add(self.len)` is within the allocation. `T: Copy` means
-        // writing a single `T` value is the complete initialization — no
-        // destructor state exists to corrupt. The write does not overlap the
-        // already-initialized prefix `[0, self.len)` because the capacity check
-        // above has verified that `self.len < self.capacity`.
-        unsafe { core::ptr::write(self.ptr.add(self.len), value) };
-        self.len += 1;
-    }
-
-    /// Appends a slice of elements, growing the allocation if required.
-    ///
-    /// Equivalent to calling [`push`][Self::push] for each element but
-    /// performs a single bulk copy for the entire slice.
-    #[inline]
-    pub fn extend_from_slice(&mut self, slice: &[T]) {
-        let n = slice.len();
-        if n == 0 {
-            return;
-        }
-        self.reserve(n);
-        // SAFETY: `reserve(n)` guarantees `self.capacity >= self.len + n`, so
-        // `[self.len, self.len + n)` is within the allocation. `slice` is a
-        // valid initialized `[T]` reference; `T: Copy` makes the bytewise copy
-        // sound. The destination is beyond the initialized prefix so the source
-        // and destination ranges cannot overlap (they live in distinct
-        // allocations or at disjoint offsets into the same one).
-        unsafe {
-            core::ptr::copy_nonoverlapping(slice.as_ptr(), self.ptr.add(self.len), n);
-        }
-        self.len += n;
     }
 
     /// Appends every element produced by an iterator.
@@ -340,17 +339,6 @@ impl<T: ScratchElement> AlignedVec<T> {
             v.set_len(self.len);
         }
         v
-    }
-
-    /// Ensures the buffer can hold at least `self.len() + additional` elements
-    /// without reallocating. Does not change `len` or initialize memory.
-    #[inline]
-    fn reserve(&mut self, additional: usize) {
-        let needed = self.len.saturating_add(additional);
-        if needed > self.capacity {
-            let new_cap = needed.max(self.capacity.saturating_mul(2));
-            self.grow_to(new_cap);
-        }
     }
 
     #[cold]
@@ -532,10 +520,10 @@ impl<'a, T: ScratchElement> IntoIterator for &'a mut AlignedVec<T> {
 // is itself `Send`.
 unsafe impl<T: ScratchElement + Send> Send for AlignedVec<T> {}
 
-// SAFETY: Sharing a `&AlignedVec<T>` across threads is sound when `T: Sync`
-// because all shared access goes through the read-only `as_slice()`/`Deref`
-// path. The raw `*mut T` field is an owning pointer; no aliased mutable
-// reference can be created from a `&AlignedVec<T>` reference.
+// SAFETY: every shared path through `&AlignedVec<T>` — `as_slice`, `Deref` —
+// yields `&[T]` and nothing else, so a shared reference grants no way to reach
+// the owning `*mut T` mutably. Sharing one across threads is therefore exactly
+// as sound as sharing `&[T]`, which holds when `T: Sync`.
 unsafe impl<T: ScratchElement + Sync> Sync for AlignedVec<T> {}
 
 impl<T: ScratchElement> core::ops::Deref for AlignedVec<T> {

@@ -339,3 +339,58 @@ fn test_scratch_pool_panic_resilience() {
         "borrow depth must be restored to 0 after panic!"
     );
 }
+
+#[test]
+fn aligned_vec_push_grows_and_preserves_order() {
+    let mut v = AlignedVec::<f32>::with_capacity(2);
+    for i in 0..9 {
+        v.push(i as f32);
+    }
+    assert_eq!(v.len(), 9);
+    assert!(v.capacity() >= 9);
+    assert_eq!(v.as_slice(), &[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+    assert_eq!(v.as_mut_ptr() as usize % DEFAULT_SCRATCH_ALIGN, 0);
+}
+
+#[test]
+fn aligned_vec_extend_from_slice_appends_after_existing() {
+    let mut v = AlignedVec::<u32>::from_slice(&[1, 2, 3]);
+    v.extend_from_slice(&[4, 5]);
+    v.extend_from_slice(&[]);
+    assert_eq!(v.as_slice(), &[1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn aligned_vec_from_slice_copies_the_source() {
+    let source = [1.5_f64, 2.5, 3.5];
+    let mut v = AlignedVec::from_slice(&source);
+    v.as_mut_slice()[0] = 9.0;
+    assert_eq!(source[0], 1.5);
+    assert_eq!(v.as_slice(), &[9.0, 2.5, 3.5]);
+}
+
+#[test]
+fn aligned_vec_filled_writes_every_element() {
+    let v = AlignedVec::filled(5, 7_u8);
+    assert_eq!(v.as_slice(), &[7, 7, 7, 7, 7]);
+    assert_eq!(AlignedVec::filled(0, 7_u8).len(), 0);
+}
+
+#[test]
+fn aligned_vec_resize_grows_with_value_and_shrinks_in_place() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2]);
+    v.resize(5, -1);
+    assert_eq!(v.as_slice(), &[1, 2, -1, -1, -1]);
+    let grown = v.capacity();
+    v.resize(2, 0);
+    assert_eq!(v.as_slice(), &[1, 2]);
+    assert_eq!(v.capacity(), grown, "shrinking keeps the allocation");
+    v.resize(4, 8);
+    assert_eq!(v.as_slice(), &[1, 2, 8, 8]);
+}
+
+#[test]
+fn aligned_vec_is_send_and_sync() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<AlignedVec<f64>>();
+}
