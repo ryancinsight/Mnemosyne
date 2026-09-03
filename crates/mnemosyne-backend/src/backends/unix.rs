@@ -231,7 +231,8 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
             // does not need to split a 2MB huge page.  Full-segment resets
             // (size >= SEGMENT_SIZE, SEGMENT_ALIGN-aligned base) are always
             // THP-safe and use MADV_DONTNEED for guaranteed zeroing.
-            let is_full_segment = size >= SEGMENT_SIZE && (ptr as usize) % SEGMENT_SIZE == 0;
+            let is_full_segment =
+                size >= SEGMENT_SIZE && (ptr as usize).is_multiple_of(SEGMENT_SIZE);
             let advice = if is_full_segment {
                 MADV_DONTNEED
             } else {
@@ -345,6 +346,11 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
                 cached == 1
             };
             let advice = if use_free { MADV_FREE } else { MADV_DONTNEED };
+            // SAFETY: as for the probe above -- `ptr`/`size` satisfy this
+            // function's documented contract, and `advice` is whichever of
+            // MADV_FREE / MADV_DONTNEED the probe found this kernel accepts.
+            // madvise discards page contents; it never invalidates the
+            // mapping, which the caller still owns until `munmap`.
             let res = unsafe { madvise(ptr as *mut c_void, size, advice) };
             if res == 0 && use_free {
                 // Track the lazy-purge subset: decommit_calls/bytes are
@@ -500,6 +506,8 @@ mod tests {
             assert_eq!(ptr.add(size - 1).read_volatile(), 0x55);
         }
 
+        // SAFETY: `ptr`/`size` are exactly what the matching `allocate`
+        // returned above, and the mapping has not been released yet.
         let released = unsafe { UnixBackend::deallocate(ptr, size) };
         assert!(
             released,
