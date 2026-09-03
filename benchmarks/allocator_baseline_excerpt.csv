@@ -1,13 +1,13 @@
 benchmark,mean_point_estimate_ns,median_point_estimate_ns
-allocator cycle latency/mnemosyne/small_32,3.268797,3.258406
-allocator cycle latency/mnemosyne/medium_1024,3.333201,3.318375
-allocator cycle latency/mnemosyne/large_8192,3.345950,3.299767
-allocator burst retention/mnemosyne/small_32,835.631892,841.473085
-cross-thread free handoff/mnemosyne/small_32,9419.017332,9338.076688
-threaded saturated small allocation cycles/mnemosyne,91407.086704,90852.374552
-segment cache eviction/mnemosyne,236685.407790,231058.270677
-realloc latency/mnemosyne/within_class_24_to_32,5.372630,5.073043
-realloc latency/mnemosyne/cross_class_32_to_64,10.411994,10.371742
-realloc latency/mnemosyne/within_class_6k_to_8k,53.491292,54.041982
-realloc latency/mnemosyne/cross_class_8k_to_16k,54.737514,53.378687
-realloc latency/mnemosyne/huge_shrink_4m_to_2m,45435.607203,45494.416244
+allocator cycle latency/mnemosyne/small_32,4.566929,4.565407
+allocator cycle latency/mnemosyne/medium_1024,4.581553,4.578815
+allocator cycle latency/mnemosyne/large_8192,4.572271,4.571144
+allocator burst retention/mnemosyne/small_32,1072.685931,1071.945623
+cross-thread free handoff/mnemosyne/small_32,15786.175104,15791.117378
+threaded saturated small allocation cycles/mnemosyne,91355.643019,91310.324302
+segment cache eviction/mnemosyne,237312.575655,237719.285714
+realloc latency/mnemosyne/within_class_24_to_32,8.434135,8.452699
+realloc latency/mnemosyne/cross_class_32_to_64,12.908856,12.911925
+realloc latency/mnemosyne/within_class_6k_to_8k,28.672681,28.593317
+realloc latency/mnemosyne/cross_class_8k_to_16k,43.119072,43.077229
+realloc latency/mnemosyne/huge_shrink_4m_to_2m,53.742891,52.620373
