@@ -51,8 +51,7 @@ const MADV_FREE: c_int = 8;
 /// Initialised lazily on the first `decommit` call. `2` = uninitialised,
 /// `1` = supported, `0` = not supported (fall back to `MADV_DONTNEED`).
 #[cfg(all(target_os = "linux", not(miri)))]
-static MADV_FREE_SUPPORTED: core::sync::atomic::AtomicU8 =
-    core::sync::atomic::AtomicU8::new(2);
+static MADV_FREE_SUPPORTED: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(2);
 
 /// macOS / BSD `MADV_FREE` advice constant.
 ///
@@ -232,8 +231,7 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
             // does not need to split a 2MB huge page.  Full-segment resets
             // (size >= SEGMENT_SIZE, SEGMENT_ALIGN-aligned base) are always
             // THP-safe and use MADV_DONTNEED for guaranteed zeroing.
-            let is_full_segment = size >= SEGMENT_SIZE
-                && (ptr as usize) % SEGMENT_SIZE == 0;
+            let is_full_segment = size >= SEGMENT_SIZE && (ptr as usize) % SEGMENT_SIZE == 0;
             let advice = if is_full_segment {
                 MADV_DONTNEED
             } else {
@@ -242,7 +240,11 @@ impl mnemosyne_core::MemoryBackend for UnixBackend {
                 // too old (MADV_FREE_SUPPORTED == 0 after a failed probe).
                 use core::sync::atomic::Ordering;
                 let supported = MADV_FREE_SUPPORTED.load(Ordering::Relaxed);
-                if supported != 0 { MADV_FREE } else { MADV_DONTNEED }
+                if supported != 0 {
+                    MADV_FREE
+                } else {
+                    MADV_DONTNEED
+                }
             };
             // SAFETY: caller guarantees `ptr` is page-aligned inside an
             // active mapping and `size` is a non-zero multiple of the

@@ -1,3 +1,5 @@
+use core::fmt::Write as _;
+
 use mnemosyne_core::NUM_SIZE_CLASSES;
 
 use crate::{LocalAllocatorSelector, SizeClassOccupancy};
@@ -227,43 +229,69 @@ impl MemoryStats {
                 out.push_str(&format!("{}", $val));
             };
         }
-        kv_usize!("current_mapped_bytes",    self.current_mapped_bytes, false);
-        kv_usize!("peak_mapped_bytes",        self.peak_mapped_bytes, true);
-        kv_usize!("map_calls",                self.map_calls, true);
-        kv_usize!("unmap_calls",              self.unmap_calls, true);
-        kv_usize!("page_reset_calls",         self.page_reset_calls, true);
-        kv_usize!("page_reset_bytes",         self.page_reset_bytes, true);
-        kv_usize!("decommit_bytes",
-            mnemosyne_backend::backend_memory_stats().decommit_bytes, true);
-        kv_usize!("purged_bytes",             self.purged_bytes, true);
-        kv_usize!("retained_free_segments",   self.retained_free_segments, true);
-        kv_usize!("max_retained_free_segments", self.max_retained_free_segments, true);
-        kv_usize!("retained_free_bytes",      self.retained_free_bytes, true);
-        kv_usize!("purged_segments",          self.purged_segments, true);
-        kv_usize!("purge_calls",              self.purge_calls, true);
-        kv_usize!("reset_segments",           self.reset_segments, true);
-        kv_usize!("reset_calls",              self.reset_calls, true);
-        kv_usize!("retained_huge_blocks",     self.retained_huge_blocks, true);
-        kv_usize!("retained_huge_bytes",      self.retained_huge_bytes, true);
-        kv_usize!("current_thread_live_allocations", self.current_thread_live_allocations, true);
-        kv_usize!("current_thread_owned_segments",   self.current_thread_owned_segments, true);
-        kv_usize!("cross_thread_reclaimed_blocks",   self.cross_thread_reclaimed_blocks, true);
-        kv_usize!("page_refills",             self.page_refills, true);
-        kv_usize!("recycled_pages",           self.recycled_pages, true);
-        kv_usize!("fresh_pages",              self.fresh_pages, true);
-        kv_usize!("fresh_segments",           self.fresh_segments, true);
-        kv_usize!("orphan_segments_adopted",  self.orphan_segments_adopted, true);
-        kv_usize!("recycle_sweeps",           self.recycle_sweeps, true);
+        kv_usize!("current_mapped_bytes", self.current_mapped_bytes, false);
+        kv_usize!("peak_mapped_bytes", self.peak_mapped_bytes, true);
+        kv_usize!("map_calls", self.map_calls, true);
+        kv_usize!("unmap_calls", self.unmap_calls, true);
+        kv_usize!("page_reset_calls", self.page_reset_calls, true);
+        kv_usize!("page_reset_bytes", self.page_reset_bytes, true);
+        kv_usize!(
+            "decommit_bytes",
+            mnemosyne_backend::backend_memory_stats().decommit_bytes,
+            true
+        );
+        kv_usize!("purged_bytes", self.purged_bytes, true);
+        kv_usize!("retained_free_segments", self.retained_free_segments, true);
+        kv_usize!(
+            "max_retained_free_segments",
+            self.max_retained_free_segments,
+            true
+        );
+        kv_usize!("retained_free_bytes", self.retained_free_bytes, true);
+        kv_usize!("purged_segments", self.purged_segments, true);
+        kv_usize!("purge_calls", self.purge_calls, true);
+        kv_usize!("reset_segments", self.reset_segments, true);
+        kv_usize!("reset_calls", self.reset_calls, true);
+        kv_usize!("retained_huge_blocks", self.retained_huge_blocks, true);
+        kv_usize!("retained_huge_bytes", self.retained_huge_bytes, true);
+        kv_usize!(
+            "current_thread_live_allocations",
+            self.current_thread_live_allocations,
+            true
+        );
+        kv_usize!(
+            "current_thread_owned_segments",
+            self.current_thread_owned_segments,
+            true
+        );
+        kv_usize!(
+            "cross_thread_reclaimed_blocks",
+            self.cross_thread_reclaimed_blocks,
+            true
+        );
+        kv_usize!("page_refills", self.page_refills, true);
+        kv_usize!("recycled_pages", self.recycled_pages, true);
+        kv_usize!("fresh_pages", self.fresh_pages, true);
+        kv_usize!("fresh_segments", self.fresh_segments, true);
+        kv_usize!(
+            "orphan_segments_adopted",
+            self.orphan_segments_adopted,
+            true
+        );
+        kv_usize!("recycle_sweeps", self.recycle_sweeps, true);
         // Per-bin array
         out.push_str(",\"bins\":[");
         for (i, bin) in bins.iter().enumerate() {
             if i > 0 {
                 out.push(',');
             }
-            out.push_str(&format!(
+            // `write!` formats straight into `out`; `push_str(&format!(..))`
+            // would allocate a second `String` per bin only to copy it in.
+            let _ = write!(
+                out,
                 "{{\"block_size\":{},\"alloc_count\":{},\"dealloc_count\":{},\"live_estimate\":{}}}",
                 bin.block_size, bin.alloc_count, bin.dealloc_count, bin.live_estimate
-            ));
+            );
         }
         out.push_str("]}");
         out

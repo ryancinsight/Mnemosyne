@@ -165,8 +165,7 @@ pub const fn round_up_size(size: usize) -> Option<usize> {
 
 const CLASS_TO_SIZE: [u16; NUM_SIZE_CLASSES] = [
     // 16–128 bytes: 16-byte steps (classes 0–7)
-    16, 32, 48, 64, 80, 96, 112, 128,
-    // 129–512 bytes: 32-byte steps (classes 8–19)
+    16, 32, 48, 64, 80, 96, 112, 128, // 129–512 bytes: 32-byte steps (classes 8–19)
     160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512,
     // 513–2048 bytes: 128-byte steps (classes 20–31)
     640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048,

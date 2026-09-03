@@ -22,9 +22,10 @@ use mnemosyne_core::size_class::class_to_size;
 
 // Three process-wide per-class atomic arrays.  Kept together so they fit on
 // the same cache lines when iterated in `bin_stats`.
-static ALLOC_COUNT:   [AtomicU64; NUM_SIZE_CLASSES] = [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
-static DEALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] = [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
-static ALLOC_BYTES:   [AtomicU64; NUM_SIZE_CLASSES] = [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
+static ALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] = [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
+static DEALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] =
+    [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
+static ALLOC_BYTES: [AtomicU64; NUM_SIZE_CLASSES] = [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
 
 /// Records one allocation from `class`.
 ///
@@ -71,10 +72,10 @@ pub fn bin_snapshot(class: usize) -> Option<BinSnapshot> {
     if class >= NUM_SIZE_CLASSES {
         return None;
     }
-    let alloc_count   = ALLOC_COUNT[class].load(Ordering::Relaxed);
+    let alloc_count = ALLOC_COUNT[class].load(Ordering::Relaxed);
     let dealloc_count = DEALLOC_COUNT[class].load(Ordering::Relaxed);
-    let alloc_bytes   = ALLOC_BYTES[class].load(Ordering::Relaxed);
-    let block_size    = class_to_size(class);
+    let alloc_bytes = ALLOC_BYTES[class].load(Ordering::Relaxed);
+    let block_size = class_to_size(class);
     Some(BinSnapshot {
         alloc_count,
         dealloc_count,
@@ -88,10 +89,10 @@ pub fn bin_snapshot(class: usize) -> Option<BinSnapshot> {
 #[must_use]
 pub fn all_bin_snapshots() -> [BinSnapshot; NUM_SIZE_CLASSES] {
     core::array::from_fn(|class| {
-        let alloc_count   = ALLOC_COUNT[class].load(Ordering::Relaxed);
+        let alloc_count = ALLOC_COUNT[class].load(Ordering::Relaxed);
         let dealloc_count = DEALLOC_COUNT[class].load(Ordering::Relaxed);
-        let alloc_bytes   = ALLOC_BYTES[class].load(Ordering::Relaxed);
-        let block_size    = class_to_size(class);
+        let alloc_bytes = ALLOC_BYTES[class].load(Ordering::Relaxed);
+        let block_size = class_to_size(class);
         BinSnapshot {
             alloc_count,
             dealloc_count,

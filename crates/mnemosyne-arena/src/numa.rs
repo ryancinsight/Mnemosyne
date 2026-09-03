@@ -34,8 +34,8 @@ pub fn refresh_numa_node() -> u32 {
 #[inline]
 pub unsafe fn bind_segment_to_numa_node(ptr: *mut u8, len: usize, numa_node: u32) {
     use core::ffi::c_int;
-    use core::ffi::c_void;
     use core::ffi::c_ulong;
+    use core::ffi::c_void;
 
     // `MPOL_BIND = 2` — allocate only on nodes in the nodemask.
     const MPOL_BIND: c_int = 2;
@@ -56,10 +56,28 @@ pub unsafe fn bind_segment_to_numa_node(ptr: *mut u8, len: usize, numa_node: u32
     // SAFETY: `ptr` addresses a live OS mapping of `len` bytes (caller
     // contract); `nodemask` is a stack variable whose address is valid for
     // the duration of the syscall; no concurrent access to the range.
-    let _ = unsafe { mbind(ptr as *mut c_void, len as c_ulong, MPOL_BIND, &nodemask, 64, 0) };
+    let _ = unsafe {
+        mbind(
+            ptr as *mut c_void,
+            len as c_ulong,
+            MPOL_BIND,
+            &nodemask,
+            64,
+            0,
+        )
+    };
 }
 
 /// No-op on non-Linux or Miri: the caller can call this unconditionally.
+///
+/// # Safety
+///
+/// This body does nothing, but the contract matches the Linux definition so a
+/// caller compiles against one signature on every target: `ptr` must point to
+/// an OS mapping of at least `len` bytes, `numa_node` must be a valid node
+/// reported by the kernel, and the range `[ptr, ptr + len)` must not be
+/// concurrently accessed during the call. Holding to it here keeps a caller
+/// portable to a target where the call is not a no-op.
 #[cfg(not(all(target_os = "linux", not(miri))))]
 #[inline]
 pub unsafe fn bind_segment_to_numa_node(_ptr: *mut u8, _len: usize, _numa_node: u32) {}

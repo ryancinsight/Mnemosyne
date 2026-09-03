@@ -103,7 +103,8 @@ fn aligned_vec_clear_then_extend_reuses_allocation() {
 #[test]
 fn aligned_vec_truncate_shrinks_without_reallocating() {
     let mut v = AlignedVec::<f32>::zeroed(8);
-    v.as_mut_slice().copy_from_slice(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+    v.as_mut_slice()
+        .copy_from_slice(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
     let cap_before = v.capacity();
     v.truncate(3);
     assert_eq!(v.len(), 3);

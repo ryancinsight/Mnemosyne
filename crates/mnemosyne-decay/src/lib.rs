@@ -131,9 +131,7 @@ fn decay_thread_loop(initial_cadence: usize, worker_generation: usize) {
                 .min(ADAPTIVE_MAX_MS)
                 .min(base_u64.saturating_mul(10))
         } else if freed > ADAPTIVE_SPEED_UP_THRESHOLD {
-            (current_interval / 2)
-                .max(1)
-                .max(base_u64 / 4)
+            (current_interval / 2).max(1).max(base_u64 / 4)
         } else {
             base_u64
         };
