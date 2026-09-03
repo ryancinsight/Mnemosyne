@@ -113,8 +113,9 @@
   **Dependencies:** none. **Effort:** M.
 
 - [ ] [patch] [perf] **MN-467 — capture the threshold baseline under the pinned
-  procedure.** status=blocked; owner=unclaimed; blocker=MN-466;
-  re-open trigger=`benchmark_summary --repeat-spread` passes on all twelve
+  procedure.** status=in-progress; owner=atlas-session; branch=
+  `perf/mnemosyne-baseline-mn467`; blocker cleared by MN-466's landed
+  `--repeat-spread` result; lease=backlog claim.
   gated rows. Split from MN-464, which delivered the procedure but must not
   refresh the baseline while one gated row still disagrees with itself by twice
   its ceiling. **The refresh must be whole, not row-wise.** The committed
