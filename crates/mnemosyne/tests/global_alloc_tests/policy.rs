@@ -27,6 +27,9 @@ fn test_large_alignment() {
         }
         unsafe { ALLOCATOR.dealloc(ptr, layout) };
     }
+    // Drain any huge-pool entries so later tests (e.g. test_purge) start
+    // from a clean state regardless of huge-allocation caching policy.
+    purge();
 }
 
 #[test]

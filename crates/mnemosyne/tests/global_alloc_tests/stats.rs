@@ -94,6 +94,9 @@ fn test_memory_stats_retention_bound() {
             .iter()
             .any(|occupancy| occupancy.active_pages > 0)
     );
+    // Drain any freed segments the allocator may have returned to the global
+    // pool so subsequent tests (e.g. test_purge) start from a clean state.
+    purge();
 }
 
 #[test]

@@ -66,6 +66,9 @@ fn test_multithreaded_allocation() {
     for handle in handles {
         handle.join().expect("allocation worker thread panicked");
     }
+    // Drain segments that the spawned threads returned to the global pool on
+    // exit, so later tests (e.g. test_purge) do not encounter stale entries.
+    purge();
 }
 
 #[test]
