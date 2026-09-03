@@ -82,6 +82,15 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.len == 0
     }
 
+    /// Sets the length to zero, retaining the allocation for reuse.
+    ///
+    /// Equivalent to `self.len = 0`; `ScratchElement` elements are `Copy`
+    /// POD so no destructors need to run when the logical slice shrinks.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
     /// Elements the current allocation can hold before `ensure_len` must
     /// reallocate; never less than `len()`.
     #[inline]

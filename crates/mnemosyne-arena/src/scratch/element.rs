@@ -49,7 +49,7 @@ macro_rules! impl_scratch_element {
 // With the `bytemuck` feature, the blanket `impl<T: Zeroable + ...>` below
 // covers all of these (plus every other Zeroable POD type).
 #[cfg(not(feature = "bytemuck"))]
-impl_scratch_element!(f32, f64, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
+impl_scratch_element!(bool, f32, f64, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
 
 #[cfg(all(feature = "eunomia", not(feature = "bytemuck")))]
 impl sealed::ScratchElementSealed for eunomia::Complex<f32> {}
