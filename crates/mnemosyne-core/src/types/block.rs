@@ -100,7 +100,82 @@ impl Block {
             self.next_encoded = next;
         }
     }
+
+    /// Computes the address-bound free canary value for a block.
+    ///
+    /// `canary = FREE_CANARY_MAGIC ^ page_cookie ^ (block_addr >> 4)`
+    ///
+    /// Binding the canary to the block's own address prevents a valid canary
+    /// from being copied from one block to another within the same page.
+    #[inline(always)]
+    fn canary_value(block: *const Block, page_cookie: usize) -> usize {
+        FREE_CANARY_MAGIC ^ page_cookie ^ (block.addr() >> 4)
+    }
+
+    /// Writes the backward-edge free canary at `block + size_of::<Block>()`.
+    ///
+    /// Called by the free path under `HardenedPolicy` (`ENABLE_FREE_LIST_ENCRYPTION`)
+    /// to mark the block as on the free list. The canary is address-bound:
+    /// `FREE_CANARY_MAGIC ^ page_cookie ^ (block_addr >> 4)`.
+    ///
+    /// # Safety
+    ///
+    /// `block` must point to a live block whose allocation is at least
+    /// `2 * size_of::<Block>()` bytes; the canary slot at
+    /// `block + size_of::<Block>()` must lie within the allocation.
+    #[inline(always)]
+    pub unsafe fn write_free_canary(block: *mut Block, page_cookie: usize) {
+        // SAFETY: the canary slot is at `block + size_of::<Block>()`, which is
+        // within the block's allocation by the caller's contract
+        // (minimum block size >= 2 * size_of::<Block>()).
+        unsafe {
+            block
+                .cast::<usize>()
+                .add(1)
+                .write(Self::canary_value(block, page_cookie));
+        }
+    }
+
+    /// Returns `true` if the backward-edge canary is present, indicating a
+    /// likely double-free. Called before writing the new free-list link so
+    /// double-frees are caught before corrupting the list.
+    ///
+    /// # Safety
+    ///
+    /// Same requirements as [`write_free_canary`](Block::write_free_canary).
+    #[inline(always)]
+    pub unsafe fn check_double_free(block: *const Block, page_cookie: usize) -> bool {
+        // SAFETY: the canary slot is within the block by the caller's contract.
+        let observed = unsafe { block.cast::<usize>().add(1).read() };
+        observed == Self::canary_value(block, page_cookie)
+    }
+
+    /// Clears the backward-edge free canary when a block is taken off the
+    /// free list, preventing a stale canary from triggering a false positive
+    /// on the next free.
+    ///
+    /// # Safety
+    ///
+    /// Same requirements as [`write_free_canary`](Block::write_free_canary).
+    #[inline(always)]
+    pub unsafe fn clear_free_canary(block: *mut Block) {
+        // SAFETY: the canary slot is within the block by the caller's contract.
+        unsafe { block.cast::<usize>().add(1).write(0) };
+    }
 }
+
+/// Magic value mixed into every free-list backward-edge canary.
+/// Non-zero to distinguish a canary from a zeroed (uninitialized) slot.
+pub const FREE_CANARY_MAGIC: usize = 0xDEAD_C0DE_CAFE_BABE_usize;
+
+// Block is `#[repr(transparent)]` over one pointer, so it is exactly one
+// pointer wide. The canary sits at `block + size_of::<Block>()` and must stay
+// within the minimum block size (MIN_BLOCK_SIZE = 16 bytes = 2 pointers on
+// 64-bit). This assertion enforces the invariant at compile time.
+const _: () = assert!(
+    core::mem::size_of::<Block>() == core::mem::size_of::<*mut u8>(),
+    "Block must be exactly one pointer wide for the canary slot to be in bounds"
+);
 
 // SAFETY: `Block` is a `#[repr(transparent)]` free-list node holding a single
 // optional next-link that lives inline in the block's own memory only while the

@@ -79,6 +79,36 @@ pub unsafe fn thread_free_layout<P: AllocPolicy, B: HasSegmentPool + LocalAlloca
     size: usize,
     align: usize,
 ) {
+    let is_small = size != 0 && crate::alloc::small_path_class(size, align).is_some();
+
+    // Sized-free validation (C23 `free_sized` / snmalloc `sanity_checks`):
+    // under ENABLE_POISONING verify the caller's layout maps to the same size
+    // class as the block's recorded `block_size`. A mismatch indicates a
+    // layout-mismatch bug or heap confusion attack; abort before the free
+    // list is mutated. Under StandardPolicy the `if` is statically dead.
+    if P::ENABLE_POISONING && !ptr.is_null() && is_small && size > 0 {
+        // SAFETY: `ptr` is a non-null allocator-owned pointer per the caller's
+        // contract; `locate_segment` recovers the live header and a bounded
+        // page index.
+        let (segment, page_index) = unsafe { mnemosyne_core::types::locate_segment(ptr) };
+        if page_index > 0 {
+            // SAFETY: `page_index` is in `[1, PAGES_PER_SEGMENT)` so `segment`
+            // is a real header whose pages array was initialized; reading
+            // `block_size` is a valid unaliased load.
+            let recorded_size =
+                unsafe { (*segment).pages.get_unchecked(page_index).block_size };
+            if recorded_size > 0 {
+                let caller_class = crate::alloc::small_path_class(size, align);
+                let block_class = mnemosyne_core::size_class::size_to_class_nonzero(
+                    recorded_size,
+                );
+                if caller_class != block_class {
+                    std::process::abort();
+                }
+            }
+        }
+    }
+
     // Derive the layout-proven small fast path from the same routing decision
     // `alloc` used, so the two never disagree on whether a block is small
     // (a disagreement would treat a huge allocation as small — UB). This now
@@ -88,7 +118,7 @@ pub unsafe fn thread_free_layout<P: AllocPolicy, B: HasSegmentPool + LocalAlloca
     // once, `size`/`align` as allocated), so the small-path classification below is
     // the one `alloc` made and the chosen arm frees the block on the path that
     // produced it.
-    if size != 0 && crate::alloc::small_path_class(size, align).is_some() {
+    if is_small {
         unsafe { thread_free_classified::<P, B, true>(ptr) };
     } else {
         unsafe { thread_free_classified::<P, B, false>(ptr) };
@@ -407,6 +437,17 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
     // `cookie_for`'s contract.
     let encrypted = unsafe { Segment::free_list_encrypted(segment) };
     let cookie = unsafe { Segment::cookie_for_dynamic(segment, encrypted, page_index) };
+
+    // Backward-edge canary: detect double-free before the free list is mutated.
+    if encrypted {
+        // SAFETY: `block` is a valid, MIN_BLOCK_SIZE-aligned block per the
+        // caller's contract; the canary slot at `block + size_of::<Block>()`
+        // lies within the allocation.
+        if unsafe { Block::check_double_free(block, cookie) } {
+            std::process::abort();
+        }
+    }
+
     // SAFETY: `block` points to a valid block in `page` per the `# Safety`
     // contract; writing its embedded next pointer reinitializes the free-list
     // link and stays inside the block this caller now owns.
@@ -416,6 +457,13 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
     // SAFETY: `block` is non-null (allocator invariant, re-confirmed by the
     // double-free guard above); publishing it as the new free-list head.
     unsafe { (*page).free = Some(NonNull::new_unchecked(block)) };
+
+    // Write the backward-edge canary after publishing so the next free of
+    // this same block can be detected.
+    if encrypted {
+        // SAFETY: same contract as `check_double_free` above.
+        unsafe { Block::write_free_canary(block, cookie) };
+    }
 
     // SAFETY: `segment`/`page`/`page_index` are the matching segment, page, and
     // its index per the `# Safety` contract; the decrement updates this page's
@@ -451,16 +499,36 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
                     push_page_front(&mut token, &mut alloc.empty_pages, branded_page, 3);
                 }
             } else {
-                // Case 2: Went from full to active
-                unsafe {
-                    move_page_between_lists_branded(
-                        &mut token,
-                        alloc.full_pages.get_unchecked_mut(class),
-                        alloc.active_pages.get_unchecked_mut(class),
-                        branded_page,
-                        1,
-                    );
+                // Case 2: Went from full to active — but only wake the page
+                // when enough blocks are free under the wake-threshold
+                // hysteresis (DELAY_PAGE_WAKE). The threshold is capacity/4;
+                // we use `encrypted` as the gate because free-list encryption
+                // is the distinguishing flag of security-hardened policies.
+                // Under StandardPolicy (`encrypted == false`) the check is
+                // statically skipped (no overhead). Under HardenedPolicy
+                // (`encrypted == true`) pages stay in the full list until at
+                // least 25% of blocks are freed, preventing rapid LIFO reuse.
+                // SAFETY: `page` is an exclusively-owned page; reading
+                // `alloc_count` and `max_blocks()` is a valid unaliased load.
+                let should_wake = !encrypted || unsafe {
+                    let capacity = (*page).max_blocks();
+                    let free_count = capacity.saturating_sub((*page).alloc_count);
+                    free_count * 4 >= capacity
+                };
+                if should_wake {
+                    unsafe {
+                        move_page_between_lists_branded(
+                            &mut token,
+                            alloc.full_pages.get_unchecked_mut(class),
+                            alloc.active_pages.get_unchecked_mut(class),
+                            branded_page,
+                            1,
+                        );
+                    }
                 }
+                // When !should_wake the page stays in full_pages with
+                // alloc_count < max_blocks. The defrag sweep or the next
+                // allocation that reclaims cross-thread frees will wake it.
             }
         } else if becomes_empty && !alloc.is_current_segment(segment) {
             // Case 3: Went from active to empty (only if not the only active page)

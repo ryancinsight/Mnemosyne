@@ -41,6 +41,22 @@ pub trait MemoryBackend: Send + Sync + 'static {
     /// Indicates whether the backend enables the lock-free per-CPU block cache.
     const ENABLE_CPU_CACHE: bool = false;
 
+    /// When `true`, the platform supports Transparent Huge Pages (THP) and
+    /// `reset_segment_pool` should reset the full 2 MiB segment (including the
+    /// page-0 metadata header) to avoid splitting a THP page at the 64 KiB
+    /// header/user-page boundary. Only meaningful on Linux with `MADV_FREE`.
+    ///
+    /// Inspired by mimalloc v3.5.1 `MI_ALLOW_THP=FULL` / minimum purge size.
+    const THP_SEGMENT_RESET: bool = false;
+
+    /// Returns `true` when THP is believed active: the platform supports
+    /// segment-scale THP and the hugepage hint is enabled at runtime.
+    /// The default returns `false`; the Linux backend overrides it.
+    #[inline(always)]
+    fn thp_is_active() -> bool {
+        false
+    }
+
     /// Allocates page-aligned memory from the OS.
     ///
     /// # Safety
