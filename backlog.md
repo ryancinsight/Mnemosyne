@@ -2,23 +2,13 @@
 
 ## In progress
 
-- [ ] [arch] [minor] **MN-469 — Use Melinoe permits for branded heap handoff.**
-  status=in-progress; owner=atlas-session; branch=
-  `feat/mnemosyne-melinoe-sync`; ADR=0010; scope=`mnemosyne-heap` branded
-  heap, tiered routing, box, vector, and cell surfaces plus facade exports and
-  focused tests/docs.
-  Replace the concrete `ThreadLocalToken` access requirement with Melinoe's
-  sealed `ReadPermit`/`WritePermit` seam, add a `sync_scope` constructor using
-  `SyncRegionToken`, and make `BrandedCell<T>` movable/shareable under the same
-  `T: Send`/`T: Send + Sync` conditions as Melinoe cells. The heap remains the
-  exclusive allocator owner; workers receive only branded cell handles and the
-  region token, so the handoff adds no lock, allocation, or copy to payload
-  access. **Acceptance oracle:** existing thread-local callers compile and keep
-  their value semantics; a scoped worker handoff mutates and returns a branded
-  cell without copying; focused nextest, Clippy, doctests, rustdoc, and a
-  paired thread-local/region branded-access measurement pass with no
-  additional runtime state. **Non-goals:** device-buffer ownership, allocator
-  synchronization, and the blocked Stage D1 provider contract.
+- [x] [arch] [minor] **MN-469 — Use Melinoe permits for branded heap handoff.**
+  status=complete 2026-09-03; owner=atlas-session; branch=
+  `feat/mnemosyne-melinoe-sync`; ADR=0010; commit=`afbedd4`.
+  outcome=all branded heap/tiered/box/vector/cell access uses Melinoe permits;
+  `sync_scope` transfers cells and `SyncRegionToken` without allocator sharing;
+  evidence=nextest 88/88, doctests/rustdoc/Clippy green, paired access intervals
+  overlap with no added runtime state.
 
 - [x] [patch] **MN-THEMIS-AFFINITY-CONSUMER-2026-09-01.** status=complete;
   source=`49146cdd98fa0457082f7f3da7ca9df9ea30f7a7`; PR #87; merge=
