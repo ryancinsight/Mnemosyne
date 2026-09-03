@@ -10,10 +10,11 @@ run-to-run spread sits *below* the ceiling it trips at; before MN-464 it did
 not, so a rerun and a regression were indistinguishable and the baseline could
 not be refreshed without baking that noise into the reference.
 
-Two host behaviours caused it, both now handled inside the benchmark process
-itself (`benches/allocator/host.rs`): hybrid-core placement and Windows power
-throttling. What is left to the procedure is the part a single process cannot
-do -- run the suite several times and prove the runs agree.
+Three host behaviours caused it, all now handled inside the benchmark process
+itself (`benches/allocator/host.rs`): hybrid-core placement, Windows power
+throttling, and scheduler priority. What is left to the procedure is the part
+a single process cannot do -- run the suite several times and prove the runs
+agree.
 
 # What it does
 

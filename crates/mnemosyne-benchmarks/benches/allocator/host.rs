@@ -1,6 +1,6 @@
 //! Host controls that make one benchmark process's timings repeatable.
 //!
-//! Two host behaviours, not the allocator, dominated run-to-run spread on the
+//! Three host behaviours, not the allocator, dominated run-to-run spread on the
 //! hybrid-core development host (see `benchmarks/allocator_baseline_metadata.md`,
 //! MN-464):
 //!
@@ -13,6 +13,10 @@
 //!    for the whole process. A throttled run is uniformly three to five times
 //!    slower than an unthrottled one and is indistinguishable, from the numbers
 //!    alone, from a catastrophic allocator regression.
+//! 3. **Scheduler priority.** A normal-priority process can lose the benchmark
+//!    thread to unrelated runnable work even after placement and throttling
+//!    controls are applied. The measured `AboveNormal` class removes that
+//!    repeat-spread source without the desktop interference of `High`.
 //!
 //! Which cores are the performance cores is asked of [`themis::CpuTopology`],
 //! not of the operating system here: the split is not inferable from processor
@@ -21,7 +25,7 @@
 //! answer. themis reports typed absence when a platform says nothing, and this
 //! module preserves it rather than substituting a guess.
 //!
-//! [`prepare_measurement_host`] addresses both behaviours before the first
+//! [`prepare_measurement_host`] addresses all three behaviours before the first
 //! sample is taken, and reports what it actually achieved rather than assuming
 //! success: a run that could not be prepared is a run whose numbers carry that
 //! caveat.
@@ -118,9 +122,40 @@ pub enum ThrottlingOutcome {
     Unsupported,
 }
 
+/// Result of raising this benchmark process to above-normal priority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PriorityOutcome {
+    /// The process priority is set to the measured repeatable class.
+    #[cfg_attr(
+        not(windows),
+        expect(dead_code, reason = "constructed only by the Windows platform backend")
+    )]
+    Set,
+    /// The operating system rejected the priority change.
+    #[cfg_attr(
+        not(windows),
+        expect(dead_code, reason = "constructed only by the Windows platform backend")
+    )]
+    Refused {
+        /// Operating-system error code captured at the failure site.
+        code: u32,
+    },
+    /// This target has no process-priority backend.
+    #[cfg_attr(
+        windows,
+        expect(
+            dead_code,
+            reason = "constructed only by the non-Windows platform backend"
+        )
+    )]
+    Unsupported,
+}
+
 /// What [`prepare_measurement_host`] achieved for this process.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HostPreparation {
+    /// Outcome of setting the measured process priority.
+    pub priority: PriorityOutcome,
     /// Outcome of the power-throttling opt-out.
     pub throttling: ThrottlingOutcome,
     /// Outcome of the performance-core binding.
@@ -129,6 +164,16 @@ pub struct HostPreparation {
 
 impl fmt::Display for HostPreparation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.priority {
+            PriorityOutcome::Set => formatter.write_str("process priority set to above-normal")?,
+            PriorityOutcome::Refused { code } => {
+                write!(formatter, "above-normal priority REFUSED (error {code})")?;
+            }
+            PriorityOutcome::Unsupported => {
+                formatter.write_str("process priority not controllable on this target")?;
+            }
+        }
+        formatter.write_str("; ")?;
         match self.throttling {
             ThrottlingOutcome::OptedOut => formatter.write_str("power throttling opted out")?,
             ThrottlingOutcome::Refused { code } => {
@@ -173,6 +218,7 @@ impl fmt::Display for HostPreparation {
 #[must_use]
 pub fn prepare_measurement_host() -> HostPreparation {
     HostPreparation {
+        priority: platform::set_measurement_priority(),
         throttling: platform::opt_out_of_power_throttling(),
         affinity: platform::bind_to_performance_cores(),
     }
@@ -189,6 +235,7 @@ mod platform {
     unsafe extern "system" {
         fn GetCurrentProcess() -> isize;
         fn GetLastError() -> u32;
+        fn SetPriorityClass(process: isize, priority_class: u32) -> i32;
         fn SetProcessInformation(
             process: isize,
             class: i32,
@@ -209,6 +256,8 @@ mod platform {
     /// mask while leaving it clear in the state mask disables throttling
     /// outright rather than leaving the decision to the scheduler.
     const EXECUTION_SPEED: u32 = 0x1;
+    /// `ABOVE_NORMAL_PRIORITY_CLASS` from the Win32 process-priority constants.
+    const ABOVE_NORMAL_PRIORITY_CLASS: u32 = 0x8000;
 
     #[repr(C)]
     struct PowerThrottlingState {
@@ -223,6 +272,20 @@ mod platform {
     const POWER_THROTTLING_STATE_BYTES: u32 = 12;
     const _: () =
         assert!(size_of::<PowerThrottlingState>() == POWER_THROTTLING_STATE_BYTES as usize);
+
+    pub(super) fn set_measurement_priority() -> super::PriorityOutcome {
+        // SAFETY: documented Win32 call; the process handle is obtained from
+        // the current process and the priority class is a valid constant.
+        let applied = unsafe { SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS) };
+        if applied == 0 {
+            // SAFETY: documented Win32 call taking no arguments.
+            super::PriorityOutcome::Refused {
+                code: unsafe { GetLastError() },
+            }
+        } else {
+            super::PriorityOutcome::Set
+        }
+    }
 
     pub(super) fn opt_out_of_power_throttling() -> ThrottlingOutcome {
         let mut state = PowerThrottlingState {
@@ -329,7 +392,11 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::{AffinityOutcome, ThrottlingOutcome};
+    use super::{AffinityOutcome, PriorityOutcome, ThrottlingOutcome};
+
+    pub(super) fn set_measurement_priority() -> PriorityOutcome {
+        PriorityOutcome::Unsupported
+    }
 
     pub(super) fn opt_out_of_power_throttling() -> ThrottlingOutcome {
         ThrottlingOutcome::Unsupported
