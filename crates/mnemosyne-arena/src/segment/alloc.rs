@@ -192,9 +192,40 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
     // SAFETY: SEGMENT_MAPPING_SIZE is non-zero and aligned. We call B::allocate.
     let raw_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
     if raw_ptr.is_null() {
-        return None;
+        // OOM recovery: release any retained segments back to the OS and retry
+        // once. This covers the common "working-set spike" scenario where the
+        // retained pool is holding address space that the kernel now needs.
+        // SAFETY: `purge_segment_pool` only releases segments that are
+        // exclusively owned by the pool (not by any thread cache), so no live
+        // allocation can be freed. The second allocate call follows the same
+        // contract as the first.
+        unsafe { purge_segment_pool::<B>() };
+        let retry_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
+        if retry_ptr.is_null() {
+            return None;
+        }
+        // Fall through with the retried allocation; re-use the rest of the init path.
+        return allocate_segment_from_raw::<B>(retry_ptr);
     }
 
+    allocate_segment_from_raw::<B>(raw_ptr)
+}
+
+/// Completes segment initialization from a freshly-OS-allocated mapping and
+/// returns the aligned segment pointer, or `None` on an alignment overflow.
+///
+/// Called after a successful `B::allocate(SEGMENT_MAPPING_SIZE)` both from the
+/// normal path and from the OOM-retry path. Extracted so the OOM retry shares
+/// the same decommit/guard/NUMA init code rather than duplicating it.
+///
+/// # Safety
+///
+/// `raw_ptr` must be a non-null, exclusively-owned `SEGMENT_MAPPING_SIZE`
+/// mapping returned by `B::allocate`. Ownership transfers into the returned
+/// segment on `Some`; on `None` the mapping is released back to `B`.
+unsafe fn allocate_segment_from_raw<B: HasSegmentPool>(
+    raw_ptr: *mut u8,
+) -> Option<*mut Segment> {
     let numa_node = current_numa_node();
     // SAFETY: `raw_ptr` is the non-null `SEGMENT_MAPPING_SIZE` mapping just
     // returned by `B::allocate`, which is exclusively owned and writable —
