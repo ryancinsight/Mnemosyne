@@ -178,3 +178,22 @@ pub fn summary_line() -> std::string::String {
         None => std::format!("allocs={total_allocs} live_bytes={live} hottest_class=none"),
     }
 }
+
+/// Resets all per-class counters to zero.
+///
+/// Useful for marking the start of a profiling window so that subsequent
+/// snapshots reflect only the activity since the reset.  The counters are
+/// monotone-non-decreasing under normal use; calling this during active
+/// allocation is safe but may produce a briefly-negative `live_estimate` in
+/// a snapshot taken immediately after the reset.
+///
+/// Only the bin-stats counters are affected; `MemoryStats` (segment pool,
+/// backend calls, etc.) has its own reset via `mnemosyne::reset()`.
+#[inline]
+pub fn reset_bin_stats() {
+    for class in 0..NUM_SIZE_CLASSES {
+        ALLOC_COUNT[class].store(0, Ordering::Relaxed);
+        DEALLOC_COUNT[class].store(0, Ordering::Relaxed);
+        ALLOC_BYTES[class].store(0, Ordering::Relaxed);
+    }
+}
