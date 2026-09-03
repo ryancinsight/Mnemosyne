@@ -1,9 +1,10 @@
 use crate::Heap;
-use crate::brand::{BrandedBlock, BrandedCell, ThreadLocalToken};
+use crate::brand::{BrandedBlock, BrandedCell};
 use crate::heap::BlockFreeGuard;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
+use melinoe::ReadPermit;
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::LocalAllocatorSelector;
 use mnemosyne_local::internal::HasSegmentPool;
@@ -28,11 +29,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
 {
     /// Creates a new `BrandedBox` containing `val` allocated from the given `Heap`.
     #[inline(always)]
-    pub fn new(
-        heap: &'heap Heap<'brand, P, B>,
-        token: &ThreadLocalToken<'brand>,
-        val: T,
-    ) -> Option<Self> {
+    pub fn new<Permit>(heap: &'heap Heap<'brand, P, B>, permit: Permit, val: T) -> Option<Self>
+    where
+        Permit: ReadPermit<'brand>,
+    {
         if core::mem::size_of::<T>() == 0 {
             let ptr: NonNull<T> = NonNull::dangling();
             // SAFETY: `T` is zero-sized, so `NonNull::dangling()` is a valid,
@@ -49,7 +49,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
             });
         }
 
-        let block = heap.alloc_init(token, val)?;
+        let block = heap.alloc_init(permit, val)?;
         Some(Self {
             ptr: block.ptr,
             heap,
@@ -174,12 +174,15 @@ impl<'brand, 'heap, T: ?Sized, P: AllocPolicy, B: HasSegmentPool + LocalAllocato
 impl<'brand, 'heap, T: Clone, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
     BrandedBox<'brand, 'heap, T, P, B>
 {
-    /// Clones the box using the given allocator token.
+    /// Clones the box using the given allocator read permit.
     ///
     /// Returns `None` if allocation fails.
     #[inline]
-    pub fn clone_in(&self, token: &ThreadLocalToken<'brand>) -> Option<Self> {
-        Self::new(self.heap, token, (**self).clone())
+    pub fn clone_in<Permit>(&self, permit: &Permit) -> Option<Self>
+    where
+        for<'token> &'token Permit: ReadPermit<'brand>,
+    {
+        Self::new(self.heap, permit, (**self).clone())
     }
 }
 

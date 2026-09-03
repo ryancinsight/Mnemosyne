@@ -2,6 +2,14 @@
 
 ## In progress
 
+- [x] [arch] [minor] **MN-469 — Use Melinoe permits for branded heap handoff.**
+  status=complete 2026-09-03; owner=atlas-session; branch=
+  `feat/mnemosyne-melinoe-sync`; ADR=0010; commit=`afbedd4`.
+  outcome=all branded heap/tiered/box/vector/cell access uses Melinoe permits;
+  `sync_scope` transfers cells and `SyncRegionToken` without allocator sharing;
+  evidence=nextest 88/88, doctests/rustdoc/Clippy green, paired access intervals
+  overlap with no added runtime state.
+
 - [x] [patch] **MN-THEMIS-AFFINITY-CONSUMER-2026-09-01.** status=complete;
   source=`49146cdd98fa0457082f7f3da7ca9df9ea30f7a7`; PR #87; merge=
   `5b4997b9ecae60ee51b7bf276dbdb1dcf67fa0b7`; local gates green.

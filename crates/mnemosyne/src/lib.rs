@@ -21,7 +21,7 @@ pub use mnemosyne_core::{
 #[cfg(feature = "branded")]
 pub use mnemosyne_heap::{
     BrandedBlock, BrandedBox, BrandedCell, BrandedVec, Heap, InvariantLifetime, ReallocError,
-    ReallocFailure, ThreadLocalToken, scope as branded_scope,
+    ReallocFailure, SyncRegionToken, ThreadLocalToken, scope as branded_scope, sync_scope,
 };
 pub use mnemosyne_local::{
     BinSnapshot, FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics,

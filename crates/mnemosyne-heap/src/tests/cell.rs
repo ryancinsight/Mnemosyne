@@ -27,6 +27,59 @@ fn test_branded_cell_sharing_and_mutation() {
 }
 
 #[test]
+fn test_sync_scope_hands_cell_to_scoped_worker() {
+    sync_scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+        let block = heap
+            .alloc_init(&token, 41_u32)
+            .expect("sync branded cell allocation failed");
+        // SAFETY: `alloc_init` returned a live block containing an initialized
+        // `u32`, and this test transfers its sole cell handle to one worker.
+        let cell = unsafe { BrandedCell::from_block(block) };
+
+        let (cell, mut token) = std::thread::scope(|scope| {
+            scope
+                .spawn(move || {
+                    *cell.borrow_mut(&mut token) += 1;
+                    (cell, token)
+                })
+                .join()
+                .expect("sync branded worker panicked")
+        });
+
+        assert_eq!(*cell.borrow(&token), 42);
+        // SAFETY: the worker returned the only live cell handle and no access
+        // derived from it remains when this scope reclaims the block.
+        heap.free(&mut token, unsafe { cell.into_block() });
+    });
+}
+
+#[test]
+fn test_sync_scope_allows_concurrent_shared_readers() {
+    sync_scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
+        let block = heap
+            .alloc_init(&token, 73_u32)
+            .expect("sync shared-read allocation failed");
+        // SAFETY: `alloc_init` returned a live block containing an initialized
+        // `u32`, and this test retains the sole owning handle until reclaim.
+        let cell = unsafe { BrandedCell::from_block(block) };
+
+        let (left, right) = std::thread::scope(|scope| {
+            let read = token.share();
+            let left = scope.spawn(move || *cell.borrow(read));
+            let right = scope.spawn(move || *cell.borrow(read));
+            (
+                left.join().expect("left reader panicked"),
+                right.join().expect("right reader panicked"),
+            )
+        });
+
+        assert_eq!((left, right), (73, 73));
+        // SAFETY: no reader or derived reference survives the scoped workers.
+        heap.free(&mut token, unsafe { cell.into_block() });
+    });
+}
+
+#[test]
 fn test_branded_cell_unsized_slice() {
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
         let mut vec = BrandedVec::new(&heap);

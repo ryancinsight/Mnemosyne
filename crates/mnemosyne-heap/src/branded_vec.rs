@@ -1,9 +1,10 @@
 use crate::Heap;
-use crate::brand::{BrandedBlock, ThreadLocalToken};
+use crate::brand::BrandedBlock;
 use crate::branded_box::BrandedBox;
 use core::alloc::Layout;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
+use melinoe::{ReadPermit, WritePermit};
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::LocalAllocatorSelector;
 use mnemosyne_local::internal::HasSegmentPool;
@@ -52,16 +53,19 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
 
     /// Creates a new `BrandedVec` with space for at least `capacity` elements.
     #[inline]
-    pub fn with_capacity(
+    pub fn with_capacity<Permit>(
         heap: &'heap Heap<'brand, P, B>,
-        token: &ThreadLocalToken<'brand>,
+        permit: Permit,
         capacity: usize,
-    ) -> Option<Self> {
+    ) -> Option<Self>
+    where
+        Permit: ReadPermit<'brand>,
+    {
         if capacity == 0 || core::mem::size_of::<T>() == 0 {
             return Some(Self::new(heap));
         }
         let layout = Layout::array::<T>(capacity).ok()?;
-        let block = heap.alloc(token, layout)?;
+        let block = heap.alloc(permit, layout)?;
         Some(Self {
             ptr: block.ptr.cast(),
             cap: capacity,
@@ -73,10 +77,13 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
 
     /// Converts this vector into a boxed slice, shrinking the memory allocation to fit.
     #[inline]
-    pub fn into_boxed_slice(
+    pub fn into_boxed_slice<Permit>(
         mut self,
-        token: &mut ThreadLocalToken<'brand>,
-    ) -> BrandedBox<'brand, 'heap, [T], P, B> {
+        token: &mut Permit,
+    ) -> BrandedBox<'brand, 'heap, [T], P, B>
+    where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
         if core::mem::size_of::<T>() == 0 {
             // SAFETY: `T` is zero-sized, so a `[T]` of any length occupies no
             // bytes; `NonNull::dangling()` is a valid, aligned base for a
@@ -168,10 +175,13 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// overflow or allocation failure the vector is left unchanged and `Err(())`
     /// is returned.
     #[inline]
-    fn grow_to(&mut self, token: &mut ThreadLocalToken<'brand>, new_cap: usize) -> Result<(), ()> {
+    fn grow_to<Permit>(&mut self, token: &mut Permit, new_cap: usize) -> Result<(), ()>
+    where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
         let new_layout = Layout::array::<T>(new_cap).map_err(|_| ())?;
         if self.cap == 0 {
-            let block = self.heap.alloc(token, new_layout).ok_or(())?;
+            let block = self.heap.alloc(&mut *token, new_layout).ok_or(())?;
             self.ptr = block.ptr.cast();
         } else {
             // `self.cap` was validated when the current allocation was made,
@@ -207,11 +217,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// Returns `Err(())` if layout calculations overflow or allocation fails.
     #[inline]
     #[expect(clippy::result_unit_err)]
-    pub fn reserve(
-        &mut self,
-        token: &mut ThreadLocalToken<'brand>,
-        additional: usize,
-    ) -> Result<(), ()> {
+    pub fn reserve<Permit>(&mut self, token: &mut Permit, additional: usize) -> Result<(), ()>
+    where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
         if core::mem::size_of::<T>() == 0 {
             return Ok(());
         }
@@ -232,7 +241,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// Returns `Err(())` if allocation fails.
     #[inline]
     #[expect(clippy::result_unit_err)]
-    pub fn shrink_to_fit(&mut self, token: &mut ThreadLocalToken<'brand>) -> Result<(), ()> {
+    pub fn shrink_to_fit<Permit>(&mut self, token: &mut Permit) -> Result<(), ()>
+    where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
         if core::mem::size_of::<T>() == 0 {
             return Ok(());
         }
@@ -250,7 +262,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// Returns `Err(())` only if the shrinking realloc fails, leaving the vector
     /// valid and unchanged (the over-sized block is retained).
     #[inline]
-    fn shrink_to_len(&mut self, token: &mut ThreadLocalToken<'brand>) -> Result<(), ()> {
+    fn shrink_to_len<Permit>(&mut self, token: &mut Permit) -> Result<(), ()>
+    where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
         if self.cap <= self.len {
             return Ok(());
         }

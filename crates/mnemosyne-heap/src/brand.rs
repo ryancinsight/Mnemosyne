@@ -1,17 +1,15 @@
-use crate::Heap;
-use crate::raw_heap::RawHeap;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
-use mnemosyne_core::AllocPolicy;
-use mnemosyne_local::LocalAllocatorSelector;
-use mnemosyne_local::internal::HasSegmentPool;
 
-use melinoe::sync::thread_local_scope;
+use melinoe::{ReadPermit, WritePermit};
+
+mod scopes;
 
 // Brand vocabulary re-exported from melinoe so the heap's branded containers and
 // their consumers share one authoritative token + marker definition.
 pub use melinoe::InvariantLifetime;
-pub use melinoe::sync::ThreadLocalToken;
+pub use melinoe::sync::{SyncRegionToken, ThreadLocalToken};
+pub use scopes::{scope, sync_scope};
 
 /// A wrapper representing a heap block branded with a compile-time unique lifetime.
 pub struct BrandedBlock<'brand, T: ?Sized> {
@@ -109,8 +107,10 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedBlock<'brand, T> {
 
 /// A GhostCell-style shared container allowing interior mutability.
 ///
-/// Permits shared read access and exclusive write access mediated by the
-/// melinoe [`ThreadLocalToken`].
+/// Permits shared read access and exclusive write access mediated by a Melinoe
+/// [`ReadPermit`] or [`WritePermit`]. Thread-confined heaps use
+/// [`ThreadLocalToken`]; [`SyncRegionToken`] enables an explicit cross-thread
+/// handoff for `Send` payloads.
 ///
 /// # Variance
 ///
@@ -166,8 +166,10 @@ pub struct BrandedCell<'brand, T: ?Sized> {
     pub(crate) _marker: InvariantLifetime<'brand>,
     /// Pins the cell invariant in `T`. `NonNull<T>` alone is covariant in
     /// `T`; `*mut T` is invariant in `T` and valid for `T: ?Sized`. The
-    /// auto-trait posture is unchanged: `NonNull<T>` already suppresses
-    /// `Send`/`Sync`, and `PhantomData<*mut T>` is `Copy`.
+    /// raw pointer marker is deliberately non-`Send`/non-`Sync`; the explicit
+    /// unsafe impls below restore those auto traits only under the payload
+    /// bounds discharged by the permit contract. `PhantomData<*mut T>` is
+    /// `Copy`, so the marker does not add storage.
     _invariance: PhantomData<*mut T>,
 }
 
@@ -213,28 +215,33 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
         }
     }
 
-    /// Accesses the value immutably using the allocator token.
+    /// Accesses the value immutably using a Melinoe read permit.
     #[inline(always)]
-    pub fn borrow<'a>(&self, _token: &'a ThreadLocalToken<'brand>) -> &'a T {
+    pub fn borrow<'a, P>(&'a self, _permit: P) -> &'a T
+    where
+        P: ReadPermit<'brand> + 'a,
+    {
         // SAFETY: `self.ptr` addresses a live, initialized `T` owned within this
-        // brand. There is exactly one `ThreadLocalToken<'brand>` per `'brand`,
-        // so a shared `&'a token` proves no `&mut` to the same value can
-        // coexist for `'a`. The returned `&'a T` is bound to the token borrow,
-        // so the shared reference cannot outlive that exclusivity guarantee —
-        // the GhostCell token-aliasing invariant for shared access.
+        // brand. A `ReadPermit<'brand>` proves no exclusive permit for the same
+        // brand can coexist for `'a`. The returned `&'a T` is bound to the
+        // permit's borrow, so the shared reference cannot outlive that
+        // exclusivity guarantee — the GhostCell token-aliasing invariant for
+        // shared access.
         unsafe { self.ptr.as_ref() }
     }
 
-    /// Accesses the value mutably using the allocator token.
+    /// Accesses the value mutably using a Melinoe write permit.
     #[inline(always)]
-    pub fn borrow_mut<'a>(&self, _token: &'a mut ThreadLocalToken<'brand>) -> &'a mut T {
+    pub fn borrow_mut<'a, P>(&self, _permit: &'a mut P) -> &'a mut T
+    where
+        for<'permit> &'permit mut P: WritePermit<'brand>,
+    {
         // SAFETY: `self.ptr` addresses a live, initialized `T` owned within this
-        // brand. There is exactly one `ThreadLocalToken<'brand>` per `'brand`,
-        // and an exclusive `&'a mut token` borrows that sole token, so for `'a`
-        // no other `borrow`/`borrow_mut` against this brand can run and no other
+        // brand. A `WritePermit<'brand>` proves exclusive access for `'a`, so no
+        // other `borrow`/`borrow_mut` against this brand can run and no other
         // reference to this value can coexist. The returned `&'a mut T` is bound
-        // to the token's exclusive borrow, upholding the unique-mutable-access
-        // half of the GhostCell token-aliasing invariant.
+        // to the exclusive permit, upholding the unique-mutable-access half of
+        // the GhostCell token-aliasing invariant.
         unsafe { &mut *self.ptr.as_ptr() }
     }
 
@@ -243,11 +250,14 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
     /// # Panics
     /// Panics if the two cells point to the same memory block.
     #[inline]
-    pub fn borrow_mut_2<'a, U: ?Sized>(
+    pub fn borrow_mut_2<'a, U: ?Sized, P>(
         cell1: &'a Self,
         cell2: &'a BrandedCell<'brand, U>,
-        _token: &'a mut ThreadLocalToken<'brand>,
-    ) -> (&'a mut T, &'a mut U) {
+        _permit: &'a mut P,
+    ) -> (&'a mut T, &'a mut U)
+    where
+        for<'permit> &'permit mut P: WritePermit<'brand>,
+    {
         assert_ne!(
             cell1.ptr.as_ptr() as *const (),
             cell2.ptr.as_ptr() as *const (),
@@ -255,11 +265,11 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
         );
         // SAFETY: the `assert_ne!` above proves `cell1` and `cell2` address
         // disjoint blocks, so the two `&mut` references never alias. Both cells
-        // share `'brand`, and the single exclusive `&'a mut token` proves no
-        // other access to this brand runs for `'a`. Each pointer addresses a
-        // live, initialized value owned within this brand, so simultaneously
-        // forming the two mutable references is sound (token-mediated exclusion
-        // plus distinctness gives the non-aliasing guarantee).
+        // share `'brand`, and the exclusive write permit proves no other access
+        // to this brand runs for `'a`. Each pointer addresses a live,
+        // initialized value owned within this brand, so simultaneously forming
+        // the two mutable references is sound (permit-mediated exclusion plus
+        // distinctness gives the non-aliasing guarantee).
         unsafe { (&mut *cell1.ptr.as_ptr(), &mut *cell2.ptr.as_ptr()) }
     }
 
@@ -268,12 +278,15 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
     /// # Panics
     /// Panics if any of the cells point to the same memory block.
     #[inline]
-    pub fn borrow_mut_3<'a, U: ?Sized, V: ?Sized>(
+    pub fn borrow_mut_3<'a, U: ?Sized, V: ?Sized, P>(
         cell1: &'a Self,
         cell2: &'a BrandedCell<'brand, U>,
         cell3: &'a BrandedCell<'brand, V>,
-        _token: &'a mut ThreadLocalToken<'brand>,
-    ) -> (&'a mut T, &'a mut U, &'a mut V) {
+        _permit: &'a mut P,
+    ) -> (&'a mut T, &'a mut U, &'a mut V)
+    where
+        for<'permit> &'permit mut P: WritePermit<'brand>,
+    {
         let p1 = cell1.ptr.as_ptr() as *const ();
         let p2 = cell2.ptr.as_ptr() as *const ();
         let p3 = cell3.ptr.as_ptr() as *const ();
@@ -283,11 +296,11 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
         );
         // SAFETY: the `assert!` above proves `cell1`, `cell2`, `cell3` address
         // pairwise-distinct blocks, so the three `&mut` references never alias.
-        // All cells share `'brand`, and the single exclusive `&'a mut token`
-        // proves no other access to this brand runs for `'a`. Each pointer
-        // addresses a live, initialized value owned within this brand, so
-        // simultaneously forming the three mutable references is sound
-        // (token-mediated exclusion plus pairwise distinctness).
+        // All cells share `'brand`, and the exclusive write permit proves no
+        // other access to this brand runs for `'a`. Each pointer addresses a
+        // live, initialized value owned within this brand, so simultaneously
+        // forming the three mutable references is sound (permit-mediated
+        // exclusion plus pairwise distinctness).
         unsafe {
             (
                 &mut *cell1.ptr.as_ptr(),
@@ -297,6 +310,16 @@ impl<'brand, T: ?Sized> BrandedCell<'brand, T> {
         }
     }
 }
+
+// SAFETY: moving a cell moves only its pointer and invariant brand marker. The
+// pointer is dereferenced exclusively through a matching Melinoe permit, so a
+// cross-thread move is sound whenever the payload itself is `Send`.
+unsafe impl<'brand, T: ?Sized + Send> Send for BrandedCell<'brand, T> {}
+
+// SAFETY: shared access to a cell exposes only `&T` under a read permit; mutable
+// access still requires the unique write permit. Concurrent use is therefore
+// sound when `T` is both `Send` and `Sync`, matching MelinoeCell's contract.
+unsafe impl<'brand, T: ?Sized + Send + Sync> Sync for BrandedCell<'brand, T> {}
 
 impl<'brand, T: ?Sized> core::fmt::Debug for BrandedCell<'brand, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -319,122 +342,4 @@ impl<'brand, T: ?Sized> core::hash::Hash for BrandedCell<'brand, T> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.ptr.hash(state);
     }
-}
-
-/// Executes a closure with a fresh, compile-time unique branded heap and token.
-///
-/// # Examples
-///
-/// ```
-/// use mnemosyne_core::StandardPolicy;
-/// use mnemosyne_backend::MemoryBackendWrapper;
-/// use mnemosyne_heap::scope;
-///
-/// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
-///     let val = mnemosyne_heap::BrandedBox::new(&heap, &token, 42)
-///         .expect("branded box allocation failed");
-///     assert_eq!(*val, 42);
-/// });
-/// ```
-///
-/// This example fails to compile because it attempts to escape a branded block from its scope:
-///
-/// ```compile_fail
-/// use mnemosyne_core::StandardPolicy;
-/// use mnemosyne_backend::MemoryBackendWrapper;
-/// use mnemosyne_heap::{scope, BrandedBlock};
-///
-/// let mut escaped: Option<BrandedBlock<'static, i32>> = None;
-/// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
-///     let block = heap.alloc_init(&token, 42)
-///         .expect("branded block allocation failed");
-///     // This compile error is expected because the 'brand lifetime cannot escape the closure scope:
-///     escaped = Some(block);
-/// });
-/// ```
-///
-/// Proving that thread-exclusivity bounds are enforced at compile time.
-/// Since the melinoe `ThreadLocalToken` is `!Send` and `!Sync`, the following fails to compile:
-///
-/// ```compile_fail
-/// use mnemosyne_core::StandardPolicy;
-/// use mnemosyne_backend::MemoryBackendWrapper;
-/// use mnemosyne_heap::scope;
-/// use std::thread;
-///
-/// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
-///     // ThreadLocalToken is !Send, so sending it to another thread is a compile error:
-///     thread::spawn(move || {
-///         let _t = token;
-///     });
-/// });
-/// ```
-///
-/// Proving that `BrandedBox` is `!Send`:
-///
-/// ```compile_fail
-/// use mnemosyne_core::StandardPolicy;
-/// use mnemosyne_backend::MemoryBackendWrapper;
-/// use mnemosyne_heap::scope;
-/// use std::thread;
-///
-/// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
-///     let val = heap.alloc_init(&token, 42)
-///         .expect("branded box send-bound allocation failed");
-///     let boxed = unsafe { mnemosyne_heap::BrandedBox::from_raw(&heap, val) };
-///     // BrandedBox is !Send, so sending it to another thread is a compile error:
-///     thread::spawn(move || {
-///         let _b = boxed;
-///     });
-/// });
-/// ```
-///
-/// Proving that `BrandedVec` is `!Send`:
-///
-/// ```compile_fail
-/// use mnemosyne_core::StandardPolicy;
-/// use mnemosyne_backend::MemoryBackendWrapper;
-/// use mnemosyne_heap::{scope, BrandedVec};
-/// use std::thread;
-///
-/// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
-///     let mut vec = BrandedVec::new(&heap);
-///     // BrandedVec is !Send, so sending it to another thread is a compile error:
-///     thread::spawn(move || {
-///         let _v = vec;
-///     });
-/// });
-/// ```
-///
-/// Proving that two distinct scopes cannot mix allocation tokens or heaps:
-///
-/// ```compile_fail
-/// use mnemosyne_core::StandardPolicy;
-/// use mnemosyne_backend::MemoryBackendWrapper;
-/// use mnemosyne_heap::scope;
-///
-/// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap1, mut token1| {
-///     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap2, mut token2| {
-///         let val = heap1.alloc_init(&token1, 42)
-///             .expect("cross-scope branded allocation failed");
-///         // This fails to compile because token2 has a different 'brand:
-///         heap2.free(&mut token2, val);
-///     });
-/// });
-/// ```
-pub fn scope<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>, F, R>(f: F) -> R
-where
-    F: for<'brand> FnOnce(Heap<'brand, P, B>, ThreadLocalToken<'brand>) -> R,
-{
-    // The brand identity, uniqueness, and thread-confined capability token are
-    // minted by melinoe. The higher-ranked `'brand` from `thread_local_scope`
-    // is shared with the `Heap` constructed under it, so the heap and its token
-    // are provably the only pair for this brand and cannot escape the closure.
-    thread_local_scope(|token| {
-        let heap = Heap {
-            raw: RawHeap::new(),
-            _phantom: PhantomData,
-        };
-        f(heap, token)
-    })
 }
