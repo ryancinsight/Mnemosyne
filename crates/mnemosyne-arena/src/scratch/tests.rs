@@ -320,3 +320,102 @@ fn aligned_vec_is_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<AlignedVec<f64>>();
 }
+
+// ── Phase 11: truncate / retain / iterators / collection ─────────────────────
+
+#[test]
+fn aligned_vec_truncate_shortens_and_noop_when_larger() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4, 5]);
+    v.truncate(3);
+    assert_eq!(v.as_slice(), &[1, 2, 3]);
+    let cap = v.capacity();
+    v.truncate(10); // no-op
+    assert_eq!(v.len(), 3);
+    assert_eq!(v.capacity(), cap, "allocation not shrunk");
+}
+
+#[test]
+fn aligned_vec_retain_keeps_matching_elements() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4, 5, 6]);
+    v.retain(|&x| x % 2 == 0);
+    assert_eq!(v.as_slice(), &[2, 4, 6]);
+}
+
+#[test]
+fn aligned_vec_retain_all_or_none() {
+    let mut v = AlignedVec::<u8>::from_slice(&[10, 20, 30]);
+    v.retain(|_| true);
+    assert_eq!(v.as_slice(), &[10, 20, 30]);
+    v.retain(|_| false);
+    assert_eq!(v.len(), 0);
+    assert!(!v.is_empty() || v.len() == 0);
+}
+
+#[test]
+fn aligned_vec_borrowed_into_iter() {
+    let v = AlignedVec::<f32>::from_slice(&[1.0, 2.0, 3.0]);
+    let sum: f32 = v.iter().sum();
+    assert_eq!(sum, 6.0);
+    // also via IntoIterator for &AlignedVec
+    let sum2: f32 = (&v).into_iter().copied().sum();
+    assert_eq!(sum2, 6.0);
+}
+
+#[test]
+fn aligned_vec_mut_borrowed_into_iter() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3]);
+    for x in &mut v {
+        *x *= 2;
+    }
+    assert_eq!(v.as_slice(), &[2, 4, 6]);
+}
+
+#[test]
+fn aligned_vec_owned_into_iter() {
+    let v = AlignedVec::<u32>::from_slice(&[10, 20, 30]);
+    let collected: std::vec::Vec<u32> = v.into_iter().collect();
+    assert_eq!(collected, &[10, 20, 30]);
+}
+
+#[test]
+fn aligned_vec_owned_into_iter_exact_size() {
+    let v = AlignedVec::<u8>::from_slice(&[1, 2, 3, 4]);
+    let mut it = v.into_iter();
+    assert_eq!(it.len(), 4);
+    let _ = it.next();
+    assert_eq!(it.len(), 3);
+}
+
+#[test]
+fn aligned_vec_from_iterator() {
+    let v: AlignedVec<u32> = (0u32..5).collect();
+    assert_eq!(v.as_slice(), &[0, 1, 2, 3, 4]);
+}
+
+#[test]
+fn aligned_vec_extend_from_iterator() {
+    let mut v = AlignedVec::<u32>::from_slice(&[0, 1, 2]);
+    v.extend(3u32..6);
+    assert_eq!(v.as_slice(), &[0, 1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn aligned_vec_extend_from_ref_iterator() {
+    let extra = [10u8, 20, 30];
+    let mut v = AlignedVec::<u8>::from_slice(&[1, 2]);
+    v.extend(extra.iter());
+    assert_eq!(v.as_slice(), &[1, 2, 10, 20, 30]);
+}
+
+#[test]
+fn aligned_vec_bool_is_scratch_element() {
+    let mut v = AlignedVec::<bool>::zeroed(4);
+    assert_eq!(v.as_slice(), &[false, false, false, false]);
+    v[1] = true;
+    v[3] = true;
+    assert_eq!(v.as_slice(), &[false, true, false, true]);
+    v.fill(false);
+    assert!(v.iter().all(|&b| !b));
+    v.clear();
+    assert!(v.is_empty());
+}

@@ -34,9 +34,9 @@ pub use mnemosyne_prof::{
     register_free_hook,
 };
 pub use options::{configure, get_options};
-pub use scratch::AlignedVec;
+pub use scratch::{AlignedVec, AlignedVecIntoIter};
 pub use stats::{
-    MemoryStats, decay, memory_stats, memory_stats_generic, memory_stats_json, purge,
+    MemoryStats, decay, memory_stats, memory_stats_generic, memory_stats_json, purge, purge_lazy,
     purge_generic, reset, reset_generic,
 };
 

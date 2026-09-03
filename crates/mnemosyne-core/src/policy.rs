@@ -45,6 +45,21 @@ pub trait AllocPolicy: private::Sealed + Send + Sync + 'static {
     /// A full page becomes active only after
     /// `free_count >= capacity / WAKE_DENOMINATOR` blocks are freed.
     const WAKE_DENOMINATOR: u16 = 4;
+
+    /// Minimum number of completely-free segments the global pool should keep
+    /// in a **warm** (committed, ready-to-reuse) state before
+    /// `reset_segment_pool` begins decommitting further segments.
+    ///
+    /// Set to a small positive value (e.g., 4) for `StandardPolicy` to
+    /// amortise the `VirtualAlloc` / `mmap` round-trip cost when allocation
+    /// bursts are followed immediately by frees and then more allocations.
+    /// Set to `0` for `HardenedPolicy` so stale physical pages are returned
+    /// to the OS eagerly — a security posture consistent with the rest of the
+    /// hardened behaviour set.
+    ///
+    /// This is a pure compile-time constant: monomorphization eliminates the
+    /// compare at zero cost when the policy has no warm threshold.
+    const SEGMENT_POOL_WARM_THRESHOLD: usize = 0;
 }
 
 /// Zero-Sized Type (ZST) representing the standard allocation policy with maximum performance.
@@ -55,6 +70,9 @@ impl private::Sealed for StandardPolicy {}
 impl AllocPolicy for StandardPolicy {
     const ENABLE_POISONING: bool = false;
     const ZERO_INITIALIZE: bool = false;
+    /// Keep 4 committed free segments as a warm pool so that rapid
+    /// free-then-allocate bursts do not pay an OS round-trip each time.
+    const SEGMENT_POOL_WARM_THRESHOLD: usize = 4;
 }
 
 /// Zero-Sized Type (ZST) representing a secure allocation policy with memory

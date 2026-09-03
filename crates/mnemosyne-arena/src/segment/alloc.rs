@@ -407,14 +407,31 @@ pub unsafe fn release_segment_mapping<B: HasSegmentPool>(segment: *mut Segment) 
 /// The caller must ensure that no threads are concurrently mutating the segment pool
 /// or accessing purged segment memory.
 pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
+    // SAFETY: forwarded contract — zero warm threshold means release everything.
+    unsafe { purge_segment_pool_with_warm::<B>(0) }
+}
+
+/// Like [`purge_segment_pool`] but retains up to `warm_threshold` committed
+/// free segments in the pool.
+///
+/// Segments above the threshold are released to the OS as normal.  The
+/// retained segments remain backed and ready for reuse without a
+/// `VirtualAlloc`/`mmap` round-trip, amortising the OS-mapping cost when
+/// allocation bursts follow shortly after a purge.
+///
+/// Pass `warm_threshold = 0` for the same behaviour as `purge_segment_pool`.
+/// Callers with policy-level guidance should pass
+/// `P::SEGMENT_POOL_WARM_THRESHOLD` directly.
+///
+/// # Safety
+///
+/// The caller must ensure that no threads are concurrently mutating the segment
+/// pool or accessing purged segment memory.
+pub unsafe fn purge_segment_pool_with_warm<B: HasSegmentPool>(warm_threshold: usize) {
     let pool = B::global_segment_pool();
-    // Detach each node's retained chain with `take_all` — one lifetime-locked
-    // atomic swap of the tagged head — then run the OS-release syscalls on the
-    // privately-owned detached chain. One swap per node instead of one CAS per
-    // segment, so the decay thread never serializes round-by-round with
-    // allocators pushing/popping the same head line (mirrors
-    // `GlobalHugePool::purge`).
     let mut purged = 0usize;
+    // Warm segments kept across the whole pool (all nodes together).
+    let mut kept = 0usize;
     for node in pool.nodes() {
         let (mut head, _count) = node.take_all();
         while !head.is_null() {
@@ -427,6 +444,14 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
                     .next_free_segment
                     .load(core::sync::atomic::Ordering::Relaxed)
             };
+            if kept < warm_threshold {
+                // Keep this segment committed and ready for reuse.
+                // SAFETY: `segment` is exclusively owned by this purge sweep,
+                // and pushing it back to the node's pool transfers ownership.
+                unsafe { node.push_unbounded(segment) };
+                kept += 1;
+                continue;
+            }
             match unsafe { release_segment_mapping::<B>(segment) } {
                 SegmentRelease::Released => purged += 1,
                 SegmentRelease::RetainedAfterFailure => {
@@ -457,8 +482,6 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
             }
         }
     }
-    // One purge "call" per invocation, with the total released count (preserves
-    // the prior telemetry contract).
     pool.record_purge(purged);
 
     // SAFETY: Releases all cached huge blocks back to the OS.

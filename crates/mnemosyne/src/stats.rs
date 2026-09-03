@@ -189,6 +189,25 @@ pub fn purge() {
     purge_generic::<mnemosyne_backend::MemoryBackendWrapper>();
 }
 
+/// Purges the global segment pool while keeping `warm_threshold` committed
+/// segments ready for immediate reuse.
+///
+/// Unlike [`purge`], which releases everything, this keeps the `warm_threshold`
+/// most-recently-retained segments in the pool so that a burst of allocations
+/// immediately following the purge avoids `VirtualAlloc`/`mmap` round-trips.
+///
+/// Callers with a policy-level guidance should pass
+/// `P::SEGMENT_POOL_WARM_THRESHOLD`. Pass `0` for the same behavior as `purge`.
+pub fn purge_lazy(warm_threshold: usize) {
+    // SAFETY: purge_segment_pool_with_warm only touches segments the pool owns
+    // exclusively; the global pool itself serialises access to its free list.
+    unsafe {
+        mnemosyne_arena::purge_segment_pool_with_warm::<mnemosyne_backend::MemoryBackendWrapper>(
+            warm_threshold,
+        );
+    }
+}
+
 /// Asks the OS to drop the physical backing of every retained free
 /// segment for a specific backend without removing them from the cache.
 ///
