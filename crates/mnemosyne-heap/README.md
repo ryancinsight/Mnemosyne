@@ -26,12 +26,14 @@ the API boundary, not a second copy of the allocator.
 ## Branding
 
 `BrandedBox`, `BrandedVec`, `BrandedBlock`, and `BrandedCell` carry an invariant
-lifetime tying an allocation to the `scope` that produced it. Because the brand
+lifetime tying an allocation to the scope that produced it. Because the brand
 is invariant, returning a block to a different heap is a type error rather than
-a runtime check. The brand marker (`InvariantLifetime`) and the thread-confined
-capability token (`ThreadLocalToken`) come from
+a runtime check. The brand marker (`InvariantLifetime`) and the sealed permit
+seam (`ReadPermit`/`WritePermit`) come from
 [melinoe](https://github.com/ryancinsight/melinoe), the single source of brand
-machinery for this ecosystem.
+machinery for this ecosystem. `scope` supplies the thread-confined token;
+`sync_scope` supplies a `SyncRegionToken` for moving branded cell handles
+through scoped workers while the owning `Heap` remains thread-confined.
 
 `Heap::realloc` validates size and alignment before entering the raw allocator
 and returns `Result<Option<_>, ReallocError>`; a failure owns the original block

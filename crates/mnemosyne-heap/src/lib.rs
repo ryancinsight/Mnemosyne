@@ -9,7 +9,8 @@
 //! so a [`PlacementHint::Numa`] is honored by the allocator, not just
 //! resolved to a tier.
 //!
-//! The `brand` family ([`BrandedBox`], [`BrandedVec`], [`BrandedBlock`])
+//! The `brand` family ([`BrandedBox`], [`BrandedVec`], [`BrandedBlock`],
+//! [`BrandedCell`])
 //! carries an invariant lifetime that ties an allocation to the [`scope`]
 //! it came from. Because the brand is invariant, a block cannot be
 //! returned to a heap other than the one that produced it: the mismatch is
@@ -40,7 +41,10 @@ pub mod tiered_heap;
 #[cfg(test)]
 mod tests;
 
-pub use brand::{BrandedBlock, BrandedCell, InvariantLifetime, ThreadLocalToken, scope};
+pub use brand::{
+    BrandedBlock, BrandedCell, InvariantLifetime, SyncRegionToken, ThreadLocalToken, scope,
+    sync_scope,
+};
 pub use branded_box::BrandedBox;
 pub use branded_vec::BrandedVec;
 pub use heap::{Heap, ReallocError, ReallocFailure};

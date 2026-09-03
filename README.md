@@ -200,7 +200,7 @@ Allocation path, foundation upward:
 
 Optional and adjacent concerns:
 
-*   **[mnemosyne-heap](crates/mnemosyne-heap)**: explicit `Heap` handles, `TieredHeap` placement across memory tiers, and the branded (`BrandedBox`/`BrandedVec`/`BrandedBlock`) scope family.
+*   **[mnemosyne-heap](crates/mnemosyne-heap)**: explicit `Heap` handles, `TieredHeap` placement across memory tiers, and the Melinoe-permit branded (`BrandedBox`/`BrandedVec`/`BrandedBlock`/`BrandedCell`) scope family.
 *   **[mnemosyne-decay](crates/mnemosyne-decay)**: background decay worker that purges cold retained segments so a burst does not pin resident memory.
 *   **[mnemosyne-prof](crates/mnemosyne-prof)**: heap profiling runtime — alloc/free trace hooks, a Poisson heap sampler, and a leak detector behind the `on_alloc`/`on_free` entry points.
 *   **[mnemosyne-hardened](crates/mnemosyne-hardened)**: re-export of `SecurePolicy` and `HardenedPolicy` under their historical path. It holds no logic; the policies live in `mnemosyne_core::policy`.
@@ -271,7 +271,7 @@ fn main() {
 }
 ```
 
-To use scoped lifetime-branded memory allocation (GhostCell-style permission and data separation with `BrandedHeap`, `BrandedBox`, `BrandedVec`, and `BrandedCell`). The brand identity and the thread-confined capability token are provided by the [`melinoe`](https://github.com/ryancinsight/melinoe) crate — its `InvariantLifetime` marker and `ThreadLocalToken` are the single source of brand machinery for the Mnemosyne ecosystem:
+To use scoped lifetime-branded memory allocation (GhostCell-style permission and data separation with `Heap`, `BrandedBox`, `BrandedVec`, and `BrandedCell`). The brand identity and sealed access permits are provided by the [`melinoe`](https://github.com/ryancinsight/melinoe) crate — its `InvariantLifetime` marker and `ReadPermit`/`WritePermit` seam are the single source of brand machinery for the Mnemosyne ecosystem. Use `branded_scope` for thread-confined allocation and `sync_scope` when a `BrandedCell` handle and region token must cross a scoped worker boundary:
 
 ```rust
 use mnemosyne::{branded_scope, StandardPolicy};
@@ -323,6 +323,8 @@ To compare Mnemosyne, the system allocator, MiMalloc, and SnMalloc performance a
 ```bash
 # Run Criterion microbenchmarks
 cargo bench -p mnemosyne-benchmarks --bench allocator_bench
+# Compare Melinoe permit paths over branded heap cells
+cargo bench -p mnemosyne-benchmarks --bench branded_access
 
 # Extract estimates and generate side-by-side comparison report
 cargo run -p mnemosyne-benchmarks --bin benchmark_summary --release
@@ -334,6 +336,8 @@ cargo run -p mnemosyne-benchmarks --bin benchmark_summary --release -- --enforce
 The `Threaded small allocation cycles` group preserves the historical four-worker measurement with one bounded-channel command per Criterion sample. The `Threaded medium allocation cycles` group repeats that topology with 1024-byte allocations. The `Threaded saturated small allocation cycles` group uses the same workers with a larger per-command allocation count, reducing benchmark coordination overhead relative to allocator work.
 Only the saturated threaded row is included in the selected threshold baseline; the small and medium threaded rows remain visible in comparison tables as continuity and size-class disparity signals.
 The source-controlled baseline is `benchmarks/allocator_baseline_excerpt.csv`; it changes only when `benchmark_summary` is run with `--refresh-baseline`. Current-run generated outputs live under `target/criterion/` (`benchmark_summary.csv`, `allocator_current_excerpt.csv`, `benchmark_baseline_comparison.csv`, `benchmark_variance.csv`, and `benchmark_metadata.json`) and are refreshed by normal summary runs. Threshold enforcement fails if any selected baseline row is missing from the current Criterion data. Threaded and cross-thread variance rows use the scheduler-aware `0.25` relative-width threshold; scalar latency rows use `0.15`.
+
+`branded_access` measures the Melinoe `ThreadLocalToken` and `SyncRegionToken` read paths with allocation and reclamation outside the timed region. Its host-preparation line records the affinity and power-throttling state used for the paired measurement.
 The memory report includes page-refill, recycle, fresh-page, fresh-segment, orphan-adoption, and recycle-sweep counters so cold-path allocation behavior can be checked without adding hot-path atomics.
 Benchmark runner contract failures print explicit `benchmark failure: <context>: <detail>` diagnostics instead of assertion or channel unwrap panics.
 Unsafe benchmark operations carry local safety comments for dynamic symbols, unchecked layouts, allocator calls, and segment-cache cycles.

@@ -1,5 +1,6 @@
 use crate::BrandedVec;
-use crate::brand::{BrandedCell, ThreadLocalToken};
+use crate::brand::BrandedCell;
+use melinoe::WritePermit;
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::LocalAllocatorSelector;
 use mnemosyne_local::internal::HasSegmentPool;
@@ -9,7 +10,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
 {
     /// Pushes an element onto the back of the vector, growing it if necessary.
     #[inline]
-    pub fn push(&mut self, token: &mut ThreadLocalToken<'brand>, val: T) -> Result<(), T> {
+    pub fn push<Permit>(&mut self, token: &mut Permit, val: T) -> Result<(), T>
+    where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
         if core::mem::size_of::<T>() == 0 {
             self.len = match self.len.checked_add(1) {
                 Some(len) => len,
@@ -159,12 +163,9 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// Returns `Err(())` if capacity overflow or allocation fails.
     #[inline]
     #[expect(clippy::result_unit_err)] // Preserve the existing allocation-failure API.
-    pub fn extend_from_slice(
-        &mut self,
-        token: &mut ThreadLocalToken<'brand>,
-        other: &[T],
-    ) -> Result<(), ()>
+    pub fn extend_from_slice<Permit>(&mut self, token: &mut Permit, other: &[T]) -> Result<(), ()>
     where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
         T: Clone,
     {
         self.reserve(token, other.len())?;
@@ -184,13 +185,9 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// Returns `Err(())` if capacity overflow or allocation fails.
     #[inline]
     #[expect(clippy::result_unit_err)] // Preserve the existing allocation-failure API.
-    pub fn resize(
-        &mut self,
-        token: &mut ThreadLocalToken<'brand>,
-        new_len: usize,
-        value: T,
-    ) -> Result<(), ()>
+    pub fn resize<Permit>(&mut self, token: &mut Permit, new_len: usize, value: T) -> Result<(), ()>
     where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
         T: Clone,
     {
         if new_len > self.len {
@@ -210,8 +207,9 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// Returns `Err(())` if allocation fails.
     #[inline]
     #[expect(clippy::result_unit_err)] // Preserve the existing allocation-failure API.
-    pub fn extend<I>(&mut self, token: &mut ThreadLocalToken<'brand>, iter: I) -> Result<(), ()>
+    pub fn extend<Permit, I>(&mut self, token: &mut Permit, iter: I) -> Result<(), ()>
     where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
         I: IntoIterator<Item = T>,
     {
         let iterator = iter.into_iter();
@@ -233,12 +231,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     /// # Errors
     /// Returns `Err(element)` if growing the vector fails.
     #[inline]
-    pub fn insert(
-        &mut self,
-        token: &mut ThreadLocalToken<'brand>,
-        index: usize,
-        element: T,
-    ) -> Result<(), T> {
+    pub fn insert<Permit>(&mut self, token: &mut Permit, index: usize, element: T) -> Result<(), T>
+    where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
         assert!(index <= self.len, "insert index out of bounds");
         if self.len == self.cap && self.reserve(token, 1).is_err() {
             return Err(element);
@@ -294,7 +290,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
     ///
     /// The memory is shrunk to fit and remains allocated until manually reclaimed.
     #[inline(always)]
-    pub fn into_cell(self, token: &mut ThreadLocalToken<'brand>) -> BrandedCell<'brand, [T]> {
+    pub fn into_cell<Permit>(self, token: &mut Permit) -> BrandedCell<'brand, [T]>
+    where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
         self.into_boxed_slice(token).into_cell()
     }
 }
@@ -302,12 +301,15 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
 impl<'brand, 'heap, T: Clone, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>
     BrandedVec<'brand, 'heap, T, P, B>
 {
-    /// Clones the vector using the given allocator token.
+    /// Clones the vector using the given allocator write permit.
     ///
     /// Returns `None` if allocation fails.
     #[inline]
-    pub fn clone_in(&self, token: &mut ThreadLocalToken<'brand>) -> Option<Self> {
-        let mut new_vec = Self::with_capacity(self.heap, token, self.len())?;
+    pub fn clone_in<Permit>(&self, token: &mut Permit) -> Option<Self>
+    where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
+        let mut new_vec = Self::with_capacity(self.heap, &mut *token, self.len())?;
         for item in self.as_slice() {
             if new_vec.push(token, item.clone()).is_err() {
                 return None;

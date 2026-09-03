@@ -17,3 +17,4 @@
 | [0007](0007-crates-io-package-identities.md) | crates.io package identities | Accepted |
 | [0008](0008-policy-keyed-allocator-statistics.md) | Policy-keyed allocator statistics | Accepted |
 | [0009](0009-preserve-allocator-mapping-provenance.md) | Preserve allocator mapping provenance | Accepted |
+| [0010](0010-melinoe-permits-for-branded-heaps.md) | Use Melinoe permits for branded heap access | Accepted |

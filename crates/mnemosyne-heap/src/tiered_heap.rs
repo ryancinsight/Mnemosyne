@@ -36,6 +36,7 @@ use crate::tiered_backend::{TierSelection, TieredBackend};
 use core::alloc::Layout;
 use core::marker::PhantomData;
 use melinoe::sync::thread_local_scope;
+use melinoe::{ReadPermit, WritePermit};
 use mnemosyne_core::AllocPolicy;
 
 /// A tier-aware heap façade.
@@ -187,16 +188,19 @@ impl<'brand, P: AllocPolicy> TieredHeap<'brand, P> {
     /// [`crate::tier::tier_for`] applied to `hint`.
     #[inline]
     #[must_use = "dropping the result discards the allocation outcome"]
-    pub fn alloc(
+    pub fn alloc<Permit>(
         &self,
-        token: &ThreadLocalToken<'brand>,
+        permit: Permit,
         layout: Layout,
         hint: PlacementHint,
-    ) -> Option<TieredBlock<'brand, u8>> {
+    ) -> Option<TieredBlock<'brand, u8>>
+    where
+        Permit: ReadPermit<'brand>,
+    {
         let tier = tier_for(hint);
         match TieredBackend::for_tier(tier) {
             Some(TierSelection::Host) => {
-                let block = self.host.alloc(token, layout)?;
+                let block = self.host.alloc(permit, layout)?;
                 if let PlacementHint::Numa(node) = hint {
                     // SAFETY: `block` is a live heap allocation of at least
                     // `layout.size()` bytes at `block.as_ptr()`; `bind_to_node`
@@ -211,19 +215,19 @@ impl<'brand, P: AllocPolicy> TieredHeap<'brand, P> {
             }
             Some(TierSelection::HostPinned) => self
                 .pinned
-                .alloc(token, layout)
+                .alloc(permit, layout)
                 .map(|b| TieredBlock { block: b, tier }),
             Some(TierSelection::Device) => self
                 .device
-                .alloc(token, layout)
+                .alloc(permit, layout)
                 .map(|b| TieredBlock { block: b, tier }),
             Some(TierSelection::Hbm) => self
                 .hbm
-                .alloc(token, layout)
+                .alloc(permit, layout)
                 .map(|b| TieredBlock { block: b, tier }),
             Some(TierSelection::Gddr) => self
                 .gddr
-                .alloc(token, layout)
+                .alloc(permit, layout)
                 .map(|b| TieredBlock { block: b, tier }),
             // None covers the budget-only tiers (`Registers`,
             // `SharedMem`): atlas ADR 0002 budgets that the GPU
@@ -248,19 +252,18 @@ impl<'brand, P: AllocPolicy> TieredHeap<'brand, P> {
     /// unallocated match arm is preserved as `unreachable!()` style
     /// empty body for type-system completeness.
     #[inline]
-    pub fn free<T: ?Sized>(
-        &self,
-        token: &mut ThreadLocalToken<'brand>,
-        block: TieredBlock<'brand, T>,
-    ) {
+    pub fn free<T: ?Sized, Permit>(&self, permit: &mut Permit, block: TieredBlock<'brand, T>)
+    where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
         let tier = block.tier;
         let inner = block.block;
         match TieredBackend::for_tier(tier) {
-            Some(TierSelection::Host) => self.host.free(token, inner),
-            Some(TierSelection::HostPinned) => self.pinned.free(token, inner),
-            Some(TierSelection::Device) => self.device.free(token, inner),
-            Some(TierSelection::Hbm) => self.hbm.free(token, inner),
-            Some(TierSelection::Gddr) => self.gddr.free(token, inner),
+            Some(TierSelection::Host) => self.host.free(permit, inner),
+            Some(TierSelection::HostPinned) => self.pinned.free(permit, inner),
+            Some(TierSelection::Device) => self.device.free(permit, inner),
+            Some(TierSelection::Hbm) => self.hbm.free(permit, inner),
+            Some(TierSelection::Gddr) => self.gddr.free(permit, inner),
             // A `TieredBlock` carrying a budget-only tier cannot
             // exist via the safe `alloc` path; reaching this arm
             // means a non-alloc construction spliced a tier that
@@ -290,30 +293,33 @@ impl<'brand, P: AllocPolicy> TieredHeap<'brand, P> {
     /// original block and its tier.
     #[inline]
     #[must_use = "dropping the result discards the realloc outcome"]
-    pub fn realloc<T: ?Sized>(
+    pub fn realloc<T: ?Sized, Permit>(
         &self,
-        token: &mut ThreadLocalToken<'brand>,
+        permit: &mut Permit,
         block: TieredBlock<'brand, T>,
         layout: Layout,
         new_size: usize,
-    ) -> Result<Option<TieredBlock<'brand, u8>>, TieredReallocError<'brand, T>> {
+    ) -> Result<Option<TieredBlock<'brand, u8>>, TieredReallocError<'brand, T>>
+    where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
         let tier = block.tier;
         let inner = block.block;
         match TieredBackend::for_tier(tier) {
             Some(TierSelection::Host) => {
-                map_realloc_result(tier, self.host.realloc(token, inner, layout, new_size))
+                map_realloc_result(tier, self.host.realloc(permit, inner, layout, new_size))
             }
             Some(TierSelection::HostPinned) => {
-                map_realloc_result(tier, self.pinned.realloc(token, inner, layout, new_size))
+                map_realloc_result(tier, self.pinned.realloc(permit, inner, layout, new_size))
             }
             Some(TierSelection::Device) => {
-                map_realloc_result(tier, self.device.realloc(token, inner, layout, new_size))
+                map_realloc_result(tier, self.device.realloc(permit, inner, layout, new_size))
             }
             Some(TierSelection::Hbm) => {
-                map_realloc_result(tier, self.hbm.realloc(token, inner, layout, new_size))
+                map_realloc_result(tier, self.hbm.realloc(permit, inner, layout, new_size))
             }
             Some(TierSelection::Gddr) => {
-                map_realloc_result(tier, self.gddr.realloc(token, inner, layout, new_size))
+                map_realloc_result(tier, self.gddr.realloc(permit, inner, layout, new_size))
             }
             // See `alloc` / `free` rationale: a budget-only-tier
             // `TieredBlock` cannot reach this path through a safe

@@ -1,8 +1,9 @@
-use crate::brand::{BrandedBlock, InvariantLifetime, ThreadLocalToken};
+use crate::brand::{BrandedBlock, InvariantLifetime};
 use crate::raw_heap::RawHeap;
 use core::alloc::Layout;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
+use melinoe::{ReadPermit, WritePermit};
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::LocalAllocatorSelector;
 use mnemosyne_local::internal::HasSegmentPool;
@@ -89,15 +90,13 @@ pub struct Heap<'brand, P: AllocPolicy, B: HasSegmentPool = mnemosyne_backend::M
 // SAFETY: `Heap<'brand, P, B>` wraps a `RawHeap<P, B>` whose only interior
 // state is a `core::cell::UnsafeCell<ThreadAllocator<B>>` accessed exclusively
 // through `&self` methods that assume single-threaded ownership and perform no
-// internal synchronization. The brand model makes the heap thread-confined:
-// every operation requires a `ThreadLocalToken<'brand>`, which melinoe mints as
-// `!Send + !Sync`, so the heap cannot be *used* on another thread even if the
-// `Heap` value itself is moved across one. The `RawHeap` core already carries
-// the matching `unsafe impl<P, B: HasSegmentPool> Send for RawHeap<P, B>` (see
-// `raw_heap.rs`) for the same reason — it is `!Send` only because
-// `UnsafeCell<T>: !Sync` denies the auto-derive, not because concurrent access
-// is sound. This mirrors the `unsafe impl Send for TieredHeap` reasoning in
-// `tiered_heap.rs`.
+// internal synchronization. A Melinoe permit proves branded access, but it
+// does not make the allocator state concurrently shareable: `Heap` remains
+// the sole owner and must stay on its originating thread. The `RawHeap` core
+// already carries the matching `unsafe impl<P, B: HasSegmentPool> Send for
+// RawHeap<P, B>` (see `raw_heap.rs`) for the same ownership-transfer reason.
+// `sync_scope` therefore transfers only `BrandedCell` handles and a
+// `SyncRegionToken`; it never shares this heap across workers.
 unsafe impl<'brand, P: AllocPolicy, B: HasSegmentPool> Send for Heap<'brand, P, B> {}
 
 /// Returns one block to its heap when dropped, on the normal path and on an
@@ -156,13 +155,13 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
     /// Allocates a block of memory from this heap.
     ///
     /// The block is tied to the heap's unique `'brand` lifetime. Returns `None`
-    /// if the allocation fails.
+    /// if the allocation fails. The read permit proves that the request belongs
+    /// to this brand without adding runtime state.
     #[inline(always)]
-    pub fn alloc(
-        &self,
-        _token: &ThreadLocalToken<'brand>,
-        layout: Layout,
-    ) -> Option<BrandedBlock<'brand, u8>> {
+    pub fn alloc<Permit>(&self, _permit: Permit, layout: Layout) -> Option<BrandedBlock<'brand, u8>>
+    where
+        Permit: ReadPermit<'brand>,
+    {
         let ptr = self.raw.alloc(layout);
         NonNull::new(ptr).map(|ptr| BrandedBlock {
             ptr,
@@ -193,18 +192,18 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
     /// Frees a block of memory back to this heap, dropping the value in-place first.
     ///
     /// Because the block is branded with the heap's unique `'brand` lifetime,
-    /// it is statically guaranteed to have been allocated by this heap.
+    /// it is statically guaranteed to have been allocated by this heap. The
+    /// write permit proves exclusive access while the value is dropped.
     ///
     /// The block is returned to the heap even if `T`'s destructor panics.
     #[inline(always)]
-    pub fn free<T: ?Sized>(
-        &self,
-        _token: &mut ThreadLocalToken<'brand>,
-        block: BrandedBlock<'brand, T>,
-    ) {
+    pub fn free<T: ?Sized, Permit>(&self, _permit: &mut Permit, block: BrandedBlock<'brand, T>)
+    where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
         let ptr = block.ptr.as_ptr();
         // SAFETY: `block` is a `BrandedBlock<'brand, T>`, and the matching
-        // `&mut ThreadLocalToken<'brand>` proves exclusive access for this
+        // `WritePermit<'brand>` carried by `_permit` proves exclusive access for this
         // brand, so `ptr` points to a live, fully-initialized `T` uniquely
         // owned here. Reading the runtime layout before dropping is valid for
         // sized and unsized values; using the pointer after `drop_in_place`
@@ -226,14 +225,16 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
     ///
     /// Useful for uninitialized memory or manual drop management.
     #[inline(always)]
-    pub fn free_uninit<T: ?Sized>(
+    pub fn free_uninit<T: ?Sized, Permit>(
         &self,
-        _token: &mut ThreadLocalToken<'brand>,
+        _permit: &mut Permit,
         block: BrandedBlock<'brand, T>,
-    ) {
+    ) where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
         let ptr = block.ptr.as_ptr();
         // SAFETY: `block` is a `BrandedBlock<'brand, T>` consumed by value with
-        // the matching exclusive `&mut ThreadLocalToken<'brand>`, so `ptr` is a
+        // the matching exclusive `WritePermit<'brand>`, so `ptr` is a
         // live block uniquely owned here. The value is intentionally not
         // dropped (uninitialized / manually-managed memory). `size_of_val`
         // reads only `T`'s layout, and a non-ZST block was allocated by this
@@ -249,11 +250,10 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
     ///
     /// The block is guaranteed to contain a fully initialized value of type `T`.
     #[inline(always)]
-    pub fn alloc_init<T>(
-        &self,
-        token: &ThreadLocalToken<'brand>,
-        val: T,
-    ) -> Option<BrandedBlock<'brand, T>> {
+    pub fn alloc_init<T, Permit>(&self, permit: Permit, val: T) -> Option<BrandedBlock<'brand, T>>
+    where
+        Permit: ReadPermit<'brand>,
+    {
         if core::mem::size_of::<T>() == 0 {
             let ptr: NonNull<T> = NonNull::dangling();
             // SAFETY: `T` is a ZST (`size_of::<T>() == 0`), so a properly
@@ -269,7 +269,7 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
             });
         }
 
-        let block = self.alloc(token, Layout::new::<T>())?;
+        let block = self.alloc(permit, Layout::new::<T>())?;
         // SAFETY: `block` is freshly allocated for `Layout::new::<T>()`, so it
         // is sized and aligned for `T` (cast layout contract), and it is
         // uninitialized `T` storage that is written with a valid `T`
@@ -301,16 +301,19 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
     /// Returns [`ReallocError`] with the original source block when the new
     /// layout is invalid or replacement allocation fails.
     #[inline(always)]
-    pub fn realloc<T: ?Sized>(
+    pub fn realloc<T: ?Sized, Permit>(
         &self,
-        token: &mut ThreadLocalToken<'brand>,
+        permit: &mut Permit,
         block: BrandedBlock<'brand, T>,
         layout: Layout,
         new_size: usize,
-    ) -> Result<Option<BrandedBlock<'brand, u8>>, ReallocError<'brand, T>> {
+    ) -> Result<Option<BrandedBlock<'brand, u8>>, ReallocError<'brand, T>>
+    where
+        for<'token> &'token mut Permit: WritePermit<'brand>,
+    {
         let ptr = block.ptr.as_ptr() as *mut u8;
         if new_size == 0 {
-            self.free(token, block);
+            self.free(permit, block);
             return Ok(None);
         }
 
@@ -330,7 +333,7 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
         // ZSTs have no allocator-owned source mapping. The source value stays
         // recoverable if the replacement allocation fails, just like a normal
         // block below.
-        // SAFETY: `block` is a live branded block and the matching token
+        // SAFETY: `block` is a live branded block and the matching permit
         // proves exclusive access, so reading its value layout is valid.
         let is_zst = unsafe { core::mem::size_of_val(&*block.ptr.as_ptr()) == 0 };
         if is_zst {
@@ -345,7 +348,7 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
                 ));
             }
             return self
-                .alloc(token, new_layout)
+                .alloc(permit, new_layout)
                 .map(Some)
                 .ok_or_else(|| ReallocError::new(block, ReallocFailure::AllocationFailed));
         }
@@ -371,7 +374,7 @@ impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Heap
         let marker = block._marker;
         // SAFETY: the ZST/zero-size cases returned above, so `ptr` is a non-ZST
         // block previously allocated by `self.raw` and not yet freed, and
-        // `layout` is its current layout; `&mut token` proves exclusive brand
+        // `layout` is its current layout; `&mut permit` proves exclusive brand
         // access. This satisfies `realloc_owned_unchecked`'s contract, which
         // either grows/shrinks in place or moves the bytes and frees the old
         // allocation, returning the (possibly relocated) block.
