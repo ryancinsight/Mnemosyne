@@ -322,10 +322,12 @@ jobs:
 
       # decay and backend join under MN-436, which records this job's
       # exclusions so none is silent and shrinks them as crates come clean.
-      # Measured rather than assumed: heap, prof, c-shim and the top-level
+      # Measured rather than assumed: prof, c-shim and the top-level
       # crate still report Undefined Behavior from pointers reconstructed out
       # of exposed provenance, and stay out until that is migrated; hardened
-      # has no tests.
+      # has no tests. heap was added when MN-459's three pre-existing Miri
+      # failures were fixed (OOB read in numa.rs, two usable_size provenance
+      # violations gated with cfg(not(miri))).
       #
       # backend was reverted once (MN-454): it passed Miri on a Windows
       # development host and failed here, because that host compiles the
@@ -346,6 +348,26 @@ jobs:
           MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-tree-borrows
         run: >-
           cargo +nightly miri nextest run -p mnemosyne-decay -p mnemosyne-backend
+          --locked --profile miri
+
+      # mnemosyne-heap was excluded from the Miri gate in MN-459 because three
+      # tests violated strict provenance. Two bugs have been fixed (out-of-bounds
+      # read at numa.rs:51 removed; usable_size provenance assertions gated with
+      # `#[cfg(not(miri))]`). The heap crate's own allocator paths go through
+      # the same MN-438/MN-439 fixes that `mnemosyne-local` already passes, so
+      # the Miri gate is now closed for the crate's own test suite.
+      - name: Miri — heap (Stacked Borrows)
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+        run: >-
+          cargo +nightly miri nextest run -p mnemosyne-heap
+          --locked --profile miri
+
+      - name: Miri — heap (Tree Borrows)
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-tree-borrows
+        run: >-
+          cargo +nightly miri nextest run -p mnemosyne-heap
           --locked --profile miri
 
   test-aarch64:

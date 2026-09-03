@@ -45,8 +45,9 @@ fn first_touch_is_idempotent_and_touches_every_page() {
     // SAFETY: `ptr` is live for `layout.size()` bytes and writable.
     unsafe { first_touch(ptr, layout.size()) };
     // SAFETY: same range, still live; the first byte of each stride slot was
-    // written as zero by the touch.
-    for offset in [0usize, 4096, 8192, 12_288] {
+    // written as zero by the touch. The allocation is 3 × 4096 bytes so valid
+    // page offsets are 0, 4096, and 8192.
+    for offset in [0usize, 4096, 8192] {
         assert_eq!(
             unsafe { core::ptr::read(ptr.add(offset)) },
             0u8,
