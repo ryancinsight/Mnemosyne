@@ -35,35 +35,30 @@ pub fn refresh_numa_node() -> u32 {
 pub unsafe fn bind_segment_to_numa_node(ptr: *mut u8, len: usize, numa_node: u32) {
     use core::ffi::c_int;
     use core::ffi::c_ulong;
-    use core::ffi::c_void;
 
     // `MPOL_BIND = 2` — allocate only on nodes in the nodemask.
     const MPOL_BIND: c_int = 2;
-
-    unsafe extern "C" {
-        fn mbind(
-            addr: *mut c_void,
-            len: c_ulong,
-            mode: c_int,
-            nodemask: *const c_ulong,
-            maxnode: c_ulong,
-            flags: c_int,
-        ) -> c_int;
-    }
 
     let nodemask: c_ulong = (1u64 as c_ulong).wrapping_shl(numa_node);
     // `maxnode = 64` covers the 64-bit nodemask above.
     // SAFETY: `ptr` addresses a live OS mapping of `len` bytes (caller
     // contract); `nodemask` is a stack variable whose address is valid for
     // the duration of the syscall; no concurrent access to the range.
+    // Reached through `syscall`, not a bare `extern "C" { fn mbind }`:
+    // glibc exports no `mbind` symbol -- it lives in libnuma -- so declaring
+    // it directly links only where `-lnuma` happens to be on the line, and
+    // fails with `undefined symbol: mbind` everywhere else.
+    // `mnemosyne-heap` binds the same policy through `libc::syscall`; this
+    // matches it rather than adding a C library dependency for one syscall.
     let _ = unsafe {
-        mbind(
-            ptr as *mut c_void,
-            len as c_ulong,
+        libc::syscall(
+            libc::SYS_mbind,
+            ptr,
+            len,
             MPOL_BIND,
-            &nodemask,
-            64,
-            0,
+            core::ptr::from_ref(&nodemask),
+            64_usize,
+            0_i32,
         )
     };
 }
