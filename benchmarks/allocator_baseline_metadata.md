@@ -23,13 +23,13 @@ the suite three times into separate Criterion roots, and checks agreement with
 regression gate reads. A gated row may not move between identical runs by more
 than the gate would call a regression; the check exits nonzero when one does.
 
-Three of the four levers live inside the benchmark process, so an ordinary
+Two of the three levers live inside the benchmark process, so an ordinary
 `cargo bench` gets them too (`benches/allocator/host.rs`,
 `benches/allocator/measurement.rs`). Each run's `bench.log` opens with what the
 process actually achieved, e.g.
 
 ```text
-allocator_bench: process priority set to above-normal; power throttling opted out; bound to 8 performance cores (mask 0xc03c03)
+allocator_bench: power throttling opted out; bound to 8 performance cores (mask 0xc03c03)
 ```
 
 Numbers taken under a `REFUSED` line are not comparable with numbers taken under
@@ -73,26 +73,19 @@ discarded warm-up run:
    `apollo/crates/apollo-fft/benches/engine_census.rs`. Across the four runs of
    the full procedure, elapsed time is 238 / 233 / 244 / 232 s — the spread that
    exposed the throttled run is gone.
-3. **Scheduler priority — confirmed contributory.** Even after placement and
-   power-throttling control, a normal-priority process can lose benchmark
-   samples to unrelated runnable work. A controlled high-priority process
-   removed the remaining full-suite spread after the cache-policy fixes; the
-   harness requests the less intrusive `AboveNormal` class and records refusal
-   explicitly. This control changes scheduling interference, not allocator
-   work, and is therefore part of the measurement provenance.
-4. **Sample budget — confirmed contributory.** The suite ran every row at ten
+3. **Sample budget — confirmed contributory.** The suite ran every row at ten
    samples, 100 ms warm-up, 500 ms measurement. Criterion sizes a row's whole
    iteration count from its warm-up, so one scheduling disturbance inside those
    100 ms mis-sizes every sample that follows, which is how a single row moves
    3-5x while its neighbours do not. The allocator under test now runs at fifty
    samples, 1 s warm-up, 2 s measurement; comparator columns keep the smoke
    budget, because they feed a report rather than a gate.
-5. **Ruled out: run ordering alone.** A discarded warm-up run is kept in the
+4. **Ruled out: run ordering alone.** A discarded warm-up run is kept in the
    procedure — the first run on a freshly built binary reads high — but it is
    not the cause. Adding it to the unpinned arm *raised* the measured spread
    from 12.3% to 20.5%, because it changed which disturbances landed in the
    sample, not how many.
-6. **Ruled out: cross-row allocator residue as a general effect.** With the
+5. **Ruled out: cross-row allocator residue as a general effect.** With the
    above applied, 11 of 12 gated rows agree to within 0.3-4.8% while running in
    exactly the same single process, in the same order, with the same
    comparator allocators allocating between them. Residue is not moving the
