@@ -1,5 +1,11 @@
 # Backlog
 
+## MN-EUNOMIA-IDENTITY-2026-09-03 — Unify optional Eunomia source identity [patch] — in-progress <a id="mn-eunomia-identity-2026-09-03"></a>
+
+- **Integrator:** Codex; **branch:** `feat/phase10-improvements`; **lease:** `Cargo.toml`, `Cargo.lock`.
+- **Outcome:** align Mnemosyne’s optional Eunomia workspace edge with provider PR #87 (`fdbf122`) so Leto, Hermes, and Hephaestus share one nominal numeric type identity without conversions.
+- **Acceptance:** standalone lockfile and `eunomia` feature gates resolve one provider source and pass; no compatibility layer is added. **Last-update:** 2026-09-03.
+
 ## In progress
 
 - [x] [patch] **MN-THEMIS-AFFINITY-CONSUMER-2026-09-01.** status=complete;
