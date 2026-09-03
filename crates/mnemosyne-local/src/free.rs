@@ -407,6 +407,15 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
     // `cookie_for`'s contract.
     let encrypted = unsafe { Segment::free_list_encrypted(segment) };
     let cookie = unsafe { Segment::cookie_for_dynamic(segment, encrypted, page_index) };
+
+    // Backward-edge canary: abort on double-free under encryption. Uses the
+    // segment's actual `free_list_encrypted` flag (not the policy flag) to
+    // avoid false alarms when the same memory is freed under a different
+    // policy than the one that allocated it.
+    if encrypted && unsafe { Block::check_double_free(block, cookie) } {
+        std::process::abort();
+    }
+
     // SAFETY: `block` points to a valid block in `page` per the `# Safety`
     // contract; writing its embedded next pointer reinitializes the free-list
     // link and stays inside the block this caller now owns.
@@ -416,6 +425,12 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
     // SAFETY: `block` is non-null (allocator invariant, re-confirmed by the
     // double-free guard above); publishing it as the new free-list head.
     unsafe { (*page).free = Some(NonNull::new_unchecked(block)) };
+
+    // Write the free canary after the block is published on the free list so
+    // the next free of the same block can detect the double-free above.
+    if encrypted {
+        unsafe { Block::write_free_canary(block, cookie) };
+    }
 
     // SAFETY: `segment`/`page`/`page_index` are the matching segment, page, and
     // its index per the `# Safety` contract; the decrement updates this page's

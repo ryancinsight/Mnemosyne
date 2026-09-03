@@ -183,4 +183,93 @@ impl<T: ScratchElement> ScratchPool<T> {
     pub fn capacity(&self) -> usize {
         self.primary_capacity.get()
     }
+
+    /// Ensures the primary slot has at least `min_capacity` elements allocated,
+    /// touching up only when the current capacity is smaller.
+    ///
+    /// Call this once (e.g. at thread startup or before the first hot loop)
+    /// to amortise the allocation cost across the whole call-site lifetime.
+    /// Calling `prewarm` while the pool is borrowed (`borrow_depth > 0`) is
+    /// safe: the guard makes it impossible to have a live mutable reference to
+    /// slot 0 when `borrow_depth == 0`, and `prewarm` only writes to slot 0
+    /// when the pool is not borrowed.
+    pub fn prewarm(&self, min_capacity: usize) {
+        if self.borrow_depth.get() != 0 {
+            // Pool in use — defer to next idle window; no panic.
+            return;
+        }
+        // SAFETY: borrow_depth == 0 guarantees no live exclusive reference to
+        // any slot exists. We briefly take an exclusive reference to slot 0
+        // inside the check and grow, mirroring the pattern in `with_scratch`.
+        let vec = unsafe { &mut *self.slots[0].get() };
+        if vec.capacity() < min_capacity {
+            vec.ensure_len(min_capacity);
+            self.primary_capacity.set(vec.capacity());
+        }
+    }
+
+    /// Like [`Self::with_scratch`] but provides an **uninitialized** slice.
+    ///
+    /// The caller receives a `*mut [T]` fat pointer instead of `&mut [T]`:
+    /// the memory is valid and aligned but may contain arbitrary bit patterns.
+    /// Initialisation (or a proof that all reads are preceded by writes) is the
+    /// caller's responsibility.
+    ///
+    /// Use this when `T`'s zero-initialisation from [`AlignedVec::ensure_len`]
+    /// dominates the profile and the caller can guarantee that every element is
+    /// written before it is read. The pool itself always zeroes the buffer on
+    /// the *first* use (via [`AlignedVec::with_capacity`]); "uninit" here means
+    /// "no zeroing on growth" for elements that were already capacity but had
+    /// been previously written.
+    ///
+    /// # Safety
+    ///
+    /// The caller **must** initialise every element in `[..n]` before reading
+    /// any of them. Reading uninitialised memory is undefined behaviour.
+    pub unsafe fn with_scratch_uninit<R>(
+        &self,
+        n: usize,
+        f: impl FnOnce(*mut [T]) -> R,
+    ) -> R {
+        struct BorrowGuard<'a> {
+            depth: &'a Cell<u8>,
+            original: u8,
+        }
+        impl Drop for BorrowGuard<'_> {
+            #[inline(always)]
+            fn drop(&mut self) {
+                self.depth.set(self.original);
+            }
+        }
+
+        let depth = self.borrow_depth.get();
+        if depth < MAX_POOL_SLOTS as u8 {
+            self.borrow_depth.set(depth + 1);
+            let _guard = BorrowGuard {
+                depth: &self.borrow_depth,
+                original: depth,
+            };
+            // SAFETY: exclusive access guaranteed by borrow_depth tracking.
+            let vec = unsafe { &mut *self.slots[depth as usize].get() };
+            // Grow if needed; ensure_len zero-fills only the newly added range.
+            if n > vec.capacity() {
+                vec.ensure_len(n);
+                if depth == 0 {
+                    self.primary_capacity.set(vec.capacity());
+                }
+            } else if n > vec.len() {
+                // Within existing capacity but beyond current logical length:
+                // extend without zeroing (the capacity was already committed).
+                unsafe { vec.set_len_unchecked(n) };
+            }
+            let ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(vec.as_mut_ptr(), n);
+            f(ptr)
+        } else {
+            let mut owned = AlignedVec::with_capacity(n);
+            // Capacity-only allocation; do not zero.
+            unsafe { owned.set_len_unchecked(n) };
+            let ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(owned.as_mut_ptr(), n);
+            f(ptr)
+        }
+    }
 }

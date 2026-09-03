@@ -101,3 +101,80 @@ pub fn all_bin_snapshots() -> [BinSnapshot; NUM_SIZE_CLASSES] {
         }
     })
 }
+
+impl BinSnapshot {
+    /// Allocation fragmentation ratio for this class: the fraction of
+    /// allocated bytes that are currently not returned, i.e.
+    /// `live_estimate * block_size / alloc_bytes` clamped to `[0.0, 1.0]`.
+    ///
+    /// Returns `0.0` when `alloc_bytes == 0` (nothing ever allocated in this
+    /// class).
+    #[inline]
+    #[must_use]
+    pub fn fragmentation_ratio(&self) -> f64 {
+        if self.alloc_bytes == 0 {
+            return 0.0;
+        }
+        let live_bytes = self.live_estimate.saturating_mul(self.block_size as u64);
+        (live_bytes as f64 / self.alloc_bytes as f64).min(1.0)
+    }
+}
+
+/// Returns the index of the hottest size class (highest `alloc_count`), or
+/// `None` when no allocations have ever been made.
+#[inline]
+#[must_use]
+pub fn hottest_class() -> Option<usize> {
+    let snapshots = all_bin_snapshots();
+    snapshots
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, s)| s.alloc_count)
+        .and_then(|(idx, s)| if s.alloc_count > 0 { Some(idx) } else { None })
+}
+
+/// Process-wide live bytes in the small allocator: sum of
+/// `live_estimate × block_size` across all classes.
+///
+/// Like all bin-stats aggregates this is a best-effort snapshot; the
+/// individual counters are not captured atomically, so the result can
+/// temporarily under-estimate during concurrent allocation bursts.
+#[inline]
+#[must_use]
+pub fn total_live_bytes() -> u64 {
+    let snapshots = all_bin_snapshots();
+    snapshots
+        .iter()
+        .map(|s| s.live_estimate.saturating_mul(s.block_size as u64))
+        .fold(0u64, u64::saturating_add)
+}
+
+/// Process-wide total allocation count across all small size classes.
+#[inline]
+#[must_use]
+pub fn total_alloc_count() -> u64 {
+    ALLOC_COUNT
+        .iter()
+        .map(|c| c.load(Ordering::Relaxed))
+        .fold(0u64, u64::saturating_add)
+}
+
+/// Returns a one-line human-readable summary of process-wide bin stats, e.g.
+/// `"allocs=1234 live_bytes=65536 hottest_class=5(48b)"`.
+///
+/// The format is intended for diagnostic logging; do not rely on it for
+/// machine parsing (it may change across versions).
+#[must_use]
+pub fn summary_line() -> std::string::String {
+    let total_allocs = total_alloc_count();
+    let live = total_live_bytes();
+    match hottest_class() {
+        Some(cls) => {
+            let block = class_to_size(cls);
+            std::format!(
+                "allocs={total_allocs} live_bytes={live} hottest_class={cls}({block}b)"
+            )
+        }
+        None => std::format!("allocs={total_allocs} live_bytes={live} hottest_class=none"),
+    }
+}

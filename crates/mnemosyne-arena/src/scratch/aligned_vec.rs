@@ -154,6 +154,25 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.ptr
     }
 
+    /// Sets the logical length to `new_len` **without** initializing the
+    /// newly covered range.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `new_len <= self.capacity()` and that
+    /// every element in `[old_len, new_len)` is initialized before any code
+    /// reads it through a safe interface.  Violating either condition is
+    /// undefined behaviour.
+    #[inline]
+    pub unsafe fn set_len_unchecked(&mut self, new_len: usize) {
+        debug_assert!(
+            new_len <= self.capacity,
+            "set_len_unchecked: new_len={new_len} exceeds capacity={}",
+            self.capacity
+        );
+        self.len = new_len;
+    }
+
     /// Returns a raw pointer to the start of the initialized slice.
     ///
     /// Equivalent to `self.as_slice().as_ptr()`. Safe to call on shared

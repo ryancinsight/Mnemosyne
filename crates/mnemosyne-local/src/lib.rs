@@ -90,7 +90,7 @@ mod validation;
 mod tests;
 
 pub use alloc::{thread_alloc, thread_alloc_layout};
-pub use bin_stats::{BinSnapshot, all_bin_snapshots, bin_snapshot};
+pub use bin_stats::{BinSnapshot, all_bin_snapshots, bin_snapshot, hottest_class, summary_line, total_alloc_count, total_live_bytes};
 pub use fast_path_cache::{
     FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics, SizeClassCache,
 };

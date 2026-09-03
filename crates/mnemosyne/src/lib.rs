@@ -26,7 +26,7 @@ pub use mnemosyne_heap::{
 pub use mnemosyne_local::{
     BinSnapshot, FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics,
     LocalAllocatorSelector, SizeClassCache, SizeClassOccupancy, all_bin_snapshots, bin_snapshot,
-    usable_size,
+    hottest_class, summary_line, total_alloc_count, total_live_bytes, usable_size,
 };
 pub use mnemosyne_prof::{
     disable_leak_detector, disable_profiling, dump_leaks, dump_profile, enable_leak_detector,

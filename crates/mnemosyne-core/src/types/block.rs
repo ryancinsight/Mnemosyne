@@ -11,6 +11,24 @@ pub struct Block {
     next_encoded: Option<NonNull<Block>>,
 }
 
+/// Canary value written to `block + size_of::<Block>()` bytes on every free
+/// under `HardenedPolicy`. Cleared on re-allocation so a later free cannot
+/// confuse a stale canary for a live one.
+///
+/// The value must be non-zero (a zero-only canary would be indistinguishable
+/// from zeroed-on-alloc memory) and must not collide with a valid `Block`
+/// next-pointer. XOR with `page_cookie` at write/check time makes it
+/// segment-specific.
+pub const FREE_CANARY_MAGIC: usize = 0xDEAD_C0DE_CAFE_BABE_usize;
+
+// Compile-time assert: `Block` occupies exactly one pointer width so that
+// `block + size_of::<Block>()` lands at a word-aligned address on every
+// supported target.
+const _: () = assert!(
+    core::mem::size_of::<Block>() == core::mem::size_of::<*mut u8>(),
+    "Block must be exactly one pointer wide"
+);
+
 impl Block {
     /// Gets the next block in the free list, decoding it if required.
     ///
@@ -99,6 +117,63 @@ impl Block {
         } else {
             self.next_encoded = next;
         }
+    }
+
+    /// Writes the backward-edge free canary `FREE_CANARY_MAGIC ^ page_cookie`
+    /// to the word immediately following the `next_encoded` field.
+    ///
+    /// Called by the free path under `HardenedPolicy` to mark the block as
+    /// free so a subsequent double-free attempt can be detected. The canary
+    /// lives at `block_addr + size_of::<Block>()` bytes and must not overlap
+    /// user data (the minimum block size is ≥ `2 * size_of::<Block>()`).
+    ///
+    /// # Safety
+    ///
+    /// `block` must point to a live free-list node whose backing allocation
+    /// is at least `2 * size_of::<Block>()` bytes, and the word at
+    /// `block + size_of::<Block>()` must be within the allocation and
+    /// writable.
+    #[inline(always)]
+    pub unsafe fn write_free_canary(block: *mut Block, page_cookie: usize) {
+        let canary_ptr = block.cast::<usize>().add(1);
+        // SAFETY: caller guarantees the block is at least two words wide and
+        // the canary slot is within the allocation.
+        unsafe { canary_ptr.write(FREE_CANARY_MAGIC ^ page_cookie) };
+    }
+
+    /// Returns `true` when the word at `block + size_of::<Block>()` matches
+    /// the expected free-canary, indicating a likely double-free.
+    ///
+    /// Called by the free path under `HardenedPolicy` immediately before
+    /// [`write_free_canary`](Block::write_free_canary) to detect double-free
+    /// attempts before they corrupt the free list.
+    ///
+    /// # Safety
+    ///
+    /// Same requirements as [`write_free_canary`](Block::write_free_canary).
+    #[inline(always)]
+    pub unsafe fn check_double_free(block: *const Block, page_cookie: usize) -> bool {
+        let canary_ptr = block.cast::<usize>().add(1);
+        // SAFETY: same as `write_free_canary`.
+        let observed = unsafe { canary_ptr.read() };
+        observed == (FREE_CANARY_MAGIC ^ page_cookie)
+    }
+
+    /// Clears the backward-edge free canary.
+    ///
+    /// Called by the alloc path under `HardenedPolicy` whenever a block is
+    /// taken off the free list, preventing a later double-free check from
+    /// reading a stale canary written during a *previous* free of the same
+    /// block.
+    ///
+    /// # Safety
+    ///
+    /// Same requirements as [`write_free_canary`](Block::write_free_canary).
+    #[inline(always)]
+    pub unsafe fn clear_free_canary(block: *mut Block) {
+        let canary_ptr = block.cast::<usize>().add(1);
+        // SAFETY: same as `write_free_canary`.
+        unsafe { canary_ptr.write(0) };
     }
 }
 

@@ -107,6 +107,17 @@ impl Page {
             // `Block` exclusively owned by this thread; reading its encoded
             // next-link with the matching `cookie` is sound.
             unsafe { (*page).free = (*block.as_ptr()).get_next::<P>(cookie) };
+            // Clear the backward-edge free canary: the block is leaving the
+            // free list and going to a caller who may free it again later.  A
+            // stale canary from the previous free would cause a false-positive
+            // double-free abort on that next free.
+            if P::ENABLE_FREE_LIST_ENCRYPTION {
+                // SAFETY: `block.as_ptr()` is a valid, aligned `Block` as
+                // established by the bounds check above; clearing the canary
+                // slot (at `block + size_of::<Block>()`) is within the block's
+                // allocation (minimum block size >= 2 * size_of::<Block>()`).
+                unsafe { Block::clear_free_canary(block.as_ptr()) };
+            }
             block
         } else {
             abort_on_corruption("pop_block called on an exhausted page");

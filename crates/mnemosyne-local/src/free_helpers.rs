@@ -59,11 +59,19 @@ pub(crate) unsafe fn commit_in_place_free(
     encrypted: bool,
     page_alloc_count: usize,
 ) {
+    // Backward-edge canary: abort on double-free under encryption.
+    if encrypted && unsafe { Block::check_double_free(block, cookie) } {
+        std::process::abort();
+    }
     // SAFETY: `block` is a live, non-null block owned by `page` per the caller's
     // contract; the free-list head mutation stays inside that page.
     unsafe {
         (*block).set_next_dynamic(page_free, encrypted, cookie);
         (*page).free = Some(NonNull::new_unchecked(block));
         (*page).alloc_count = page_alloc_count - 1;
+    }
+    // Write free canary after publishing the block on the free list.
+    if encrypted {
+        unsafe { Block::write_free_canary(block, cookie) };
     }
 }
