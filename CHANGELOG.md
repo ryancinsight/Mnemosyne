@@ -17,6 +17,70 @@
   Exact PR and merged-default CI, Miri, MSRV, mdBook, and Pages gates pass;
   live Pages returns HTTP 200.
 
+- **`AllocPolicy::DELAY_PAGE_WAKE` and `WAKE_DENOMINATOR`** (Phase 9): a page
+  that was full only transitions back to active when `free_count >=
+  capacity / WAKE_DENOMINATOR`. Under `HardenedPolicy` (`DELAY_PAGE_WAKE =
+  true`, denominator 4) this creates a hysteresis zone that maximises temporal
+  distance between free and reuse, making LIFO heap-spray and UAF exploits
+  harder to land. Under `StandardPolicy` (`DELAY_PAGE_WAKE = false`) every
+  free from a full page immediately makes the page active again. Applies to
+  both the direct-free path and the defragmentation sweep. Inspired by
+  snmalloc 0.7's `waking` field (ISMM 2024 BatchIt paper).
+
+- **`MemoryBackend::THP_SEGMENT_RESET` and `thp_is_active()`** (Phase 9):
+  when Transparent Huge Pages are active on Linux, `reset_segment_pool` resets
+  the full 2 MiB segment (including the page-0 metadata header) to avoid
+  splitting a THP page at the 64 KiB boundary. The full-segment reset preserves
+  THP backing and reduces TLB pressure on segment-intensive workloads. Inspired
+  by mimalloc v3.5.1 `MI_ALLOW_THP=FULL` / `MIMALLOC_MINIMAL_PURGE_SIZE=2MiB`.
+
+- **Address-bound free canary** (Phase 9): the backward-edge free canary now
+  incorporates the block's own address — `FREE_CANARY_MAGIC ^ page_cookie ^
+  (block_addr >> 4)` — so a valid canary at one address cannot be copied to
+  another block in the same page. Inspired by snmalloc 0.7's per-slab backward
+  edge binding.
+
+- **`do_local_free_internal` is now generic over `P: AllocPolicy`** to enable
+  the waking-threshold check at zero runtime cost under `StandardPolicy`.
+
+- **Backward-edge free canary** (Phase 8): `Block::FREE_CANARY_MAGIC`,
+  `write_free_canary`, `check_double_free`, `clear_free_canary`. Under
+  `HardenedPolicy` the free path writes a per-block canary at
+  `block + size_of::<Block>()` and the alloc path clears it. A double-free
+  attempt is detected before it corrupts the free list.
+
+- **`bin_stats` aggregation helpers** (Phase 8): `BinSnapshot::fragmentation_ratio()`,
+  `hottest_class()`, `total_live_bytes()`, `total_alloc_count()`, and
+  `summary_line()`. All re-exported from the `mnemosyne-local` and `mnemosyne`
+  facade crates.
+
+- **`ScratchPool::prewarm(min_capacity)`** (Phase 8): pre-allocates the
+  primary slot to at least `min_capacity` elements. Idempotent and safe to call
+  while any borrow is active (silently skips when `borrow_depth > 0`).
+
+- **`ScratchPool::with_scratch_uninit`** (Phase 8): a zero-copy scratch closure
+  that skips zero-initialisation on growth. The function signature is `unsafe`
+  and requires the caller to initialise every element before reading.
+
+- **`AlignedVec::fill(value)`** (Phase 8): bulk-fill all initialized elements.
+
+- **`AlignedVec::resize_fill(min_len, value)`** (Phase 8): ensure length ≥
+  `min_len` then fill the whole slice with `value`.
+
+- **`AlignedVec::set_len_unchecked(new_len)`** (Phase 8): unsafe raw length
+  setter for use in uninit buffers.
+
+- **`AlignedVec` zero-copy interoperability traits** (Phase 8):
+  `AsRef<[T]>`, `AsMut<[T]>`, `Borrow<[T]>`, `BorrowMut<[T]>`. Enables
+  passing an `AlignedVec` to any function accepting `impl AsRef<[T]>` without
+  an explicit `.as_slice()` call.
+
+- **`mnemosyne-heap` added to the Miri gate** (MN-459): three pre-existing
+  test failures fixed at their root cause (out-of-bounds read in
+  `first_touch_is_idempotent_and_touches_every_page`; provenance violations in
+  two `usable_size` calls gated with `#[cfg(not(miri))]`). CI now runs
+  `mnemosyne-heap` under both Stacked Borrows and Tree Borrows.
+
 ### Changed
 
 - **Small-class ceiling raised to 16 KiB** (`MAX_SMALL_ALLOC_SIZE`, MN-461).

@@ -1,5 +1,7 @@
 use crate::local_alloc::ThreadAllocator;
-use crate::local_alloc::page::{push_page_front, unlink_page_from_list, with_page_list_token};
+use crate::local_alloc::page::{
+    move_page_between_lists_branded, push_page_front, unlink_page_from_list, with_page_list_token,
+};
 use core::ptr::NonNull;
 use mnemosyne_arena::{HasSegmentPool, deallocate_segment, try_deallocate_segment};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
@@ -336,6 +338,34 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                         &mut self.empty_pages,
                                         branded_page,
                                         3,
+                                    );
+                                }
+                            } else if (*pg).list_state == 2 && P::DELAY_PAGE_WAKE {
+                                // Waking-threshold wake-up: a page kept in "full"
+                                // by `DELAY_PAGE_WAKE` may have accumulated enough
+                                // cross-thread frees during this sweep to cross the
+                                // threshold. If so, promote it to "active" now so
+                                // the owning thread can allocate from it.
+                                // SAFETY: `pg` is an exclusively-owned page of
+                                // `segment`; reading `max_blocks()` and
+                                // `alloc_count` is a valid, unaliased load.
+                                let capacity = (*pg).max_blocks();
+                                let free_count =
+                                    capacity.saturating_sub((*pg).alloc_count);
+                                let wake_threshold =
+                                    (capacity / P::WAKE_DENOMINATOR as usize).max(1);
+                                if free_count >= wake_threshold && (*pg).alloc_count > 0 {
+                                    let class = (*pg).size_class as usize;
+                                    let pg_ptr = NonNull::new_unchecked(pg);
+                                    let branded_page = token.page(pg_ptr);
+                                    // SAFETY: `list_state == 2` (full) so the
+                                    // page is in `full_pages[class]`.
+                                    move_page_between_lists_branded(
+                                        &mut token,
+                                        self.full_pages.get_unchecked_mut(class),
+                                        self.active_pages.get_unchecked_mut(class),
+                                        branded_page,
+                                        1,
                                     );
                                 }
                             }
