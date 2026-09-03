@@ -4,6 +4,7 @@
 // `pub`, so moving them out of the file would have removed
 // `pool::huge_pool::NodeHugeBucket` from the public surface — a break the
 // semver gate flagged, and not one a file-size refactor may make.
+use super::node_huge_bucket::HugeBucketBand;
 pub use super::node_huge_bucket::{NodeHugeBucket, NodeHugePool};
 use super::numa_bucket::{NUMA_BUCKETS, bucket_index as numa_bucket, steal_from};
 use mnemosyne_core::types::Segment;
@@ -48,6 +49,22 @@ pub(crate) const fn huge_bucket_index(size: usize) -> usize {
     }
 }
 
+/// Selects the ordered half of a logarithmic bucket for `size`.
+///
+/// The lower band ends at the bucket midpoint. A request in the upper band
+/// cannot be satisfied by any lower-band mapping, so exact-bucket lookup can
+/// skip that stack instead of walking and restoring known-undersized blocks.
+#[inline(always)]
+const fn huge_bucket_band(size: usize, bucket_idx: usize) -> HugeBucketBand {
+    let lower_bound = 1usize << (bucket_idx + 13);
+    let midpoint = lower_bound + lower_bound / 2;
+    if size > midpoint {
+        HugeBucketBand::Upper
+    } else {
+        HugeBucketBand::Lower
+    }
+}
+
 // Pin the SSOT derivation: the largest cacheable size maps to the last bucket,
 // so exactly `huge_bucket_index(MAX_CACHED_HUGE_SIZE) + 1` buckets are live.
 const _: () =
@@ -85,6 +102,10 @@ impl GlobalHugePool {
     /// actual block sizes, so mixed-size buckets use available capacity without
     /// allowing a single bucket to retain more than ~256 MiB of idle mappings.
     pub const MAX_CACHED_HUGE_BYTES_PER_BUCKET: usize = 256 * 1024 * 1024;
+    /// Per-band retained-byte budget. The two bands partition the bucket budget
+    /// so a saturated lower band cannot starve upper-band reuse.
+    pub(crate) const MAX_CACHED_HUGE_BYTES_PER_BAND: usize =
+        Self::MAX_CACHED_HUGE_BYTES_PER_BUCKET / super::node_huge_bucket::HUGE_BUCKET_BANDS;
 
     /// Creates a new empty `GlobalHugePool` with `NUMA_BUCKETS` node sub-pools.
     pub const fn new() -> Self {
@@ -117,6 +138,7 @@ impl GlobalHugePool {
         let bucket_idx = huge_bucket_index(size);
         let pool_node = &self.nodes[node];
         let bucket = &pool_node.buckets[bucket_idx];
+        let band = huge_bucket_band(size, bucket_idx);
 
         // Soft limit check, matching `NodeSegmentPool::try_push_retained`: the
         // count and byte readings are advisory, so concurrent pushers can both
@@ -124,9 +146,9 @@ impl GlobalHugePool {
         // totals below) by at most the number of racing pushers. A cache can
         // accept that bound; the alternative — holding a lock to atomically
         // check and push — is the contention this path exists to avoid.
-        let retained_bytes = bucket.retained_bytes();
+        let retained_bytes = bucket.retained_bytes(band);
         if bucket.count() >= Self::MAX_CACHED_HUGE_BLOCKS
-            || size > Self::MAX_CACHED_HUGE_BYTES_PER_BUCKET.saturating_sub(retained_bytes)
+            || size > Self::MAX_CACHED_HUGE_BYTES_PER_BAND.saturating_sub(retained_bytes)
         {
             return false;
         }
@@ -134,7 +156,7 @@ impl GlobalHugePool {
         // SAFETY: by this function's contract, ownership of `segment`
         // transfers to the pool on a successful cache insertion.
         unsafe {
-            bucket.push(segment);
+            bucket.push(segment, band);
         }
 
         pool_node
@@ -199,6 +221,8 @@ impl GlobalHugePool {
             return None;
         }
 
+        let requested_band = huge_bucket_band(size, start_bucket);
+
         for bucket_idx in start_bucket..HUGE_SIZE_BUCKETS {
             // Fit cap: stop scanning once the bucket's smallest possible block
             // (its exclusive lower bound `2^(bucket_idx+13)` plus one byte)
@@ -221,10 +245,32 @@ impl GlobalHugePool {
             let popped = if bucket_idx == start_bucket {
                 // SAFETY: this method owns each temporarily detached segment
                 // until it either returns a fit or restores the rejected chain.
-                unsafe { Self::pop_fitting_from_exact_bucket(bucket, size) }
+                match requested_band {
+                    HugeBucketBand::Lower => {
+                        let lower = unsafe {
+                            Self::pop_fitting_from_exact_bucket(bucket, size, HugeBucketBand::Lower)
+                        };
+                        match lower {
+                            Some(segment) => Some(segment),
+                            None => unsafe {
+                                Self::pop_fitting_from_exact_bucket(
+                                    bucket,
+                                    size,
+                                    HugeBucketBand::Upper,
+                                )
+                            },
+                        }
+                    }
+                    HugeBucketBand::Upper => unsafe {
+                        Self::pop_fitting_from_exact_bucket(bucket, size, HugeBucketBand::Upper)
+                    },
+                }
             } else {
                 // Higher bucket: every retained block is at least `size`.
-                bucket.pop_head()
+                match bucket.pop_head(HugeBucketBand::Lower) {
+                    Some(segment) => Some(segment),
+                    None => bucket.pop_head(HugeBucketBand::Upper),
+                }
             };
 
             if let Some(segment) = popped {
@@ -260,6 +306,7 @@ impl GlobalHugePool {
     unsafe fn pop_fitting_from_exact_bucket(
         bucket: &NodeHugeBucket,
         size: usize,
+        band: HugeBucketBand,
     ) -> Option<*mut Segment> {
         let mut rejected_head: *mut Segment = core::ptr::null_mut();
         let mut rejected_tail: *mut Segment = core::ptr::null_mut();
@@ -267,7 +314,7 @@ impl GlobalHugePool {
         let mut rejected_bytes = 0usize;
 
         let mut fit = None;
-        while let Some(segment) = bucket.pop_head() {
+        while let Some(segment) = bucket.pop_head(band) {
             // SAFETY: `pop_head` transfers exclusive ownership of `segment`.
             let block_size = unsafe { (*segment).pages[0].block_size };
             if block_size >= size {
@@ -300,7 +347,13 @@ impl GlobalHugePool {
             // `rejected_tail` delimit exactly `rejected_len` nodes, whose
             // ownership transfers back to the bucket in one CAS.
             unsafe {
-                bucket.push_chain(rejected_head, rejected_tail, rejected_len, rejected_bytes);
+                bucket.push_chain(
+                    band,
+                    rejected_head,
+                    rejected_tail,
+                    rejected_len,
+                    rejected_bytes,
+                );
             }
         }
         fit
@@ -347,33 +400,35 @@ impl GlobalHugePool {
             let pool_node = &self.nodes[node];
             for bucket_idx in 0..HUGE_SIZE_BUCKETS {
                 let bucket = &pool_node.buckets[bucket_idx];
-                let (mut head, count, retained_bytes) = bucket.take_all();
-                if count == 0 {
-                    continue;
-                }
-                pool_node
-                    .total_count
-                    .value
-                    .fetch_sub(count, core::sync::atomic::Ordering::Relaxed);
+                let (chains, retained_bytes) = bucket.take_all();
+                for (mut head, count) in chains {
+                    if count == 0 {
+                        continue;
+                    }
+                    pool_node
+                        .total_count
+                        .value
+                        .fetch_sub(count, core::sync::atomic::Ordering::Relaxed);
 
-                while !head.is_null() {
-                    // SAFETY: `head` is a segment detached from this bucket by
-                    // `take_all` and is no longer reachable by any other thread
-                    // (the caller guarantees no concurrent access during purge),
-                    // so it is exclusively owned here. Reading its links/size and
-                    // releasing its recorded mapping through the allocating
-                    // backend `B` is sound; `next` is captured before the mapping
-                    // is freed.
-                    let next = unsafe {
-                        let next = (*head)
-                            .next_free_segment
-                            .load(core::sync::atomic::Ordering::Relaxed);
-                        let raw_ptr = (*head).raw_alloc_ptr;
-                        let block_size = (*head).pages[0].block_size;
-                        let _ = B::deallocate(raw_ptr, block_size);
-                        next
-                    };
-                    head = next;
+                    while !head.is_null() {
+                        // SAFETY: `head` is a segment detached from this bucket by
+                        // `take_all` and is no longer reachable by any other thread
+                        // (the caller guarantees no concurrent access during purge),
+                        // so it is exclusively owned here. Reading its links/size and
+                        // releasing its recorded mapping through the allocating
+                        // backend `B` is sound; `next` is captured before the mapping
+                        // is freed.
+                        let next = unsafe {
+                            let next = (*head)
+                                .next_free_segment
+                                .load(core::sync::atomic::Ordering::Relaxed);
+                            let raw_ptr = (*head).raw_alloc_ptr;
+                            let block_size = (*head).pages[0].block_size;
+                            let _ = B::deallocate(raw_ptr, block_size);
+                            next
+                        };
+                        head = next;
+                    }
                 }
                 pool_node
                     .total_bytes

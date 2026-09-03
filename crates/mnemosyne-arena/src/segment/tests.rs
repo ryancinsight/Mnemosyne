@@ -664,8 +664,7 @@ fn test_huge_pool_admission_uses_actual_bucket_bytes() {
     assert_eq!(huge_bucket_index(LARGE_BLOCK_SIZE), BUCKET);
 
     let pool = GlobalHugePool::new();
-    const MAX_BLOCK_SIZE_IN_BUCKET: usize = 8 * 1024 * 1024;
-    let small_count = GlobalHugePool::MAX_CACHED_HUGE_BYTES_PER_BUCKET / MAX_BLOCK_SIZE_IN_BUCKET;
+    let small_count = GlobalHugePool::MAX_CACHED_HUGE_BYTES_PER_BAND / SMALL_BLOCK_SIZE;
     let mut small_segments = Vec::with_capacity(small_count);
     for index in 0..small_count {
         let segment = boxed_huge_segment(0x80000 + index * 0x1000, SMALL_BLOCK_SIZE);
@@ -678,10 +677,9 @@ fn test_huge_pool_admission_uses_actual_bucket_bytes() {
         small_segments.push(segment);
     }
 
-    // This fills the former worst-case-derived bucket cap, but the actual
-    // retained-byte budget still has room for the larger mapping. The old
-    // count-only admission check rejected it, causing the realloc workload to
-    // scan undersized entries and miss cache.
+    // This saturates the lower-band byte budget, but the upper-band budget
+    // still admits the larger mapping. Partitioning the budget prevents a
+    // common smaller mapping class from starving a neighboring reuse class.
     let large_segment = boxed_huge_segment(0x100000, LARGE_BLOCK_SIZE);
     unsafe {
         assert!(
