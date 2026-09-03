@@ -272,6 +272,38 @@ impl<T: ScratchElement> AlignedVec<T> {
         }
     }
 
+    /// Sets every element in the current logical length to `value`.
+    ///
+    /// Does not grow the buffer; only the existing `len()` elements are
+    /// overwritten. Equivalent to `iter::repeat(value).take(len)` but uses a
+    /// single `ptr::write` loop without going through the slice iterator so it
+    /// stays zero-copy on `Copy` types.
+    #[inline]
+    pub fn fill(&mut self, value: T) {
+        // SAFETY: indices `0..self.len` are inside the allocation and already
+        // initialized; overwriting them with new `Copy` values is valid.
+        unsafe {
+            for i in 0..self.len {
+                core::ptr::write(self.ptr.add(i), value);
+            }
+        }
+    }
+
+    /// Ensures the buffer is at least `min_len` elements long and then sets
+    /// **every** element (the full `min_len` slice) to `value`.
+    ///
+    /// Equivalent to `ensure_len(min_len)` followed by `fill(value)` but
+    /// avoids a second pass through the already-zero prefix.
+    #[inline]
+    pub fn resize_fill(&mut self, min_len: usize, value: T) {
+        self.resize(min_len, value);
+        // resize may have grown and value-initialised only the tail; overwrite
+        // the prefix too so the full slice is `value`.
+        if min_len <= self.len {
+            self.fill(value);
+        }
+    }
+
     /// Sets the length to zero, retaining the underlying allocation for reuse.
     ///
     /// Elements are not zeroed; subsequent [`push`][Self::push] or
