@@ -4,6 +4,23 @@
 
 ### Added
 
+- `ScratchPool::with_scratch_bounded` and `ScratchBank::with_scratch_bounded`
+  record each depth's high-water request (the slot's *provision*), and
+  `ScratchPool::release` / `ScratchPool::reset` (plus `ScratchBank`
+  pass-throughs) reclaim what the working set no longer needs. The pool
+  previously had no shrink path at all: a slot grew to the largest transform
+  the thread had ever run and held it until thread exit — for executor
+  workers, the life of the process. The apollo retention probe measured ~7.2 MB
+  so retained across 24 workers (`ATLAS-APOLLO-WORKER-RETENTION`). `release`
+  is for quiescent points, not per-call: warm reuse stays zero-allocation,
+  which is the property the pool exists to produce and the acceptance oracle
+  for the retention item.
+
+- `AlignedVec::shrink_to` reallocates the buffer down and returns the surplus
+  to the allocator — the deallocation counterpart `grow_to` always lacked.
+  It never grows, clamps `len`, and reclaims the allocation entirely at
+  capacity zero.
+
 - `BackendMemoryStats::hugepage_hint_calls` counts the huge-page hints issued
   to the OS for freshly mapped regions. `hint_hugepage` discards `madvise`'s
   result by design, so the decision to advise previously had no observable at
@@ -18,6 +35,12 @@
   live Pages returns HTTP 200.
 
 ### Changed
+
+- **Scratch retention is bounded** (`ATLAS-APOLLO-WORKER-RETENTION`).
+  `AlignedVec` retains its existing doubling growth policy, preserving
+  amortized reallocation and copy traffic. The new quiescent `release` path
+  trims idle slots to their recorded provisions, returning high-water storage
+  without putting an allocation or shrink operation on the warm path.
 
 - **Small-class ceiling raised to 16 KiB** (`MAX_SMALL_ALLOC_SIZE`, MN-461).
   Requests of 8-16 KiB previously left the size-class path for the large/huge

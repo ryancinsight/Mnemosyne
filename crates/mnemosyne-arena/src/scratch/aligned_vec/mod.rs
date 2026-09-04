@@ -105,7 +105,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     fn reserve(&mut self, additional: usize) {
         let needed = self.len.saturating_add(additional);
         if needed > self.capacity {
-            self.grow_to(needed.max(self.capacity.saturating_mul(2)));
+            self.grow_geometric(needed);
         }
     }
 
@@ -168,6 +168,77 @@ impl<T: ScratchElement> AlignedVec<T> {
         }
         self.ptr = new_ptr;
         self.capacity = new_capacity;
+    }
+
+    /// Applies the shared geometric growth policy to a required capacity.
+    ///
+    /// A virgin allocation is exact because `capacity` is zero; an existing
+    /// allocation doubles unless the request is larger. The policy keeps
+    /// reallocation and copy traffic amortized, while [`shrink_to_capacity`]
+    /// and the scratch-pool release path bound idle retention separately.
+    #[cold]
+    #[inline(never)]
+    fn grow_geometric(&mut self, needed: usize) {
+        self.grow_to(needed.max(self.capacity.saturating_mul(2)));
+    }
+
+    /// Reallocates the buffer down to exactly `new_capacity` elements,
+    /// returning the surplus to the allocator.
+    ///
+    /// This is the counterpart of [`grow_to`](Self::grow_to) and the only
+    /// operation on this type that gives memory back. It never grows: when
+    /// `new_capacity >= self.capacity()` it is a no-op. `len` is clamped to
+    /// the new capacity, so the type's `len <= capacity` invariant survives;
+    /// the retained elements keep their values.
+    ///
+    /// Callers that need the released region to read as fresh later must
+    /// re-zero it themselves; shrinking only preserves the initialized prefix.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the allocator reports failure for the smaller layout.
+    fn shrink_to_capacity(&mut self, new_capacity: usize) {
+        if new_capacity >= self.capacity {
+            return;
+        }
+        if new_capacity == 0 {
+            if self.capacity > 0 {
+                // Let `Drop` return the old allocation, then install the
+                // dangling sentinel: `*self =` drops the old value first, so a
+                // manual `dealloc` here would free the same block twice.
+                *self = Self::dangling();
+            }
+            return;
+        }
+        let old_layout = Self::layout_for(self.capacity);
+        let new_layout = Self::layout_for(new_capacity);
+        // SAFETY: `self.ptr` was allocated by this same allocator with
+        // `old_layout` (`capacity != 0` is guaranteed by the early return
+        // above), and both layouts share the alignment of `T`.
+        // `new_layout.size()` is non-zero (`layout_for` clamps to >= 1), so
+        // this shrinks rather than frees; the result is null-checked before
+        // it replaces `self.ptr`.
+        let new_ptr =
+            unsafe { alloc::alloc::realloc(self.ptr as *mut u8, old_layout, new_layout.size()) }
+                as *mut T;
+        if new_ptr.is_null() {
+            alloc::alloc::handle_alloc_error(new_layout);
+        }
+        self.ptr = new_ptr;
+        self.capacity = new_capacity;
+        if self.len > self.capacity {
+            self.len = self.capacity;
+        }
+    }
+
+    /// Reallocates the buffer down to exactly `new_capacity` elements,
+    /// returning the surplus to the allocator.
+    ///
+    /// This is the public length-oriented entry point for the capacity
+    /// reduction operation.
+    #[inline]
+    pub fn shrink_to(&mut self, new_capacity: usize) {
+        self.shrink_to_capacity(new_capacity);
     }
 
     #[inline]
