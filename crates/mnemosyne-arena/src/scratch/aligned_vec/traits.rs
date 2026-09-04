@@ -312,3 +312,25 @@ impl<'a, T: ScratchElement> Extend<&'a T> for AlignedVec<T> {
         }
     }
 }
+
+// ── Box conversions ───────────────────────────────────────────────────────────
+
+impl<T: ScratchElement> From<AlignedVec<T>> for alloc::boxed::Box<[T]> {
+    /// Converts an `AlignedVec<T>` into a boxed slice.
+    ///
+    /// Copies the initialized elements into a heap allocation managed by the
+    /// global allocator. This is a data copy because `AlignedVec` and `Box<[T]>`
+    /// use different allocators (and possibly different alignments).
+    #[inline]
+    fn from(v: AlignedVec<T>) -> alloc::boxed::Box<[T]> {
+        v.into_vec().into_boxed_slice()
+    }
+}
+
+impl<T: ScratchElement> From<alloc::boxed::Box<[T]>> for AlignedVec<T> {
+    /// Converts a boxed slice into an `AlignedVec<T>` by copying.
+    #[inline]
+    fn from(b: alloc::boxed::Box<[T]>) -> Self {
+        Self::from_slice(&b)
+    }
+}

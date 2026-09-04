@@ -255,6 +255,16 @@ impl<P: AllocPolicy> PolicyMarker<P> {
     pub const fn name() -> &'static str {
         P::POLICY_NAME
     }
+    /// Returns the compile-time policy fingerprint.
+    #[inline]
+    pub const fn fingerprint() -> u64 {
+        P::POLICY_FINGERPRINT
+    }
+    /// Returns the compile-time mitigation flags bitmask.
+    #[inline]
+    pub const fn mitigation_flags() -> u32 {
+        P::MITIGATION_FLAGS
+    }
 }
 
 impl<P: AllocPolicy> Default for PolicyMarker<P> {
