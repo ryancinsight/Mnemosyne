@@ -9,8 +9,8 @@ parametric API that lets callers trade safety for throughput at compile time.
 
 - **Per-thread, low-contention** — small allocations are served from a
   thread-local cache; the global segment pool is touched only on cache miss.
-- **Size-class bucketing** — requests are rounded up to the next power-of-two
-  or sub-power boundary, reducing fragmentation and enabling in-place realloc.
+- **Size-class bucketing** — requests are rounded up to the next supported
+  class in a fixed table, reducing fragmentation and enabling in-place realloc.
 - **Policy parametric** — `StandardPolicy` is the fast path; `HardenedPolicy`
   adds use-after-free detection; `SecurePolicy` zeroes on both allocate and
   free for sensitive buffers.  The policy is a ZST compile-time parameter —
@@ -22,7 +22,8 @@ parametric API that lets callers trade safety for throughput at compile time.
 
 ## What this book covers
 
-1. The size-class table and why it matters for fragmentation.
+1. The size-class table, its rounding bound, and why it matters for
+   fragmentation and page density.
 2. Allocation policies as compile-time ZST parameters.
 3. The global allocator: `#[global_allocator] static A: Mnemosyne = Mnemosyne`.
 4. Scratch pools: zero-allocation temporary buffers with nested borrow support.
