@@ -1,7 +1,7 @@
 //! Scratch bank implementation for keeping multiple related pools together.
 
 use super::element::ScratchElement;
-use super::pool::ScratchPool;
+use super::pool::{MAX_POOL_SLOTS, ScratchPool};
 
 /// A fixed set of same-typed scratch pools for domain-specific temporary roles.
 ///
@@ -55,6 +55,45 @@ impl<T: ScratchElement, const N: usize> ScratchBank<T, N> {
         self.pools[INDEX].with_scratch(n, f)
     }
 
+    /// Like [`with_scratch`](Self::with_scratch), but records the request so a
+    /// later [`release`](Self::release) can reclaim above the working set.
+    /// See [`ScratchPool::with_scratch_bounded`] for the full contract.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `INDEX >= N`.
+    #[inline]
+    pub fn with_scratch_bounded<const INDEX: usize, R>(
+        &self,
+        n: usize,
+        f: impl FnOnce(&mut [T]) -> R,
+    ) -> R {
+        assert!(INDEX < N, "ScratchBank slot index out of range");
+        self.pools[INDEX].with_scratch_bounded(n, f)
+    }
+
+    /// Reclaims every pool's storage above its recorded provision.
+    /// See [`ScratchPool::release`] for the contract and the quiescent-calling
+    /// rhythm this is designed for.
+    ///
+    /// Returns the per-pool, per-slot capacities after reclamation.
+    pub fn release(&self) -> [[usize; MAX_POOL_SLOTS]; N] {
+        let mut capacities = [[0usize; MAX_POOL_SLOTS]; N];
+        for (pool, out) in self.pools.iter().zip(capacities.iter_mut()) {
+            *out = pool.release();
+        }
+        capacities
+    }
+
+    /// Clears every pool's recorded provisions so a later
+    /// [`release`](Self::release) reclaims every slot entirely.
+    /// See [`ScratchPool::reset`].
+    pub fn reset(&self) {
+        for pool in &self.pools {
+            pool.reset();
+        }
+    }
+
     /// Returns the primary capacity for slot `INDEX`.
     ///
     /// Forwards to [`ScratchPool::capacity`] and inherits its contract: the
@@ -62,49 +101,6 @@ impl<T: ScratchElement, const N: usize> ScratchBank<T, N> {
     /// [`Self::with_scratch`] borrow of the same slot.
     ///
     /// # Panics
-    /// Frees every pool's slot allocations and reports the total bytes
-    /// released, or [`None`] if any pool has a live borrow.
-    ///
-    /// The bank-wide counterpart to [`ScratchPool::release`]. A consumer that
-    /// holds one bank per worker thread — several roles, each grown to its own
-    /// high-water mark — retains the sum of those marks for the life of the
-    /// thread. This releases all of them at a quiescent point of the caller's
-    /// choosing.
-    ///
-    /// All-or-nothing: if any pool is mid-borrow, nothing is freed, so a caller
-    /// that reaches this from inside a `with_scratch` closure cannot
-    /// half-release the bank underneath itself.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use mnemosyne_arena::scratch::ScratchBank;
-    ///
-    /// let bank: ScratchBank<f64, 2> = ScratchBank::new();
-    /// bank.with_scratch::<0, _>(512, |s| s[0] = 1.0);
-    /// bank.with_scratch::<1, _>(256, |s| s[0] = 2.0);
-    ///
-    /// let freed = bank.release().expect("no borrow is live here");
-    /// assert!(freed >= (512 + 256) * size_of::<f64>());
-    /// assert_eq!(bank.capacity::<0>(), 0);
-    /// ```
-    #[must_use]
-    pub fn release(&self) -> Option<usize> {
-        if self.pools.iter().any(|pool| pool.borrow_depth() != 0) {
-            return None;
-        }
-        let mut freed = 0_usize;
-        for pool in &self.pools {
-            // The depth check above already established that every pool is
-            // quiescent, so no pool can refuse here.
-            let released = pool
-                .release()
-                .expect("invariant: every pool was checked quiescent above");
-            freed = freed.saturating_add(released);
-        }
-        Some(freed)
-    }
-
     ///
     /// Panics when `INDEX >= N`.
     #[inline]

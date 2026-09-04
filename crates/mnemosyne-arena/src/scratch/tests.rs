@@ -396,78 +396,6 @@ fn aligned_vec_is_send_and_sync() {
     assert_send_sync::<AlignedVec<f64>>();
 }
 
-#[test]
-fn release_frees_every_slot_and_reports_the_bytes() {
-    let pool: ScratchPool<f64> = ScratchPool::new();
-    pool.with_scratch(1024, |scratch| scratch[0] = 1.0);
-    let grown = pool.capacity();
-    assert!(
-        grown >= 1024,
-        "the slot must have grown to serve the request"
-    );
-
-    let freed = pool.release().expect("no borrow is live");
-    assert!(
-        freed >= grown * size_of::<f64>(),
-        "released {freed} bytes against a slot of {grown} f64 elements"
-    );
-    assert_eq!(pool.capacity(), 0, "the slot allocation is gone");
-
-    // Still usable: the slot re-grows on demand.
-    pool.with_scratch(16, |scratch| assert_eq!(scratch.len(), 16));
-    assert!(pool.capacity() >= 16);
-}
-
-#[test]
-fn release_refuses_while_a_borrow_is_live_and_frees_nothing() {
-    let pool: ScratchPool<f64> = ScratchPool::new();
-    pool.with_scratch(512, |scratch| scratch[0] = 1.0);
-    let before = pool.capacity();
-    assert!(before >= 512);
-
-    pool.with_scratch(512, |scratch| {
-        scratch[0] = 2.0;
-        // Freeing here would invalidate `scratch`, which is still held.
-        assert!(
-            pool.release().is_none(),
-            "release must refuse while its own slot is borrowed"
-        );
-        // The guard has to be load-bearing, not decorative: the slice must
-        // still be usable after the refused call.
-        assert_eq!(scratch[0], 2.0);
-    });
-
-    assert_eq!(
-        pool.capacity(),
-        before,
-        "a refused release must free nothing"
-    );
-    assert!(pool.release().is_some(), "and succeed once the borrow ends");
-}
-
-#[test]
-fn bank_release_is_all_or_nothing_across_pools() {
-    let bank: ScratchBank<f64, 2> = ScratchBank::new();
-    bank.with_scratch::<0, _>(512, |scratch| scratch[0] = 1.0);
-    bank.with_scratch::<1, _>(256, |scratch| scratch[0] = 2.0);
-    assert!(bank.capacity::<0>() >= 512 && bank.capacity::<1>() >= 256);
-
-    bank.with_scratch::<0, _>(512, |_| {
-        assert!(
-            bank.release().is_none(),
-            "one live borrow must block the whole bank"
-        );
-    });
-    assert!(
-        bank.capacity::<1>() >= 256,
-        "the untouched pool keeps its buffer when the bank refuses"
-    );
-
-    let freed = bank.release().expect("quiescent");
-    assert!(freed >= (512 + 256) * size_of::<f64>());
-    assert_eq!(bank.capacity::<0>(), 0);
-    assert_eq!(bank.capacity::<1>(), 0);
-}
 // -- Phase 16: New collection ops ---------------------------------------------
 
 #[test]
@@ -641,4 +569,150 @@ fn scratch_pool_with_scratch_uninit_initialises_before_read() {
         })
     };
     assert_eq!(result, 30);
+}
+
+#[test]
+fn aligned_vec_shrink_reduces_capacity_and_clamps_len() {
+    let mut v = AlignedVec::<f64>::with_capacity(256);
+    v.ensure_len(256);
+    v.truncate(16);
+    v.shrink_to(32);
+    assert_eq!(v.capacity(), 32);
+    assert_eq!(v.len(), 16, "initialized prefix survives a shrink");
+    // Growth past the shrunk capacity works and re-zeros the new range.
+    v.ensure_len(64);
+    assert_eq!(v.len(), 64);
+    assert!(
+        v.as_slice()[16..].iter().all(|&x| x == 0.0),
+        "newly grown range is zeroed"
+    );
+}
+
+#[test]
+fn aligned_vec_shrink_to_zero_frees_and_never_over_shrinks() {
+    let mut v = AlignedVec::<f64>::zeroed(128);
+    v.shrink_to(0);
+    assert_eq!((v.capacity(), v.len()), (0, 0));
+    v.shrink_to(0);
+    assert_eq!(v.capacity(), 0, "shrinking an empty buffer is a no-op");
+    let mut grown = AlignedVec::<u8>::zeroed(64);
+    grown.shrink_to(128);
+    assert_eq!(
+        grown.capacity(),
+        64,
+        "shrinking to a larger size is a no-op"
+    );
+}
+
+/// The retention fix must not trade memory savings for excessive reallocation
+/// and copy traffic on the warm-up path.
+#[test]
+fn aligned_vec_growth_stays_geometric() {
+    const TARGET_LEN: usize = 1 << 16;
+    let mut v = AlignedVec::<f64>::dangling();
+    let mut previous_capacity = 0;
+    let mut growth_events = 0;
+    for len in 1..=TARGET_LEN {
+        v.ensure_len(len);
+        let capacity = v.capacity();
+        if capacity != previous_capacity {
+            if previous_capacity != 0 {
+                assert!(
+                    capacity >= previous_capacity * 2,
+                    "growth must at least double capacity: {previous_capacity} -> {capacity}"
+                );
+            }
+            growth_events += 1;
+            previous_capacity = capacity;
+        }
+    }
+    assert!(
+        growth_events <= 17,
+        "2^16 extensions should need at most 17 geometric allocations, got {growth_events}"
+    );
+}
+
+#[test]
+fn pool_release_reclaims_above_provision() {
+    let pool = ScratchPool::<f64>::new();
+    let mut max_seen = 0usize;
+    for n in [128usize, 16_384, 512] {
+        pool.with_scratch_bounded(n, |s| {
+            assert_eq!(s.len(), n);
+            s[0] = 1.0;
+            max_seen = max_seen.max(n);
+        });
+    }
+    let caps = pool.release();
+    assert_eq!(caps[0], 16_384, "kept exactly the working set");
+    // The capacity mirror (the reentrant accessor) is unchanged by a warm pass:
+    // growth would update it, so equality here is the no-new-allocation proof.
+    let before = pool.capacity();
+    pool.with_scratch_bounded(16_384, |s| {
+        s[0] += 1.0;
+    });
+    assert_eq!(
+        pool.capacity(),
+        before,
+        "post-release warm pass must not grow (allocate)"
+    );
+}
+
+#[test]
+fn pool_release_without_provision_frees_everything() {
+    let pool = ScratchPool::<f64>::new();
+    pool.with_scratch(1_024, |s| {
+        s[0] = 1.0;
+    });
+    let caps = pool.release();
+    assert_eq!(caps[0], 0, "unprovisioned slot reclaims entirely");
+    assert_eq!(pool.capacity(), 0, "capacity mirror follows the reclaim");
+}
+
+#[test]
+fn pool_release_skips_busy_slots_and_reset_re_enables() {
+    let pool = ScratchPool::<f64>::new();
+    pool.with_scratch_bounded(4_096, |_| {
+        pool.with_scratch_bounded(2_048, |_| {
+            // Depths 0 and 1 are busy; only 2.. are idle (and unprovisioned).
+            let caps = pool.release();
+            assert_eq!(caps[0], 4_096, "busy slot reports its provision");
+            assert_eq!(caps[1], 2_048);
+            assert_eq!(caps[2], 0);
+        });
+    });
+    let caps = pool.release();
+    assert_eq!(caps[0], 4_096);
+    // Depth 1 holds 2_048 exactly (its provision), so nothing is reclaimed and
+    // the reported capacity is the held one.
+    assert_eq!(caps[1], 2_048);
+    pool.reset();
+    let caps = pool.release();
+    assert_eq!(caps[0], 0, "reset makes release reclaim everything");
+    assert_eq!(caps[1], 0);
+}
+
+#[test]
+fn pool_release_converges_across_growth_cycles() {
+    // Three grow/shrink cycles; the pool must end at the high-water working
+    // set and stay allocation-free on the warm path throughout.
+    let pool = ScratchPool::<f64>::new();
+    for &n in &[512usize, 65_536, 8_192] {
+        pool.with_scratch_bounded(n, |_| {});
+        pool.release();
+    }
+    // Provisions are high-water marks: the retained slot covers the largest
+    // request of the whole cycle, not the latest one.
+    assert_eq!(pool.release()[0], 65_536);
+    // A working-set changeover (reset, run the new set, release) reclaims the
+    // rest — the steady state tracks the current workload, not the historical
+    // peak, once the consumer signals the changeover.
+    pool.reset();
+    pool.with_scratch_bounded(512, |_| {});
+    assert_eq!(pool.release()[0], 512);
+    let before = pool.capacity();
+    pool.with_scratch_bounded(512, |s| {
+        s[511] = 1.0;
+    });
+    assert_eq!(pool.capacity(), before, "warm pass stays allocation-free");
 }

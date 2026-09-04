@@ -148,12 +148,11 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
                     .next_free_segment
                     .load(core::sync::atomic::Ordering::Relaxed)
             };
-            match {
-                // SAFETY: `segment` was exclusively acquired from `take_all`
-                // and has not yet been pushed back; it is a valid, initialized
-                // `Segment` whose allocation matches backend `B`.
-                unsafe { release_segment_mapping::<B>(segment) }
-            } {
+            // SAFETY: `segment` was exclusively acquired from `take_all`
+            // and has not yet been pushed back; it is a valid, initialized
+            // `Segment` whose allocation matches backend `B`.
+            let release = unsafe { release_segment_mapping::<B>(segment) };
+            match release {
                 SegmentRelease::Released => purged += 1,
                 SegmentRelease::RetainedAfterFailure => {
                     // The backend declined to release `segment`; re-cache it and

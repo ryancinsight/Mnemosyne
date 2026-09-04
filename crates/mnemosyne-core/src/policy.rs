@@ -29,9 +29,13 @@ pub mod mitigations {
     /// Validate caller's size/align against stored block_size on sized free.
     pub const SIZED_FREE_VALIDATION: u32 = 1 << 6;
     /// All mitigations active.
-    pub const ALL: u32 =
-        POISONING | ZERO_INIT | FREE_LIST_ENCRYPTION | RANDOMIZE_ALLOCATION
-        | DELAY_PAGE_WAKE | FREE_CANARY | SIZED_FREE_VALIDATION;
+    pub const ALL: u32 = POISONING
+        | ZERO_INIT
+        | FREE_LIST_ENCRYPTION
+        | RANDOMIZE_ALLOCATION
+        | DELAY_PAGE_WAKE
+        | FREE_CANARY
+        | SIZED_FREE_VALIDATION;
     /// No mitigations.
     pub const NONE: u32 = 0;
 }
@@ -207,11 +211,15 @@ impl<P: AllocPolicy> PolicyMarker<P> {
 
 impl<P: AllocPolicy> Default for PolicyMarker<P> {
     #[inline]
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 impl<P: AllocPolicy> Clone for PolicyMarker<P> {
     #[inline]
-    fn clone(&self) -> Self { Self::new() }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 impl<P: AllocPolicy> Copy for PolicyMarker<P> {}
 impl<P: AllocPolicy> core::fmt::Debug for PolicyMarker<P> {
@@ -220,7 +228,9 @@ impl<P: AllocPolicy> core::fmt::Debug for PolicyMarker<P> {
     }
 }
 impl<P: AllocPolicy> PartialEq for PolicyMarker<P> {
-    fn eq(&self, _: &Self) -> bool { true }
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
 }
 impl<P: AllocPolicy> Eq for PolicyMarker<P> {}
 

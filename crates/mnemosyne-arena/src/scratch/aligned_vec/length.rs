@@ -1,8 +1,7 @@
 //! Operations that change an [`AlignedVec`]'s length.
 //!
-//! Every one of these goes through the storage module's `reserve`, so the
-//! growth policy — double the capacity — lives in one place and these are
-//! the callers of it.
+//! Length-changing operations use the storage module's doubling growth policy,
+//! so scratch reuse remains amortized while quiescent release handles retention.
 
 use super::AlignedVec;
 use super::ScratchElement;
@@ -28,8 +27,7 @@ impl<T: ScratchElement> AlignedVec<T> {
             return;
         }
         if min_len > self.capacity {
-            let new_cap = min_len.max(self.capacity.saturating_mul(2));
-            self.grow_to(new_cap);
+            self.grow_geometric(min_len);
         }
         // Zero only the newly added range.
         // SAFETY: capacity was grown to `>= min_len` above, so the range
@@ -65,8 +63,8 @@ impl<T: ScratchElement> AlignedVec<T> {
 
     /// Appends one element, growing the allocation if it is full.
     ///
-    /// Amortized O(1): a growth doubles the capacity, so `n` pushes onto an
-    /// empty buffer perform O(log n) reallocations and O(n) element writes.
+    /// Amortized O(1): a growth doubles capacity, so `n` pushes onto an empty
+    /// buffer perform O(log n) reallocations and O(n) element writes.
     #[inline]
     pub fn push(&mut self, value: T) {
         self.reserve(1);
@@ -349,40 +347,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// Best-effort: on allocator refusal the buffer remains valid unchanged.
     #[inline]
     pub fn shrink_to_fit(&mut self) {
-        self.shrink_to(0);
-    }
-
-    /// Shrinks the capacity to `max(len(), min_capacity)` if possible.
-    #[inline]
-    pub fn shrink_to(&mut self, min_capacity: usize) {
-        let target = self.len.max(min_capacity);
-        if self.capacity <= target {
-            return;
-        }
-        if target == 0 {
-            if self.capacity > 0 {
-                let layout = Self::layout_for(self.capacity);
-                // SAFETY: `capacity > 0` so `self.ptr` is a live allocation
-                // matching `layout`. After dealloc both len and capacity are 0.
-                unsafe { ::alloc::alloc::dealloc(self.ptr as *mut u8, layout) };
-                self.ptr = core::ptr::NonNull::dangling().as_ptr();
-                self.capacity = 0;
-            }
-            return;
-        }
-        let old_layout = Self::layout_for(self.capacity);
-        let new_layout = Self::layout_for(target);
-        // SAFETY: `self.ptr` was allocated with `old_layout`; the alignment is
-        // identical (layout_for uses the same expression). `new_layout.size()`
-        // is non-zero (layout_for clamps to >= 1). Null result means the
-        // allocator declined; we leave `self` unchanged.
-        let new_ptr = unsafe {
-            ::alloc::alloc::realloc(self.ptr as *mut u8, old_layout, new_layout.size()) as *mut T
-        };
-        if !new_ptr.is_null() {
-            self.ptr = new_ptr;
-            self.capacity = target;
-        }
+        self.shrink_to(self.len);
     }
 
     // ── Uninitialised access ─────────────────────────────────────────────────
