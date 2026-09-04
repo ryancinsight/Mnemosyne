@@ -4,11 +4,11 @@
 **Source**: `crates/mnemosyne/examples/book_scratch_pool.rs`
 
 `ScratchPool<T>` is a reusable, aligned buffer pool for temporary computation.
-Construction is zero-allocation; the backing buffer is mapped only on the
-first `with_scratch` call and reused on subsequent calls.  Up to
-`MAX_POOL_SLOTS` (4) nested borrows are supported, covering recursive FFT
-twiddle computation, nested solver residuals, and similar patterns. The
-example also demonstrates bounded provisioning and explicit idle reclamation.
+Construction is zero-allocation; the first request grows a pooled slot, and
+later requests reuse it while they fit the provisioned capacity. A larger
+request grows the slot, and nesting beyond `MAX_POOL_SLOTS` (4) uses a
+temporary owned buffer. The example also demonstrates bounded provisioning
+and explicit idle reclamation.
 
 ## Source
 
@@ -29,9 +29,10 @@ all scratch-pool assertions passed
 
 ## What to notice
 
-- `ScratchPool::new()` is `const fn` and allocates nothing.  The backing
-  `AlignedVec` is lazily mapped on the first `with_scratch` call, then
-  reused on every subsequent call within the same pool instance.
+- `ScratchPool::new()` is `const fn` and allocates nothing. The first
+  `with_scratch` call grows its selected `AlignedVec`; subsequent requests
+  that fit the slot reuse its storage. A request larger than the current
+  capacity is a real growth allocation.
 
 - Nested borrows work because `ScratchPool` maintains a `borrow_depth: Cell<u8>`
   counter.  Each `with_scratch` increments the depth and picks a fresh slot;

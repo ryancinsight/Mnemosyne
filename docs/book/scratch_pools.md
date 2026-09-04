@@ -1,8 +1,9 @@
 # Scratch Pools
 
-`ScratchPool<T>` provides reusable, aligned temporary buffers without heap
-allocation after warm-up. It is designed for `thread_local!` use and is
-`Send` but intentionally not `Sync`.
+`ScratchPool<T>` provides reusable, aligned temporary buffers. A pool can
+reuse storage without allocation after it has been warmed for a stable
+workload. It is designed for `thread_local!` use and is `Send` but
+intentionally not `Sync`.
 
 ## Construction
 
@@ -49,9 +50,10 @@ the recorded provisions; the following release reclaims every idle slot.
 
 ## Design
 
-- **No allocation after warm-up**: pooled slots reuse their `AlignedVec`
-  storage across invocations; `prewarm` moves the first growth outside a
-  measurement window.
+- **Warm reuse**: pooled slots reuse their `AlignedVec` storage across
+  invocations after the largest workload has been provisioned; a larger
+  request grows its slot, and nesting beyond four slots uses a temporary
+  allocation. `prewarm` moves known growth outside a measurement window.
 - **Explicit alignment**: each buffer starts at the crate's 64-byte alignment,
   satisfying the scratch element's SIMD contract. The pool is thread-local, so
   this alignment is not presented as inter-thread false-sharing protection.
