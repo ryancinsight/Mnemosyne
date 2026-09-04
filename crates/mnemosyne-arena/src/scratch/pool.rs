@@ -405,10 +405,18 @@ impl<T: ScratchElement> ScratchPool<T> {
                 vec.ensure_len(n);
                 self.slot_capacities[depth as usize].set(vec.capacity());
             }
-            // SAFETY: caller must initialize [0, n) before safe reads.
-            unsafe { vec.set_len_unchecked(n) };
             let raw = core::ptr::slice_from_raw_parts_mut(vec.as_mut_ptr(), n);
-            f(raw)
+            // The length is published only after `f` returns normally. When the
+            // slot already has spare capacity no `ensure_len` runs, so
+            // `[len, n)` is uninitialized while `f` executes; publishing `n`
+            // first would leave that length behind on an unwind, and the next
+            // safe `with_scratch(n, ..)` — seeing `n <= len` — would skip
+            // `ensure_len` and hand out a slice over uninitialized elements.
+            let result = f(raw);
+            // SAFETY: `f` returned normally, discharging the caller's contract
+            // to initialize `[0, n)`; capacity >= n was established above.
+            unsafe { vec.set_len_unchecked(n) };
+            result
         } else {
             let mut owned = AlignedVec::with_capacity(n);
             // SAFETY: caller initializes before safe reads.

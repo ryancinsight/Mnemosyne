@@ -749,3 +749,33 @@ fn total_capacity_counts_slots_grown_by_nested_borrows() {
     assert_eq!(freed, 0, "release leaves every slot at zero capacity");
     assert_eq!(pool.total_capacity_bytes(), 0);
 }
+
+#[test]
+fn uninit_callback_panic_leaves_no_uninitialized_length_behind() {
+    // Spare capacity with a shorter initialized length is the case that makes
+    // this reachable: `with_scratch_uninit` skips `ensure_len`, so `[len, n)`
+    // stays uninitialized while the callback runs.
+    let pool: ScratchPool<u64> = ScratchPool::with_slot_capacity(1024);
+    assert!(pool.capacity() >= 1024);
+
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: the callback is required to initialize the range, and it
+        // deliberately does not — it unwinds first, which is the case under
+        // test. Nothing reads the buffer through this call.
+        unsafe {
+            pool.with_scratch_uninit(512, |_raw| {
+                panic!("callback unwinds before initializing anything");
+            })
+        }
+    }));
+    assert!(panicked.is_err(), "the callback must have unwound");
+
+    // The safe path must not inherit a length covering memory the unwound
+    // callback never wrote. Under Miri this read is the assertion: an
+    // uninitialized element here is undefined behaviour, not a wrong value.
+    pool.with_scratch(512, |scratch| {
+        assert_eq!(scratch.len(), 512);
+        let observed = scratch.iter().fold(0u64, |acc, value| acc ^ *value);
+        assert_eq!(observed, 0, "reused scratch must be zeroed, not stale");
+    });
+}
