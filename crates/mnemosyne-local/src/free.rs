@@ -288,7 +288,9 @@ unsafe fn thread_free_classified<
                 // free-path inputs (guards above) with `alloc` the owning
                 // allocator — exactly `do_local_free_internal`'s contract.
                 let _became_empty = unsafe {
-                    do_local_free_internal::<B>(alloc, block, page_ptr, segment, page_index)
+                    do_local_free_internal_policy::<P, B>(
+                        alloc, block, page_ptr, segment, page_index,
+                    )
                 };
                 // SAFETY: `alloc` is the exclusively-borrowed owning allocator
                 // with `is_allocating` raised, the precondition of the cold sweep.
@@ -312,8 +314,9 @@ unsafe fn thread_free_classified<
                 unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::allocator_mut(owner_allocator) };
             // SAFETY: as above — validated free-path inputs and the owning
             // `alloc`, satisfying `do_local_free_internal`'s contract.
-            let _became_empty =
-                unsafe { do_local_free_internal::<B>(alloc, block, page_ptr, segment, page_index) };
+            let _became_empty = unsafe {
+                do_local_free_internal_policy::<P, B>(alloc, block, page_ptr, segment, page_index)
+            };
             #[cfg(feature = "dealloc-probe")]
             crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::FullToActive);
             return;
@@ -388,6 +391,33 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
     segment: *mut Segment,
     page_index: usize,
 ) -> bool {
+    // SAFETY: forwards this function's own contract unchanged — the caller has
+    // established that `block` is a valid block allocated in `page` within
+    // `segment`, which is exactly what the policy-aware inner call requires.
+    unsafe {
+        do_local_free_internal_policy::<mnemosyne_core::policy::StandardPolicy, B>(
+            alloc, block, page, segment, page_index,
+        )
+    }
+}
+
+/// Policy-aware inner free — generic over `P` so `DELAY_PAGE_WAKE` and other
+/// compile-time flags can be propagated without runtime overhead.
+///
+/// # Safety
+///
+/// Same contract as `do_local_free_internal`.
+#[inline(always)]
+pub unsafe fn do_local_free_internal_policy<
+    P: mnemosyne_core::policy::AllocPolicy,
+    B: HasSegmentPool,
+>(
+    alloc: &mut ThreadAllocator<B>,
+    block: *mut Block,
+    page: *mut Page,
+    segment: *mut Segment,
+    page_index: usize,
+) -> bool {
     // SAFETY: `page` is valid per this function's contract, and the caller holds
     // the owner's exclusive page-list access, so `alloc_count` has no concurrent
     // writer.
@@ -407,6 +437,21 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
     // `cookie_for`'s contract.
     let encrypted = unsafe { Segment::free_list_encrypted(segment) };
     let cookie = unsafe { Segment::cookie_for_dynamic(segment, encrypted, page_index) };
+
+    // Backward-edge canary check (HardenedPolicy with ENABLE_FREE_LIST_ENCRYPTION).
+    // Under StandardPolicy this is dead code (ENABLE_FREE_LIST_ENCRYPTION = false).
+    if P::ENABLE_FREE_LIST_ENCRYPTION {
+        // SAFETY: `block` is a live, MIN_BLOCK_SIZE-aligned block per the
+        // caller's contract; the canary slot lies at block+size_of::<Block>()
+        // which is within the allocation by the MIN_BLOCK_SIZE constraint.
+        if unsafe { mnemosyne_core::types::Block::check_double_free(block, cookie) } {
+            std::process::abort();
+        }
+        // Write the canary so the next free of this block is detectable.
+        // SAFETY: same slot bounds as the read above.
+        unsafe { mnemosyne_core::types::Block::write_free_canary(block, cookie) };
+    }
+
     // SAFETY: `block` points to a valid block in `page` per the `# Safety`
     // contract; writing its embedded next pointer reinitializes the free-list
     // link and stays inside the block this caller now owns.
@@ -451,16 +496,38 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
                     push_page_front(&mut token, &mut alloc.empty_pages, branded_page, 3);
                 }
             } else {
-                // Case 2: Went from full to active
-                unsafe {
-                    move_page_between_lists_branded(
-                        &mut token,
-                        alloc.full_pages.get_unchecked_mut(class),
-                        alloc.active_pages.get_unchecked_mut(class),
-                        branded_page,
-                        1,
-                    );
+                // Case 2: Went from full to active.
+                //
+                // DELAY_PAGE_WAKE hysteresis (snmalloc 0.7.x `random_larger_thresholds`
+                // / `waking` field): when the policy requests it, keep the page in the
+                // full list until at least `capacity / WAKE_DENOMINATOR` blocks have
+                // been freed. This prevents rapid LIFO address reuse and makes
+                // use-after-free and heap-spray exploits harder to land by widening
+                // the temporal window between free and realloc.
+                //
+                // Under `StandardPolicy`, `DELAY_PAGE_WAKE = false` and the compiler
+                // eliminates the entire guard as dead code (zero-cost monomorphization).
+                let max_blocks = mnemosyne_core::size_class::class_to_max_blocks(class);
+                // SAFETY: `page` is exclusively owned per this function's contract;
+                // `alloc_count` is a valid initialized field.
+                let freed_so_far = max_blocks.saturating_sub(unsafe { (*page).alloc_count });
+                let wake_threshold = max_blocks / (P::WAKE_DENOMINATOR as usize).max(1);
+                if !P::DELAY_PAGE_WAKE || freed_so_far >= wake_threshold {
+                    // SAFETY: `class < NUM_SIZE_CLASSES` — validated upstream;
+                    // `branded_page` is exclusively owned by this thread and the
+                    // page list operations preserve ownership invariants.
+                    unsafe {
+                        move_page_between_lists_branded(
+                            &mut token,
+                            alloc.full_pages.get_unchecked_mut(class),
+                            alloc.active_pages.get_unchecked_mut(class),
+                            branded_page,
+                            1,
+                        );
+                    }
                 }
+                // When DELAY_PAGE_WAKE and threshold not yet reached, the page
+                // stays in the full list; future frees will re-evaluate.
             }
         } else if becomes_empty && !alloc.is_current_segment(segment) {
             // Case 3: Went from active to empty (only if not the only active page)

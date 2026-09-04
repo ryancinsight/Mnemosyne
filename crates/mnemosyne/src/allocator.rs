@@ -71,6 +71,9 @@ unsafe impl GlobalAlloc for Mnemosyne {
     /// `GlobalAlloc::realloc`.
     #[inline(always)]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        // SAFETY: `ptr` and `layout` satisfy the `GlobalAlloc::realloc`
+        // contract as documented in this function's `# Safety` rustdoc, which
+        // is the identical contract `thread_realloc` expects.
         unsafe {
             thread_realloc::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
                 ptr, layout, new_size,
@@ -140,6 +143,9 @@ unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorS
     /// Same contract as `Mnemosyne::realloc`.
     #[inline(always)]
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        // SAFETY: `ptr` and `layout` satisfy the `GlobalAlloc::realloc`
+        // contract stated in `Mnemosyne::realloc`, which is identical to
+        // `thread_realloc`'s contract.
         unsafe { thread_realloc::<P, B>(ptr, layout, new_size) }
     }
 }

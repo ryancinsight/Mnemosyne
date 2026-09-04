@@ -5,6 +5,7 @@
 # Part I — Allocation Architecture
 
 - [1. Size Classes](size_classes.md)
+  - [Example: Size Classes](examples/size_classes.md)
 - [2. Allocation Policies](alloc_policies.md)
   - [Example: Allocator Statistics](examples/alloc_policies.md)
 - [3. The Global Allocator](global_allocator.md)

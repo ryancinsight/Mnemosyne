@@ -18,7 +18,10 @@ pub unsafe fn miri_cleanup_pools<B: mnemosyne_arena::HasSegmentPool>() {
     }
 
     for segment in orphaned {
+        // SAFETY: `segment` was just popped from the orphan pool, giving
+        // exclusive ownership; the header fields are valid and initialized.
         let mut occupied = unsafe { (*segment).page_occupied_mask };
+        // SAFETY: same ownership argument as above.
         let encrypted = unsafe { (*segment).free_list_encrypted };
         while occupied != 0 {
             let page_index = occupied.trailing_zeros() as usize;
@@ -93,7 +96,11 @@ mod validation;
 mod tests;
 
 pub use alloc::{thread_alloc, thread_alloc_layout};
-pub use bin_stats::{BinSnapshot, all_bin_snapshots, bin_snapshot};
+pub use bin_stats::{
+    BinSnapshot, all_bin_snapshots, alloc_distribution, bin_snapshot, flush_tls_stats,
+    hottest_class, reset_bin_stats, summary_line, total_alloc_count, total_internal_fragmentation,
+    total_live_bytes, total_requested_bytes,
+};
 pub use fast_path_cache::{
     FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics, SizeClassCache,
 };
@@ -107,7 +114,7 @@ pub use usable_size::{thread_allocator_stats, usable_size};
 
 // Re-export internal details used by the macros/internal paths
 #[doc(hidden)]
-pub use free::do_local_free_internal;
+pub use free::{do_local_free_internal, do_local_free_internal_policy};
 #[doc(hidden)]
 pub use realloc::small_realloc_fits_existing_class;
 #[doc(hidden)]
@@ -123,8 +130,8 @@ pub mod internal {
     // the crate root lists what a consumer actually calls.
     pub use crate::options::{mark_options_initialized, reset_options_for_testing};
     pub use crate::{
-        do_local_free_internal, initialize_allocated_bytes, poison_freed_bytes,
-        small_realloc_fits_existing_class, thread_free_layout,
+        do_local_free_internal, do_local_free_internal_policy, initialize_allocated_bytes,
+        poison_freed_bytes, small_realloc_fits_existing_class, thread_free_layout,
     };
     pub use core::alloc::Layout;
     pub use core::ptr::NonNull;

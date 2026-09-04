@@ -149,6 +149,8 @@ const fn size_to_class_nonzero_arithmetic(size: usize) -> Option<usize> {
 }
 
 /// Returns the rounded size-class block size for a given allocation size.
+///
+/// Equivalent to `size_to_class(size).map(class_to_size)`.
 #[inline(always)]
 pub const fn round_up_size(size: usize) -> Option<usize> {
     if size == 0 {
@@ -161,6 +163,45 @@ pub const fn round_up_size(size: usize) -> Option<usize> {
         Some(class) => Some(class_to_size(class)),
         None => None,
     }
+}
+
+/// Returns the class stride for the given request, saturating to the largest
+/// class when `size > MAX_SMALL_ALLOC_SIZE`.
+///
+/// This is the `round_up_size` variant that never returns `None`:
+/// - `size == 0` → `0`
+/// - `size > MAX_SMALL_ALLOC_SIZE` → `MAX_SMALL_ALLOC_SIZE`
+///
+/// Useful when you need an aligned stride without separately handling the
+/// large-allocation path.
+#[inline(always)]
+pub const fn round_up_size_saturating(size: usize) -> usize {
+    if size == 0 {
+        return 0;
+    }
+    match round_up_size(size) {
+        Some(s) => s,
+        None => MAX_SMALL_ALLOC_SIZE,
+    }
+}
+
+/// Returns the internal fragmentation for a request of `size` bytes:
+/// `(class_stride - size) / class_stride`, in `[0.0, 1.0]`.
+///
+/// Returns `0.0` when `size == 0` or `size > MAX_SMALL_ALLOC_SIZE`.
+#[inline]
+pub fn size_class_fragmentation(size: usize) -> f64 {
+    if size == 0 {
+        return 0.0;
+    }
+    let Some(stride) = round_up_size(size) else {
+        return 0.0;
+    };
+    if stride == 0 {
+        return 0.0;
+    }
+    let waste = stride.saturating_sub(size);
+    waste as f64 / stride as f64
 }
 
 const CLASS_TO_SIZE: [u16; NUM_SIZE_CLASSES] = [
@@ -211,6 +252,43 @@ pub const fn class_to_max_blocks(class: usize) -> usize {
     }
 }
 
+// ── Lemire reciprocal division ─────────────────────────────────────────────
+//
+// Pre-computed `div_mult` per class eliminates the hardware division in
+// `block_index = offset / block_size` on the validation path.
+//
+// Algorithm (Lemire indirect, 32-bit shift):
+//   mult = (2^SHIFT / n) + 1  →  index = (offset * mult) >> SHIFT
+//
+// Correctness bounds: offset < PAGE_SIZE (≤65535), n ≥ 16.  The round-up
+// error in `mult` never propagates for these bounds.
+//
+// Inspired by snmalloc `ds/sizeclasstable.h §slab_index`.
+
+/// Shift constant for the Lemire indirect reciprocal.
+pub const LEMIRE_DIV_SHIFT: u32 = 32;
+
+const CLASS_TO_DIV_MULT: [u32; NUM_SIZE_CLASSES] = {
+    let mut arr = [0u32; NUM_SIZE_CLASSES];
+    let mut i = 0;
+    while i < NUM_SIZE_CLASSES {
+        let n = CLASS_TO_SIZE[i] as u64;
+        arr[i] = ((1u64 << LEMIRE_DIV_SHIFT) / n + 1) as u32;
+        i += 1;
+    }
+    arr
+};
+
+/// Block index within a page using Lemire reciprocal multiplication.
+///
+/// Equivalent to `offset / class_to_size(class)` without a division
+/// instruction. `offset` must be `< PAGE_SIZE`; `class` must be
+/// `< NUM_SIZE_CLASSES`.
+#[inline(always)]
+pub const fn block_index_in_page(class: usize, offset: usize) -> usize {
+    ((offset as u64 * CLASS_TO_DIV_MULT[class] as u64) >> LEMIRE_DIV_SHIFT) as usize
+}
+
 // Compile-time cross-check between `NUM_SIZE_CLASSES` and the piecewise
 // `class_to_size` schedule: the final class must produce exactly
 // `MAX_SMALL_ALLOC_SIZE`, and the first out-of-range class must produce
@@ -223,6 +301,39 @@ const _: () = assert!(
     class_to_size(NUM_SIZE_CLASSES) == 0,
     "class_to_size(NUM_SIZE_CLASSES) must return the 0 sentinel"
 );
+
+// ── Size class table ordering invariants ────────────────────────────────────
+//
+// These const assertions verify structural properties of CLASS_TO_SIZE that
+// prevent subtle bugs when extending the table:
+//
+// 1. Strict monotone: each class is strictly larger than the previous.
+// 2. Min block: the smallest class is MIN_BLOCK_SIZE (16 bytes).
+// 3. Alignment divisibility: every size is a multiple of MIN_BLOCK_SIZE.
+// 4. Every class fits in a page: class_to_max_blocks(class) >= 1.
+
+const _: () = {
+    assert!(
+        CLASS_TO_SIZE[0] as usize == MIN_BLOCK_SIZE,
+        "smallest size class must equal MIN_BLOCK_SIZE"
+    );
+    let mut i = 1;
+    while i < NUM_SIZE_CLASSES {
+        assert!(
+            CLASS_TO_SIZE[i] > CLASS_TO_SIZE[i - 1],
+            "CLASS_TO_SIZE must be strictly increasing"
+        );
+        assert!(
+            (CLASS_TO_SIZE[i] as usize).is_multiple_of(MIN_BLOCK_SIZE),
+            "every size class must be a multiple of MIN_BLOCK_SIZE"
+        );
+        assert!(
+            CLASS_TO_MAX_BLOCKS[i] >= 1,
+            "every size class must fit at least one block per page"
+        );
+        i += 1;
+    }
+};
 
 #[cfg(test)]
 mod tests {
@@ -311,5 +422,67 @@ mod tests {
         assert_eq!(size_to_class(0), Some(0));
         // The smallest non-zero size also maps to class 0.
         assert_eq!(size_to_class(1), Some(0));
+    }
+
+    #[test]
+    fn block_index_in_page_matches_integer_division() {
+        // Verify Lemire reciprocal gives the same result as integer division
+        // for every class and every valid block offset within a page.
+        for class in 0..NUM_SIZE_CLASSES {
+            let block_size = class_to_size(class);
+            let max_blocks = class_to_max_blocks(class);
+            for idx in 0..max_blocks {
+                let offset = idx * block_size;
+                let expected = offset / block_size;
+                let fast = block_index_in_page(class, offset);
+                assert_eq!(
+                    fast, expected,
+                    "class={class} block_size={block_size} offset={offset}: \
+                     lemire={fast} != div={expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn round_up_size_saturating_never_returns_zero_for_positive() {
+        for sz in [
+            1usize,
+            16,
+            17,
+            100,
+            512,
+            2048,
+            MAX_SMALL_ALLOC_SIZE,
+            MAX_SMALL_ALLOC_SIZE + 1,
+        ] {
+            let result = round_up_size_saturating(sz);
+            if sz == 0 {
+                assert_eq!(result, 0);
+            } else {
+                assert!(result > 0, "round_up_size_saturating({sz}) must be > 0");
+            }
+        }
+        assert_eq!(round_up_size_saturating(0), 0);
+        assert_eq!(
+            round_up_size_saturating(MAX_SMALL_ALLOC_SIZE + 1),
+            MAX_SMALL_ALLOC_SIZE
+        );
+    }
+
+    #[test]
+    fn size_class_fragmentation_is_bounded() {
+        for sz in [1usize, 15, 16, 17, 32, 100, 512, 1000, MAX_SMALL_ALLOC_SIZE] {
+            let frag = size_class_fragmentation(sz);
+            assert!(
+                (0.0..=1.0).contains(&frag),
+                "fragmentation for sz={sz} is {frag}, out of [0,1]"
+            );
+        }
+        // Exactly on a class boundary: zero fragmentation
+        assert_eq!(size_class_fragmentation(16), 0.0);
+        assert_eq!(size_class_fragmentation(32), 0.0);
+        // Above max: 0.0
+        assert_eq!(size_class_fragmentation(MAX_SMALL_ALLOC_SIZE + 1), 0.0);
     }
 }

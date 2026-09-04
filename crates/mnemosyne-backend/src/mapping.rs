@@ -58,7 +58,13 @@ pub(crate) fn do_deallocate<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool
     if ptr.is_null() {
         return false;
     }
-    let released = unsafe { B::deallocate(ptr, size) };
+    let released = {
+        // SAFETY: `ptr` is non-null per the guard above; `size` matches the
+        // original allocation by the caller's invariant (same contract as
+        // `B::deallocate`). The OS mapping is released; `ptr` must not be
+        // dereferenced after this point.
+        unsafe { B::deallocate(ptr, size) }
+    };
     if released {
         record_unmap(size);
     } else {

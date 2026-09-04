@@ -13,6 +13,35 @@ pub use huge_pool::GlobalHugePool;
 pub use list::NodeSegmentPool;
 pub use segment_pool::GlobalSegmentPool;
 
+/// Point-in-time snapshot of [`GlobalHugePool`] counters.
+///
+/// All fields are individually relaxed reads; not jointly consistent.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct HugePoolStats {
+    /// Huge blocks currently held in the warm cache.
+    pub retained_blocks: usize,
+    /// Total bytes of huge blocks in the warm cache.
+    pub retained_bytes: usize,
+}
+
+/// Point-in-time snapshot of [`GlobalSegmentPool`] telemetry counters.
+///
+/// All fields are individually monotone-non-decreasing relaxed reads;
+/// they are not jointly consistent (no single atomic snapshot).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SegmentPoolStats {
+    /// Segments currently held in the warm cache.
+    pub retained: usize,
+    /// Cumulative segments returned to the OS by purge passes.
+    pub purged_segments: usize,
+    /// Cumulative purge-pass invocations.
+    pub purge_calls: usize,
+    /// Cumulative segments whose physical backing was dropped by a page-reset.
+    pub reset_segments: usize,
+    /// Cumulative reset-pass invocations.
+    pub reset_calls: usize,
+}
+
 /// Sealed trait module to protect architectural invariants.
 #[doc(hidden)]
 pub mod private {

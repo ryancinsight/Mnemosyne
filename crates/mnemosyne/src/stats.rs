@@ -201,7 +201,37 @@ pub fn memory_stats() -> MemoryStats {
 pub fn memory_stats_json() -> alloc::string::String {
     let s = memory_stats();
     let bins = mnemosyne_local::all_bin_snapshots();
-    s.to_json_with_bins(&bins)
+    let mut json = s.to_json_with_bins(&bins);
+    // Insert compile-time policy metadata before the closing brace.
+    // The policy name and mitigation flags let parsers correlate a dump
+    // with the build configuration without consulting the binary.
+    use mnemosyne_core::policy::AllocPolicy;
+    json.pop(); // remove trailing '}'
+    // Include segment pool telemetry for completeness.
+    use mnemosyne_arena::HasSegmentPool as _;
+    let sp = mnemosyne_backend::MemoryBackendWrapper::global_segment_pool().stats();
+    let total_req = mnemosyne_local::total_requested_bytes();
+    let int_frag = mnemosyne_local::total_internal_fragmentation();
+    let _ = ::core::fmt::Write::write_fmt(
+        &mut json,
+        core::format_args!(
+            ",\"pool_retained\":{},\"pool_purged\":{},\"pool_purge_calls\":{},\
+             \"pool_reset_segments\":{},\"pool_reset_calls\":{},\
+             \"total_requested_bytes\":{},\"total_internal_fragmentation\":{:.4},\
+             \"policy_name\":\"{}\",\"mitigation_flags\":{},\"policy_fingerprint\":{}}}",
+            sp.retained,
+            sp.purged_segments,
+            sp.purge_calls,
+            sp.reset_segments,
+            sp.reset_calls,
+            total_req,
+            int_frag,
+            mnemosyne_core::policy::StandardPolicy::POLICY_NAME,
+            mnemosyne_core::policy::StandardPolicy::MITIGATION_FLAGS,
+            mnemosyne_core::policy::StandardPolicy::POLICY_FINGERPRINT,
+        ),
+    );
+    json
 }
 
 impl MemoryStats {
@@ -289,8 +319,16 @@ impl MemoryStats {
             // would allocate a second `String` per bin only to copy it in.
             let _ = write!(
                 out,
-                "{{\"block_size\":{},\"alloc_count\":{},\"dealloc_count\":{},\"live_estimate\":{}}}",
-                bin.block_size, bin.alloc_count, bin.dealloc_count, bin.live_estimate
+                "{{\"block_size\":{},\"alloc_count\":{},\"dealloc_count\":{},\
+                 \"live_estimate\":{},\"requested_bytes\":{},\
+                 \"fragmentation\":{:.4},\"internal_fragmentation\":{:.4}}}",
+                bin.block_size,
+                bin.alloc_count,
+                bin.dealloc_count,
+                bin.live_estimate,
+                bin.requested_bytes,
+                bin.fragmentation_ratio(),
+                bin.internal_fragmentation_ratio()
             );
         }
         out.push_str("]}");
@@ -312,13 +350,14 @@ pub fn purge() {
     purge_generic::<mnemosyne_backend::MemoryBackendWrapper>();
 }
 
-/// Asks the OS to drop the physical backing of every retained free
+/// Asks the OS to drop the physical backing of every retained standard free
 /// segment for a specific backend without removing them from the cache.
 ///
 /// Use this as a lighter-weight RSS-reduction knob than `purge`: the
-/// segment cache stays warm so subsequent allocations skip the OS
-/// mapping syscall, while the resident memory footprint of idle
-/// segments drops to the kernel's demand-fault baseline.
+/// standard segment cache stays warm so subsequent small allocations skip the
+/// OS mapping syscall, while the resident memory footprint of idle segments
+/// drops to the kernel's demand-fault baseline. The separate huge-allocation
+/// cache is not reset by this operation.
 pub fn reset_generic<B: mnemosyne_arena::HasSegmentPool>() {
     // SAFETY: reset_segment_pool drains the retained pool, issues
     // page_reset on each segment's mapping, and pushes them back into
@@ -328,13 +367,107 @@ pub fn reset_generic<B: mnemosyne_arena::HasSegmentPool>() {
     }
 }
 
-/// Asks the OS to drop the physical backing of every retained free
+/// Asks the OS to drop the physical backing of every retained standard free
 /// segment without removing them from the cache.
+///
+/// The separate huge-allocation cache is not reset; use [`purge`] when both
+/// cache families must be released.
 pub fn reset() {
     reset_generic::<mnemosyne_backend::MemoryBackendWrapper>();
+}
+
+/// Purges the global segment pool while keeping `warm_threshold` committed
+/// segments ready for immediate reuse.
+///
+/// Unlike [`purge`], which releases everything, this keeps the
+/// `warm_threshold` most-recently-retained segments committed so that a
+/// burst of allocations immediately following the purge avoids
+/// `VirtualAlloc`/`mmap` round-trips.
+///
+/// Pass `P::SEGMENT_POOL_WARM_THRESHOLD` for policy-level guidance, or `0`
+/// for the same behaviour as `purge`.
+pub fn purge_lazy(warm_threshold: usize) {
+    // SAFETY: purge_segment_pool_with_warm only touches segments the pool
+    // owns exclusively.
+    unsafe {
+        mnemosyne_arena::purge_segment_pool_with_warm::<mnemosyne_backend::MemoryBackendWrapper>(
+            warm_threshold,
+        );
+    }
+}
+
+/// Purges with `StandardPolicy::SEGMENT_POOL_WARM_THRESHOLD` warm segments kept.
+///
+/// A higher-level shortcut for `purge_lazy(StandardPolicy::SEGMENT_POOL_WARM_THRESHOLD)`.
+pub fn purge_standard() {
+    use mnemosyne_core::policy::AllocPolicy;
+    purge_lazy(mnemosyne_core::policy::StandardPolicy::SEGMENT_POOL_WARM_THRESHOLD);
 }
 
 /// Triggers a manual background decay and defragmentation cycle across all active memory backends.
 pub fn decay() {
     mnemosyne_decay::decay_step();
+}
+
+// ── Stats window ──────────────────────────────────────────────────────────────
+
+/// A snapshot of bin stats taken at a fixed point in time.
+///
+/// Create a baseline with [`BinStatsWindow::capture`], then call
+/// [`BinStatsWindow::delta`] later to compute per-class deltas over the window.
+/// This is the recommended pattern for profiling a code region:
+///
+/// ```rust
+/// # use mnemosyne::BinStatsWindow;
+/// let baseline = BinStatsWindow::capture();
+/// // ... code under profiling ...
+/// let delta = baseline.delta();
+/// ```
+pub struct BinStatsWindow {
+    bins: [mnemosyne_local::BinSnapshot; mnemosyne_core::NUM_SIZE_CLASSES],
+}
+
+impl BinStatsWindow {
+    /// Captures the current per-class bin stats as a baseline.
+    ///
+    /// Flushes the calling thread's TLS batch first so the snapshot
+    /// reflects all preceding allocations on this thread.
+    #[must_use]
+    pub fn capture() -> Self {
+        Self {
+            bins: mnemosyne_local::all_bin_snapshots(),
+        }
+    }
+
+    /// Computes per-class deltas since the baseline was captured.
+    ///
+    /// Each returned snapshot has its counters set to the difference since
+    /// the baseline. Counters that decreased (or were reset) saturate to zero.
+    #[must_use]
+    pub fn delta(&self) -> [mnemosyne_local::BinSnapshot; mnemosyne_core::NUM_SIZE_CLASSES] {
+        let now = mnemosyne_local::all_bin_snapshots();
+        core::array::from_fn(|class| {
+            let b = &self.bins[class];
+            let n = &now[class];
+            n.saturating_delta(b)
+        })
+    }
+
+    /// Total allocations during the window across all size classes.
+    #[must_use]
+    pub fn total_alloc_count_delta(&self) -> u64 {
+        self.delta()
+            .iter()
+            .map(|s| s.alloc_count)
+            .fold(0u64, u64::saturating_add)
+    }
+
+    /// Total live bytes at the end of the window minus the start.
+    #[must_use]
+    pub fn total_live_bytes_delta(&self) -> u64 {
+        self.delta()
+            .iter()
+            .map(|s| s.live_bytes())
+            .fold(0u64, u64::saturating_add)
+    }
 }

@@ -5,7 +5,9 @@
 //! zero succeeds on any Linux system, and an out-of-range node id fails in
 //! the wrapper before any kernel call. The tiered-heap Numa routing test
 //! asserts the best-effort contract — a block is returned whether or not
-//! the policy call succeeded — so it is portable across platforms.
+//! the policy call succeeded — so it is portable across platforms. Miri
+//! excludes only the platform-boundary tests because it cannot execute the
+//! Linux `mbind` syscall or Windows NUMA FFI; native runs retain those checks.
 
 use super::*;
 #[cfg(target_os = "linux")]
@@ -18,6 +20,10 @@ use mnemosyne_core::StandardPolicy;
 use themis::NumaNodeId;
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "NUMA placement uses unsupported platform calls under Miri"
+)]
 fn allocate_interleaved_returns_usable_aligned_memory() {
     let layout = Layout::from_size_align(64 * 1024, 4096).expect("valid layout");
     let ptr = allocate_interleaved(layout).expect("interleaved allocation succeeds");
@@ -46,7 +52,7 @@ fn first_touch_is_idempotent_and_touches_every_page() {
     unsafe { first_touch(ptr, layout.size()) };
     // SAFETY: same range, still live; the first byte of each stride slot was
     // written as zero by the touch.
-    for offset in [0usize, 4096, 8192, 12_288] {
+    for offset in (0..layout.size()).step_by(4096) {
         assert_eq!(
             unsafe { core::ptr::read(ptr.add(offset)) },
             0u8,
@@ -61,6 +67,10 @@ fn first_touch_is_idempotent_and_touches_every_page() {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "NUMA binding uses unsupported platform calls under Miri"
+)]
 fn bind_to_node_on_fresh_allocation_is_ok() {
     let layout = Layout::from_size_align(64 * 1024, 4096).expect("valid layout");
     // SAFETY: fresh mmap-backed allocation (unfaulted), released below.
@@ -97,6 +107,10 @@ fn bind_to_node_rejects_out_of_range_node() {
     unsafe { std::alloc::dealloc(ptr, layout) };
 }
 
+#[cfg_attr(
+    miri,
+    ignore = "NUMA binding uses unsupported platform calls under Miri"
+)]
 #[test]
 fn tiered_alloc_numa_hint_is_best_effort_and_returns_block() {
     assert_eq!(

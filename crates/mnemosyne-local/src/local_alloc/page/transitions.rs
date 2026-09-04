@@ -30,7 +30,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline(always)]
     pub(crate) unsafe fn push_active_page(&mut self, page_ptr: NonNull<Page>, class: usize) {
         with_page_list_token::<B, _>(|mut token| {
+            // SAFETY: `page_ptr` is exclusively owned by this thread allocator.
             let page = unsafe { token.page(page_ptr) };
+            // SAFETY: `class < NUM_SIZE_CLASSES` — validated by the caller;
+            // `get_unchecked_mut` stays in bounds.
             unsafe {
                 push_page_front(
                     &mut token,
@@ -45,7 +48,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline(always)]
     pub(crate) unsafe fn push_full_page(&mut self, page_ptr: NonNull<Page>, class: usize) {
         with_page_list_token::<B, _>(|mut token| {
+            // SAFETY: `page_ptr` is exclusively owned by this thread allocator.
             let page = unsafe { token.page(page_ptr) };
+            // SAFETY: `class < NUM_SIZE_CLASSES` — validated by the caller;
+            // `get_unchecked_mut` stays in bounds.
             unsafe {
                 push_page_front(
                     &mut token,
@@ -60,7 +66,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline(always)]
     pub(crate) unsafe fn push_empty_page(&mut self, page_ptr: NonNull<Page>) {
         with_page_list_token::<B, _>(|mut token| {
+            // SAFETY: `page_ptr` is exclusively owned by this thread allocator.
             let page = unsafe { token.page(page_ptr) };
+            // SAFETY: forwarded — the branded page satisfies `push_page_front`.
             unsafe { push_page_front(&mut token, &mut self.empty_pages, page, 3) };
         });
     }

@@ -179,6 +179,7 @@ fn tiered_heap_budget_only_hints_return_none() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "CUDA dynamic loading is unsupported under Miri")]
 fn tiered_heap_device_and_pinned_hints_route_to_cuda_sub_heaps() {
     // This test exercises dispatch classification when CUDA is unavailable:
     // returning None on alloc is the correct outcome because

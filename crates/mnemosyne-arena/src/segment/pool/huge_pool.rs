@@ -4,6 +4,7 @@
 // `pub`, so moving them out of the file would have removed
 // `pool::huge_pool::NodeHugeBucket` from the public surface — a break the
 // semver gate flagged, and not one a file-size refactor may make.
+use super::HugePoolStats;
 use super::node_huge_bucket::HugeBucketBand;
 pub use super::node_huge_bucket::{NodeHugeBucket, NodeHugePool};
 use super::numa_bucket::{NUMA_BUCKETS, bucket_index as numa_bucket, steal_from};
@@ -395,6 +396,18 @@ impl GlobalHugePool {
                     .load(core::sync::atomic::Ordering::Relaxed)
             })
             .sum()
+    }
+
+    /// Returns a point-in-time snapshot of the huge pool's key counters.
+    ///
+    /// All fields are individually relaxed reads — not jointly consistent.
+    #[inline]
+    #[must_use]
+    pub fn stats(&self) -> HugePoolStats {
+        HugePoolStats {
+            retained_blocks: self.retained_blocks(),
+            retained_bytes: self.retained_bytes(),
+        }
     }
 
     /// Purges all cached huge blocks and releases them to the OS.

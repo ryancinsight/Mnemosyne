@@ -79,14 +79,19 @@ impl Page {
     /// uninitialized blocks remaining.
     #[inline(always)]
     pub unsafe fn pop_block<P: crate::policy::AllocPolicy>(page: *mut Self) -> NonNull<Block> {
+        // SAFETY: forwarded from `pop_block`'s contract — `page` is a live,
+        // exclusively-owned page with free or uninitialized blocks remaining.
         if let Some(block) = unsafe { Self::try_pop_bump_block(page) } {
             block
+        // SAFETY: same contract — reading `free` from an exclusively-owned page.
         } else if let Some(block) = unsafe { (*page).free } {
             let block_addr = block.as_ptr() as usize;
             let page_addr = page.addr();
             let segment_addr = page_addr & !(crate::constants::SEGMENT_SIZE - 1);
+            // SAFETY: `page` is exclusively owned; its `page_index` is initialized.
             let page_start = segment_addr
                 + (unsafe { (*page).page_index as usize } << crate::constants::PAGE_SHIFT);
+            // SAFETY: `page` is exclusively owned; `block_size` is initialized.
             let block_size = unsafe { (*page).block_size };
             if block_addr < page_start
                 || block_addr + block_size > page_start + crate::constants::PAGE_SIZE
@@ -107,6 +112,16 @@ impl Page {
             // `Block` exclusively owned by this thread; reading its encoded
             // next-link with the matching `cookie` is sound.
             unsafe { (*page).free = (*block.as_ptr()).get_next::<P>(cookie) };
+            // Clear the backward-edge canary on the block being handed out for
+            // allocation so a future free does not false-positive on a stale
+            // canary written during its previous free.
+            // Under StandardPolicy, ENABLE_FREE_LIST_ENCRYPTION = false and the
+            // compiler eliminates this as dead code.
+            if P::ENABLE_FREE_LIST_ENCRYPTION {
+                // SAFETY: `block.as_ptr()` is valid, MIN_BLOCK_SIZE-aligned per
+                // the bounds check above; the canary slot fits within that minimum.
+                unsafe { Block::clear_free_canary(block.as_ptr()) };
+            }
             block
         } else {
             abort_on_corruption("pop_block called on an exhausted page");

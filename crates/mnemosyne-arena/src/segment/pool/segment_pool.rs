@@ -2,6 +2,7 @@
 //! the telemetry counters summed across nodes.
 
 use crate::numa::current_numa_node;
+use crate::segment::pool::SegmentPoolStats;
 use crate::segment::pool::list::NodeSegmentPool;
 use crate::segment::pool::numa_bucket::{NUMA_BUCKETS, bucket_index as numa_bucket, steal_from};
 use mnemosyne_core::types::Segment;
@@ -211,6 +212,23 @@ impl GlobalSegmentPool {
     pub(crate) fn record_reset(&self, count: usize) {
         let node = numa_bucket(current_numa_node());
         self.nodes[node].record_reset(count);
+    }
+
+    /// Returns a point-in-time snapshot of the pool's key counters.
+    ///
+    /// Useful for diagnostic logging and telemetry. All fields are read
+    /// with `Relaxed` ordering — they are individually monotone-increasing,
+    /// not jointly consistent.
+    #[inline]
+    #[must_use]
+    pub fn stats(&self) -> SegmentPoolStats {
+        SegmentPoolStats {
+            retained: self.retained_count(),
+            purged_segments: self.purged_count(),
+            purge_calls: self.purge_call_count(),
+            reset_segments: self.reset_segments_count(),
+            reset_calls: self.reset_call_count(),
+        }
     }
 }
 

@@ -116,6 +116,24 @@ impl<T: ScratchElement> Iterator for IntoIter<T> {
 impl<T: ScratchElement> ExactSizeIterator for IntoIter<T> {}
 impl<T: ScratchElement> core::iter::FusedIterator for IntoIter<T> {}
 
+impl<T: ScratchElement> core::iter::DoubleEndedIterator for IntoIter<T> {
+    #[inline]
+    fn next_back(&mut self) -> Option<T> {
+        let end = self.vec.len();
+        if self.pos < end {
+            // Logically pop from the back by reducing len.
+            // SAFETY: `end - 1 < self.vec.len()` — initialized; T: Copy.
+            let new_end = end - 1;
+            // SAFETY: `new_end <= capacity`; element at `new_end` is initialized.
+            unsafe { self.vec.set_len_unchecked(new_end) };
+            let val = unsafe { core::ptr::read(self.vec.ptr.add(new_end)) };
+            Some(val)
+        } else {
+            None
+        }
+    }
+}
+
 impl<T: ScratchElement> IntoIterator for AlignedVec<T> {
     type Item = T;
     type IntoIter = IntoIter<T>;
@@ -231,5 +249,129 @@ impl<T: ScratchElement + PartialEq, const N: usize> PartialEq<[T; N]> for Aligne
     #[inline]
     fn eq(&self, other: &[T; N]) -> bool {
         self.as_slice() == other.as_slice()
+    }
+}
+
+// ── Slice views (AsRef / AsMut / Borrow) ─────────────────────────────────────
+
+impl<T: ScratchElement> core::convert::AsRef<[T]> for AlignedVec<T> {
+    #[inline]
+    fn as_ref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T: ScratchElement> core::convert::AsMut<[T]> for AlignedVec<T> {
+    #[inline]
+    fn as_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
+
+impl<T: ScratchElement> core::borrow::Borrow<[T]> for AlignedVec<T> {
+    #[inline]
+    fn borrow(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T: ScratchElement> core::borrow::BorrowMut<[T]> for AlignedVec<T> {
+    #[inline]
+    fn borrow_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
+
+// ── Collection ───────────────────────────────────────────────────────────────
+
+impl<T: ScratchElement> core::iter::FromIterator<T> for AlignedVec<T> {
+    #[inline]
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let iter = iter.into_iter();
+        let (lo, _) = iter.size_hint();
+        let mut buf = AlignedVec::with_capacity(lo);
+        for item in iter {
+            buf.push(item);
+        }
+        buf
+    }
+}
+
+impl<T: ScratchElement> Extend<T> for AlignedVec<T> {
+    #[inline]
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        self.extend_from_iter(iter);
+    }
+}
+
+impl<'a, T: ScratchElement> Extend<&'a T> for AlignedVec<T> {
+    #[inline]
+    fn extend<I: IntoIterator<Item = &'a T>>(&mut self, iter: I) {
+        for &item in iter {
+            self.push(item);
+        }
+    }
+}
+
+// ── Box conversions ───────────────────────────────────────────────────────────
+
+impl<T: ScratchElement> From<AlignedVec<T>> for alloc::boxed::Box<[T]> {
+    /// Converts an `AlignedVec<T>` into a boxed slice.
+    ///
+    /// Copies the initialized elements into a heap allocation managed by the
+    /// global allocator. This is a data copy because `AlignedVec` and `Box<[T]>`
+    /// use different allocators (and possibly different alignments).
+    #[inline]
+    fn from(v: AlignedVec<T>) -> alloc::boxed::Box<[T]> {
+        v.into_vec().into_boxed_slice()
+    }
+}
+
+impl<T: ScratchElement> From<alloc::boxed::Box<[T]>> for AlignedVec<T> {
+    /// Converts a boxed slice into an `AlignedVec<T>` by copying.
+    #[inline]
+    fn from(b: alloc::boxed::Box<[T]>) -> Self {
+        Self::from_slice(&b)
+    }
+}
+
+// ── Write sink ────────────────────────────────────────────────────────────────
+
+/// `AlignedVec<u8>` as a `core::fmt::Write` sink.
+///
+/// Enables zero-allocation formatted output into an aligned buffer:
+///
+/// ```rust
+/// use core::fmt::Write as _;
+/// use mnemosyne_arena::AlignedVec;
+///
+/// let mut buf = AlignedVec::<u8>::with_capacity(64);
+/// write!(buf, "hello {}", 42).unwrap();
+/// assert_eq!(buf.as_slice(), b"hello 42");
+/// ```
+impl core::fmt::Write for AlignedVec<u8> {
+    /// Appends the UTF-8 bytes of `s` to the buffer, growing if needed.
+    #[inline]
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.extend_from_slice(s.as_bytes());
+        Ok(())
+    }
+}
+
+// ── Display ───────────────────────────────────────────────────────────────────
+
+/// Formats an `AlignedVec<u8>` as a UTF-8 string (lossy).
+///
+/// Non-UTF-8 bytes are replaced with the Unicode replacement character U+FFFD.
+impl core::fmt::Display for AlignedVec<u8> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match core::str::from_utf8(self.as_slice()) {
+            Ok(s) => f.write_str(s),
+            Err(_) => {
+                // Replace non-UTF-8 bytes with U+FFFD replacement character.
+                let s = alloc::string::String::from_utf8_lossy(self.as_slice());
+                f.write_str(&s)
+            }
+        }
     }
 }

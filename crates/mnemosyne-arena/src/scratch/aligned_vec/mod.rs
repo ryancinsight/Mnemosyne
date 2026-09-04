@@ -10,3 +10,5 @@ pub use storage::AlignedVec;
 pub use traits::IntoIter;
 
 use super::element::ScratchElement;
+
+pub use length::Drain;

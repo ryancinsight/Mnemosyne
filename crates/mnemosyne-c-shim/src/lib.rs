@@ -84,6 +84,9 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
 pub unsafe extern "C" fn free(ptr: *mut c_void) {
     // thread_free is pointer-only (it derives the owning page/segment) and
     // tolerates null, so no layout is needed here.
+    // SAFETY: `ptr` is either null (no-op) or a live allocation returned by
+    // this shim — same contract as C `free`. thread_free validates the pointer
+    // is from this allocator before touching any metadata.
     unsafe { thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr as *mut u8) };
 }
 
@@ -140,9 +143,11 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
 #[cfg_attr(not(any(test, fuzzing)), unsafe(no_mangle))]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
     if ptr.is_null() {
+        // SAFETY: `new_size != 0` (guarded above) — malloc contract satisfied.
         return unsafe { malloc(new_size) };
     }
     if new_size == 0 {
+        // SAFETY: `ptr` is non-null (guarded above) — free contract satisfied.
         unsafe { free(ptr) };
         return core::ptr::null_mut();
     }

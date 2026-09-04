@@ -14,8 +14,8 @@ pub use allocate::allocate_segment;
 pub(crate) use allocate::decommit_mapping_slack;
 use allocate::try_return_to_pool;
 pub use release::{
-    deallocate_segment, purge_segment_pool, release_segment_mapping, reset_segment_pool,
-    try_deallocate_segment,
+    deallocate_segment, purge_segment_pool, purge_segment_pool_with_warm, release_segment_mapping,
+    reset_segment_pool, try_deallocate_segment,
 };
 
 /// Bytes requested from the OS for each standard segment mapping.

@@ -68,6 +68,10 @@ unsafe fn init_segment_layout(
     );
 
     // Write the back-pointer and update alloc_count (live for both paths).
+    // SAFETY: `aligned_ptr` was just computed as the SEGMENT_ALIGN-aligned
+    // base of the live mapping `raw_ptr`; page 0's `alloc_count` stores the
+    // requested allocation size. `metadata_slot` is the word immediately
+    // before `user_ptr`, inside the reserved prefix computed above.
     unsafe {
         (*aligned_ptr).pages[0].alloc_count = size;
         let metadata_slot = (user_ptr as *mut *mut Segment).sub(1);
@@ -136,10 +140,14 @@ unsafe fn initialize_large_or_huge_segment(
     is_cache_hit: bool,
 ) -> Option<(*mut u8, usize, usize, usize)> {
     if is_cache_hit {
+        // SAFETY: forwarded contract — `raw_ptr` holds a valid previously-
+        // initialized `Segment` header whose invariant fields are live.
         unsafe {
             initialize_large_or_huge_segment_cached(raw_ptr, total_alloc_size, alignment, size)
         }
     } else {
+        // SAFETY: forwarded contract — `raw_ptr` is a freshly allocated
+        // OS mapping whose `Segment` header has not yet been initialized.
         unsafe {
             initialize_large_or_huge_segment_fresh(raw_ptr, total_alloc_size, alignment, size)
         }
@@ -148,8 +156,9 @@ unsafe fn initialize_large_or_huge_segment(
 
 /// Allocates a block of memory of the given size and alignment.
 ///
-/// If the size is small (<= 8KB), it should be routed through the thread-local
-/// allocator instead of this global arena.
+/// If the request can be represented by a small size class (up to
+/// `MAX_SMALL_ALLOC_SIZE`, subject to alignment), it should be routed through
+/// the thread-local allocator instead of this global arena.
 ///
 /// # Safety
 ///

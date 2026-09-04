@@ -31,6 +31,13 @@ fn test_multi_heap_basic() {
 }
 
 #[test]
+// `mnemosyne_local::options::get_env_var_stack` returns `None` under
+// `cfg(miri)` by design — Miri cannot execute the platform environment FFI — so
+// the allocator keeps its documented defaults and an env-var override is
+// unobservable here. Retention itself stays covered under Miri by
+// `test_programmatic_options_configure`, which drives `max_retained_segments: 0`
+// through `set_options`; only the env delivery path is skipped.
+#[cfg_attr(miri, ignore = "env-var overrides are invisible under cfg(miri)")]
 fn test_runtime_options_override_default_retention() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     use mnemosyne_arena::HasSegmentPool;

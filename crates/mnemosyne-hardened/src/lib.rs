@@ -11,4 +11,6 @@
 //! Cargo manifests that list `mnemosyne-hardened`) resolve unchanged. It holds
 //! no logic of its own.
 
-pub use mnemosyne_core::policy::{HardenedPolicy, SecurePolicy};
+pub use mnemosyne_core::policy::{
+    AllocPolicy, HardenedPolicy, PolicyMarker, SecurePolicy, StandardPolicy, mitigations,
+};

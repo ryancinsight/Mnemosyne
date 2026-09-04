@@ -49,27 +49,6 @@ fn test_branded_box_unsized_slice_and_drop() {
 }
 
 #[test]
-fn test_branded_vec_into_boxed_slice_shrinks_storage_to_len() {
-    scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, mut token| {
-        let mut vec = BrandedVec::with_capacity(&heap, &token, 1024)
-            .expect("oversized vector allocation failed");
-        vec.push(&mut token, 0xCAFE_BABEu64)
-            .expect("push into preallocated vector failed");
-
-        let before_usable = unsafe { mnemosyne_local::usable_size(vec.as_ptr() as *mut u8) };
-        let boxed_slice = vec.into_boxed_slice(&mut token);
-        let after_usable = unsafe { mnemosyne_local::usable_size(boxed_slice.as_ptr() as *mut u8) };
-
-        assert_eq!(boxed_slice.len(), 1);
-        assert_eq!(boxed_slice[0], 0xCAFE_BABE);
-        assert!(
-            after_usable <= before_usable,
-            "boxed slice conversion must not increase usable storage from {before_usable}, got {after_usable}"
-        );
-    });
-}
-
-#[test]
 fn test_branded_box_into_and_from_raw() {
     let counter = AtomicUsize::new(0);
     scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {

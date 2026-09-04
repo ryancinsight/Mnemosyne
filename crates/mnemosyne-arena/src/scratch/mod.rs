@@ -13,7 +13,7 @@ pub mod pool;
 #[cfg(test)]
 mod tests;
 
-pub use aligned_vec::AlignedVec;
+pub use aligned_vec::{AlignedVec, Drain, IntoIter};
 pub use bank::ScratchBank;
 pub use element::{DEFAULT_SCRATCH_ALIGN, ScratchElement, default_align};
 pub use pool::{MAX_POOL_SLOTS, ScratchPool};

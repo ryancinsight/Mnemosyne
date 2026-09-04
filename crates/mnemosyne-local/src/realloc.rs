@@ -136,10 +136,16 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
 
         if can_reuse {
             if P::ZERO_INITIALIZE && is_grow {
+                // SAFETY: `ptr.add(layout.size())` starts at the end of the
+                // previously initialized range; the delta `new_size - layout.size`
+                // bytes lie within the allocation (capacity >= new_size proven
+                // by `can_reuse`). Zeroing them satisfies ZERO_INITIALIZE.
                 unsafe {
                     core::ptr::write_bytes(ptr.add(layout.size()), 0, new_size - layout.size());
                 }
             } else if P::ENABLE_POISONING && is_grow {
+                // SAFETY: same bounds argument as above; writing the poison byte
+                // marks the grown-into region until the caller writes real data.
                 unsafe {
                     core::ptr::write_bytes(
                         ptr.add(layout.size()),
@@ -149,6 +155,9 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                 }
             }
             if P::ENABLE_POISONING && new_size < layout.size() {
+                // SAFETY: `ptr.add(new_size)` starts at the new logical end of
+                // the allocation; `layout.size() - new_size` bytes are the
+                // truncated tail, still within the backing block.
                 unsafe {
                     poison_freed_bytes::<P>(ptr.add(new_size), layout.size() - new_size);
                 }
@@ -160,9 +169,13 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
             if new_size == 0 {
                 return core::ptr::null_mut();
             }
+            // SAFETY: `new_size != 0` and `layout.align()` is a power of two
+            // (valid Layout invariant); thread_alloc_layout's contract is met.
             return unsafe { thread_alloc_layout::<P, B>(new_size, layout.align()) };
         }
         // new_size == 0 && !ptr.is_null()
+        // SAFETY: `ptr` is a live non-null allocation from this allocator;
+        // thread_free's contract is met.
         unsafe { thread_free::<P, B>(ptr) };
         return core::ptr::null_mut();
     }
@@ -228,7 +241,7 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                     let allocated = unsafe { alloc.alloc_class::<P>(class) };
                     new_ptr = allocated;
                     if !new_ptr.is_null() {
-                        crate::bin_stats::record_alloc(class);
+                        crate::bin_stats::record_alloc_with_size(class, new_adjusted);
                         unsafe {
                             // SAFETY: `new_ptr` is a fresh block of at least
                             // `new_adjusted` bytes; init writes only within it.
@@ -299,6 +312,8 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
                         }
                         local_free_done = true;
                     }
+                    // SAFETY: `slot_ptr` is this thread's TLS slot pointer,
+                    // exclusively owned; clearing the `allocating` flag is safe.
                     unsafe {
                         crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(slot_ptr, false)
                     };
@@ -308,6 +323,8 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
     }
 
     if new_ptr.is_null() {
+        // SAFETY: `new_size != 0` and `layout.align()` is a valid power-of-two
+        // alignment; thread_alloc_layout's contract is met.
         new_ptr = unsafe { thread_alloc_layout::<P, B>(new_size, layout.align()) };
         if new_ptr.is_null() {
             return core::ptr::null_mut();

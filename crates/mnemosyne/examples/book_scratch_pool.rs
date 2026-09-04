@@ -62,6 +62,21 @@ fn main() {
         assert_eq!(total, 64.0_f32);
     });
 
+    // Bounded provisioning retains the working set while making geometric
+    // growth headroom reclaimable at a consumer-selected quiescent point.
+    let bounded_pool: ScratchPool<u32> = ScratchPool::new();
+    bounded_pool.with_scratch_bounded(1024, |_| {});
+    bounded_pool.with_scratch_bounded(1025, |_| {});
+    assert_eq!(bounded_pool.capacity(), 2048);
+    let retained = bounded_pool.release();
+    println!(
+        "bounded release: capacity={} -> retained={}",
+        2048, retained[0]
+    );
+    assert_eq!(retained[0], 1025);
+    bounded_pool.reset();
+    assert_eq!(bounded_pool.release()[0], 0);
+
     println!("MAX_POOL_SLOTS = {MAX_POOL_SLOTS} (max concurrent nested borrows)");
     println!("all scratch-pool assertions passed");
 }

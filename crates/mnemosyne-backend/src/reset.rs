@@ -29,7 +29,12 @@ pub(crate) fn do_page_reset<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool
     if ptr.is_null() || size == 0 {
         return false;
     }
-    let reset = unsafe { B::page_reset(ptr, size) };
+    let reset = {
+        // SAFETY: `ptr` is non-null and `size` is non-zero per the guards
+        // above; `B::page_reset` (MADV_DONTNEED/MEM_RESET) is documented to
+        // be safe for any committed mapping this caller controls.
+        unsafe { B::page_reset(ptr, size) }
+    };
     if reset {
         record_page_reset(size);
     }
@@ -47,7 +52,12 @@ pub(crate) fn do_decommit<B: MemoryBackend>(ptr: *mut u8, size: usize) -> bool {
     if ptr.is_null() || size == 0 {
         return false;
     }
-    let decommitted = unsafe { B::decommit(ptr, size) };
+    let decommitted = {
+        // SAFETY: `ptr` is non-null and `size` is non-zero per the guards
+        // above; `B::decommit` (VirtualFree MEM_DECOMMIT / MADV_DONTNEED)
+        // is safe for any committed mapping this caller controls.
+        unsafe { B::decommit(ptr, size) }
+    };
     if decommitted {
         record_decommit(size);
     }

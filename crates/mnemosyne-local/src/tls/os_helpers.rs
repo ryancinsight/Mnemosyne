@@ -134,6 +134,10 @@ pub(crate) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
 #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
 #[inline(always)]
 pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
+    // SAFETY: `index` is a valid `TlsAlloc`-allocated key (caller's contract);
+    // the TEB inline array (GS+0x1480) and expansion-slot pointer (GS+0x1780)
+    // are within the well-known TEB layout for Windows x86-64. The inline-asm
+    // reads only and does not modify any register the compiler owns.
     unsafe {
         if index < 64 {
             let val: *mut core::ffi::c_void;
@@ -173,6 +177,10 @@ pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
 #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
 #[inline(always)]
 pub(crate) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
+    // SAFETY: `index` is a valid `TlsAlloc`-allocated key (caller's contract).
+    // The TEB inline array (GS+0x1480) and expansion-slot pointer (GS+0x1780)
+    // are within the well-known TEB layout for Windows x86-64. The asm writes
+    // only the slot word; no register the compiler owns is clobbered.
     unsafe {
         if index < 64 {
             // SAFETY: `index < 64` is a `TlsAlloc`-allocated slot in the

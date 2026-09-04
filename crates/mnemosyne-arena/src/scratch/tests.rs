@@ -396,6 +396,181 @@ fn aligned_vec_is_send_and_sync() {
     assert_send_sync::<AlignedVec<f64>>();
 }
 
+// -- Phase 16: New collection ops ---------------------------------------------
+
+#[test]
+fn aligned_vec_pop_returns_last_element() {
+    let mut v = AlignedVec::<u32>::from_slice(&[10, 20, 30]);
+    assert_eq!(v.pop(), Some(30));
+    assert_eq!(v.pop(), Some(20));
+    assert_eq!(v.pop(), Some(10));
+    assert_eq!(v.pop(), None);
+}
+
+#[test]
+fn aligned_vec_swap_remove_unordered() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4, 5]);
+    let r = v.swap_remove(1); // removes 2, swaps 5 in
+    assert_eq!(r, 2);
+    assert_eq!(v.len(), 4);
+    assert!(!v.as_slice().contains(&2));
+    assert!(v.as_slice().contains(&5));
+}
+
+#[test]
+fn aligned_vec_remove_preserves_order() {
+    let mut v = AlignedVec::<i32>::from_slice(&[10, 20, 30, 40]);
+    assert_eq!(v.remove(1), 20);
+    assert_eq!(v.as_slice(), &[10, 30, 40]);
+}
+
+#[test]
+fn aligned_vec_insert_shifts_right() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 3]);
+    v.insert(1, 2);
+    assert_eq!(v.as_slice(), &[1, 2, 3]);
+}
+
+#[test]
+fn aligned_vec_retain_filters_in_place() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4, 5, 6]);
+    v.retain(|&x| x % 2 == 0);
+    assert_eq!(v.as_slice(), &[2, 4, 6]);
+}
+
+#[test]
+fn aligned_vec_dedup_consecutive() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 1, 2, 3, 3, 3, 2]);
+    v.dedup();
+    assert_eq!(v.as_slice(), &[1, 2, 3, 2]);
+}
+
+#[test]
+fn aligned_vec_sort_and_dedup() {
+    let mut v = AlignedVec::<i32>::from_slice(&[3, 1, 2, 1, 3, 2]);
+    v.sort_unstable();
+    v.dedup();
+    assert_eq!(v.as_slice(), &[1, 2, 3]);
+}
+
+#[test]
+fn aligned_vec_append_drains_source() {
+    let mut a = AlignedVec::<u32>::from_slice(&[1, 2, 3]);
+    let mut b = AlignedVec::<u32>::from_slice(&[4, 5, 6]);
+    a.append(&mut b);
+    assert_eq!(a.as_slice(), &[1, 2, 3, 4, 5, 6]);
+    assert!(b.is_empty());
+}
+
+#[test]
+fn aligned_vec_split_off() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4, 5]);
+    let tail = v.split_off(2);
+    assert_eq!(v.as_slice(), &[1, 2]);
+    assert_eq!(tail.as_slice(), &[3, 4, 5]);
+}
+
+#[test]
+fn aligned_vec_shrink_to_fit() {
+    let mut v = AlignedVec::<u32>::with_capacity(256);
+    v.push(1);
+    v.shrink_to_fit();
+    assert_eq!(v.len(), 1);
+    assert!(v.capacity() < 256);
+}
+
+#[test]
+fn aligned_vec_drain_yields_and_collapses() {
+    let mut v = AlignedVec::<i32>::from_slice(&[10, 20, 30, 40, 50]);
+    let drained: std::vec::Vec<i32> = v.drain(1, 3).collect();
+    assert_eq!(drained, &[20, 30]);
+    assert_eq!(v.as_slice(), &[10, 40, 50]);
+}
+
+#[test]
+fn aligned_vec_from_fn() {
+    let v = AlignedVec::<u32>::from_fn(5, |i| (i as u32 + 1) * 10);
+    assert_eq!(v.as_slice(), &[10, 20, 30, 40, 50]);
+}
+
+#[test]
+fn aligned_vec_from_iterator() {
+    let v: AlignedVec<u32> = (0u32..5).collect();
+    assert_eq!(v.as_slice(), &[0, 1, 2, 3, 4]);
+}
+
+#[test]
+fn aligned_vec_extend_and_extend_by_ref() {
+    let mut v = AlignedVec::<u32>::from_slice(&[0, 1, 2]);
+    v.extend(3u32..6);
+    assert_eq!(v.as_slice(), &[0, 1, 2, 3, 4, 5]);
+    let extra = [10u32, 20];
+    v.extend(extra.iter());
+    assert_eq!(&v.as_slice()[6..], &[10, 20]);
+}
+
+#[test]
+fn aligned_vec_double_ended_iter() {
+    let v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4]);
+    let rev: std::vec::Vec<i32> = v.into_iter().rev().collect();
+    assert_eq!(rev, &[4, 3, 2, 1]);
+}
+
+#[test]
+fn aligned_vec_as_ref_and_borrow() {
+    let v = AlignedVec::<u8>::from_slice(&[1, 2, 3]);
+    let r: &[u8] = v.as_ref();
+    assert_eq!(r, &[1, 2, 3]);
+    use core::borrow::Borrow;
+    let b: &[u8] = v.borrow();
+    assert_eq!(b, &[1, 2, 3]);
+}
+
+#[test]
+fn aligned_vec_spare_capacity_and_set_len() {
+    let mut v = AlignedVec::<u32>::with_capacity(8);
+    v.push(0);
+    let spare = v.spare_capacity_mut();
+    unsafe {
+        let slice = &mut *spare;
+        slice[0] = 1;
+        slice[1] = 2;
+        v.set_len_unchecked(3);
+    }
+    assert_eq!(v.as_slice(), &[0, 1, 2]);
+}
+
+#[test]
+fn scratch_pool_prewarm_grows_primary() {
+    let pool = ScratchPool::<f64>::new();
+    assert_eq!(pool.capacity(), 0);
+    pool.prewarm(128);
+    assert!(pool.capacity() >= 128);
+}
+
+#[test]
+fn scratch_pool_shrink_all_slots_releases_memory() {
+    let pool = ScratchPool::<u32>::new();
+    pool.with_scratch(64, |_| {});
+    assert!(pool.capacity() >= 64);
+    pool.shrink_all_slots();
+    assert_eq!(pool.capacity(), 0);
+}
+#[test]
+fn scratch_pool_with_scratch_uninit_initialises_before_read() {
+    let pool = ScratchPool::<u32>::new();
+    let result = unsafe {
+        pool.with_scratch_uninit(4, |raw| {
+            let slice = &mut *raw;
+            for (i, elem) in slice.iter_mut().enumerate() {
+                core::ptr::write(elem, i as u32 * 10);
+            }
+            (*raw)[3]
+        })
+    };
+    assert_eq!(result, 30);
+}
+
 #[test]
 fn aligned_vec_shrink_reduces_capacity_and_clamps_len() {
     let mut v = AlignedVec::<f64>::with_capacity(256);
@@ -540,4 +715,260 @@ fn pool_release_converges_across_growth_cycles() {
         s[511] = 1.0;
     });
     assert_eq!(pool.capacity(), before, "warm pass stays allocation-free");
+}
+
+#[test]
+fn total_capacity_counts_slots_grown_by_nested_borrows() {
+    let pool: ScratchPool<f64> = ScratchPool::new();
+    let element = size_of::<f64>();
+
+    // Slot 0 from the outer borrow, slot 1 from the nested one. Reading the
+    // total from *inside* the nested borrow is the case a slot-0-only answer
+    // got wrong: both slots are grown, and one of them is held exclusively.
+    pool.with_scratch(1024, |outer| {
+        outer[0] = 1.0;
+        pool.with_scratch(512, |inner| {
+            inner[0] = 2.0;
+            let total = pool.total_capacity_bytes();
+            assert!(
+                total >= (1024 + 512) * element,
+                "total_capacity_bytes reported {total} bytes during a nested                  borrow, which cannot cover slot 0 (>=1024) plus slot 1 (>=512)                  at {element} bytes per element"
+            );
+            assert!(
+                total > pool.capacity() * element,
+                "the total must exceed slot 0 alone once a nested borrow has                  grown a second slot"
+            );
+        });
+    });
+
+    // The same total holds once every borrow has ended.
+    let quiescent = pool.total_capacity_bytes();
+    assert!(quiescent >= (1024 + 512) * element);
+
+    let freed: usize = pool.release().iter().sum();
+    assert_eq!(freed, 0, "release leaves every slot at zero capacity");
+    assert_eq!(pool.total_capacity_bytes(), 0);
+}
+
+#[test]
+fn uninit_callback_panic_leaves_no_uninitialized_length_behind() {
+    // Spare capacity with a shorter initialized length is the case that makes
+    // this reachable: `with_scratch_uninit` skips `ensure_len`, so `[len, n)`
+    // stays uninitialized while the callback runs.
+    let pool: ScratchPool<u64> = ScratchPool::with_slot_capacity(1024);
+    assert!(pool.capacity() >= 1024);
+
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: the callback is required to initialize the range, and it
+        // deliberately does not — it unwinds first, which is the case under
+        // test. Nothing reads the buffer through this call.
+        unsafe {
+            pool.with_scratch_uninit(512, |_raw| {
+                panic!("callback unwinds before initializing anything");
+            })
+        }
+    }));
+    assert!(panicked.is_err(), "the callback must have unwound");
+
+    // The safe path must not inherit a length covering memory the unwound
+    // callback never wrote. Under Miri this read is the assertion: an
+    // uninitialized element here is undefined behaviour, not a wrong value.
+    pool.with_scratch(512, |scratch| {
+        assert_eq!(scratch.len(), 512);
+        let observed = scratch.iter().fold(0u64, |acc, value| acc ^ *value);
+        assert_eq!(observed, 0, "reused scratch must be zeroed, not stale");
+    });
+}
+// ---- Phase 17: resize_with / fill_with -------------------------------------
+
+#[test]
+fn aligned_vec_resize_with_grows_using_closure() {
+    let mut v = AlignedVec::<u32>::from_slice(&[1, 2]);
+    let mut counter = 10u32;
+    v.resize_with(5, || {
+        counter += 1;
+        counter
+    });
+    assert_eq!(v.len(), 5);
+    assert_eq!(&v.as_slice()[..2], &[1, 2]);
+    // Elements 2..5 produced by closure
+    assert!(v.as_slice()[2] > 10);
+    assert!(v.as_slice()[4] > v.as_slice()[2]);
+}
+
+#[test]
+fn aligned_vec_resize_with_shrinks_like_truncate() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4, 5]);
+    v.resize_with(3, || 99);
+    assert_eq!(v.as_slice(), &[1, 2, 3]);
+}
+
+#[test]
+fn aligned_vec_fill_with_overwrites_all_elements() {
+    let mut v = AlignedVec::<u32>::from_slice(&[0, 0, 0, 0]);
+    let mut idx = 0u32;
+    v.fill_with(|| {
+        idx += 1;
+        idx
+    });
+    assert_eq!(v.as_slice(), &[1, 2, 3, 4]);
+}
+// ---- Phase 18b: concat / binary_search / contains / position ---------------
+
+#[test]
+fn aligned_vec_concat_merges_two_slices() {
+    let v = AlignedVec::<u32>::concat(&[1, 2, 3], &[4, 5, 6]);
+    assert_eq!(v.as_slice(), &[1, 2, 3, 4, 5, 6]);
+}
+
+#[test]
+fn aligned_vec_concat_with_empty() {
+    let v = AlignedVec::<u8>::concat(&[10, 20], &[]);
+    assert_eq!(v.as_slice(), &[10, 20]);
+    let v2 = AlignedVec::<u8>::concat(&[], &[30, 40]);
+    assert_eq!(v2.as_slice(), &[30, 40]);
+}
+
+#[test]
+fn aligned_vec_binary_search_finds_element() {
+    let v = AlignedVec::<i32>::from_slice(&[1, 3, 5, 7, 9]);
+    assert_eq!(v.binary_search(&5), Ok(2));
+    assert!(v.binary_search(&4).is_err());
+}
+
+#[test]
+fn aligned_vec_contains_and_position() {
+    let v = AlignedVec::<u32>::from_slice(&[10, 20, 30, 20]);
+    assert!(v.contains(&20));
+    assert!(!v.contains(&99));
+    assert_eq!(v.position(&20), Some(1));
+    assert_eq!(v.position(&99), None);
+}
+
+#[test]
+fn aligned_vec_sort_unstable_inplace() {
+    let mut v = AlignedVec::<i32>::from_slice(&[3, 1, 4, 1, 5, 9, 2, 6]);
+    v.sort_unstable_inplace();
+    assert_eq!(v.as_slice(), &[1, 1, 2, 3, 4, 5, 6, 9]);
+}
+// ---- Phase 20: zero_fill / copy_from_slice / as_ptr_range -----------------
+
+#[test]
+fn aligned_vec_zero_fill_resets_all_elements() {
+    let mut v = AlignedVec::<u32>::from_slice(&[1, 2, 3, 4]);
+    v.zero_fill();
+    assert_eq!(v.as_slice(), &[0, 0, 0, 0]);
+}
+
+#[test]
+fn aligned_vec_zero_fill_empty_is_noop() {
+    let mut v = AlignedVec::<u8>::dangling();
+    v.zero_fill(); // must not panic
+    assert!(v.is_empty());
+}
+
+#[test]
+fn aligned_vec_copy_from_slice() {
+    let mut v = AlignedVec::<i32>::zeroed(4);
+    v.copy_from_slice(&[10, 20, 30, 40]);
+    assert_eq!(v.as_slice(), &[10, 20, 30, 40]);
+}
+
+#[test]
+fn aligned_vec_as_ptr_range() {
+    let v = AlignedVec::<u32>::from_slice(&[1, 2, 3]);
+    let range = v.as_ptr_range();
+    assert_eq!(
+        range.end as usize - range.start as usize,
+        3 * core::mem::size_of::<u32>()
+    );
+    assert_eq!(range.start, v.as_ptr());
+}
+
+#[test]
+fn aligned_vec_as_mut_ptr_range() {
+    let mut v = AlignedVec::<u32>::from_slice(&[1, 2, 3]);
+    let range = v.as_mut_ptr_range();
+    assert_eq!(
+        range.end as usize - range.start as usize,
+        3 * core::mem::size_of::<u32>()
+    );
+}
+// ---- Phase 20b: partition_in_place ----------------------------------------
+
+#[test]
+fn aligned_vec_partition_evens_before_odds() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4, 5, 6]);
+    let pivot = v.partition_in_place(|&x| x % 2 == 0);
+    assert_eq!(pivot, 3, "three even numbers");
+    for &x in &v.as_slice()[..pivot] {
+        assert_eq!(x % 2, 0, "all true-predicate elements before pivot");
+    }
+    for &x in &v.as_slice()[pivot..] {
+        assert_eq!(x % 2, 1, "all false-predicate elements after pivot");
+    }
+}
+
+#[test]
+fn aligned_vec_partition_all_true() {
+    let mut v = AlignedVec::<u32>::from_slice(&[2, 4, 6]);
+    let pivot = v.partition_in_place(|&x| x % 2 == 0);
+    assert_eq!(pivot, 3);
+}
+
+#[test]
+fn aligned_vec_partition_all_false() {
+    let mut v = AlignedVec::<u32>::from_slice(&[1, 3, 5]);
+    let pivot = v.partition_in_place(|&x| x % 2 == 0);
+    assert_eq!(pivot, 0);
+}
+// ---- Phase 22: Write + starts_with/ends_with + strip_prefix/suffix ---------
+
+#[test]
+fn aligned_vec_write_sink_fmt() {
+    use core::fmt::Write as _;
+    let mut buf = AlignedVec::<u8>::with_capacity(64);
+    write!(buf, "hello {}", 42).expect("invariant: AlignedVec's Write sink never fails");
+    assert_eq!(buf.as_slice(), b"hello 42");
+}
+
+#[test]
+fn aligned_vec_starts_with_ends_with() {
+    let v = AlignedVec::<u8>::from_slice(b"hello world");
+    assert!(v.starts_with(b"hello"));
+    assert!(v.ends_with(b"world"));
+    assert!(!v.starts_with(b"world"));
+    assert!(!v.ends_with(b"hello"));
+}
+
+#[test]
+fn aligned_vec_strip_prefix_suffix() {
+    let v = AlignedVec::<u8>::from_slice(b"foobar");
+    assert_eq!(v.strip_prefix(b"foo"), Some(b"bar".as_ref()));
+    assert_eq!(v.strip_suffix(b"bar"), Some(b"foo".as_ref()));
+    assert_eq!(v.strip_prefix(b"baz"), None);
+}
+// ---- Phase 23: sort_unstable_by + alloc_distribution + is_sorted -----------
+
+#[test]
+fn aligned_vec_sort_unstable_by_reverse() {
+    let mut v = AlignedVec::<i32>::from_slice(&[3, 1, 4, 1, 5]);
+    v.sort_unstable_by(|a, b| b.cmp(a));
+    // Reverse order
+    assert_eq!(&v.as_slice()[0], &5);
+}
+
+#[test]
+fn aligned_vec_sort_unstable_by_key() {
+    let mut v = AlignedVec::<i32>::from_slice(&[-3, 1, -4, 1, 5]);
+    v.sort_unstable_by_key(|x| x.unsigned_abs());
+    assert_eq!(v.as_slice()[0], 1); // smallest absolute value
+}
+
+#[test]
+fn aligned_vec_is_sorted() {
+    let asc = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4]);
+    assert!(asc.is_sorted());
+    let unsorted = AlignedVec::<i32>::from_slice(&[1, 3, 2]);
+    assert!(!unsorted.is_sorted());
 }
