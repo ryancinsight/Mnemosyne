@@ -5,7 +5,9 @@
 //! zero succeeds on any Linux system, and an out-of-range node id fails in
 //! the wrapper before any kernel call. The tiered-heap Numa routing test
 //! asserts the best-effort contract — a block is returned whether or not
-//! the policy call succeeded — so it is portable across platforms.
+//! the policy call succeeded — so it is portable across platforms. Miri
+//! excludes only the platform-boundary tests because it cannot execute the
+//! Linux `mbind` syscall or Windows NUMA FFI; native runs retain those checks.
 
 use super::*;
 #[cfg(target_os = "linux")]
@@ -19,8 +21,8 @@ use themis::NumaNodeId;
 
 #[test]
 #[cfg_attr(
-    all(miri, target_os = "windows"),
-    ignore = "Windows NUMA discovery uses unsupported system FFI under Miri"
+    miri,
+    ignore = "NUMA placement uses unsupported platform calls under Miri"
 )]
 fn allocate_interleaved_returns_usable_aligned_memory() {
     let layout = Layout::from_size_align(64 * 1024, 4096).expect("valid layout");
@@ -65,6 +67,10 @@ fn first_touch_is_idempotent_and_touches_every_page() {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "NUMA binding uses unsupported platform calls under Miri"
+)]
 fn bind_to_node_on_fresh_allocation_is_ok() {
     let layout = Layout::from_size_align(64 * 1024, 4096).expect("valid layout");
     // SAFETY: fresh mmap-backed allocation (unfaulted), released below.
