@@ -213,13 +213,20 @@ pub unsafe fn purge_segment_pool_with_warm<B: HasSegmentPool>(warm_threshold: us
             match unsafe { release_segment_mapping::<B>(segment) } {
                 SegmentRelease::Released => purged += 1,
                 SegmentRelease::RetainedAfterFailure => {
+                    // SAFETY: the backend declined to release `segment`, so it
+                    // remains exclusively owned by this sweep; returning it to
+                    // the node pool transfers ownership without violation.
                     unsafe { node.push_unbounded(segment) };
                     while !head.is_null() {
                         let s = head;
+                        // SAFETY: `s` is the next node in the chain that was
+                        // atomically detached by `take_all`; loading its
+                        // `next_free_segment` link before re-caching it is sound.
                         head = unsafe {
                             (*s).next_free_segment
                                 .load(core::sync::atomic::Ordering::Relaxed)
                         };
+                        // SAFETY: `s` is exclusively owned by this sweep pass.
                         unsafe { node.push_unbounded(s) };
                     }
                     break;

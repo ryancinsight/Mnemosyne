@@ -180,6 +180,28 @@ pub struct BinSnapshot {
     pub live_estimate: u64,
 }
 
+impl BinSnapshot {
+    /// Fragmentation ratio: `live_bytes / alloc_bytes`, in `[0.0, 1.0]`.
+    ///
+    /// Returns `0.0` when nothing has ever been allocated in this class.
+    #[inline]
+    #[must_use]
+    pub fn fragmentation_ratio(&self) -> f64 {
+        if self.alloc_bytes == 0 {
+            return 0.0;
+        }
+        let live_bytes = self.live_estimate.saturating_mul(self.block_size as u64);
+        (live_bytes as f64 / self.alloc_bytes as f64).min(1.0)
+    }
+
+    /// Live bytes in this class: `live_estimate × block_size`.
+    #[inline]
+    #[must_use]
+    pub fn live_bytes(&self) -> u64 {
+        self.live_estimate.saturating_mul(self.block_size as u64)
+    }
+}
+
 /// Returns a snapshot for size class `class`, or `None` if out of range.
 #[must_use]
 pub fn bin_snapshot(class: usize) -> Option<BinSnapshot> {
@@ -215,6 +237,73 @@ pub fn all_bin_snapshots() -> [BinSnapshot; NUM_SIZE_CLASSES] {
             live_estimate: alloc_count.saturating_sub(dealloc_count),
         }
     })
+}
+
+/// Returns the index of the hottest size class (highest alloc_count), or
+/// `None` when nothing has ever been allocated.
+#[must_use]
+pub fn hottest_class() -> Option<usize> {
+    let snapshots = all_bin_snapshots();
+    snapshots
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, s)| s.alloc_count)
+        .and_then(|(idx, s)| if s.alloc_count > 0 { Some(idx) } else { None })
+}
+
+/// Process-wide live bytes in the small allocator: sum of `live_estimate ×
+/// block_size` across all classes.
+#[must_use]
+pub fn total_live_bytes() -> u64 {
+    all_bin_snapshots()
+        .iter()
+        .map(|s| s.live_bytes())
+        .fold(0u64, u64::saturating_add)
+}
+
+/// Process-wide total allocation count across all small size classes.
+#[must_use]
+pub fn total_alloc_count() -> u64 {
+    flush_current_thread();
+    ALLOC_COUNT
+        .iter()
+        .map(|c| c.load(Ordering::Relaxed))
+        .fold(0u64, u64::saturating_add)
+}
+
+/// Resets all per-class counters to zero.
+///
+/// Useful for marking the start of a profiling window so subsequent
+/// snapshots reflect only activity since the reset.
+pub fn reset_bin_stats() {
+    flush_current_thread();
+    for class in 0..NUM_SIZE_CLASSES {
+        ALLOC_COUNT[class].store(0, Ordering::Relaxed);
+        DEALLOC_COUNT[class].store(0, Ordering::Relaxed);
+    }
+}
+
+/// Flushes the calling thread's pending bin-stats batch to the global counters.
+///
+/// `bin_snapshot` and `all_bin_snapshots` call this automatically; invoke
+/// it explicitly before reading from a different thread.
+#[inline]
+pub fn flush_tls_stats() {
+    flush_current_thread();
+}
+
+/// One-line human-readable summary of process-wide bin stats.
+#[must_use]
+pub fn summary_line() -> std::string::String {
+    let total_allocs = total_alloc_count();
+    let live = total_live_bytes();
+    match hottest_class() {
+        Some(cls) => std::format!(
+            "allocs={total_allocs} live_bytes={live} hottest_class={cls}({}b)",
+            class_to_size(cls)
+        ),
+        None => std::format!("allocs={total_allocs} live_bytes={live} hottest_class=none"),
+    }
 }
 
 #[cfg(test)]
