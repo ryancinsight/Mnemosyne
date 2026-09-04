@@ -17,6 +17,7 @@ pub struct AlignedVec<T: ScratchElement> {
 impl<T: ScratchElement> AlignedVec<T> {
     /// Creates a dangling sentinel with zero capacity.
     #[inline]
+    #[must_use]
     pub const fn dangling() -> Self {
         Self {
             ptr: core::ptr::NonNull::dangling().as_ptr(),
@@ -28,6 +29,7 @@ impl<T: ScratchElement> AlignedVec<T> {
 
     /// Creates a new `AlignedVec` with the given initial capacity.
     #[inline]
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         if capacity == 0 {
             return Self::dangling();
@@ -63,6 +65,7 @@ impl<T: ScratchElement> AlignedVec<T> {
 
     /// Returns a shared slice of the initialized elements.
     #[inline]
+    #[must_use]
     pub fn as_slice(&self) -> &[T] {
         // SAFETY: same validity argument as `as_mut_slice` — `[0, self.len)` is
         // initialized POD `T`. `&self` precludes concurrent mutation for the
@@ -72,12 +75,14 @@ impl<T: ScratchElement> AlignedVec<T> {
 
     /// Number of initialized elements: the prefix `as_slice` exposes.
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Whether no element is initialized (`len() == 0`).
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -154,6 +159,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// Elements the current allocation can hold before `ensure_len` must
     /// reallocate; never less than `len()`.
     #[inline]
+    #[must_use]
     pub fn capacity(&self) -> usize {
         self.capacity
     }
@@ -164,6 +170,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// expressed as a single constructor. All elements are zero (valid per the
     /// [`ScratchElement`] invariant).
     #[inline]
+    #[must_use]
     pub fn zeroed(len: usize) -> Self {
         let mut v = Self::with_capacity(len);
         v.ensure_len(len);
@@ -359,6 +366,133 @@ impl<T: ScratchElement> AlignedVec<T> {
             v.set_len(self.len);
         }
         v
+    }
+
+    /// Shrinks the capacity as close to `len()` as possible.
+    ///
+    /// If the buffer is empty (`len() == 0`) the allocation is freed. If
+    /// `capacity == len` already, nothing happens. Otherwise a `realloc`
+    /// down to exactly `len` elements is attempted; if the allocator declines
+    /// the resize the capacity is unchanged (shrink is best-effort, never
+    /// panics).
+    #[inline]
+    pub fn shrink_to_fit(&mut self) {
+        self.shrink_to(0);
+    }
+
+    /// Shrinks the capacity to at most `max(len(), min_capacity)` elements.
+    ///
+    /// No reallocation happens if the current capacity already satisfies the
+    /// constraint. The `realloc` is best-effort — on failure the capacity
+    /// remains unchanged and the buffer is still valid.
+    #[inline]
+    pub fn shrink_to(&mut self, min_capacity: usize) {
+        let target = self.len.max(min_capacity);
+        if self.capacity <= target {
+            return;
+        }
+        if target == 0 {
+            if self.capacity > 0 {
+                let layout = Self::layout_for(self.capacity);
+                // SAFETY: `capacity > 0` so `self.ptr` is a live aligned
+                // allocation matching `layout`. After dealloc, `len` and
+                // `capacity` are both set to 0 so no further reads happen.
+                unsafe { alloc::alloc::dealloc(self.ptr as *mut u8, layout) };
+                self.ptr = core::ptr::NonNull::dangling().as_ptr();
+                self.capacity = 0;
+            }
+            return;
+        }
+        let old_layout = Self::layout_for(self.capacity);
+        let new_layout = Self::layout_for(target);
+        // SAFETY: `self.ptr` was allocated with `old_layout`; `new_layout`
+        // shares alignment (layout_for uses the same alignment expression).
+        // `new_layout.size()` is non-zero (layout_for clamps to >= 1). The
+        // result is null-checked before committing.
+        let new_ptr = unsafe {
+            alloc::alloc::realloc(self.ptr as *mut u8, old_layout, new_layout.size()) as *mut T
+        };
+        if !new_ptr.is_null() {
+            self.ptr = new_ptr;
+            self.capacity = target;
+        }
+        // On null, leave self unchanged — shrink is advisory.
+    }
+
+    /// Removes the element at `index` by swapping it with the last element
+    /// and truncating, then returns the removed value.
+    ///
+    /// Does not preserve element order. O(1).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.len()`.
+    #[inline]
+    pub fn swap_remove(&mut self, index: usize) -> T {
+        assert!(index < self.len, "swap_remove: index out of bounds");
+        // SAFETY: `index < len` and `len - 1 < len`, so both indices are
+        // inside the initialized region; T: Copy — bitwise reads are sound.
+        let last = unsafe { core::ptr::read(self.ptr.add(self.len - 1)) };
+        let removed = unsafe { core::ptr::read(self.ptr.add(index)) };
+        if index != self.len - 1 {
+            // SAFETY: `index < len`, so writing `last` at `index` stays in bounds.
+            unsafe { core::ptr::write(self.ptr.add(index), last) };
+        }
+        self.len -= 1;
+        removed
+    }
+
+    /// Moves all elements of `other` into `self`, leaving `other` empty.
+    ///
+    /// Equivalent to `self.extend_from_slice(other.as_slice()); other.clear()`.
+    /// Uses `copy_nonoverlapping` for the bulk copy.
+    #[inline]
+    pub fn append(&mut self, other: &mut Self) {
+        if other.is_empty() {
+            return;
+        }
+        self.extend_from_slice(other.as_slice());
+        other.len = 0;
+    }
+
+    /// Splits the buffer into two at the given index.
+    ///
+    /// Returns a new `AlignedVec` containing elements `[at, len)`.
+    /// `self` retains elements `[0, at)` and is shortened accordingly.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `at > self.len()`.
+    #[must_use]
+    #[inline]
+    pub fn split_off(&mut self, at: usize) -> Self {
+        assert!(at <= self.len, "split_off: at > len");
+        let tail_len = self.len - at;
+        // SAFETY: `at .. at + tail_len` is within initialized bounds; T: Copy.
+        let tail = Self::from_slice(unsafe {
+            core::slice::from_raw_parts(self.ptr.add(at), tail_len)
+        });
+        self.len = at;
+        tail
+    }
+
+    /// Returns a mutable pointer covering the spare (uninitialized) capacity
+    /// `[len, capacity)`.
+    ///
+    /// Callers must initialize every element in the returned slice before
+    /// calling `set_len_unchecked` to extend the initialized prefix. The
+    /// returned pointer is valid only until the next reallocation.
+    #[inline]
+    pub fn spare_capacity_mut(&mut self) -> *mut [T] {
+        let spare_len = self.capacity - self.len;
+        // SAFETY: `self.ptr.add(self.len)` is the first byte past the
+        // initialized region and before the allocation end (`capacity` was
+        // grown to `>= len`). The resulting pointer-to-slice is only a raw
+        // pointer, so no reference-aliasing rules apply until the caller
+        // constructs a reference from it.
+        unsafe {
+            core::ptr::slice_from_raw_parts_mut(self.ptr.add(self.len), spare_len)
+        }
     }
 
     #[cold]

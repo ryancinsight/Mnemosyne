@@ -218,6 +218,11 @@ fn decay_step_for_backend<B: HasSegmentPool>() {
     decay_orphan_pool::<B>();
     // SAFETY: this maintenance step only touches backend-owned retained
     // segments for `B`; no caller-provided pointers are involved.
+    // The decay step always purges with warm_threshold=0 — reclaiming all
+    // idle memory is its contract. The natural retention buffer is maintained
+    // separately by the MAX_RETAINED_SEGMENTS cap on `try_push_retained`.
+    // `SEGMENT_POOL_WARM_THRESHOLD` applies to the user-facing `purge_lazy`
+    // API, not to background decay.
     unsafe {
         mnemosyne_arena::purge_segment_pool::<B>();
     }

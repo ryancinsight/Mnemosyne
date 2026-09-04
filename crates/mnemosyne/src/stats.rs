@@ -1,4 +1,5 @@
 use mnemosyne_core::NUM_SIZE_CLASSES;
+use mnemosyne_core::policy::AllocPolicy;
 
 use crate::{LocalAllocatorSelector, SizeClassOccupancy};
 
@@ -279,7 +280,11 @@ pub fn memory_stats_json() -> alloc::string::String {
         };
     }
 
-    kv!("current_mapped_bytes", s.current_mapped_bytes, false);
+    // Include compile-time policy metadata so that log-line parsers can
+    // correlate a JSON stats dump with the policy the process was built with.
+    kv!("policy_name", mnemosyne_core::policy::StandardPolicy::POLICY_NAME, false);
+    kv!("segment_pool_warm_threshold", mnemosyne_core::policy::StandardPolicy::SEGMENT_POOL_WARM_THRESHOLD, true);
+    kv!("current_mapped_bytes", s.current_mapped_bytes, true);
     kv!("peak_mapped_bytes", s.peak_mapped_bytes, true);
     kv!("map_calls", s.map_calls, true);
     kv!("unmap_calls", s.unmap_calls, true);

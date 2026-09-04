@@ -60,6 +60,17 @@ pub trait AllocPolicy: private::Sealed + Send + Sync + 'static {
     /// This is a pure compile-time constant: monomorphization eliminates the
     /// compare at zero cost when the policy has no warm threshold.
     const SEGMENT_POOL_WARM_THRESHOLD: usize = 0;
+
+    /// Human-readable name of this policy.
+    ///
+    /// Useful for diagnostic output and logging without needing runtime
+    /// reflection: `P::POLICY_NAME` is a compile-time string constant.
+    /// The default implementation returns the unit type name so every
+    /// implementation automatically gets a reasonable fallback.
+    ///
+    /// Zero-cost: the constant is inlined by the compiler; no string
+    /// allocation or indirection at run time.
+    const POLICY_NAME: &'static str = "custom";
 }
 
 /// Zero-Sized Type (ZST) representing the standard allocation policy with maximum performance.
@@ -73,6 +84,7 @@ impl AllocPolicy for StandardPolicy {
     /// Keep 4 committed free segments as a warm pool so that rapid
     /// free-then-allocate bursts do not pay an OS round-trip each time.
     const SEGMENT_POOL_WARM_THRESHOLD: usize = 4;
+    const POLICY_NAME: &'static str = "standard";
 }
 
 /// Zero-Sized Type (ZST) representing a secure allocation policy with memory
@@ -85,6 +97,7 @@ impl AllocPolicy for SecurePolicy {
     const ENABLE_POISONING: bool = true;
     const ZERO_INITIALIZE: bool = true;
     const RANDOMIZE_ALLOCATION: bool = true;
+    const POLICY_NAME: &'static str = "secure";
 }
 
 /// Zero-Sized Type (ZST) representing a hardened allocation policy with memory
@@ -103,4 +116,91 @@ impl AllocPolicy for HardenedPolicy {
     /// reuse and increases the temporal window between free and reallocate,
     /// making use-after-free and LIFO heap-spray exploits harder to land.
     const DELAY_PAGE_WAKE: bool = true;
+    const POLICY_NAME: &'static str = "hardened";
 }
+
+// ── Policy typestate marker ───────────────────────────────────────────────────
+
+/// Zero-sized type (ZST) that brands a data structure with the allocator
+/// policy used to create it.
+///
+/// Embed `PolicyMarker<P>` in any type to carry the policy as a
+/// **compile-time proof** without any runtime overhead (PhantomData is a
+/// ZST whose size is always 0).  Consumer code monomorphized over `P` can
+/// then propagate the policy through data pipelines without runtime dispatch.
+///
+/// # Example
+///
+/// ```rust
+/// use mnemosyne_core::policy::{AllocPolicy, PolicyMarker, StandardPolicy};
+///
+/// struct ScratchBuffer<P: AllocPolicy> {
+///     data: alloc::vec::Vec<u8>,
+///     _policy: PolicyMarker<P>,
+/// }
+///
+/// impl<P: AllocPolicy> ScratchBuffer<P> {
+///     fn policy_name() -> &'static str {
+///         P::POLICY_NAME
+///     }
+/// }
+///
+/// assert_eq!(ScratchBuffer::<StandardPolicy>::policy_name(), "standard");
+/// ```
+pub struct PolicyMarker<P: AllocPolicy>(core::marker::PhantomData<P>);
+
+impl<P: AllocPolicy> PolicyMarker<P> {
+    /// Creates a new zero-cost marker for policy `P`.
+    #[inline]
+    pub const fn new() -> Self {
+        Self(core::marker::PhantomData)
+    }
+
+    /// Returns the compile-time policy name.
+    #[inline]
+    pub const fn name() -> &'static str {
+        P::POLICY_NAME
+    }
+}
+
+impl<P: AllocPolicy> Default for PolicyMarker<P> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// PolicyMarker is a ZST — always Copy, Clone, Debug, PartialEq, Eq, Hash.
+impl<P: AllocPolicy> Clone for PolicyMarker<P> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self::new()
+    }
+}
+
+impl<P: AllocPolicy> Copy for PolicyMarker<P> {}
+
+impl<P: AllocPolicy> core::fmt::Debug for PolicyMarker<P> {
+    #[inline]
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "PolicyMarker<{}>", P::POLICY_NAME)
+    }
+}
+
+impl<P: AllocPolicy> PartialEq for PolicyMarker<P> {
+    #[inline]
+    fn eq(&self, _other: &Self) -> bool {
+        true // ZST — all instances are identical
+    }
+}
+
+impl<P: AllocPolicy> Eq for PolicyMarker<P> {}
+
+impl<P: AllocPolicy> core::hash::Hash for PolicyMarker<P> {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, _state: &mut H) {}
+}
+
+/// Compile-time assertion that `PolicyMarker<P>` is truly zero-sized.
+const _: () = assert!(core::mem::size_of::<PolicyMarker<StandardPolicy>>() == 0);
+

@@ -420,7 +420,107 @@ fn aligned_vec_bool_is_scratch_element() {
     assert!(v.is_empty());
 }
 
-// ── Phase 12: drain / DoubleEndedIterator ─────────────────────────────────────
+// ── Phase 13: shrink_to_fit / swap_remove / append / split_off / spare_capacity_mut ──
+
+#[test]
+fn aligned_vec_shrink_to_fit_releases_excess() {
+    let mut v = AlignedVec::<u32>::with_capacity(256);
+    for i in 0..4u32 { v.push(i); }
+    assert!(v.capacity() >= 256);
+    v.shrink_to_fit();
+    assert_eq!(v.len(), 4);
+    assert!(v.capacity() < 256, "capacity should have shrunk");
+    assert_eq!(v.as_slice(), &[0, 1, 2, 3]);
+}
+
+#[test]
+fn aligned_vec_shrink_to_respects_min_capacity() {
+    let mut v = AlignedVec::<u32>::with_capacity(256);
+    v.push(1);
+    v.shrink_to(64);
+    assert_eq!(v.len(), 1);
+    assert!(v.capacity() >= 64, "capacity must be at least min_capacity");
+    assert!(v.capacity() < 256, "capacity should have shrunk");
+}
+
+#[test]
+fn aligned_vec_shrink_to_fit_empty_frees_alloc() {
+    let mut v = AlignedVec::<u64>::with_capacity(128);
+    v.shrink_to_fit();
+    assert_eq!(v.capacity(), 0);
+    assert_eq!(v.len(), 0);
+}
+
+#[test]
+fn aligned_vec_swap_remove_preserves_others() {
+    let mut v = AlignedVec::<i32>::from_slice(&[10, 20, 30, 40, 50]);
+    let removed = v.swap_remove(1); // removes 20, swaps with 50
+    assert_eq!(removed, 20);
+    assert_eq!(v.len(), 4);
+    // Last element (50) fills the gap
+    assert!(v.as_slice().contains(&10));
+    assert!(v.as_slice().contains(&30));
+    assert!(v.as_slice().contains(&40));
+    assert!(v.as_slice().contains(&50));
+    assert!(!v.as_slice().contains(&20));
+}
+
+#[test]
+fn aligned_vec_swap_remove_last() {
+    let mut v = AlignedVec::<u8>::from_slice(&[1, 2, 3]);
+    let removed = v.swap_remove(2);
+    assert_eq!(removed, 3);
+    assert_eq!(v.as_slice(), &[1, 2]);
+}
+
+#[test]
+fn aligned_vec_append_drains_source() {
+    let mut a = AlignedVec::<u32>::from_slice(&[1, 2, 3]);
+    let mut b = AlignedVec::<u32>::from_slice(&[4, 5, 6]);
+    a.append(&mut b);
+    assert_eq!(a.as_slice(), &[1, 2, 3, 4, 5, 6]);
+    assert!(b.is_empty(), "source must be empty after append");
+}
+
+#[test]
+fn aligned_vec_split_off_at_midpoint() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4, 5]);
+    let tail = v.split_off(2);
+    assert_eq!(v.as_slice(), &[1, 2]);
+    assert_eq!(tail.as_slice(), &[3, 4, 5]);
+}
+
+#[test]
+fn aligned_vec_split_off_at_zero_is_clone_and_clear() {
+    let mut v = AlignedVec::<u8>::from_slice(&[10, 20, 30]);
+    let tail = v.split_off(0);
+    assert!(v.is_empty());
+    assert_eq!(tail.as_slice(), &[10, 20, 30]);
+}
+
+#[test]
+fn aligned_vec_spare_capacity_mut_write_then_set_len() {
+    let mut v = AlignedVec::<u32>::with_capacity(8);
+    v.push(0);
+    // Write into spare capacity
+    let spare = v.spare_capacity_mut();
+    // SAFETY: spare covers [len, capacity) = [1, 8); we write exactly 3 elements
+    unsafe {
+        let spare_slice = &mut *spare;
+        spare_slice[0] = 1;
+        spare_slice[1] = 2;
+        spare_slice[2] = 3;
+        v.set_len_unchecked(4);
+    }
+    assert_eq!(v.as_slice(), &[0, 1, 2, 3]);
+}
+
+#[test]
+fn aligned_vec_must_use_zeroed_compiles_with_discard_allowed() {
+    // Compile-time test: calling zeroed() and immediately dropping is a
+    // user choice; #[must_use] warns but does not error.
+    let _ = AlignedVec::<u32>::zeroed(4);
+}
 
 #[test]
 fn aligned_vec_drain_yields_range_and_collapses() {
