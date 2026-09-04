@@ -446,6 +446,83 @@ impl<T: ScratchElement> AlignedVec<T> {
             current: start,
         }
     }
+
+    // ── Bulk operations ──────────────────────────────────────────────────────
+
+    /// Concatenates two slices into a new `AlignedVec`, copying both.
+    ///
+    /// Equivalent to `AlignedVec::from_slice(a)` + `extend_from_slice(b)`.
+    #[inline]
+    #[must_use]
+    pub fn concat(a: &[T], b: &[T]) -> Self {
+        let mut v = Self::with_capacity(a.len() + b.len());
+        v.extend_from_slice(a);
+        v.extend_from_slice(b);
+        v
+    }
+
+    /// Binary search for `value` in a sorted slice.
+    ///
+    /// Delegates to `[T]::binary_search`; `AlignedVec::Deref` already gives
+    /// access but this method improves discoverability.
+    #[inline]
+    pub fn binary_search(&self, value: &T) -> Result<usize, usize>
+    where
+        T: Ord,
+    {
+        self.as_slice().binary_search(value)
+    }
+
+    /// Binary search with a comparator. Delegates to `[T]::binary_search_by`.
+    #[inline]
+    pub fn binary_search_by<F: FnMut(&T) -> core::cmp::Ordering>(
+        &self,
+        f: F,
+    ) -> Result<usize, usize> {
+        self.as_slice().binary_search_by(f)
+    }
+
+    /// Binary search by key. Delegates to `[T]::binary_search_by_key`.
+    #[inline]
+    pub fn binary_search_by_key<K: Ord, F: FnMut(&T) -> K>(
+        &self,
+        b: &K,
+        f: F,
+    ) -> Result<usize, usize> {
+        self.as_slice().binary_search_by_key(b, f)
+    }
+
+    /// Returns `true` if the slice contains `value`.
+    ///
+    /// Delegates to `[T]::contains`. For sorted data, prefer `binary_search`.
+    #[inline]
+    pub fn contains(&self, value: &T) -> bool
+    where
+        T: PartialEq,
+    {
+        self.as_slice().contains(value)
+    }
+
+    /// Returns the position of the first occurrence of `value`.
+    #[inline]
+    pub fn position(&self, value: &T) -> Option<usize>
+    where
+        T: PartialEq,
+    {
+        self.as_slice().iter().position(|x| x == value)
+    }
+
+    /// Sorts the initialized elements using `T`'s natural ordering.
+    ///
+    /// Delegates to `[T]::sort_unstable`. Provided for discoverability
+    /// alongside the other in-place methods.
+    #[inline]
+    pub fn sort_unstable_inplace(&mut self)
+    where
+        T: Ord,
+    {
+        self.as_mut_slice().sort_unstable();
+    }
 }
 
 // ── Drain iterator ───────────────────────────────────────────────────────────

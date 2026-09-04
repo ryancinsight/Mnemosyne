@@ -813,3 +813,41 @@ fn aligned_vec_fill_with_overwrites_all_elements() {
     });
     assert_eq!(v.as_slice(), &[1, 2, 3, 4]);
 }
+// ---- Phase 18b: concat / binary_search / contains / position ---------------
+
+#[test]
+fn aligned_vec_concat_merges_two_slices() {
+    let v = AlignedVec::<u32>::concat(&[1, 2, 3], &[4, 5, 6]);
+    assert_eq!(v.as_slice(), &[1, 2, 3, 4, 5, 6]);
+}
+
+#[test]
+fn aligned_vec_concat_with_empty() {
+    let v = AlignedVec::<u8>::concat(&[10, 20], &[]);
+    assert_eq!(v.as_slice(), &[10, 20]);
+    let v2 = AlignedVec::<u8>::concat(&[], &[30, 40]);
+    assert_eq!(v2.as_slice(), &[30, 40]);
+}
+
+#[test]
+fn aligned_vec_binary_search_finds_element() {
+    let v = AlignedVec::<i32>::from_slice(&[1, 3, 5, 7, 9]);
+    assert_eq!(v.binary_search(&5), Ok(2));
+    assert!(v.binary_search(&4).is_err());
+}
+
+#[test]
+fn aligned_vec_contains_and_position() {
+    let v = AlignedVec::<u32>::from_slice(&[10, 20, 30, 20]);
+    assert!(v.contains(&20));
+    assert!(!v.contains(&99));
+    assert_eq!(v.position(&20), Some(1));
+    assert_eq!(v.position(&99), None);
+}
+
+#[test]
+fn aligned_vec_sort_unstable_inplace() {
+    let mut v = AlignedVec::<i32>::from_slice(&[3, 1, 4, 1, 5, 9, 2, 6]);
+    v.sort_unstable_inplace();
+    assert_eq!(v.as_slice(), &[1, 1, 2, 3, 4, 5, 6, 9]);
+}

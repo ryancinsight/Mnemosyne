@@ -314,8 +314,15 @@ impl MemoryStats {
             // would allocate a second `String` per bin only to copy it in.
             let _ = write!(
                 out,
-                "{{\"block_size\":{},\"alloc_count\":{},\"dealloc_count\":{},\"live_estimate\":{}}}",
-                bin.block_size, bin.alloc_count, bin.dealloc_count, bin.live_estimate
+                "{{\"block_size\":{},\"alloc_count\":{},\"dealloc_count\":{},\
+                 \"live_estimate\":{},\"requested_bytes\":{},\
+                 \"internal_fragmentation\":{:.4}}}",
+                bin.block_size,
+                bin.alloc_count,
+                bin.dealloc_count,
+                bin.live_estimate,
+                bin.requested_bytes,
+                bin.internal_fragmentation_ratio()
             );
         }
         out.push_str("]}");
