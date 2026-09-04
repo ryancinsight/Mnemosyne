@@ -28,22 +28,23 @@ pub mod mitigations {
     pub const FREE_CANARY: u32 = 1 << 5;
     /// Validate caller's size/align against stored block_size on sized free.
     pub const SIZED_FREE_VALIDATION: u32 = 1 << 6;
+    /// Free-canary is now wired: it IS enforced at runtime.
+    pub const FREE_CANARY_WIRED: u32 = 1 << 7;
     /// Mitigations with an end-to-end runtime implementation.
     ///
-    /// `DELAY_PAGE_WAKE` belongs here: the free path branches on
-    /// `P::DELAY_PAGE_WAKE` and applies the wake-threshold hysteresis, so it is
-    /// enforced rather than merely registered. `FREE_CANARY` and
-    /// `SIZED_FREE_VALIDATION` stay out — the canary helpers exist but no
-    /// production caller reaches them.
+    /// `DELAY_PAGE_WAKE` and `FREE_CANARY_WIRED` belong here.
+    /// `SIZED_FREE_VALIDATION` stays out — helpers exist but no production
+    /// caller reaches them yet.
     pub const IMPLEMENTED: u32 =
-        POISONING | ZERO_INIT | FREE_LIST_ENCRYPTION | RANDOMIZE_ALLOCATION | DELAY_PAGE_WAKE;
+        POISONING | ZERO_INIT | FREE_LIST_ENCRYPTION | RANDOMIZE_ALLOCATION
+        | DELAY_PAGE_WAKE | FREE_CANARY | FREE_CANARY_WIRED;
     /// Every mitigation bit defined by this registry.
     ///
     /// This is a registry mask, not a claim that every bit is active in a
     /// policy. Use [`IMPLEMENTED`] or a policy's
     /// [`MITIGATION_FLAGS`][super::AllocPolicy::MITIGATION_FLAGS]
     /// for the currently enforced data-plane mitigations.
-    pub const ALL: u32 = IMPLEMENTED | FREE_CANARY | SIZED_FREE_VALIDATION;
+    pub const ALL: u32 = IMPLEMENTED | SIZED_FREE_VALIDATION;
     /// No mitigations.
     pub const NONE: u32 = 0;
 }
@@ -193,7 +194,7 @@ impl AllocPolicy for HardenedPolicy {
     const DELAY_PAGE_WAKE: bool = true;
     const POLICY_NAME: &'static str = "hardened";
     /// All currently implemented mitigations active.
-    const MITIGATION_FLAGS: u32 = mitigations::IMPLEMENTED | mitigations::DELAY_PAGE_WAKE;
+    const MITIGATION_FLAGS: u32 = mitigations::IMPLEMENTED;
 }
 
 /// Compile-time assertions that `StandardPolicy` carries no non-ZST overhead.
@@ -231,8 +232,8 @@ const _: () = assert!(
     "StandardPolicy::MITIGATION_FLAGS must be NONE"
 );
 const _: () = assert!(
-    HardenedPolicy::MITIGATION_FLAGS == (mitigations::IMPLEMENTED | mitigations::DELAY_PAGE_WAKE),
-    "HardenedPolicy::MITIGATION_FLAGS must be IMPLEMENTED | DELAY_PAGE_WAKE"
+    HardenedPolicy::MITIGATION_FLAGS == mitigations::IMPLEMENTED,
+    "HardenedPolicy::MITIGATION_FLAGS must equal mitigations::IMPLEMENTED"
 );
 
 // ── Policy typestate marker ───────────────────────────────────────────────────

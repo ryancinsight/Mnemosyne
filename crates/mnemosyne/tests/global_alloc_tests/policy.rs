@@ -126,3 +126,66 @@ where
         "CUDA {name} backend retained a live allocation"
     );
 }
+#[test]
+fn test_hardened_policy_features() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("global allocator test lock was poisoned");
+
+    use mnemosyne::{AllocPolicy, HardenedPolicy, mitigations};
+
+    // Verify policy constants are as expected.
+    assert!(HardenedPolicy::ENABLE_POISONING);
+    assert!(HardenedPolicy::ZERO_INITIALIZE);
+    assert!(HardenedPolicy::ENABLE_FREE_LIST_ENCRYPTION);
+    assert!(HardenedPolicy::RANDOMIZE_ALLOCATION);
+    assert!(HardenedPolicy::DELAY_PAGE_WAKE);
+
+    // MITIGATION_FLAGS includes all implemented bits.
+    assert_ne!(HardenedPolicy::MITIGATION_FLAGS, mitigations::NONE);
+    assert_ne!(HardenedPolicy::POLICY_FINGERPRINT, 0);
+
+    // Allocate with HardenedPolicy and verify zero-initialization.
+    let allocator = MnemosyneAllocator::<HardenedPolicy>::new();
+    let layout = Layout::from_size_align(64, 8).expect("64-byte 8-aligned Layout is valid");
+
+    let ptr = unsafe { allocator.alloc(layout) };
+    assert!(!ptr.is_null(), "hardened-policy allocation failed");
+
+    // Verify zero-initialization.
+    let slice = unsafe { core::slice::from_raw_parts(ptr, 64) };
+    for &byte in slice {
+        assert_eq!(byte, 0, "HardenedPolicy allocation must be zero-initialized");
+    }
+
+    // Write a pattern and free; the free path writes a canary.
+    unsafe { core::ptr::write_bytes(ptr, 0xBB, 64) };
+    unsafe { allocator.dealloc(ptr, layout) };
+
+    // Allocate again -- the new block comes from the same pool but is
+    // zero-initialized by HardenedPolicy.
+    let ptr2 = unsafe { allocator.alloc(layout) };
+    assert!(!ptr2.is_null());
+    let slice2 = unsafe { core::slice::from_raw_parts(ptr2, 64) };
+    for &byte in slice2 {
+        assert_eq!(byte, 0, "second HardenedPolicy allocation must be zero-initialized");
+    }
+    unsafe { allocator.dealloc(ptr2, layout) };
+}
+
+#[test]
+fn test_policy_fingerprint_uniqueness() {
+    use mnemosyne::{AllocPolicy, HardenedPolicy, SecurePolicy, StandardPolicy};
+
+    // All three production policies must have distinct fingerprints.
+    let std_fp = StandardPolicy::POLICY_FINGERPRINT;
+    let sec_fp = SecurePolicy::POLICY_FINGERPRINT;
+    let hrd_fp = HardenedPolicy::POLICY_FINGERPRINT;
+
+    assert_ne!(std_fp, sec_fp, "Standard and Secure must have distinct fingerprints");
+    assert_ne!(std_fp, hrd_fp, "Standard and Hardened must have distinct fingerprints");
+    assert_ne!(sec_fp, hrd_fp, "Secure and Hardened must have distinct fingerprints");
+
+    // StandardPolicy fingerprint: all bool flags false -> low bits zero.
+    assert_eq!(std_fp & 0x1F, 0, "StandardPolicy has no bool flags set");
+}

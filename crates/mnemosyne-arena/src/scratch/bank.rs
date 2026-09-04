@@ -119,4 +119,53 @@ impl<T: ScratchElement, const N: usize> ScratchBank<T, N> {
         assert!(INDEX < N, "ScratchBank slot index out of range");
         self.pools[INDEX].borrow_depth()
     }
+
+    /// Provides uninitialized scratch from slot `INDEX` to `f`.
+    ///
+    /// Like [`with_scratch`][Self::with_scratch] but skips the zero-
+    /// initialization of newly grown capacity. The caller must write every
+    /// element of the returned slice before reading it.
+    ///
+    /// # Safety
+    ///
+    /// Every element of the returned `*mut [T]` slice must be initialized
+    /// before any safe read through `as_slice`, `Deref`, or similar.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `INDEX >= N`.
+    #[inline]
+    pub unsafe fn with_scratch_uninit<const INDEX: usize, R>(
+        &self,
+        n: usize,
+        f: impl FnOnce(*mut [T]) -> R,
+    ) -> R {
+        assert!(INDEX < N, "ScratchBank slot index out of range");
+        // SAFETY: forwarded — caller satisfies the initialization contract.
+        unsafe { self.pools[INDEX].with_scratch_uninit(n, f) }
+    }
+
+    /// Prewarms slot `INDEX` to at least `min_capacity` elements.
+    ///
+    /// Forwards to [`ScratchPool::prewarm`]. No-op when borrowed.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `INDEX >= N`.
+    #[inline]
+    pub fn prewarm<const INDEX: usize>(&self, min_capacity: usize) {
+        assert!(INDEX < N, "ScratchBank slot index out of range");
+        self.pools[INDEX].prewarm(min_capacity);
+    }
+
+    /// Returns the total backing bytes for slot `INDEX` across all of its slots.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `INDEX >= N`.
+    #[inline]
+    pub fn total_capacity_bytes<const INDEX: usize>(&self) -> usize {
+        assert!(INDEX < N, "ScratchBank slot index out of range");
+        self.pools[INDEX].total_capacity_bytes()
+    }
 }

@@ -26,6 +26,16 @@ use mnemosyne_core::size_class::class_to_size;
 static ALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] = [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
 static DEALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] =
     [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
+/// Cumulative user-requested bytes per class; used to compute internal
+/// fragmentation: `(alloc_bytes - requested_bytes) / alloc_bytes`.
+///
+/// Updated with a direct relaxed `fetch_add` (not batched) because the
+/// request size varies per call and cannot be accumulated in the
+/// fixed-class `PendingCount` slots. The hot-path overhead is one extra
+/// `LOCK XADD` per allocation, which is dominated by the cache-line cost
+/// of the alloc itself.
+static REQUESTED_BYTES: [AtomicU64; NUM_SIZE_CLASSES] =
+    [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
 
 // Eight direct-mapped entries cover the common case of one or a few active
 // size classes while keeping the per-thread footprint bounded at 256 bytes.
@@ -122,11 +132,11 @@ fn allocation_bytes(alloc_count: u64, block_size: usize) -> u64 {
     alloc_count.saturating_mul(block_size as u64)
 }
 
-/// Records one allocation from `class`.
+/// Records one allocation from `class` with the user-requested byte count.
 ///
-/// `# Safety` is not required; the function bounds-checks `class` internally.
-/// Called on the alloc hot path: one TLS counter update and one global relaxed
-/// `fetch_add` per batch of matching operations.
+/// `adjusted_size` is the actual bytes requested (before class rounding).
+/// Bounds-checks `class` internally.
+/// Called on the alloc hot path.
 #[inline(always)]
 pub(crate) fn record_alloc(class: usize) {
     if class < NUM_SIZE_CLASSES {
@@ -135,6 +145,21 @@ pub(crate) fn record_alloc(class: usize) {
             // closure cannot run concurrently for the same TLS value.
             unsafe { (*stats.get()).record_alloc(class) };
         });
+    }
+}
+
+/// Records one allocation with the explicit adjusted request size.
+///
+/// Updates both the batched alloc-count and the direct requested-bytes
+/// counter so per-class internal fragmentation can be measured.
+#[inline(always)]
+pub(crate) fn record_alloc_with_size(class: usize, adjusted_size: usize) {
+    if class < NUM_SIZE_CLASSES {
+        THREAD_STATS.with(|stats| {
+            // SAFETY: `THREAD_STATS` is owned by the current thread.
+            unsafe { (*stats.get()).record_alloc(class) };
+        });
+        REQUESTED_BYTES[class].fetch_add(adjusted_size as u64, Ordering::Relaxed);
     }
 }
 
@@ -170,6 +195,12 @@ pub struct BinSnapshot {
     ///
     /// The product saturates at `u64::MAX` rather than wrapping.
     pub alloc_bytes: u64,
+    /// Cumulative user-requested bytes for this class.
+    ///
+    /// Populated by `record_alloc_with_size`; zero when the call sites only
+    /// use `record_alloc`. Internal fragmentation =
+    /// `(alloc_bytes - requested_bytes) / alloc_bytes`.
+    pub requested_bytes: u64,
     /// Block size of this size class in bytes.
     pub block_size: usize,
     /// Live allocation estimate: `alloc_count − dealloc_count`.
@@ -194,6 +225,20 @@ impl BinSnapshot {
         (live_bytes as f64 / self.alloc_bytes as f64).min(1.0)
     }
 
+    /// Internal fragmentation: `(alloc_bytes - requested_bytes) / alloc_bytes`.
+    ///
+    /// Returns `0.0` when `requested_bytes` is zero (not tracked) or
+    /// `alloc_bytes` is zero.
+    #[inline]
+    #[must_use]
+    pub fn internal_fragmentation_ratio(&self) -> f64 {
+        if self.alloc_bytes == 0 || self.requested_bytes == 0 {
+            return 0.0;
+        }
+        let waste = self.alloc_bytes.saturating_sub(self.requested_bytes);
+        (waste as f64 / self.alloc_bytes as f64).min(1.0)
+    }
+
     /// Live bytes in this class: `live_estimate × block_size`.
     #[inline]
     #[must_use]
@@ -216,6 +261,7 @@ pub fn bin_snapshot(class: usize) -> Option<BinSnapshot> {
         alloc_count,
         dealloc_count,
         alloc_bytes: allocation_bytes(alloc_count, block_size),
+        requested_bytes: REQUESTED_BYTES[class].load(Ordering::Relaxed),
         block_size,
         live_estimate: alloc_count.saturating_sub(dealloc_count),
     })
@@ -233,6 +279,7 @@ pub fn all_bin_snapshots() -> [BinSnapshot; NUM_SIZE_CLASSES] {
             alloc_count,
             dealloc_count,
             alloc_bytes: allocation_bytes(alloc_count, block_size),
+            requested_bytes: REQUESTED_BYTES[class].load(Ordering::Relaxed),
             block_size,
             live_estimate: alloc_count.saturating_sub(dealloc_count),
         }
@@ -280,6 +327,7 @@ pub fn reset_bin_stats() {
     for class in 0..NUM_SIZE_CLASSES {
         ALLOC_COUNT[class].store(0, Ordering::Relaxed);
         DEALLOC_COUNT[class].store(0, Ordering::Relaxed);
+        REQUESTED_BYTES[class].store(0, Ordering::Relaxed);
     }
 }
 
