@@ -2,28 +2,18 @@
 
 ## Ready
 
-<a id="mn-em-book-depth-1"></a>
-- [ ] **MNEM-BOOK-DEPTH-1** [docs][minor] status=todo owner=unclaimed
-  scope=`docs/book/`. Non-goals: the two factual rewrites already landed
-  (`size_classes.md`, `numa_placement.md`); adding chapters with no teaching
-  content. **Outcome:** the book teaches allocator design from the ground up,
-  as the domain-book contract requires, rather than summarizing the README.
-  All ten numbered chapters are 36–54 lines, and only two of them
-  (`alloc_policies`, `scratch_pools`) have an executable example under
-  `mdbook test`. The theory layer a newcomer needs — fragmentation as a
-  metric and why size classes bound it, the happens-before argument behind the
-  page-local cross-thread queue, decay/purge as an RSS-vs-syscall tradeoff,
-  why free-list encryption detects the UAF classes it does — is absent, and
-  the sources are already cited in the README's Research Foundations table.
-  **Acceptance oracle:** each Part has at least one chapter carrying a
-  derivation or protocol argument with a resolved citation (paper + section),
-  and each Part has at least one `mdbook test`-executed example. File one
-  DoR-shaped sub-item per chapter rather than treating this as one edit; this
-  entry is the parent. **Dependencies:** MNEM-DOCS-GAP-1 (the gap analysis is
-  the source for several chapters' "what we do not do" sections).
-  **Risk/change class:** [minor]. **Effort:** L.
-
 ## In progress
+
+<a id="mn-em-book-depth-1"></a>
+- [ ] **MNEM-BOOK-DEPTH-1** [docs][minor] status=in-progress owner=codex
+  branch=`perf/mnemosyne-scratch-release`; lease=`docs/book/size_classes.md`,
+  `docs/book/examples/size_classes.md`, `crates/mnemosyne/examples/book_size_classes.rs`,
+  `docs/book/SUMMARY.md`, `docs/book/README.md`; last-update=2026-09-04.
+  Vertical slice: correct the size-class geometry and teach its mapping,
+  page-density, and fragmentation implications with a runnable example.
+  Acceptance for this slice: implementation values and book claims agree;
+  example builds; `mdbook test docs/book` passes. The parent remains open for
+  the remaining chapters and Parts.
 
 ### MN-SCRATCH-RELEASE-2026-09-04 — Pooled scratch had no reclamation path [minor] [perf] — in progress <a id="mn-scratch-release-2026-09-04"></a>
 
