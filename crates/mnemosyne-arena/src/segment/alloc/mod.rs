@@ -1,7 +1,7 @@
 //! Aligned segment allocations from the OS or global pools.
 //!
-//! Returning a segment is the other direction and lives in
-//! [`release`] beside this.
+//! Returning a segment is the other direction and lives in the adjacent
+//! release module.
 
 mod release;
 

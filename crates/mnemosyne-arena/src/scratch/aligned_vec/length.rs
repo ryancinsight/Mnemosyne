@@ -1,8 +1,7 @@
 //! Operations that change an [`AlignedVec`]'s length.
 //!
-//! Every one of these goes through the storage module's `reserve` (or its
-//! sibling `grow_bounded`), so the growth policy — the request plus one-eighth
-//! headroom — lives in one place and these are the callers of it.
+//! Length-changing operations use the storage module's doubling growth policy,
+//! so scratch reuse remains amortized while quiescent release handles retention.
 
 use super::AlignedVec;
 use super::ScratchElement;
@@ -28,7 +27,7 @@ impl<T: ScratchElement> AlignedVec<T> {
             return;
         }
         if min_len > self.capacity {
-            self.grow_bounded(min_len);
+            self.grow_geometric(min_len);
         }
         // Zero only the newly added range.
         // SAFETY: capacity was grown to `>= min_len` above, so the range
@@ -64,8 +63,8 @@ impl<T: ScratchElement> AlignedVec<T> {
 
     /// Appends one element, growing the allocation if it is full.
     ///
-    /// Amortized O(1): a growth adds one-eighth headroom, so `n` pushes onto
-    /// an empty buffer perform O(log n) reallocations and O(n) element writes.
+    /// Amortized O(1): a growth doubles capacity, so `n` pushes onto an empty
+    /// buffer perform O(log n) reallocations and O(n) element writes.
     #[inline]
     pub fn push(&mut self, value: T) {
         self.reserve(1);

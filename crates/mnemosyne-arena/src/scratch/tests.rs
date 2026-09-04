@@ -429,28 +429,31 @@ fn aligned_vec_shrink_to_zero_frees_and_never_over_shrinks() {
     );
 }
 
-/// Growth policy: a virgin allocation is exact (no prior pattern to amortize
-/// against — headroom there is pure permanent overshoot, the defect the apollo
-/// retention probe measured, `ATLAS-APOLLO-WORKER-RETENTION`); growth of an
-/// existing buffer adds one-eighth headroom (12.5% cap vs the old doubling).
+/// The retention fix must not trade memory savings for excessive reallocation
+/// and copy traffic on the warm-up path.
 #[test]
-fn aligned_vec_growth_is_bounded() {
+fn aligned_vec_growth_stays_geometric() {
+    const TARGET_LEN: usize = 1 << 16;
     let mut v = AlignedVec::<f64>::dangling();
-    v.ensure_len(16_384);
-    assert_eq!(v.capacity(), 16_384, "virgin allocation is exact");
-    v.ensure_len(16_385);
-    assert_eq!(
-        v.capacity(),
-        16_385 + 16_385 / 8,
-        "incremental growth adds one-eighth headroom"
-    );
-    let mut small = AlignedVec::<f64>::dangling();
-    small.ensure_len(4);
-    small.ensure_len(5);
-    assert_eq!(
-        small.capacity(),
-        13,
-        "floor of 8 keeps tiny buffers amortized"
+    let mut previous_capacity = 0;
+    let mut growth_events = 0;
+    for len in 1..=TARGET_LEN {
+        v.ensure_len(len);
+        let capacity = v.capacity();
+        if capacity != previous_capacity {
+            if previous_capacity != 0 {
+                assert!(
+                    capacity >= previous_capacity * 2,
+                    "growth must at least double capacity: {previous_capacity} -> {capacity}"
+                );
+            }
+            growth_events += 1;
+            previous_capacity = capacity;
+        }
+    }
+    assert!(
+        growth_events <= 17,
+        "2^16 extensions should need at most 17 geometric allocations, got {growth_events}"
     );
 }
 

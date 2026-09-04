@@ -5,12 +5,13 @@
 ## MN-SCRATCH-GROWTH-COST-2026-09-04 [patch] [perf] — in-progress <a id="mn-scratch-growth-cost-2026-09-04"></a>
 
 - **Outcome:** Preserve geometric scratch growth while `release` reclaims
-  capacity above each recorded provision, avoiding a warm-path allocation
-  regression in the retention fix.
+  capacity above each recorded provision, avoiding a reallocation regression
+  in the retention fix.
 - **Scope:** `mnemosyne-arena` aligned scratch storage, focused scratch tests,
   and synchronized changelog/backlog text on PR #127.
-- **Acceptance:** growth remains overflow-safe and amortized; release retains
-  the requested provision exactly; a regression test bounds growth events;
+- **Acceptance:** growth retains its overflow-safe doubling policy and remains
+  amortized; release retains the requested provision exactly; a regression test
+  bounds growth events;
   format, strict Clippy, Nextest, and Miri pass.
 - **Risk / delivery:** `[patch]` private growth policy and regression coverage;
   integrator current Atlas session; branch `perf/scratch-release`.
