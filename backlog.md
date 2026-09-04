@@ -1,5 +1,29 @@
 # Backlog
 
+## MN-BIN-STATS-RESET-BOUNDARY-2026-09-04 — `reset_bin_stats` is not a synchronized profiling boundary [minor] [perf] — todo <a id="mn-bin-stats-reset-boundary-2026-09-04"></a>
+
+- **Integrator:** unclaimed; **branch:** none; **lease:** none.
+- **Last-update:** 2026-09-04.
+- **Finding (review of #128, verified against the code).** `reset_bin_stats()`
+  calls `flush_current_thread()` and then zeroes `ALLOC_COUNT`/`DEALLOC_COUNT`.
+  That flushes the *calling* thread's TLS batch only, so any other worker
+  holding a batch accumulated before the reset flushes it afterward and
+  reintroduces pre-reset activity into the fresh counters. Symmetrically, a
+  `fetch_add` already in flight on another thread can be lost when the reset's
+  `store(0, Relaxed)` lands after it.
+- **Outcome:** a reset that is a real boundary — every worker's batch
+  coordinated, or each batch tagged with a reset generation so a stale batch is
+  discarded rather than added.
+- **Scope note.** Telemetry accuracy, not memory safety: the counters are
+  profiling output, and no allocation path reads them. That is why this is
+  filed rather than fixed inside #128 — the fix is a redesign of the batching
+  contract in a subsystem landed hours earlier and still being extended, so it
+  belongs to its author with a clear boundary rather than to a reviewer's
+  drive-by.
+- **Acceptance oracle:** a multi-threaded test where a worker holds a pre-reset
+  batch across `reset_bin_stats()` and the post-reset totals exclude it.
+- **Risk / change class:** [minor] [perf].
+
 ## Ready
 
 ## In progress
