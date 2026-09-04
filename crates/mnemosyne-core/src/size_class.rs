@@ -349,4 +349,24 @@ mod tests {
         // The smallest non-zero size also maps to class 0.
         assert_eq!(size_to_class(1), Some(0));
     }
+
+    #[test]
+    fn block_index_in_page_matches_integer_division() {
+        // Verify Lemire reciprocal gives the same result as integer division
+        // for every class and every valid block offset within a page.
+        for class in 0..NUM_SIZE_CLASSES {
+            let block_size = class_to_size(class);
+            let max_blocks = class_to_max_blocks(class);
+            for idx in 0..max_blocks {
+                let offset = idx * block_size;
+                let expected = offset / block_size;
+                let fast = block_index_in_page(class, offset);
+                assert_eq!(
+                    fast, expected,
+                    "class={class} block_size={block_size} offset={offset}: \
+                     lemire={fast} != div={expected}"
+                );
+            }
+        }
+    }
 }
