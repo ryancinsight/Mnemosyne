@@ -134,12 +134,14 @@ fn test_hardened_policy_features() {
 
     use mnemosyne::{AllocPolicy, HardenedPolicy, mitigations};
 
-    // Verify policy constants are as expected.
-    assert!(HardenedPolicy::ENABLE_POISONING);
-    assert!(HardenedPolicy::ZERO_INITIALIZE);
-    assert!(HardenedPolicy::ENABLE_FREE_LIST_ENCRYPTION);
-    assert!(HardenedPolicy::RANDOMIZE_ALLOCATION);
-    assert!(HardenedPolicy::DELAY_PAGE_WAKE);
+    // Policy flags are associated constants, so these are build-time facts:
+    // asserting them at run time checks nothing a compiled binary could still
+    // get wrong.
+    const _: () = assert!(HardenedPolicy::ENABLE_POISONING);
+    const _: () = assert!(HardenedPolicy::ZERO_INITIALIZE);
+    const _: () = assert!(HardenedPolicy::ENABLE_FREE_LIST_ENCRYPTION);
+    const _: () = assert!(HardenedPolicy::RANDOMIZE_ALLOCATION);
+    const _: () = assert!(HardenedPolicy::DELAY_PAGE_WAKE);
 
     // MITIGATION_FLAGS includes all implemented bits.
     assert_ne!(HardenedPolicy::MITIGATION_FLAGS, mitigations::NONE);

@@ -261,6 +261,39 @@ const _: () = assert!(
     "class_to_size(NUM_SIZE_CLASSES) must return the 0 sentinel"
 );
 
+// ── Size class table ordering invariants ────────────────────────────────────
+//
+// These const assertions verify structural properties of CLASS_TO_SIZE that
+// prevent subtle bugs when extending the table:
+//
+// 1. Strict monotone: each class is strictly larger than the previous.
+// 2. Min block: the smallest class is MIN_BLOCK_SIZE (16 bytes).
+// 3. Alignment divisibility: every size is a multiple of MIN_BLOCK_SIZE.
+// 4. Every class fits in a page: class_to_max_blocks(class) >= 1.
+
+const _: () = {
+    assert!(
+        CLASS_TO_SIZE[0] as usize == MIN_BLOCK_SIZE,
+        "smallest size class must equal MIN_BLOCK_SIZE"
+    );
+    let mut i = 1;
+    while i < NUM_SIZE_CLASSES {
+        assert!(
+            CLASS_TO_SIZE[i] > CLASS_TO_SIZE[i - 1],
+            "CLASS_TO_SIZE must be strictly increasing"
+        );
+        assert!(
+            CLASS_TO_SIZE[i] as usize % MIN_BLOCK_SIZE == 0,
+            "every size class must be a multiple of MIN_BLOCK_SIZE"
+        );
+        assert!(
+            CLASS_TO_MAX_BLOCKS[i] >= 1,
+            "every size class must fit at least one block per page"
+        );
+        i += 1;
+    }
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -851,3 +851,40 @@ fn aligned_vec_sort_unstable_inplace() {
     v.sort_unstable_inplace();
     assert_eq!(v.as_slice(), &[1, 1, 2, 3, 4, 5, 6, 9]);
 }
+// ---- Phase 20: zero_fill / copy_from_slice / as_ptr_range -----------------
+
+#[test]
+fn aligned_vec_zero_fill_resets_all_elements() {
+    let mut v = AlignedVec::<u32>::from_slice(&[1, 2, 3, 4]);
+    v.zero_fill();
+    assert_eq!(v.as_slice(), &[0, 0, 0, 0]);
+}
+
+#[test]
+fn aligned_vec_zero_fill_empty_is_noop() {
+    let mut v = AlignedVec::<u8>::dangling();
+    v.zero_fill(); // must not panic
+    assert!(v.is_empty());
+}
+
+#[test]
+fn aligned_vec_copy_from_slice() {
+    let mut v = AlignedVec::<i32>::zeroed(4);
+    v.copy_from_slice(&[10, 20, 30, 40]);
+    assert_eq!(v.as_slice(), &[10, 20, 30, 40]);
+}
+
+#[test]
+fn aligned_vec_as_ptr_range() {
+    let v = AlignedVec::<u32>::from_slice(&[1, 2, 3]);
+    let range = v.as_ptr_range();
+    assert_eq!(range.end as usize - range.start as usize, 3 * core::mem::size_of::<u32>());
+    assert_eq!(range.start, v.as_ptr());
+}
+
+#[test]
+fn aligned_vec_as_mut_ptr_range() {
+    let mut v = AlignedVec::<u32>::from_slice(&[1, 2, 3]);
+    let range = v.as_mut_ptr_range();
+    assert_eq!(range.end as usize - range.start as usize, 3 * core::mem::size_of::<u32>());
+}

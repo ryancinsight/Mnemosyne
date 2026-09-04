@@ -210,17 +210,22 @@ pub fn memory_stats_json() -> alloc::string::String {
     // Include segment pool telemetry for completeness.
     use mnemosyne_arena::HasSegmentPool as _;
     let sp = mnemosyne_backend::MemoryBackendWrapper::global_segment_pool().stats();
+    let total_req = mnemosyne_local::total_requested_bytes();
+    let int_frag = mnemosyne_local::total_internal_fragmentation();
     let _ = ::core::fmt::Write::write_fmt(
         &mut json,
         core::format_args!(
             ",\"pool_retained\":{},\"pool_purged\":{},\"pool_purge_calls\":{},\
              \"pool_reset_segments\":{},\"pool_reset_calls\":{},\
+             \"total_requested_bytes\":{},\"total_internal_fragmentation\":{:.4},\
              \"policy_name\":\"{}\",\"mitigation_flags\":{},\"policy_fingerprint\":{}}}",
             sp.retained,
             sp.purged_segments,
             sp.purge_calls,
             sp.reset_segments,
             sp.reset_calls,
+            total_req,
+            int_frag,
             mnemosyne_core::policy::StandardPolicy::POLICY_NAME,
             mnemosyne_core::policy::StandardPolicy::MITIGATION_FLAGS,
             mnemosyne_core::policy::StandardPolicy::POLICY_FINGERPRINT,
@@ -316,12 +321,13 @@ impl MemoryStats {
                 out,
                 "{{\"block_size\":{},\"alloc_count\":{},\"dealloc_count\":{},\
                  \"live_estimate\":{},\"requested_bytes\":{},\
-                 \"internal_fragmentation\":{:.4}}}",
+                 \"fragmentation\":{:.4},\"internal_fragmentation\":{:.4}}}",
                 bin.block_size,
                 bin.alloc_count,
                 bin.dealloc_count,
                 bin.live_estimate,
                 bin.requested_bytes,
+                bin.fragmentation_ratio(),
                 bin.internal_fragmentation_ratio()
             );
         }

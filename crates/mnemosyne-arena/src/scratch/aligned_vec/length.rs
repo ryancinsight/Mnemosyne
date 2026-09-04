@@ -424,6 +424,34 @@ impl<T: ScratchElement> AlignedVec<T> {
         }
     }
 
+    /// Resets all initialized elements to the all-zero bit pattern.
+    ///
+    /// Equivalent to `fill` with the zero value but uses a single
+    /// `write_bytes(0)` call — faster than iterating when the size is large.
+    ///
+    /// Requires the all-zero bit pattern to be a valid value of `T`, which
+    /// is guaranteed by the [`ScratchElement`] invariant.
+    #[inline]
+    pub fn zero_fill(&mut self) {
+        if self.len == 0 {
+            return;
+        }
+        // SAFETY: `[0, self.len)` is within the allocation; all-zero is a
+        // valid bit pattern for every `ScratchElement` type by invariant.
+        unsafe {
+            core::ptr::write_bytes(self.ptr, 0, self.len);
+        }
+    }
+
+    /// Copies a slice of exactly `len()` elements into the buffer.
+    ///
+    /// Panics if `src.len() != self.len()`.  Equivalent to
+    /// `self.as_mut_slice().copy_from_slice(src)` but named for discoverability.
+    #[inline]
+    pub fn copy_from_slice(&mut self, src: &[T]) {
+        self.as_mut_slice().copy_from_slice(src);
+    }
+
     // ── Drain ────────────────────────────────────────────────────────────────
 
     /// Removes elements in `start..end`, yields them by value, then shifts

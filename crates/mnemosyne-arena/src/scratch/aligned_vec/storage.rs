@@ -134,6 +134,32 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.ptr
     }
 
+    /// Returns the pointer range `as_ptr()..as_ptr().add(len())` as a
+    /// `core::ops::Range<*const T>`.
+    ///
+    /// Useful for bounds checks and FFI handoffs that expect a pointer pair
+    /// rather than a fat pointer.
+    #[inline]
+    pub fn as_ptr_range(&self) -> core::ops::Range<*const T> {
+        // SAFETY: `self.ptr.add(self.len)` stays within (or one-past-end of)
+        // the allocation — `capacity >= len`.
+        let start = self.ptr as *const T;
+        // SAFETY: same argument as `as_slice`.
+        let end = unsafe { start.add(self.len) };
+        start..end
+    }
+
+    /// Mutable counterpart of [`as_ptr_range`][Self::as_ptr_range].
+    ///
+    /// Returns `as_mut_ptr()..as_mut_ptr().add(len())`.
+    #[inline]
+    pub fn as_mut_ptr_range(&mut self) -> core::ops::Range<*mut T> {
+        let start = self.ptr;
+        // SAFETY: `self.ptr.add(self.len)` stays within the allocation.
+        let end = unsafe { start.add(self.len) };
+        start..end
+    }
+
     /// Consumes self and returns a `Vec<T>` with the initialized data.
     #[inline]
     pub fn into_vec(self) -> Vec<T> {

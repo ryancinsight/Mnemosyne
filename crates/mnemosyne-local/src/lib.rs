@@ -98,7 +98,8 @@ mod tests;
 pub use alloc::{thread_alloc, thread_alloc_layout};
 pub use bin_stats::{
     BinSnapshot, all_bin_snapshots, bin_snapshot, flush_tls_stats, hottest_class, reset_bin_stats,
-    summary_line, total_alloc_count, total_live_bytes,
+    summary_line, total_alloc_count, total_internal_fragmentation, total_live_bytes,
+    total_requested_bytes,
 };
 pub use fast_path_cache::{
     FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics, SizeClassCache,

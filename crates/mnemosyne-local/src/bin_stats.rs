@@ -132,22 +132,6 @@ fn allocation_bytes(alloc_count: u64, block_size: usize) -> u64 {
     alloc_count.saturating_mul(block_size as u64)
 }
 
-/// Records one allocation from `class` with the user-requested byte count.
-///
-/// `adjusted_size` is the actual bytes requested (before class rounding).
-/// Bounds-checks `class` internally.
-/// Called on the alloc hot path.
-#[inline(always)]
-pub(crate) fn record_alloc(class: usize) {
-    if class < NUM_SIZE_CLASSES {
-        THREAD_STATS.with(|stats| {
-            // SAFETY: `THREAD_STATS` is owned by the current thread. The
-            // closure cannot run concurrently for the same TLS value.
-            unsafe { (*stats.get()).record_alloc(class) };
-        });
-    }
-}
-
 /// Records one allocation with the explicit adjusted request size.
 ///
 /// Updates both the batched alloc-count and the direct requested-bytes
@@ -352,6 +336,35 @@ pub fn summary_line() -> std::string::String {
         ),
         None => std::format!("allocs={total_allocs} live_bytes={live} hottest_class=none"),
     }
+}
+
+/// Process-wide cumulative user-requested bytes across all small size classes.
+///
+/// Zero until `record_alloc_with_size` call sites are wired (done in Phase 19).
+#[must_use]
+pub fn total_requested_bytes() -> u64 {
+    flush_current_thread();
+    REQUESTED_BYTES
+        .iter()
+        .map(|c| c.load(Ordering::Relaxed))
+        .fold(0u64, u64::saturating_add)
+}
+
+/// Process-wide internal fragmentation ratio:
+/// `(total_alloc_bytes - total_requested_bytes) / total_alloc_bytes`.
+///
+/// Returns `0.0` when `total_alloc_bytes == 0` or `total_requested_bytes == 0`
+/// (e.g. before any `record_alloc_with_size` calls).
+#[must_use]
+pub fn total_internal_fragmentation() -> f64 {
+    let snapshots = all_bin_snapshots();
+    let alloc: u64 = snapshots.iter().map(|s| s.alloc_bytes).fold(0, u64::saturating_add);
+    let requested: u64 = snapshots.iter().map(|s| s.requested_bytes).fold(0, u64::saturating_add);
+    if alloc == 0 || requested == 0 {
+        return 0.0;
+    }
+    let waste = alloc.saturating_sub(requested);
+    (waste as f64 / alloc as f64).min(1.0)
 }
 
 #[cfg(test)]
