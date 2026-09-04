@@ -103,20 +103,28 @@ impl Block {
 
     /// Computes the address-bound free canary value for a block.
     ///
-    /// `canary = FREE_CANARY_MAGIC ^ page_cookie ^ (block_addr >> 4)`
+    /// Uses a multiplicative backward-edge signature inspired by snmalloc 0.7.x
+    /// `freelist.h::signed_prev`: `(addr + MAGIC) * (cookie ^ (addr >> 4))`
     ///
-    /// Binding the canary to the block's own address prevents a valid canary
-    /// from being copied from one block to another within the same page.
+    /// The multiplication (vs XOR-only) makes the canary non-linear: knowing
+    /// the magic constant and the address is insufficient to forge a valid
+    /// canary without knowing the per-page `page_cookie`. The `addr >> 4`
+    /// strips alignment bits (block addresses are always 16-byte aligned) so
+    /// every block in a page gets a distinct mixed term.
     #[inline(always)]
     fn canary_value(block: *const Block, page_cookie: usize) -> usize {
-        FREE_CANARY_MAGIC ^ page_cookie ^ (block.addr() >> 4)
+        let addr = block.addr();
+        // Non-linear multiplicative combination; wrapping_mul avoids UB on overflow.
+        addr.wrapping_add(FREE_CANARY_MAGIC)
+            .wrapping_mul(page_cookie ^ (addr >> 4))
     }
 
     /// Writes the backward-edge free canary at `block + size_of::<Block>()`.
     ///
     /// Called by the free path under `HardenedPolicy` (`ENABLE_FREE_LIST_ENCRYPTION`)
-    /// to mark the block as on the free list. The canary is address-bound:
-    /// `FREE_CANARY_MAGIC ^ page_cookie ^ (block_addr >> 4)`.
+    /// to mark the block as on the free list. The canary uses a multiplicative
+    /// backward-edge signature: `(addr + MAGIC).wrapping_mul(cookie ^ (addr >> 4))`.
+    /// This non-linear formula prevents forgery without knowing the per-page cookie.
     ///
     /// # Safety
     ///

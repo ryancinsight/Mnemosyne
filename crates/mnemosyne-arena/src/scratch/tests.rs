@@ -420,7 +420,46 @@ fn aligned_vec_bool_is_scratch_element() {
     assert!(v.is_empty());
 }
 
-// ── Phase 13: shrink_to_fit / swap_remove / append / split_off / spare_capacity_mut ──
+// ── Phase 14: dedup / dedup_by_key ───────────────────────────────────────────
+
+#[test]
+fn aligned_vec_dedup_removes_consecutive_duplicates() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 1, 2, 3, 3, 3, 2, 2]);
+    v.dedup();
+    assert_eq!(v.as_slice(), &[1, 2, 3, 2]);
+}
+
+#[test]
+fn aligned_vec_dedup_no_duplicates_is_noop() {
+    let mut v = AlignedVec::<u32>::from_slice(&[1, 2, 3, 4]);
+    v.dedup();
+    assert_eq!(v.as_slice(), &[1, 2, 3, 4]);
+}
+
+#[test]
+fn aligned_vec_dedup_all_same() {
+    let mut v = AlignedVec::<u8>::from_slice(&[7, 7, 7, 7, 7]);
+    v.dedup();
+    assert_eq!(v.as_slice(), &[7]);
+}
+
+#[test]
+fn aligned_vec_dedup_by_key() {
+    // Group integers by their low bit (even/odd)
+    let mut v = AlignedVec::<i32>::from_slice(&[2, 4, 3, 5, 6, 7]);
+    v.dedup_by_key(|x| x & 1);
+    // even=2, odd=3, even=6, odd=7 — but actually: 2(even),4(even)→keep2; 3(odd),5(odd)→keep3; 6(even),7(odd)→both
+    // Adjacent same-key groups: 2 and 4 share key 0; 3 and 5 share key 1; 6 has key 0; 7 has key 1
+    assert_eq!(v.as_slice(), &[2, 3, 6, 7]);
+}
+
+#[test]
+fn aligned_vec_sort_and_dedup() {
+    let mut v = AlignedVec::<i32>::from_slice(&[3, 1, 2, 1, 3, 2]);
+    v.sort_unstable(); // via Deref to [T]
+    v.dedup();
+    assert_eq!(v.as_slice(), &[1, 2, 3]);
+}
 
 #[test]
 fn aligned_vec_shrink_to_fit_releases_excess() {

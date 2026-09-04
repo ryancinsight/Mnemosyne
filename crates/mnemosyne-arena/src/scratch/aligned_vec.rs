@@ -134,6 +134,47 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.len = write;
     }
 
+    /// Removes consecutive duplicate elements.
+    ///
+    /// Requires `T: PartialEq`. If the buffer is not sorted, only adjacent
+    /// duplicates are removed; call `sort_unstable()` (via `Deref` to `[T]`)
+    /// first to deduplicate globally.
+    ///
+    /// This is the in-place counterpart of `Vec::dedup()`, which is not
+    /// available on slices alone.
+    #[inline]
+    pub fn dedup(&mut self)
+    where
+        T: PartialEq,
+    {
+        self.dedup_by_key(|x| *x);
+    }
+
+    /// Removes consecutive duplicates according to a key function.
+    ///
+    /// Two elements `a` and `b` are considered duplicates when
+    /// `key(a) == key(b)`. The *first* of each run is kept.
+    #[inline]
+    pub fn dedup_by_key<K: PartialEq, F: FnMut(&T) -> K>(&mut self, mut key: F) {
+        if self.len < 2 {
+            return;
+        }
+        let mut write = 1usize;
+        for read in 1..self.len {
+            // SAFETY: `read` and `write` are both in `[0, self.len)` since
+            // `write <= read < self.len`; `T: Copy` — reads are bitwise copies.
+            let elem = unsafe { core::ptr::read(self.ptr.add(read)) };
+            let prev = unsafe { core::ptr::read(self.ptr.add(write - 1)) };
+            if key(&elem) != key(&prev) {
+                if write != read {
+                    unsafe { core::ptr::write(self.ptr.add(write), elem) };
+                }
+                write += 1;
+            }
+        }
+        self.len = write;
+    }
+
     /// Removes the elements in the given range from the buffer, returns them
     /// as an iterator, and shifts the elements after the range to fill the gap.
     ///

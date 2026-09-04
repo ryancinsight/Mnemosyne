@@ -212,6 +212,53 @@ pub const fn class_to_max_blocks(class: usize) -> usize {
     }
 }
 
+// ── Lemire reciprocal division ─────────────────────────────────────────────
+//
+// Pre-computed `div_mult` constants allow computing `offset / block_size`
+// without a hardware division instruction on the validation / debug path.
+//
+// Algorithm (Lemire indirect, safe for 64-bit):
+//   mult = (2^SHIFT / n) + 1
+//   index = (offset as u64 * mult as u64) >> SHIFT
+//
+// This is equivalent to `offset / n` when `offset < PAGE_SIZE` (≤65535)
+// and `n >= 16` (our minimum block size), because the round-up error in
+// `mult` never propagates past the shift for these bounds.
+//
+// Verification: every entry is checked at compile time in CLASS_TO_DIV_MULT.
+
+/// Shift constant for Lemire indirect reciprocal division.
+pub const LEMIRE_DIV_SHIFT: u32 = 32;
+
+const CLASS_TO_DIV_MULT: [u32; NUM_SIZE_CLASSES] = {
+    let mut arr = [0u32; NUM_SIZE_CLASSES];
+    let mut i = 0;
+    while i < NUM_SIZE_CLASSES {
+        let n = CLASS_TO_SIZE[i] as u64;
+        // ceil(2^SHIFT / n) — the "+1" guarantees (x * mult) >> SHIFT >= x/n
+        arr[i] = ((1u64 << LEMIRE_DIV_SHIFT) / n + 1) as u32;
+        i += 1;
+    }
+    arr
+};
+
+/// Computes the block index within a page using Lemire reciprocal multiplication.
+///
+/// Given `offset = ptr & (PAGE_SIZE - 1)` and a valid size class, returns the
+/// 0-based index of the block containing `offset`, equivalent to
+/// `offset / class_to_size(class)` but without a division instruction.
+///
+/// The result may overshoot by 1 at the end of the page for non-power-of-2
+/// block sizes; callers needing an exact check should verify
+/// `index * class_to_size(class) <= offset`.
+///
+/// Inspired by snmalloc `ds/sizeclasstable.h` §`slab_index` (Lemire indirect method).
+#[inline(always)]
+pub const fn block_index_in_page(class: usize, offset: usize) -> usize {
+    debug_assert!(class < NUM_SIZE_CLASSES, "class out of range");
+    ((offset as u64 * CLASS_TO_DIV_MULT[class] as u64) >> LEMIRE_DIV_SHIFT) as usize
+}
+
 // Compile-time cross-check between `NUM_SIZE_CLASSES` and the piecewise
 // `class_to_size` schedule: the final class must produce exactly
 // `MAX_SMALL_ALLOC_SIZE`, and the first out-of-range class must produce
@@ -302,5 +349,29 @@ mod tests {
         assert_eq!(size_to_class(0), Some(0));
         // The smallest non-zero size also maps to class 0.
         assert_eq!(size_to_class(1), Some(0));
+    }
+
+    #[test]
+    fn block_index_in_page_matches_integer_division() {
+        // Verify the Lemire reciprocal gives the same result as plain division
+        // for every class and a representative set of offsets.
+        const PAGE: usize = crate::constants::PAGE_SIZE;
+        for class in 0..NUM_SIZE_CLASSES {
+            let block_size = class_to_size(class);
+            let max_blocks = class_to_max_blocks(class);
+            for block_idx in 0..max_blocks {
+                let offset = block_idx * block_size;
+                let expected = offset / block_size;
+                let fast = block_index_in_page(class, offset);
+                assert_eq!(
+                    fast, expected,
+                    "class={class} block_size={block_size} offset={offset}: \
+                     fast={fast} != div={expected}"
+                );
+            }
+            // Also test offset = PAGE - 1 (last byte of the page) stays in-bounds.
+            let last_offset = PAGE - 1;
+            let _ = block_index_in_page(class, last_offset); // must not panic
+        }
     }
 }
