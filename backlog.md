@@ -70,14 +70,14 @@
 
 <a id="mn-459"></a>
 - [ ] [patch] **MN-459 — bring `mnemosyne-heap` under the Miri gate.**
-  status=in-progress; integrator=codex; branch=`perf/mnemosyne-scratch-release`;
-  lease=`crates/mnemosyne-heap/src/tests/tiered.rs`; last-update=2026-09-04.
+  status=review; integrator=codex; branch=`perf/mnemosyne-scratch-release`;
+  last-update=2026-09-04; latest=`a582256`.
   The heap helpers are corrected at their causes:
   the NUMA page probes stay in-bounds, the storage shrink checks avoid
   provenance-invalid metadata recovery under Miri, and both Stacked Borrows and
-  Tree Borrows jobs cover `mnemosyne-heap`. The hosted run exposed one
-  platform-boundary test that calls CUDA `dlopen`, which Miri cannot execute;
-  classify that test explicitly and retain native CUDA coverage.
+  Tree Borrows jobs cover `mnemosyne-heap`. The CUDA `dlopen` platform-boundary
+  test is now explicit under Miri while native CUDA coverage remains intact;
+  close after the hosted full-suite Miri conclusion is green.
 
 <a id="mnem-unsafe-doc-1"></a>
 - [ ] **MNEM-UNSAFE-DOC-1** [verification][patch] status=in-progress owner=Claude
