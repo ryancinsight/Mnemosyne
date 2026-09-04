@@ -207,10 +207,20 @@ pub fn memory_stats_json() -> alloc::string::String {
     // with the build configuration without consulting the binary.
     use mnemosyne_core::policy::AllocPolicy;
     json.pop(); // remove trailing '}'
+    // Include segment pool telemetry for completeness.
+    use mnemosyne_arena::HasSegmentPool as _;
+    let sp = mnemosyne_backend::MemoryBackendWrapper::global_segment_pool().stats();
     let _ = ::core::fmt::Write::write_fmt(
         &mut json,
         core::format_args!(
-            ",\"policy_name\":\"{}\",\"mitigation_flags\":{},\"policy_fingerprint\":{}}}",
+            ",\"pool_retained\":{},\"pool_purged\":{},\"pool_purge_calls\":{},\
+             \"pool_reset_segments\":{},\"pool_reset_calls\":{},\
+             \"policy_name\":\"{}\",\"mitigation_flags\":{},\"policy_fingerprint\":{}}}",
+            sp.retained,
+            sp.purged_segments,
+            sp.purge_calls,
+            sp.reset_segments,
+            sp.reset_calls,
             mnemosyne_core::policy::StandardPolicy::POLICY_NAME,
             mnemosyne_core::policy::StandardPolicy::MITIGATION_FLAGS,
             mnemosyne_core::policy::StandardPolicy::POLICY_FINGERPRINT,

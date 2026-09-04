@@ -437,6 +437,21 @@ pub unsafe fn do_local_free_internal_policy<
     // `cookie_for`'s contract.
     let encrypted = unsafe { Segment::free_list_encrypted(segment) };
     let cookie = unsafe { Segment::cookie_for_dynamic(segment, encrypted, page_index) };
+
+    // Backward-edge canary check (HardenedPolicy with ENABLE_FREE_LIST_ENCRYPTION).
+    // Under StandardPolicy this is dead code (ENABLE_FREE_LIST_ENCRYPTION = false).
+    if P::ENABLE_FREE_LIST_ENCRYPTION {
+        // SAFETY: `block` is a live, MIN_BLOCK_SIZE-aligned block per the
+        // caller's contract; the canary slot lies at block+size_of::<Block>()
+        // which is within the allocation by the MIN_BLOCK_SIZE constraint.
+        if unsafe { mnemosyne_core::types::Block::check_double_free(block, cookie) } {
+            std::process::abort();
+        }
+        // Write the canary so the next free of this block is detectable.
+        // SAFETY: same slot bounds as the read above.
+        unsafe { mnemosyne_core::types::Block::write_free_canary(block, cookie) };
+    }
+
     // SAFETY: `block` points to a valid block in `page` per the `# Safety`
     // contract; writing its embedded next pointer reinitializes the free-list
     // link and stays inside the block this caller now owns.
