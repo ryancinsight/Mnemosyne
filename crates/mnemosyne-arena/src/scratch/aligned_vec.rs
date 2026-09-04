@@ -134,9 +134,77 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.len = write;
     }
 
+    /// Removes and returns the last element of the buffer, or `None` if empty.
+    ///
+    /// O(1). Does not reallocate.
+    #[inline]
+    pub fn pop(&mut self) -> Option<T> {
+        if self.len == 0 {
+            return None;
+        }
+        self.len -= 1;
+        // SAFETY: `self.len` was decremented, so the element at the former last
+        // position is still inside the allocation and was initialized; `T: Copy`
+        // — bitwise read is sound.
+        Some(unsafe { core::ptr::read(self.ptr.add(self.len)) })
+    }
+
+    /// Inserts `value` at `index`, shifting all elements after it one position
+    /// to the right.  O(n).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index > self.len()`.
+    #[inline]
+    pub fn insert(&mut self, index: usize, value: T) {
+        assert!(index <= self.len, "insert: index out of bounds");
+        self.reserve(1);
+        if index < self.len {
+            // SAFETY: `index < len` and `len < capacity` (reserve ensured it).
+            // The source and destination ranges `[index, len)` → `[index+1, len+1)`
+            // overlap, so we use `copy` (memmove) rather than `copy_nonoverlapping`.
+            unsafe {
+                core::ptr::copy(
+                    self.ptr.add(index),
+                    self.ptr.add(index + 1),
+                    self.len - index,
+                );
+            }
+        }
+        // SAFETY: `ptr.add(index)` is inside the allocation (now len < capacity).
+        unsafe { core::ptr::write(self.ptr.add(index), value) };
+        self.len += 1;
+    }
+
+    /// Removes and returns the element at `index`, shifting later elements left.
+    /// O(n).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.len()`.
+    #[inline]
+    pub fn remove(&mut self, index: usize) -> T {
+        assert!(index < self.len, "remove: index out of bounds");
+        // SAFETY: `index < len` so the element is initialized; `T: Copy`.
+        let removed = unsafe { core::ptr::read(self.ptr.add(index)) };
+        let tail = self.len - index - 1;
+        if tail > 0 {
+            // SAFETY: `[index+1, len)` → `[index, len-1)`, overlapping ranges.
+            unsafe {
+                core::ptr::copy(
+                    self.ptr.add(index + 1),
+                    self.ptr.add(index),
+                    tail,
+                );
+            }
+        }
+        self.len -= 1;
+        removed
+    }
+
     /// Removes consecutive duplicate elements.
     ///
-    /// Requires `T: PartialEq`. If the buffer is not sorted, only adjacent
+    /// If the buffer is not sorted, only adjacent
     /// duplicates are removed; call `sort_unstable()` (via `Deref` to `[T]`)
     /// first to deduplicate globally.
     ///

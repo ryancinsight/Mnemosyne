@@ -661,3 +661,39 @@ fn scratch_pool_shrink_all_slots_is_noop_when_borrowed() {
     });
     assert_eq!(pool.capacity(), 64);
 }
+// -- pop / insert / remove -----------------------------------------------------
+
+#[test]
+fn aligned_vec_pop_removes_last() {
+    let mut v = AlignedVec::<u32>::from_slice(&[1, 2, 3]);
+    assert_eq!(v.pop(), Some(3));
+    assert_eq!(v.pop(), Some(2));
+    assert_eq!(v.pop(), Some(1));
+    assert_eq!(v.pop(), None);
+    assert!(v.is_empty());
+}
+
+#[test]
+fn aligned_vec_insert_at_front_and_middle() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 3, 4]);
+    v.insert(1, 2); // [1, 2, 3, 4]
+    assert_eq!(v.as_slice(), &[1, 2, 3, 4]);
+    v.insert(0, 0); // [0, 1, 2, 3, 4]
+    assert_eq!(v.as_slice(), &[0, 1, 2, 3, 4]);
+}
+
+#[test]
+fn aligned_vec_insert_at_end() {
+    let mut v = AlignedVec::<u8>::from_slice(&[1, 2]);
+    v.insert(2, 3);
+    assert_eq!(v.as_slice(), &[1, 2, 3]);
+}
+
+#[test]
+fn aligned_vec_remove_from_front_and_middle() {
+    let mut v = AlignedVec::<i32>::from_slice(&[10, 20, 30, 40]);
+    assert_eq!(v.remove(1), 20);
+    assert_eq!(v.as_slice(), &[10, 30, 40]);
+    assert_eq!(v.remove(0), 10);
+    assert_eq!(v.as_slice(), &[30, 40]);
+}
