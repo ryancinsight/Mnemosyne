@@ -7,7 +7,7 @@
 <a id="mn-em-book-depth-1"></a>
 - [ ] **MNEM-BOOK-DEPTH-1** [docs][minor] status=in-progress owner=codex
   branch=`perf/mnemosyne-scratch-release`; last-update=2026-09-04;
-  latest=`abbcafe`.
+  latest=`2735160`.
   Vertical slice: correct the size-class geometry and teach its mapping,
   page-density, and fragmentation implications with a runnable example.
   Acceptance for this slice: implementation values and book claims agree;
