@@ -375,8 +375,9 @@
   Until then the crate's unsafe surface is reviewed but unchecked.
 
 - [ ] [patch] **MN-457 — scope the Windows CUDA thread-exit import to
-  x86_64.** status=review; integrator=codex; lease discharged by the delivery
-  commit; last-update=2026-08-27. The import now matches its x86_64-only
+  x86_64.** status=in-progress; integrator=codex (takeover);
+  branch=`perf/mnemosyne-scratch-release`; lease=`backlog.md`;
+  last-update=2026-09-04. The import now matches its x86_64-only
   redirect caller. AArch64 Windows strict-warning check, host all-target
   Clippy, and 14/14 focused nextest tests pass.
 
