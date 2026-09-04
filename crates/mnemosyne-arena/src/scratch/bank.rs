@@ -62,6 +62,49 @@ impl<T: ScratchElement, const N: usize> ScratchBank<T, N> {
     /// [`Self::with_scratch`] borrow of the same slot.
     ///
     /// # Panics
+    /// Frees every pool's slot allocations and reports the total bytes
+    /// released, or [`None`] if any pool has a live borrow.
+    ///
+    /// The bank-wide counterpart to [`ScratchPool::release`]. A consumer that
+    /// holds one bank per worker thread — several roles, each grown to its own
+    /// high-water mark — retains the sum of those marks for the life of the
+    /// thread. This releases all of them at a quiescent point of the caller's
+    /// choosing.
+    ///
+    /// All-or-nothing: if any pool is mid-borrow, nothing is freed, so a caller
+    /// that reaches this from inside a `with_scratch` closure cannot
+    /// half-release the bank underneath itself.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemosyne_arena::scratch::ScratchBank;
+    ///
+    /// let bank: ScratchBank<f64, 2> = ScratchBank::new();
+    /// bank.with_scratch::<0, _>(512, |s| s[0] = 1.0);
+    /// bank.with_scratch::<1, _>(256, |s| s[0] = 2.0);
+    ///
+    /// let freed = bank.release().expect("no borrow is live here");
+    /// assert!(freed >= (512 + 256) * size_of::<f64>());
+    /// assert_eq!(bank.capacity::<0>(), 0);
+    /// ```
+    #[must_use]
+    pub fn release(&self) -> Option<usize> {
+        if self.pools.iter().any(|pool| pool.borrow_depth() != 0) {
+            return None;
+        }
+        let mut freed = 0_usize;
+        for pool in &self.pools {
+            // The depth check above already established that every pool is
+            // quiescent, so no pool can refuse here.
+            let released = pool
+                .release()
+                .expect("invariant: every pool was checked quiescent above");
+            freed = freed.saturating_add(released);
+        }
+        Some(freed)
+    }
+
     ///
     /// Panics when `INDEX >= N`.
     #[inline]

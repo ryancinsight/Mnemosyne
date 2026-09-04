@@ -101,6 +101,58 @@ impl<T: ScratchElement> ScratchPool<T> {
         }
     }
 
+    /// Frees every pooled slot allocation, returning the pool to the state
+    /// [`ScratchPool::new`] leaves it in, and reports the bytes released.
+    ///
+    /// A pool slot grows to the high-water mark of the largest request that
+    /// thread ever made and never shrinks — `AlignedVec`'s shrinking resize
+    /// keeps the allocation deliberately, so reuse stays allocation-free. In a
+    /// `thread_local!` home on a long-lived worker that makes the high-water
+    /// mark permanent, which is correct for a hot loop and wrong for a thread
+    /// that has moved on to smaller work or gone idle. This is the reclamation
+    /// path; it is never called on the hot path, and callers choose the moment.
+    ///
+    /// Returns [`None`] and frees nothing while a [`ScratchPool::with_scratch`]
+    /// borrow is live, since the slice that borrow holds points into a slot.
+    /// The next request after a release re-grows the slot it needs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mnemosyne_arena::scratch::ScratchPool;
+    ///
+    /// let pool: ScratchPool<f64> = ScratchPool::new();
+    /// pool.with_scratch(1024, |scratch| scratch[0] = 1.0);
+    /// assert!(pool.capacity() >= 1024);
+    ///
+    /// let freed = pool.release().expect("no borrow is live here");
+    /// assert!(freed >= 1024 * size_of::<f64>());
+    /// assert_eq!(pool.capacity(), 0);
+    ///
+    /// // Still usable; the slot re-grows on demand.
+    /// pool.with_scratch(16, |scratch| assert_eq!(scratch.len(), 16));
+    /// ```
+    #[must_use]
+    pub fn release(&self) -> Option<usize> {
+        if self.borrow_depth.get() != 0 {
+            return None;
+        }
+        let element = core::mem::size_of::<T>();
+        let mut freed = 0_usize;
+        for slot in &self.slots {
+            // SAFETY: `borrow_depth == 0` means no `with_scratch` borrow is
+            // live, so no `&mut [T]` derived from any slot is outstanding, and
+            // the pool is `!Sync` so no other thread holds one either.
+            // Replacing the buffer drops the old allocation.
+            let vec = unsafe { &mut *slot.get() };
+            freed = freed.saturating_add(vec.capacity().saturating_mul(element));
+            *vec = AlignedVec::dangling();
+        }
+        // Slot 0 is empty again, and this is the mirror the accessor reads.
+        self.primary_capacity.set(0);
+        Some(freed)
+    }
+
     /// Provides a mutable aligned scratch slice of **exactly** `n` elements
     /// to the closure. Borrow depth is released when the closure returns.
     ///

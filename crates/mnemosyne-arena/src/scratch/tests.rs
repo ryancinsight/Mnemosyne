@@ -395,3 +395,76 @@ fn aligned_vec_is_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<AlignedVec<f64>>();
 }
+
+#[test]
+fn release_frees_every_slot_and_reports_the_bytes() {
+    let pool: ScratchPool<f64> = ScratchPool::new();
+    pool.with_scratch(1024, |scratch| scratch[0] = 1.0);
+    let grown = pool.capacity();
+    assert!(
+        grown >= 1024,
+        "the slot must have grown to serve the request"
+    );
+
+    let freed = pool.release().expect("no borrow is live");
+    assert!(
+        freed >= grown * size_of::<f64>(),
+        "released {freed} bytes against a slot of {grown} f64 elements"
+    );
+    assert_eq!(pool.capacity(), 0, "the slot allocation is gone");
+
+    // Still usable: the slot re-grows on demand.
+    pool.with_scratch(16, |scratch| assert_eq!(scratch.len(), 16));
+    assert!(pool.capacity() >= 16);
+}
+
+#[test]
+fn release_refuses_while_a_borrow_is_live_and_frees_nothing() {
+    let pool: ScratchPool<f64> = ScratchPool::new();
+    pool.with_scratch(512, |scratch| scratch[0] = 1.0);
+    let before = pool.capacity();
+    assert!(before >= 512);
+
+    pool.with_scratch(512, |scratch| {
+        scratch[0] = 2.0;
+        // Freeing here would invalidate `scratch`, which is still held.
+        assert!(
+            pool.release().is_none(),
+            "release must refuse while its own slot is borrowed"
+        );
+        // The guard has to be load-bearing, not decorative: the slice must
+        // still be usable after the refused call.
+        assert_eq!(scratch[0], 2.0);
+    });
+
+    assert_eq!(
+        pool.capacity(),
+        before,
+        "a refused release must free nothing"
+    );
+    assert!(pool.release().is_some(), "and succeed once the borrow ends");
+}
+
+#[test]
+fn bank_release_is_all_or_nothing_across_pools() {
+    let bank: ScratchBank<f64, 2> = ScratchBank::new();
+    bank.with_scratch::<0, _>(512, |scratch| scratch[0] = 1.0);
+    bank.with_scratch::<1, _>(256, |scratch| scratch[0] = 2.0);
+    assert!(bank.capacity::<0>() >= 512 && bank.capacity::<1>() >= 256);
+
+    bank.with_scratch::<0, _>(512, |_| {
+        assert!(
+            bank.release().is_none(),
+            "one live borrow must block the whole bank"
+        );
+    });
+    assert!(
+        bank.capacity::<1>() >= 256,
+        "the untouched pool keeps its buffer when the bank refuses"
+    );
+
+    let freed = bank.release().expect("quiescent");
+    assert!(freed >= (512 + 256) * size_of::<f64>());
+    assert_eq!(bank.capacity::<0>(), 0);
+    assert_eq!(bank.capacity::<1>(), 0);
+}
