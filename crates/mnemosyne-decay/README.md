@@ -20,6 +20,9 @@ and spawns no thread. `decay_step` performs one sweep across the active
 segments and is callable directly when a caller wants to drive reclamation
 without the background worker. `decay_step_generation` and
 `wait_for_decay_step` provide a bounded event seam for callers that need to
-observe completed background sweeps without polling.
+observe completed background sweeps without polling. `request_decay_step`
+coalesces an immediate wake for an active worker; it is useful when a caller
+has just produced reclaimable work and does not need to wait for the next
+periodic deadline.
 
 Licensed under MIT OR Apache-2.0.
