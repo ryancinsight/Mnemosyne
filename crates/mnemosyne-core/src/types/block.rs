@@ -132,7 +132,13 @@ unsafe impl Sync for Block {}
 // `MAGIC` and `addr` is not enough to forge the value without `cookie`.
 
 /// Magic constant mixed into the backward-edge canary.
-pub const FREE_CANARY_MAGIC: usize = 0xDEAD_C0DE_CAFE_BABE_usize;
+///
+/// Written as a `u64` and narrowed: a `usize` literal this wide does not
+/// compile on the 32-bit targets this crate still supports (see the
+/// `cfg(not(target_pointer_width = "64"))` arms in `crate::sync`). Truncation
+/// is the intent — the canary is a bit-mixing constant, not a quantity — and
+/// the 64-bit value is unchanged, with the low half serving 32-bit builds.
+pub const FREE_CANARY_MAGIC: usize = 0xDEAD_C0DE_CAFE_BABE_u64 as usize;
 
 // `Block` is pointer-wide; the canary sits at `block + size_of::<Block>()`.
 // Both slots must fit in `MIN_BLOCK_SIZE` (16 bytes = 2 × 8-byte pointers on
