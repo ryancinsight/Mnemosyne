@@ -878,7 +878,10 @@ fn aligned_vec_copy_from_slice() {
 fn aligned_vec_as_ptr_range() {
     let v = AlignedVec::<u32>::from_slice(&[1, 2, 3]);
     let range = v.as_ptr_range();
-    assert_eq!(range.end as usize - range.start as usize, 3 * core::mem::size_of::<u32>());
+    assert_eq!(
+        range.end as usize - range.start as usize,
+        3 * core::mem::size_of::<u32>()
+    );
     assert_eq!(range.start, v.as_ptr());
 }
 
@@ -886,7 +889,10 @@ fn aligned_vec_as_ptr_range() {
 fn aligned_vec_as_mut_ptr_range() {
     let mut v = AlignedVec::<u32>::from_slice(&[1, 2, 3]);
     let range = v.as_mut_ptr_range();
-    assert_eq!(range.end as usize - range.start as usize, 3 * core::mem::size_of::<u32>());
+    assert_eq!(
+        range.end as usize - range.start as usize,
+        3 * core::mem::size_of::<u32>()
+    );
 }
 // ---- Phase 20b: partition_in_place ----------------------------------------
 

@@ -13,6 +13,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// expressed as a single constructor. All elements are zero (valid per the
     /// [`ScratchElement`] invariant).
     #[inline]
+    #[must_use]
     pub fn zeroed(len: usize) -> Self {
         let mut v = Self::with_capacity(len);
         v.ensure_len(len);
@@ -47,6 +48,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// The zero-valued case has a cheaper path in [`zeroed`][Self::zeroed],
     /// which writes bytes rather than elements.
     #[inline]
+    #[must_use]
     pub fn filled(len: usize, value: T) -> Self {
         let mut buffer = Self::with_capacity(len);
         buffer.resize(len, value);
@@ -55,6 +57,7 @@ impl<T: ScratchElement> AlignedVec<T> {
 
     /// Creates a buffer holding a copy of `slice`.
     #[inline]
+    #[must_use]
     pub fn from_slice(slice: &[T]) -> Self {
         let mut buffer = Self::with_capacity(slice.len());
         buffer.extend_from_slice(slice);
@@ -188,6 +191,7 @@ impl<T: ScratchElement> AlignedVec<T> {
 
     /// Removes and returns the last element, or `None` if empty. O(1).
     #[inline]
+    #[must_use]
     pub fn pop(&mut self) -> Option<T> {
         if self.len == 0 {
             return None;
@@ -207,6 +211,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     ///
     /// Panics if `index >= self.len()`.
     #[inline]
+    #[must_use]
     pub fn swap_remove(&mut self, index: usize) -> T {
         assert!(
             index < self.len,
@@ -233,6 +238,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     ///
     /// Panics if `index >= self.len()`.
     #[inline]
+    #[must_use]
     pub fn remove(&mut self, index: usize) -> T {
         assert!(
             index < self.len,
@@ -323,15 +329,23 @@ impl<T: ScratchElement> AlignedVec<T> {
             while lo < hi {
                 // SAFETY: `lo < hi <= self.len`.
                 let elem = unsafe { core::ptr::read(self.ptr.add(lo)) };
-                if predicate(&elem) { lo += 1; } else { break; }
+                if predicate(&elem) {
+                    lo += 1;
+                } else {
+                    break;
+                }
             }
             while lo < hi {
                 hi -= 1;
                 // SAFETY: `hi < self.len`.
                 let elem = unsafe { core::ptr::read(self.ptr.add(hi)) };
-                if predicate(&elem) { break; }
+                if predicate(&elem) {
+                    break;
+                }
             }
-            if lo >= hi { break; }
+            if lo >= hi {
+                break;
+            }
             // SAFETY: lo and hi are distinct valid indices.
             unsafe {
                 let a = core::ptr::read(self.ptr.add(lo));
@@ -500,6 +514,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     ///
     /// Panics if `start > end` or `end > self.len()`.
     #[inline]
+    #[must_use]
     pub fn drain(&mut self, start: usize, end: usize) -> Drain<'_, T> {
         assert!(start <= end, "drain: start > end");
         assert!(end <= self.len, "drain: end > len");
@@ -518,6 +533,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// Equivalent to `AlignedVec::from_slice(a)` + `extend_from_slice(b)`.
     #[inline]
     #[must_use]
+
     pub fn concat(a: &[T], b: &[T]) -> Self {
         let mut v = Self::with_capacity(a.len() + b.len());
         v.extend_from_slice(a);
@@ -530,6 +546,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// Delegates to `[T]::binary_search`; `AlignedVec::Deref` already gives
     /// access but this method improves discoverability.
     #[inline]
+    #[must_use]
     pub fn binary_search(&self, value: &T) -> Result<usize, usize>
     where
         T: Ord,
@@ -560,6 +577,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     ///
     /// Delegates to `[T]::contains`. For sorted data, prefer `binary_search`.
     #[inline]
+    #[must_use]
     pub fn contains(&self, value: &T) -> bool
     where
         T: PartialEq,
@@ -569,6 +587,7 @@ impl<T: ScratchElement> AlignedVec<T> {
 
     /// Returns the position of the first occurrence of `value`.
     #[inline]
+    #[must_use]
     pub fn position(&self, value: &T) -> Option<usize>
     where
         T: PartialEq,

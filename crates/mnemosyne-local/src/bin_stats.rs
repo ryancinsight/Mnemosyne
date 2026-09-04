@@ -361,8 +361,14 @@ pub fn total_requested_bytes() -> u64 {
 #[must_use]
 pub fn total_internal_fragmentation() -> f64 {
     let snapshots = all_bin_snapshots();
-    let alloc: u64 = snapshots.iter().map(|s| s.alloc_bytes).fold(0, u64::saturating_add);
-    let requested: u64 = snapshots.iter().map(|s| s.requested_bytes).fold(0, u64::saturating_add);
+    let alloc: u64 = snapshots
+        .iter()
+        .map(|s| s.alloc_bytes)
+        .fold(0, u64::saturating_add);
+    let requested: u64 = snapshots
+        .iter()
+        .map(|s| s.requested_bytes)
+        .fold(0, u64::saturating_add);
     if alloc == 0 || requested == 0 {
         return 0.0;
     }
