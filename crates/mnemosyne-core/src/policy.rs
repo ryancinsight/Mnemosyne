@@ -35,9 +35,13 @@ pub mod mitigations {
     /// `DELAY_PAGE_WAKE` and `FREE_CANARY_WIRED` belong here.
     /// `SIZED_FREE_VALIDATION` stays out — helpers exist but no production
     /// caller reaches them yet.
-    pub const IMPLEMENTED: u32 =
-        POISONING | ZERO_INIT | FREE_LIST_ENCRYPTION | RANDOMIZE_ALLOCATION
-        | DELAY_PAGE_WAKE | FREE_CANARY | FREE_CANARY_WIRED;
+    pub const IMPLEMENTED: u32 = POISONING
+        | ZERO_INIT
+        | FREE_LIST_ENCRYPTION
+        | RANDOMIZE_ALLOCATION
+        | DELAY_PAGE_WAKE
+        | FREE_CANARY
+        | FREE_CANARY_WIRED;
     /// Every mitigation bit defined by this registry.
     ///
     /// This is a registry mask, not a claim that every bit is active in a

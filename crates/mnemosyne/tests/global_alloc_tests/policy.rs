@@ -155,7 +155,10 @@ fn test_hardened_policy_features() {
     // Verify zero-initialization.
     let slice = unsafe { core::slice::from_raw_parts(ptr, 64) };
     for &byte in slice {
-        assert_eq!(byte, 0, "HardenedPolicy allocation must be zero-initialized");
+        assert_eq!(
+            byte, 0,
+            "HardenedPolicy allocation must be zero-initialized"
+        );
     }
 
     // Write a pattern and free; the free path writes a canary.
@@ -168,7 +171,10 @@ fn test_hardened_policy_features() {
     assert!(!ptr2.is_null());
     let slice2 = unsafe { core::slice::from_raw_parts(ptr2, 64) };
     for &byte in slice2 {
-        assert_eq!(byte, 0, "second HardenedPolicy allocation must be zero-initialized");
+        assert_eq!(
+            byte, 0,
+            "second HardenedPolicy allocation must be zero-initialized"
+        );
     }
     unsafe { allocator.dealloc(ptr2, layout) };
 }
@@ -182,9 +188,18 @@ fn test_policy_fingerprint_uniqueness() {
     let sec_fp = SecurePolicy::POLICY_FINGERPRINT;
     let hrd_fp = HardenedPolicy::POLICY_FINGERPRINT;
 
-    assert_ne!(std_fp, sec_fp, "Standard and Secure must have distinct fingerprints");
-    assert_ne!(std_fp, hrd_fp, "Standard and Hardened must have distinct fingerprints");
-    assert_ne!(sec_fp, hrd_fp, "Secure and Hardened must have distinct fingerprints");
+    assert_ne!(
+        std_fp, sec_fp,
+        "Standard and Secure must have distinct fingerprints"
+    );
+    assert_ne!(
+        std_fp, hrd_fp,
+        "Standard and Hardened must have distinct fingerprints"
+    );
+    assert_ne!(
+        sec_fp, hrd_fp,
+        "Secure and Hardened must have distinct fingerprints"
+    );
 
     // StandardPolicy fingerprint: all bool flags false -> low bits zero.
     assert_eq!(std_fp & 0x1F, 0, "StandardPolicy has no bool flags set");

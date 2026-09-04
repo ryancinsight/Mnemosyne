@@ -394,3 +394,73 @@ pub fn purge_lazy(warm_threshold: usize) {
 pub fn decay() {
     mnemosyne_decay::decay_step();
 }
+
+// ── Stats window ──────────────────────────────────────────────────────────────
+
+/// A snapshot of bin stats taken at a fixed point in time.
+///
+/// Create a baseline with [`BinStatsWindow::capture`], then call
+/// [`BinStatsWindow::delta`] later to compute per-class deltas over the window.
+/// This is the recommended pattern for profiling a code region:
+///
+/// ```rust
+/// # use mnemosyne::BinStatsWindow;
+/// let baseline = BinStatsWindow::capture();
+/// // ... code under profiling ...
+/// let delta = baseline.delta();
+/// ```
+pub struct BinStatsWindow {
+    bins: [mnemosyne_local::BinSnapshot; mnemosyne_core::NUM_SIZE_CLASSES],
+}
+
+impl BinStatsWindow {
+    /// Captures the current per-class bin stats as a baseline.
+    ///
+    /// Flushes the calling thread's TLS batch first so the snapshot
+    /// reflects all preceding allocations on this thread.
+    #[must_use]
+    pub fn capture() -> Self {
+        Self {
+            bins: mnemosyne_local::all_bin_snapshots(),
+        }
+    }
+
+    /// Computes per-class deltas since the baseline was captured.
+    ///
+    /// Each returned snapshot has its counters set to the difference since
+    /// the baseline. Counters that decreased (or were reset) saturate to zero.
+    #[must_use]
+    pub fn delta(&self) -> [mnemosyne_local::BinSnapshot; mnemosyne_core::NUM_SIZE_CLASSES] {
+        let now = mnemosyne_local::all_bin_snapshots();
+        core::array::from_fn(|class| {
+            let b = &self.bins[class];
+            let n = &now[class];
+            mnemosyne_local::BinSnapshot {
+                alloc_count: n.alloc_count.saturating_sub(b.alloc_count),
+                dealloc_count: n.dealloc_count.saturating_sub(b.dealloc_count),
+                alloc_bytes: n.alloc_bytes.saturating_sub(b.alloc_bytes),
+                requested_bytes: n.requested_bytes.saturating_sub(b.requested_bytes),
+                block_size: n.block_size,
+                live_estimate: n.live_estimate.saturating_sub(b.live_estimate),
+            }
+        })
+    }
+
+    /// Total allocations during the window across all size classes.
+    #[must_use]
+    pub fn total_alloc_count_delta(&self) -> u64 {
+        self.delta()
+            .iter()
+            .map(|s| s.alloc_count)
+            .fold(0u64, u64::saturating_add)
+    }
+
+    /// Total live bytes at the end of the window minus the start.
+    #[must_use]
+    pub fn total_live_bytes_delta(&self) -> u64 {
+        self.delta()
+            .iter()
+            .map(|s| s.live_bytes())
+            .fold(0u64, u64::saturating_add)
+    }
+}

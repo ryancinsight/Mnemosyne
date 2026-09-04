@@ -44,8 +44,8 @@ pub use mnemosyne_prof::{
 pub use options::{configure, get_options};
 pub use scratch::{AlignedVec, Drain, IntoIter};
 pub use stats::{
-    MemoryStats, decay, memory_stats, memory_stats_generic, memory_stats_json, purge,
-    purge_generic, purge_lazy, reset, reset_generic,
+    BinStatsWindow, MemoryStats, decay, memory_stats, memory_stats_generic, memory_stats_json,
+    purge, purge_generic, purge_lazy, reset, reset_generic,
 };
 
 /// Forces the Mnemosyne thread-local allocator to initialize for the current
