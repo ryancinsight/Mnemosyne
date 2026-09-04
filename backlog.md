@@ -162,27 +162,9 @@
   Evidence: `benchmarks/allocator_baseline_metadata.md`, 2026-09-03 section.
   **Closed locally in `185f828` plus the baseline/report refresh.**
 
-- [ ] [patch] **MN-462 — the SnMalloc comparator column cannot be produced on
-  any MSYS2-flavoured Windows host.** status=in-progress; integrator=codex;
-  branch=`perf/mnemosyne-scratch-release`;
-  lease=`crates/mnemosyne-benchmarks/Cargo.toml`,
-  `crates/mnemosyne-benchmarks/benches/allocator/`,
-  `benchmarks/allocator_baseline_metadata.md`;
-  diagnosed
-  2026-09-01. `snmalloc-sys` 0.3.8's `build.rs` matches `config.is_windows()`
-  before `config.is_msvc()` and, inside that arm, branches on the `MSYSTEM`
-  environment variable — so a Git Bash / MSYS2 shell makes it pass
-  `-DCMAKE_CXX_FLAGS=-fuse-ld=lld -Wno-error=unknown-pragmas` to a cmake run
-  that has already selected the `Visual Studio 17 2022` generator and
-  `cl.exe`. `cl` rejects the GNU flag (`D8021`) and the CXX compiler probe
-  fails. Confirmed not to be a cmake-selection problem: the native CMake 4.3.1
-  fails identically, and `env -u MSYSTEM` does not clear the flags. This is
-  upstream's defect, so the options are a version bump once it is fixed, a
-  vetted `[patch]` fork, or accepting the column's absence — the last is the
-  status quo and is why the feature is opt-in. **Acceptance oracle:**
-  `cargo build -p mnemosyne-benchmarks --benches --release --features
-  snmalloc` succeeds on this host, or the comparator is recorded as
-  permanently unavailable here with the reason. **Effort:** S.
+<a id="mn-462"></a>
+- [x] [patch] **MN-462 — the SnMalloc comparator column cannot be produced on any MSYS2-flavoured Windows host.** status=done (2026-09-04); integrator=codex; branch=`perf/mnemosyne-scratch-release`; lease=discharged; PR=#128.
+  **Outcome:** upgraded `snmalloc-rs`/`snmalloc-sys` from 0.3.8 to 0.7.5; the exact `MSYSTEM=UCRT64` release bench build completed in 46.98 s. `Cargo.lock` and baseline metadata are synchronized; timing values remain unrefreshed.
 
 - [x] [patch] **MN-463 — the Windows Jemalloc column needs an MSVC-built
   jemalloc.** status=done (2026-09-02); owner=atlas-session; branch=

@@ -1,5 +1,19 @@
 # Allocator Baseline Metadata
 
+## 2026-09-04 — SnMalloc comparator build restored (MN-462)
+
+The opt-in SnMalloc comparator now builds under the same MSYS2-flavoured
+environment that exposed the previous dependency defect. Updating
+`snmalloc-rs` and `snmalloc-sys` from `0.3.8` to the maintained `0.7.5` release
+removed the MSVC/GNU flag mismatch: with `MSYSTEM=UCRT64`,
+`cargo build -p mnemosyne-benchmarks --benches --release --features snmalloc`
+completed successfully in 46.98 s on the pinned Windows 11 MSVC host.
+
+This verifies build compatibility, not benchmark performance. The comparison
+table below remains the earlier measurement artifact and its `SnMalloc (ns)`
+cells are historical `N/A` values; no timing baseline was refreshed from this
+build-only check.
+
 ## 2026-09-03 — whole baseline refresh under the final procedure (MN-467)
 
 The threshold baseline and comparison report were refreshed together from the
@@ -191,17 +205,15 @@ from `rust-toolchain.toml`):
 - **Default feature set builds and runs.** `cargo build -p
   mnemosyne-benchmarks --benches --release` finishes in 42 s. Mnemosyne, the
   system allocator, mimalloc and rpmalloc all produce real rows.
-- **`--features snmalloc` cannot build.** `snmalloc-sys` 0.3.8's `build.rs`
-  branches on the `MSYSTEM` environment variable *before* it checks
-  `is_msvc()`, so under any MSYS2-flavoured shell it hands cmake
+- **Before MN-462, `--features snmalloc` could not build.** `snmalloc-sys`
+  0.3.8's `build.rs` branched on the `MSYSTEM` environment variable *before*
+  it checked `is_msvc()`, so under any MSYS2-flavoured shell it handed cmake
   `-DCMAKE_CXX_FLAGS=-fuse-ld=lld -Wno-error=unknown-pragmas` while cmake
-  selects the MSVC generator and `cl.exe`. `cl` rejects the GNU flag
+  selected the MSVC generator and `cl.exe`. `cl` rejected the GNU flag
   (`command line error D8021: invalid numeric argument
-  '/Wno-error=unknown-pragmas'`) and the CXX compiler probe fails. Substituting
-  the native CMake 4.3.1 for the MSYS2 one does not help — the flags come from
-  the crate, not the generator — and unsetting `MSYSTEM` did not clear them
-  either. This is a third-party build-script defect, not a repository one; the
-  comparator is opt-in precisely because it also fails on hosted runners.
+  '/Wno-error=unknown-pragmas'`) and the CXX compiler probe failed. MN-462
+  resolved this third-party defect by upgrading to `snmalloc-sys` 0.7.5; the
+  exact reproduction now builds as recorded above.
 - **`--features system-jemalloc` cannot link.** This is the genuine
   GNU-vs-MSVC mismatch: the located `D:\msys64\ucrt64\lib\libjemalloc_s.a` is
   a mingw-gcc archive that needs `___chkstk_ms`, a GCC runtime symbol MSVCRT
@@ -209,11 +221,12 @@ from `rust-toolchain.toml`):
   `LNK1120`. The Windows jemalloc column requires either a GNU-hosted rustc or
   an MSVC-built jemalloc; neither exists here.
 
-**Comparators that actually ran: Mnemosyne, System, MiMalloc, RpMalloc.** The
-`SnMalloc (ns)` and `Jemalloc (ns)` columns are `N/A` on every row because
-those two comparators could not be built or linked, not because they measured
-nothing — the diagnoses above are the reason, and `MN-462` / `MN-463` track
-them.
+**The 2026-09-01 comparison run actually measured Mnemosyne, System, MiMalloc,
+and RpMalloc.** Its `SnMalloc (ns)` and `Jemalloc (ns)` columns are `N/A` on
+every row because those comparators could not be built or linked in that
+historical configuration, not because they measured nothing. MN-462 now
+restores SnMalloc buildability; MN-463 remains the Windows Jemalloc link
+diagnosis.
 
 ### Why the numbers moved, and why it is not the sweep
 
