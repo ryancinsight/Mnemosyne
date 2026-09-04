@@ -107,6 +107,10 @@ fn bind_to_node_rejects_out_of_range_node() {
     unsafe { std::alloc::dealloc(ptr, layout) };
 }
 
+#[cfg_attr(
+    miri,
+    ignore = "NUMA binding uses unsupported platform calls under Miri"
+)]
 #[test]
 fn tiered_alloc_numa_hint_is_best_effort_and_returns_block() {
     assert_eq!(

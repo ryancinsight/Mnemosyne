@@ -149,7 +149,8 @@
 
 ## Closed
 
-- [x] [pm-hygiene][patch] **MNEM-PM-COMPACT-1 — compact backlog and checklist.** status=done; commit=pending; refs=git-history.
+<a id="mn-em-pm-compact-1"></a>
+- [x] [pm-hygiene][patch] **MNEM-PM-COMPACT-1 — compact backlog and checklist.** status=done; commit=`a3b249a`; refs=backlog.md#mn-em-pm-compact-1.
 - [x] [arch] [minor] **MN-469 — Use Melinoe permits for branded heap handoff.**; refs=afbedd4
 - [x] [patch] **MN-THEMIS-AFFINITY-CONSUMER-2026-09-01.** status=complete;; refs=PR #87,49146cdd98fa0457082f7f3da7ca9df9ea30f7a7
 - [x] [patch] **MN-468 — the benchmark harness parses its own performance-core; refs=PR #86,dde4012
