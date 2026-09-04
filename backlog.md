@@ -2,19 +2,21 @@
 
 ## In progress
 
-## MN-SCRATCH-GROWTH-COST-2026-09-04 [patch] [perf] — in-progress <a id="mn-scratch-growth-cost-2026-09-04"></a>
+## MN-PR126-MIRI-2026-09-04 [patch] — in-progress <a id="mn-pr126-miri-2026-09-04"></a>
 
-- **Outcome:** Preserve geometric scratch growth while `release` reclaims
-  capacity above each recorded provision, avoiding a reallocation regression
-  in the retention fix.
-- **Scope:** `mnemosyne-arena` aligned scratch storage, focused scratch tests,
-  and synchronized changelog/backlog text on PR #127.
-- **Acceptance:** growth retains its overflow-safe doubling policy and remains
-  amortized; release retains the requested provision exactly; a regression test
-  bounds growth events;
-  format, strict Clippy, Nextest, and Miri pass.
-- **Risk / delivery:** `[patch]` private growth policy and regression coverage;
-  integrator current Atlas session; branch `perf/scratch-release`.
+- **Outcome:** Keep decay integration waits valid under Miri without changing
+  the five-second native test budget.
+- **Scope:** `mnemosyne-decay` integration-test worker wait and synchronized
+  backlog text.
+- **Acceptance:** decay/backend Miri tests pass, native decay tests retain
+  their existing bound, and format, strict Clippy, and focused Nextest pass.
+- **Risk / delivery:** `[patch]`; integrator current Atlas session; branch
+  `fix/mnemosyne-decay-miri-timeout`; follow-up to merged PR #126.
+
+- [x] [patch] [perf] **MN-SCRATCH-GROWTH-COST-2026-09-04.** status=done
+  2026-09-04; integrator=atlas-session; PR #127; merge=`3da22b3`; evidence=
+  geometric growth and bounded scratch release verified by hosted Miri, Loom,
+  native tests, Clippy, and benchmark hygiene.
 
 - [x] [arch] [minor] **MN-469 — Use Melinoe permits for branded heap handoff.**
   status=complete 2026-09-03; owner=atlas-session; branch=
