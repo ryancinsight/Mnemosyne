@@ -113,7 +113,7 @@ pub use usable_size::{thread_allocator_stats, usable_size};
 
 // Re-export internal details used by the macros/internal paths
 #[doc(hidden)]
-pub use free::do_local_free_internal;
+pub use free::{do_local_free_internal, do_local_free_internal_policy};
 #[doc(hidden)]
 pub use realloc::small_realloc_fits_existing_class;
 #[doc(hidden)]
@@ -129,8 +129,8 @@ pub mod internal {
     // the crate root lists what a consumer actually calls.
     pub use crate::options::{mark_options_initialized, reset_options_for_testing};
     pub use crate::{
-        do_local_free_internal, initialize_allocated_bytes, poison_freed_bytes,
-        small_realloc_fits_existing_class, thread_free_layout,
+        do_local_free_internal, do_local_free_internal_policy, initialize_allocated_bytes,
+        poison_freed_bytes, small_realloc_fits_existing_class, thread_free_layout,
     };
     pub use core::alloc::Layout;
     pub use core::ptr::NonNull;

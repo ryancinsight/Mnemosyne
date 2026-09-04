@@ -2,9 +2,9 @@
 //! the telemetry counters summed across nodes.
 
 use crate::numa::current_numa_node;
+use crate::segment::pool::SegmentPoolStats;
 use crate::segment::pool::list::NodeSegmentPool;
 use crate::segment::pool::numa_bucket::{NUMA_BUCKETS, bucket_index as numa_bucket, steal_from};
-use crate::segment::pool::SegmentPoolStats;
 use mnemosyne_core::types::Segment;
 
 /// A NUMA-aware reclamation-safe global pool of free segments partitioned by socket node.

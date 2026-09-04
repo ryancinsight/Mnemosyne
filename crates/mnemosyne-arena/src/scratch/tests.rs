@@ -785,7 +785,10 @@ fn uninit_callback_panic_leaves_no_uninitialized_length_behind() {
 fn aligned_vec_resize_with_grows_using_closure() {
     let mut v = AlignedVec::<u32>::from_slice(&[1, 2]);
     let mut counter = 10u32;
-    v.resize_with(5, || { counter += 1; counter });
+    v.resize_with(5, || {
+        counter += 1;
+        counter
+    });
     assert_eq!(v.len(), 5);
     assert_eq!(&v.as_slice()[..2], &[1, 2]);
     // Elements 2..5 produced by closure
@@ -804,6 +807,9 @@ fn aligned_vec_resize_with_shrinks_like_truncate() {
 fn aligned_vec_fill_with_overwrites_all_elements() {
     let mut v = AlignedVec::<u32>::from_slice(&[0, 0, 0, 0]);
     let mut idx = 0u32;
-    v.fill_with(|| { idx += 1; idx });
+    v.fill_with(|| {
+        idx += 1;
+        idx
+    });
     assert_eq!(v.as_slice(), &[1, 2, 3, 4]);
 }

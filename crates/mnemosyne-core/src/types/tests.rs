@@ -229,12 +229,11 @@ fn huge_mapping_suffix_uses_raw_mapping_base() {
 
 #[test]
 fn free_canary_write_check_clear_roundtrip() {
-    use crate::types::Block;
     use crate::constants::MIN_BLOCK_SIZE;
+    use crate::types::Block;
 
     // Allocate a block-sized buffer with the minimum block size.
-    let layout = Layout::from_size_align(MIN_BLOCK_SIZE, MIN_BLOCK_SIZE)
-        .expect("valid layout");
+    let layout = Layout::from_size_align(MIN_BLOCK_SIZE, MIN_BLOCK_SIZE).expect("valid layout");
     let ptr = unsafe { alloc_zeroed(layout) } as *mut Block;
     assert!(!ptr.is_null());
 
@@ -249,7 +248,10 @@ fn free_canary_write_check_clear_roundtrip() {
 
     // Now check_double_free should return true.
     let has_canary = unsafe { Block::check_double_free(ptr, page_cookie) };
-    assert!(has_canary, "canary must be detected after write_free_canary");
+    assert!(
+        has_canary,
+        "canary must be detected after write_free_canary"
+    );
 
     // A different cookie must NOT match -- the canary is address+cookie bound.
     let wrong_cookie: usize = 0x1111_2222_3333_4444;
@@ -269,12 +271,11 @@ fn free_canary_write_check_clear_roundtrip() {
 
 #[test]
 fn free_canary_is_address_bound() {
-    use crate::types::Block;
     use crate::constants::MIN_BLOCK_SIZE;
+    use crate::types::Block;
 
     // Two adjacent blocks with the same page_cookie must produce different canaries.
-    let layout = Layout::from_size_align(MIN_BLOCK_SIZE * 2, MIN_BLOCK_SIZE)
-        .expect("valid layout");
+    let layout = Layout::from_size_align(MIN_BLOCK_SIZE * 2, MIN_BLOCK_SIZE).expect("valid layout");
     let base = unsafe { alloc_zeroed(layout) } as *mut Block;
     assert!(!base.is_null());
 
