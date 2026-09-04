@@ -24,7 +24,8 @@ parametric API that lets callers trade safety for throughput at compile time.
 
 1. The size-class table, its rounding bound, and why it matters for
    fragmentation and page density.
-2. Allocation policies as compile-time ZST parameters.
+2. Allocation policies as compile-time ZST parameters, including their active
+   mitigation masks and zeroing/poisoning costs.
 3. The global allocator: `#[global_allocator] static A: Mnemosyne = Mnemosyne`.
 4. Scratch pools: zero-allocation temporary buffers with nested borrow support.
 5. Segment lifecycle: how free segments are cached, decayed, purged, and reset.

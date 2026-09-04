@@ -8,14 +8,41 @@
 
 extern crate mnemosyne;
 
-use mnemosyne::{Mnemosyne, memory_stats, purge};
+use mnemosyne::{
+    AllocPolicy, HardenedPolicy, Mnemosyne, SecurePolicy, StandardPolicy, memory_stats,
+    mitigations, purge,
+};
 
 #[global_allocator]
 static ALLOC: Mnemosyne = Mnemosyne;
 
+fn print_policy<P: AllocPolicy>() {
+    println!(
+        "policy {}: zst={}, active_flags=0x{:02X}, warm_segments={}",
+        P::POLICY_NAME,
+        core::mem::size_of::<P>(),
+        P::MITIGATION_FLAGS,
+        P::SEGMENT_POOL_WARM_THRESHOLD,
+    );
+}
+
 fn main() {
     // Warm up the allocator to initialise TLS structures.
     let _ = std::vec::Vec::<u8>::with_capacity(64);
+
+    print_policy::<StandardPolicy>();
+    print_policy::<SecurePolicy>();
+    print_policy::<HardenedPolicy>();
+    assert_eq!(
+        StandardPolicy::MITIGATION_FLAGS,
+        mitigations::NONE,
+        "standard policy must not advertise mitigations"
+    );
+    assert_eq!(
+        HardenedPolicy::MITIGATION_FLAGS,
+        mitigations::IMPLEMENTED,
+        "hardened policy must advertise only implemented mitigations"
+    );
 
     let baseline = memory_stats();
     println!(

@@ -28,14 +28,15 @@ pub mod mitigations {
     pub const FREE_CANARY: u32 = 1 << 5;
     /// Validate caller's size/align against stored block_size on sized free.
     pub const SIZED_FREE_VALIDATION: u32 = 1 << 6;
-    /// All mitigations active.
-    pub const ALL: u32 = POISONING
-        | ZERO_INIT
-        | FREE_LIST_ENCRYPTION
-        | RANDOMIZE_ALLOCATION
-        | DELAY_PAGE_WAKE
-        | FREE_CANARY
-        | SIZED_FREE_VALIDATION;
+    /// Mitigations with an end-to-end runtime implementation.
+    pub const IMPLEMENTED: u32 =
+        POISONING | ZERO_INIT | FREE_LIST_ENCRYPTION | RANDOMIZE_ALLOCATION;
+    /// Every mitigation bit defined by this registry.
+    ///
+    /// This is a registry mask, not a claim that every bit is active in a
+    /// policy. Use [`IMPLEMENTED`] or a policy's [`AllocPolicy::MITIGATION_FLAGS`]
+    /// for the currently enforced data-plane mitigations.
+    pub const ALL: u32 = IMPLEMENTED | DELAY_PAGE_WAKE | FREE_CANARY | SIZED_FREE_VALIDATION;
     /// No mitigations.
     pub const NONE: u32 = 0;
 }
@@ -142,10 +143,9 @@ impl AllocPolicy for HardenedPolicy {
     const ZERO_INITIALIZE: bool = true;
     const ENABLE_FREE_LIST_ENCRYPTION: bool = true;
     const RANDOMIZE_ALLOCATION: bool = true;
-    const DELAY_PAGE_WAKE: bool = true;
     const POLICY_NAME: &'static str = "hardened";
-    /// All mitigations active — maximum security posture.
-    const MITIGATION_FLAGS: u32 = mitigations::ALL;
+    /// All currently implemented mitigations active.
+    const MITIGATION_FLAGS: u32 = mitigations::IMPLEMENTED;
 }
 
 /// Compile-time assertions that `StandardPolicy` carries no non-ZST overhead.
@@ -183,8 +183,8 @@ const _: () = assert!(
     "StandardPolicy::MITIGATION_FLAGS must be NONE"
 );
 const _: () = assert!(
-    HardenedPolicy::MITIGATION_FLAGS == mitigations::ALL,
-    "HardenedPolicy::MITIGATION_FLAGS must be ALL"
+    HardenedPolicy::MITIGATION_FLAGS == mitigations::IMPLEMENTED,
+    "HardenedPolicy::MITIGATION_FLAGS must be IMPLEMENTED"
 );
 
 // ── Policy typestate marker ───────────────────────────────────────────────────
