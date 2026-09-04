@@ -533,7 +533,6 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// Equivalent to `AlignedVec::from_slice(a)` + `extend_from_slice(b)`.
     #[inline]
     #[must_use]
-
     pub fn concat(a: &[T], b: &[T]) -> Self {
         let mut v = Self::with_capacity(a.len() + b.len());
         v.extend_from_slice(a);
@@ -546,7 +545,6 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// Delegates to `[T]::binary_search`; `AlignedVec::Deref` already gives
     /// access but this method improves discoverability.
     #[inline]
-    #[must_use]
     pub fn binary_search(&self, value: &T) -> Result<usize, usize>
     where
         T: Ord,

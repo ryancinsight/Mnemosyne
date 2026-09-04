@@ -283,7 +283,7 @@ const _: () = {
             "CLASS_TO_SIZE must be strictly increasing"
         );
         assert!(
-            CLASS_TO_SIZE[i] as usize % MIN_BLOCK_SIZE == 0,
+            (CLASS_TO_SIZE[i] as usize).is_multiple_of(MIN_BLOCK_SIZE),
             "every size class must be a multiple of MIN_BLOCK_SIZE"
         );
         assert!(
