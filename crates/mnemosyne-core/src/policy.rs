@@ -29,14 +29,21 @@ pub mod mitigations {
     /// Validate caller's size/align against stored block_size on sized free.
     pub const SIZED_FREE_VALIDATION: u32 = 1 << 6;
     /// Mitigations with an end-to-end runtime implementation.
+    ///
+    /// `DELAY_PAGE_WAKE` belongs here: the free path branches on
+    /// `P::DELAY_PAGE_WAKE` and applies the wake-threshold hysteresis, so it is
+    /// enforced rather than merely registered. `FREE_CANARY` and
+    /// `SIZED_FREE_VALIDATION` stay out — the canary helpers exist but no
+    /// production caller reaches them.
     pub const IMPLEMENTED: u32 =
-        POISONING | ZERO_INIT | FREE_LIST_ENCRYPTION | RANDOMIZE_ALLOCATION;
+        POISONING | ZERO_INIT | FREE_LIST_ENCRYPTION | RANDOMIZE_ALLOCATION | DELAY_PAGE_WAKE;
     /// Every mitigation bit defined by this registry.
     ///
     /// This is a registry mask, not a claim that every bit is active in a
-    /// policy. Use [`IMPLEMENTED`] or a policy's [`AllocPolicy::MITIGATION_FLAGS`]
+    /// policy. Use [`IMPLEMENTED`] or a policy's
+    /// [`MITIGATION_FLAGS`][super::AllocPolicy::MITIGATION_FLAGS]
     /// for the currently enforced data-plane mitigations.
-    pub const ALL: u32 = IMPLEMENTED | DELAY_PAGE_WAKE | FREE_CANARY | SIZED_FREE_VALIDATION;
+    pub const ALL: u32 = IMPLEMENTED | FREE_CANARY | SIZED_FREE_VALIDATION;
     /// No mitigations.
     pub const NONE: u32 = 0;
 }
@@ -119,15 +126,14 @@ pub trait AllocPolicy: private::Sealed + Send + Sync + 'static {
         //  5..20  WAKE_DENOMINATOR (16 bits)
         // 20..28  SEGMENT_POOL_WARM_THRESHOLD (clamped to 8 bits)
         // 28..60  MITIGATION_FLAGS (32 bits)
-        let b = (Self::ENABLE_POISONING as u64)
+        (Self::ENABLE_POISONING as u64)
             | ((Self::ZERO_INITIALIZE as u64) << 1)
             | ((Self::ENABLE_FREE_LIST_ENCRYPTION as u64) << 2)
             | ((Self::RANDOMIZE_ALLOCATION as u64) << 3)
             | ((Self::DELAY_PAGE_WAKE as u64) << 4)
             | ((Self::WAKE_DENOMINATOR as u64) << 5)
             | (((Self::SEGMENT_POOL_WARM_THRESHOLD & 0xFF) as u64) << 20)
-            | ((Self::MITIGATION_FLAGS as u64) << 28);
-        b
+            | ((Self::MITIGATION_FLAGS as u64) << 28)
     };
 }
 
@@ -179,9 +185,15 @@ impl AllocPolicy for HardenedPolicy {
     const ZERO_INITIALIZE: bool = true;
     const ENABLE_FREE_LIST_ENCRYPTION: bool = true;
     const RANDOMIZE_ALLOCATION: bool = true;
+    /// Page-waking hysteresis: a full page does not re-enter the active list
+    /// until at least `capacity / WAKE_DENOMINATOR` blocks have been freed.
+    /// This widens the temporal window between free and realloc, making
+    /// use-after-free and LIFO heap-spray exploits harder to land.
+    /// Zero-cost in `StandardPolicy` (branch eliminated at monomorphization).
+    const DELAY_PAGE_WAKE: bool = true;
     const POLICY_NAME: &'static str = "hardened";
     /// All currently implemented mitigations active.
-    const MITIGATION_FLAGS: u32 = mitigations::IMPLEMENTED;
+    const MITIGATION_FLAGS: u32 = mitigations::IMPLEMENTED | mitigations::DELAY_PAGE_WAKE;
 }
 
 /// Compile-time assertions that `StandardPolicy` carries no non-ZST overhead.
@@ -219,8 +231,8 @@ const _: () = assert!(
     "StandardPolicy::MITIGATION_FLAGS must be NONE"
 );
 const _: () = assert!(
-    HardenedPolicy::MITIGATION_FLAGS == mitigations::IMPLEMENTED,
-    "HardenedPolicy::MITIGATION_FLAGS must be IMPLEMENTED"
+    HardenedPolicy::MITIGATION_FLAGS == (mitigations::IMPLEMENTED | mitigations::DELAY_PAGE_WAKE),
+    "HardenedPolicy::MITIGATION_FLAGS must be IMPLEMENTED | DELAY_PAGE_WAKE"
 );
 
 // ── Policy typestate marker ───────────────────────────────────────────────────
@@ -289,9 +301,11 @@ mod tests {
     fn hardened_policy_has_all_implemented_mitigations() {
         assert_eq!(HardenedPolicy::POLICY_NAME, "hardened");
         assert_ne!(HardenedPolicy::MITIGATION_FLAGS, mitigations::NONE);
-        // HardenedPolicy has poisoning and encryption enabled
-        assert!(HardenedPolicy::ENABLE_POISONING);
-        assert!(HardenedPolicy::ENABLE_FREE_LIST_ENCRYPTION);
+        // Poisoning and encryption are associated constants, so these are
+        // build-time facts: asserting them at run time checks nothing a
+        // compiled binary could still get wrong.
+        const _: () = assert!(HardenedPolicy::ENABLE_POISONING);
+        const _: () = assert!(HardenedPolicy::ENABLE_FREE_LIST_ENCRYPTION);
     }
 
     #[test]
