@@ -211,6 +211,43 @@ pub const fn class_to_max_blocks(class: usize) -> usize {
     }
 }
 
+// ── Lemire reciprocal division ─────────────────────────────────────────────
+//
+// Pre-computed `div_mult` per class eliminates the hardware division in
+// `block_index = offset / block_size` on the validation path.
+//
+// Algorithm (Lemire indirect, 32-bit shift):
+//   mult = (2^SHIFT / n) + 1  →  index = (offset * mult) >> SHIFT
+//
+// Correctness bounds: offset < PAGE_SIZE (≤65535), n ≥ 16.  The round-up
+// error in `mult` never propagates for these bounds.
+//
+// Inspired by snmalloc `ds/sizeclasstable.h §slab_index`.
+
+/// Shift constant for the Lemire indirect reciprocal.
+pub const LEMIRE_DIV_SHIFT: u32 = 32;
+
+const CLASS_TO_DIV_MULT: [u32; NUM_SIZE_CLASSES] = {
+    let mut arr = [0u32; NUM_SIZE_CLASSES];
+    let mut i = 0;
+    while i < NUM_SIZE_CLASSES {
+        let n = CLASS_TO_SIZE[i] as u64;
+        arr[i] = ((1u64 << LEMIRE_DIV_SHIFT) / n + 1) as u32;
+        i += 1;
+    }
+    arr
+};
+
+/// Block index within a page using Lemire reciprocal multiplication.
+///
+/// Equivalent to `offset / class_to_size(class)` without a division
+/// instruction. `offset` must be `< PAGE_SIZE`; `class` must be
+/// `< NUM_SIZE_CLASSES`.
+#[inline(always)]
+pub const fn block_index_in_page(class: usize, offset: usize) -> usize {
+    ((offset as u64 * CLASS_TO_DIV_MULT[class] as u64) >> LEMIRE_DIV_SHIFT) as usize
+}
+
 // Compile-time cross-check between `NUM_SIZE_CLASSES` and the piecewise
 // `class_to_size` schedule: the final class must produce exactly
 // `MAX_SMALL_ALLOC_SIZE`, and the first out-of-range class must produce

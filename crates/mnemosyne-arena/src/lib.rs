@@ -15,7 +15,7 @@ pub mod segment;
 
 pub use arena::{allocate_large_or_huge, deallocate_large_or_huge};
 pub use numa::{bind_segment_to_numa_node, current_numa_node};
-pub use scratch::{AlignedVec, DEFAULT_SCRATCH_ALIGN, ScratchBank, ScratchElement, ScratchPool};
+pub use scratch::{AlignedVec, Drain, IntoIter, DEFAULT_SCRATCH_ALIGN, ScratchBank, ScratchElement, ScratchPool};
 pub use segment::{
     ArenaMemoryStats, GlobalHugePool, GlobalSegmentPool, HasSegmentPool, MAX_RETAINED_SEGMENTS,
     SEGMENT_MAPPING_SIZE, allocate_segment, arena_memory_stats, checked_align_up,

@@ -201,7 +201,21 @@ pub fn memory_stats() -> MemoryStats {
 pub fn memory_stats_json() -> alloc::string::String {
     let s = memory_stats();
     let bins = mnemosyne_local::all_bin_snapshots();
-    s.to_json_with_bins(&bins)
+    let mut json = s.to_json_with_bins(&bins);
+    // Insert compile-time policy metadata before the closing brace.
+    // The policy name and mitigation flags let parsers correlate a dump
+    // with the build configuration without consulting the binary.
+    use mnemosyne_core::policy::AllocPolicy;
+    json.pop(); // remove trailing '}'
+    let _ = ::core::fmt::Write::write_fmt(
+        &mut json,
+        core::format_args!(
+            ",\"policy_name\":\"{}\",\"mitigation_flags\":{}}}",
+            mnemosyne_core::policy::StandardPolicy::POLICY_NAME,
+            mnemosyne_core::policy::StandardPolicy::MITIGATION_FLAGS,
+        ),
+    );
+    json
 }
 
 impl MemoryStats {

@@ -117,3 +117,82 @@ unsafe impl Send for Block {}
 // with the `AtomicFreeList` publish/consume serializing any hand-off; the type
 // exposes no other interior mutability.
 unsafe impl Sync for Block {}
+
+// ── Backward-edge free canary ─────────────────────────────────────────────────
+//
+// A canary word written at `block + size_of::<Block>()` (the second pointer
+// slot) detects double-frees under `HardenedPolicy`.
+//
+// The canary uses a multiplicative formula inspired by snmalloc 0.7.x
+// `freelist.h::signed_prev`:
+//
+//   canary = (addr + MAGIC).wrapping_mul(cookie ^ (addr >> 4))
+//
+// This is stronger than XOR-only because the multiplier is non-linear: knowing
+// `MAGIC` and `addr` is not enough to forge the value without `cookie`.
+
+/// Magic constant mixed into the backward-edge canary.
+pub const FREE_CANARY_MAGIC: usize = 0xDEAD_C0DE_CAFE_BABE_usize;
+
+// `Block` is pointer-wide; the canary sits at `block + size_of::<Block>()`.
+// Both slots must fit in `MIN_BLOCK_SIZE` (16 bytes = 2 × 8-byte pointers on
+// 64-bit). Enforced at build time:
+const _: () = assert!(
+    core::mem::size_of::<Block>() * 2 <= crate::constants::MIN_BLOCK_SIZE,
+    "canary slot does not fit within MIN_BLOCK_SIZE"
+);
+
+impl Block {
+    /// Computes the multiplicative backward-edge canary value for `block`.
+    #[inline(always)]
+    fn canary_value(block: *const Block, page_cookie: usize) -> usize {
+        let addr = block.addr();
+        addr.wrapping_add(FREE_CANARY_MAGIC)
+            .wrapping_mul(page_cookie ^ (addr >> 4))
+    }
+
+    /// Writes the backward-edge canary at `block + size_of::<Block>()`.
+    ///
+    /// Called on the free path under `HardenedPolicy`.
+    ///
+    /// # Safety
+    ///
+    /// `block` must point to a live block whose allocation is at least
+    /// `2 * size_of::<Block>()` bytes; the canary slot must lie within it.
+    #[inline(always)]
+    pub unsafe fn write_free_canary(block: *mut Block, page_cookie: usize) {
+        // SAFETY: the canary slot is the second `usize` inside the block
+        // (`block + 1` in pointer arithmetic). By the caller's contract the
+        // block is at least 2 × size_of::<Block>() bytes, so the slot is
+        // within the allocation and exclusively owned by the free path.
+        unsafe {
+            block
+                .cast::<usize>()
+                .add(1)
+                .write(Self::canary_value(block, page_cookie));
+        }
+    }
+
+    /// Returns `true` if the backward-edge canary is present (likely double-free).
+    ///
+    /// # Safety
+    ///
+    /// Same requirements as [`write_free_canary`][Block::write_free_canary].
+    #[inline(always)]
+    pub unsafe fn check_double_free(block: *const Block, page_cookie: usize) -> bool {
+        // SAFETY: the canary slot is within the block by the caller's contract.
+        let observed = unsafe { block.cast::<usize>().add(1).read() };
+        observed == Self::canary_value(block, page_cookie)
+    }
+
+    /// Clears the canary when a block is taken off the free list.
+    ///
+    /// # Safety
+    ///
+    /// Same requirements as [`write_free_canary`][Block::write_free_canary].
+    #[inline(always)]
+    pub unsafe fn clear_free_canary(block: *mut Block) {
+        // SAFETY: the canary slot is within the block by the caller's contract.
+        unsafe { block.cast::<usize>().add(1).write(0) };
+    }
+}

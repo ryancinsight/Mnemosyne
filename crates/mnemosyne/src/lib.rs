@@ -16,7 +16,8 @@ pub use mnemosyne_backend::{
     MemoryBackendWrapper, is_cuda_available,
 };
 pub use mnemosyne_core::{
-    AllocPolicy, HardenedPolicy, SecurePolicy, StandardPolicy, options::MnemosyneOptions,
+    AllocPolicy, HardenedPolicy, PolicyMarker, SecurePolicy, StandardPolicy, mitigations,
+    options::MnemosyneOptions,
 };
 #[cfg(feature = "branded")]
 pub use mnemosyne_heap::{
@@ -34,7 +35,7 @@ pub use mnemosyne_prof::{
     register_free_hook,
 };
 pub use options::{configure, get_options};
-pub use scratch::AlignedVec;
+pub use scratch::{AlignedVec, Drain, IntoIter};
 pub use stats::{
     MemoryStats, decay, memory_stats, memory_stats_generic, memory_stats_json, purge,
     purge_generic, reset, reset_generic,

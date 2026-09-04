@@ -116,6 +116,24 @@ impl<T: ScratchElement> Iterator for IntoIter<T> {
 impl<T: ScratchElement> ExactSizeIterator for IntoIter<T> {}
 impl<T: ScratchElement> core::iter::FusedIterator for IntoIter<T> {}
 
+impl<T: ScratchElement> core::iter::DoubleEndedIterator for IntoIter<T> {
+    #[inline]
+    fn next_back(&mut self) -> Option<T> {
+        let end = self.vec.len();
+        if self.pos < end {
+            // Logically pop from the back by reducing len.
+            // SAFETY: `end - 1 < self.vec.len()` — initialized; T: Copy.
+            let new_end = end - 1;
+            // SAFETY: `new_end <= capacity`; element at `new_end` is initialized.
+            unsafe { self.vec.set_len_unchecked(new_end) };
+            let val = unsafe { core::ptr::read(self.vec.ptr.add(new_end)) };
+            Some(val)
+        } else {
+            None
+        }
+    }
+}
+
 impl<T: ScratchElement> IntoIterator for AlignedVec<T> {
     type Item = T;
     type IntoIter = IntoIter<T>;
@@ -231,5 +249,66 @@ impl<T: ScratchElement + PartialEq, const N: usize> PartialEq<[T; N]> for Aligne
     #[inline]
     fn eq(&self, other: &[T; N]) -> bool {
         self.as_slice() == other.as_slice()
+    }
+}
+
+// ── Slice views (AsRef / AsMut / Borrow) ─────────────────────────────────────
+
+impl<T: ScratchElement> core::convert::AsRef<[T]> for AlignedVec<T> {
+    #[inline]
+    fn as_ref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T: ScratchElement> core::convert::AsMut<[T]> for AlignedVec<T> {
+    #[inline]
+    fn as_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
+
+impl<T: ScratchElement> core::borrow::Borrow<[T]> for AlignedVec<T> {
+    #[inline]
+    fn borrow(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T: ScratchElement> core::borrow::BorrowMut<[T]> for AlignedVec<T> {
+    #[inline]
+    fn borrow_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
+
+// ── Collection ───────────────────────────────────────────────────────────────
+
+impl<T: ScratchElement> core::iter::FromIterator<T> for AlignedVec<T> {
+    #[inline]
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let iter = iter.into_iter();
+        let (lo, _) = iter.size_hint();
+        let mut buf = AlignedVec::with_capacity(lo);
+        for item in iter {
+            buf.push(item);
+        }
+        buf
+    }
+}
+
+impl<T: ScratchElement> Extend<T> for AlignedVec<T> {
+    #[inline]
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        self.extend_from_iter(iter);
+    }
+}
+
+impl<'a, T: ScratchElement> Extend<&'a T> for AlignedVec<T> {
+    #[inline]
+    fn extend<I: IntoIterator<Item = &'a T>>(&mut self, iter: I) {
+        for &item in iter {
+            self.push(item);
+        }
     }
 }

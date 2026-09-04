@@ -9,6 +9,33 @@
 //! non-poisoning allocator.  The compile-time assertions at the bottom of this
 //! module verify this invariant at build time.
 
+/// Compile-time security mitigation bitmask constants.
+///
+/// Combine with bitwise OR to describe a policy's active mitigations.
+/// Inspired by snmalloc 0.7.x `mitigations/mitigations.h`.
+pub mod mitigations {
+    /// Poison freed and allocated bytes with sentinel patterns.
+    pub const POISONING: u32 = 1 << 0;
+    /// Zero-initialize all allocations.
+    pub const ZERO_INIT: u32 = 1 << 1;
+    /// XOR-encrypt free-list next-pointers per page cookie.
+    pub const FREE_LIST_ENCRYPTION: u32 = 1 << 2;
+    /// Fisher-Yates–shuffle free list on page initialization.
+    pub const RANDOMIZE_ALLOCATION: u32 = 1 << 3;
+    /// Hysteresis: delay page waking until ≥ capacity/WAKE_DENOMINATOR freed.
+    pub const DELAY_PAGE_WAKE: u32 = 1 << 4;
+    /// Multiplicative backward-edge canary on freed blocks.
+    pub const FREE_CANARY: u32 = 1 << 5;
+    /// Validate caller's size/align against stored block_size on sized free.
+    pub const SIZED_FREE_VALIDATION: u32 = 1 << 6;
+    /// All mitigations active.
+    pub const ALL: u32 =
+        POISONING | ZERO_INIT | FREE_LIST_ENCRYPTION | RANDOMIZE_ALLOCATION
+        | DELAY_PAGE_WAKE | FREE_CANARY | SIZED_FREE_VALIDATION;
+    /// No mitigations.
+    pub const NONE: u32 = 0;
+}
+
 #[doc(hidden)]
 pub mod private {
     pub trait Sealed {}
@@ -41,6 +68,26 @@ pub trait AllocPolicy: private::Sealed + Send + Sync + 'static {
 
     /// If true, randomize the allocation order of blocks in a page.
     const RANDOMIZE_ALLOCATION: bool = false;
+
+    /// If true, a full page does not become active until at least
+    /// `capacity / WAKE_DENOMINATOR` blocks are freed from it.
+    const DELAY_PAGE_WAKE: bool = false;
+
+    /// Denominator for the page-wake hysteresis.
+    const WAKE_DENOMINATOR: u16 = 4;
+
+    /// Minimum warm segments kept in the pool after a `purge_lazy` call.
+    const SEGMENT_POOL_WARM_THRESHOLD: usize = 0;
+
+    /// Human-readable name for this policy. Zero-cost — inlined by the compiler.
+    const POLICY_NAME: &'static str = "custom";
+
+    /// Combined bitmask of active [`mitigations`] for this policy.
+    const MITIGATION_FLAGS: u32 = mitigations::NONE;
+
+    /// Probabilistic guard-page sampling rate (GWP-ASan hook).
+    /// `0` disables. Inspired by snmalloc 0.7.2 `gwp_asan.h`.
+    const GWP_SAMPLE_RATE: u32 = 0;
 }
 
 /// Zero-Sized Type (ZST) representing the standard allocation policy with maximum performance.
@@ -55,6 +102,10 @@ impl private::Sealed for StandardPolicy {}
 impl AllocPolicy for StandardPolicy {
     const ENABLE_POISONING: bool = false;
     const ZERO_INITIALIZE: bool = false;
+    /// Keep 4 committed free segments warm for rapid free-then-allocate bursts.
+    const SEGMENT_POOL_WARM_THRESHOLD: usize = 4;
+    const POLICY_NAME: &'static str = "standard";
+    const MITIGATION_FLAGS: u32 = mitigations::NONE;
 }
 
 /// Zero-Sized Type (ZST) representing a secure allocation policy with memory
@@ -67,6 +118,9 @@ impl AllocPolicy for SecurePolicy {
     const ENABLE_POISONING: bool = true;
     const ZERO_INITIALIZE: bool = true;
     const RANDOMIZE_ALLOCATION: bool = true;
+    const POLICY_NAME: &'static str = "secure";
+    const MITIGATION_FLAGS: u32 =
+        mitigations::POISONING | mitigations::ZERO_INIT | mitigations::RANDOMIZE_ALLOCATION;
 }
 
 /// Zero-Sized Type (ZST) representing a hardened allocation policy with memory
@@ -84,6 +138,10 @@ impl AllocPolicy for HardenedPolicy {
     const ZERO_INITIALIZE: bool = true;
     const ENABLE_FREE_LIST_ENCRYPTION: bool = true;
     const RANDOMIZE_ALLOCATION: bool = true;
+    const DELAY_PAGE_WAKE: bool = true;
+    const POLICY_NAME: &'static str = "hardened";
+    /// All mitigations active — maximum security posture.
+    const MITIGATION_FLAGS: u32 = mitigations::ALL;
 }
 
 /// Compile-time assertions that `StandardPolicy` carries no non-ZST overhead.
@@ -114,4 +172,59 @@ const _: () = assert!(
 const _: () = assert!(
     core::mem::size_of::<HardenedPolicy>() == 0,
     "HardenedPolicy must be a ZST"
+);
+// Mitigation-flag consistency assertions
+const _: () = assert!(
+    StandardPolicy::MITIGATION_FLAGS == mitigations::NONE,
+    "StandardPolicy::MITIGATION_FLAGS must be NONE"
+);
+const _: () = assert!(
+    HardenedPolicy::MITIGATION_FLAGS == mitigations::ALL,
+    "HardenedPolicy::MITIGATION_FLAGS must be ALL"
+);
+
+// ── Policy typestate marker ───────────────────────────────────────────────────
+
+/// Zero-sized type (ZST) that brands a data structure with the allocator
+/// policy used to create it — zero runtime cost (`PhantomData<P>`).
+///
+/// Embed `PolicyMarker<P>` in consumer types to carry the policy as a
+/// compile-time proof without any runtime overhead.
+pub struct PolicyMarker<P: AllocPolicy>(core::marker::PhantomData<P>);
+
+impl<P: AllocPolicy> PolicyMarker<P> {
+    /// Creates a new zero-cost marker.
+    #[inline]
+    pub const fn new() -> Self {
+        Self(core::marker::PhantomData)
+    }
+    /// Returns the compile-time policy name.
+    #[inline]
+    pub const fn name() -> &'static str {
+        P::POLICY_NAME
+    }
+}
+
+impl<P: AllocPolicy> Default for PolicyMarker<P> {
+    #[inline]
+    fn default() -> Self { Self::new() }
+}
+impl<P: AllocPolicy> Clone for PolicyMarker<P> {
+    #[inline]
+    fn clone(&self) -> Self { Self::new() }
+}
+impl<P: AllocPolicy> Copy for PolicyMarker<P> {}
+impl<P: AllocPolicy> core::fmt::Debug for PolicyMarker<P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "PolicyMarker<{}>", P::POLICY_NAME)
+    }
+}
+impl<P: AllocPolicy> PartialEq for PolicyMarker<P> {
+    fn eq(&self, _: &Self) -> bool { true }
+}
+impl<P: AllocPolicy> Eq for PolicyMarker<P> {}
+
+const _: () = assert!(
+    core::mem::size_of::<PolicyMarker<StandardPolicy>>() == 0,
+    "PolicyMarker must be a ZST"
 );

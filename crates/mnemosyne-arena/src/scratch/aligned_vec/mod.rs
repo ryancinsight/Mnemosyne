@@ -11,6 +11,9 @@ mod traits;
 // changes no bodies -- so the path is preserved here.
 pub use traits::IntoIter;
 
+// `Drain` is defined in `length.rs` where the draining operation lives.
+pub use length::Drain;
+
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
@@ -27,6 +30,7 @@ pub struct AlignedVec<T: ScratchElement> {
 impl<T: ScratchElement> AlignedVec<T> {
     /// Creates a dangling sentinel with zero capacity.
     #[inline]
+    #[must_use]
     pub const fn dangling() -> Self {
         Self {
             ptr: core::ptr::NonNull::dangling().as_ptr(),
@@ -38,6 +42,7 @@ impl<T: ScratchElement> AlignedVec<T> {
 
     /// Creates a new `AlignedVec` with the given initial capacity.
     #[inline]
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         if capacity == 0 {
             return Self::dangling();
@@ -82,12 +87,14 @@ impl<T: ScratchElement> AlignedVec<T> {
 
     /// Number of initialized elements: the prefix `as_slice` exposes.
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Whether no element is initialized (`len() == 0`).
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -95,8 +102,27 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// Elements the current allocation can hold before `ensure_len` must
     /// reallocate; never less than `len()`.
     #[inline]
+    #[must_use]
     pub fn capacity(&self) -> usize {
         self.capacity
+    }
+
+    /// Sets the logical length without initializing the extended range.
+    ///
+    /// # Safety
+    ///
+    /// * `new_len <= self.capacity()`.
+    /// * If `new_len > self.len()`, every element in `[old_len, new_len)` must
+    ///   be initialized before any operation that reads through `as_slice()` or
+    ///   `Deref`. Violating either condition is undefined behavior.
+    #[inline]
+    pub unsafe fn set_len_unchecked(&mut self, new_len: usize) {
+        debug_assert!(
+            new_len <= self.capacity,
+            "set_len_unchecked: {new_len} > capacity {}",
+            self.capacity
+        );
+        self.len = new_len;
     }
 
     /// Grows the allocation so `additional` more elements fit without another
