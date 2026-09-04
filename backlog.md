@@ -1,5 +1,17 @@
 # Backlog
 
+## MN-EUNOMIA-MERGED-2026-09-04 — Follow merged Eunomia provider [patch] [arch] — in-progress <a id="mn-eunomia-merged-2026-09-04"></a>
+
+- **Integrator:** Codex on `feat/phase10-improvements`; **lease:** `Cargo.toml`,
+  `Cargo.lock`, `backlog.md`, `docs/adr/0006-provider-default-msrv.md`.
+- **Outcome:** remove the obsolete Eunomia PR #87 revision after merge so
+  Mnemosyne exports the same nominal numeric types as current Leto and Hermes.
+- **Acceptance:** the standalone graph resolves one Eunomia source; workspace
+  check, warning-denied Clippy, nextest, doctests, rustdoc, and downstream Leto
+  consumer checks pass without a source override.
+- **Dependency:** Eunomia PR #87 merged at `27237595`; **Last-update:**
+  2026-09-04.
+
 ## MN-EUNOMIA-IDENTITY-2026-09-03 — Unify optional Eunomia source identity [patch] — done <a id="mn-eunomia-identity-2026-09-03"></a>
 
 - **Integrator:** Codex; **branch:** `feat/phase10-improvements`; **lease:** none.
