@@ -261,6 +261,11 @@ impl GlobalHugePool {
                             },
                         }
                     }
+                    // SAFETY: same ownership window as the Lower-band call
+                    // above — this method still owns the temporarily detached
+                    // chain (the Lower pop returned None and restored it), so
+                    // popping an Upper-band fit from the detached bucket is
+                    // valid; a rejected walk is restored before return.
                     HugeBucketBand::Upper => unsafe {
                         Self::pop_fitting_from_exact_bucket(bucket, size, HugeBucketBand::Upper)
                     },
