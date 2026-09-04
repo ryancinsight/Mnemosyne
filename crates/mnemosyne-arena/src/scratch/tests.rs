@@ -888,3 +888,31 @@ fn aligned_vec_as_mut_ptr_range() {
     let range = v.as_mut_ptr_range();
     assert_eq!(range.end as usize - range.start as usize, 3 * core::mem::size_of::<u32>());
 }
+// ---- Phase 20b: partition_in_place ----------------------------------------
+
+#[test]
+fn aligned_vec_partition_evens_before_odds() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4, 5, 6]);
+    let pivot = v.partition_in_place(|&x| x % 2 == 0);
+    assert_eq!(pivot, 3, "three even numbers");
+    for &x in &v.as_slice()[..pivot] {
+        assert_eq!(x % 2, 0, "all true-predicate elements before pivot");
+    }
+    for &x in &v.as_slice()[pivot..] {
+        assert_eq!(x % 2, 1, "all false-predicate elements after pivot");
+    }
+}
+
+#[test]
+fn aligned_vec_partition_all_true() {
+    let mut v = AlignedVec::<u32>::from_slice(&[2, 4, 6]);
+    let pivot = v.partition_in_place(|&x| x % 2 == 0);
+    assert_eq!(pivot, 3);
+}
+
+#[test]
+fn aligned_vec_partition_all_false() {
+    let mut v = AlignedVec::<u32>::from_slice(&[1, 3, 5]);
+    let pivot = v.partition_in_place(|&x| x % 2 == 0);
+    assert_eq!(pivot, 0);
+}

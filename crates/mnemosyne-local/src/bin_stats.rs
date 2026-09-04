@@ -329,12 +329,15 @@ pub fn flush_tls_stats() {
 pub fn summary_line() -> std::string::String {
     let total_allocs = total_alloc_count();
     let live = total_live_bytes();
+    let int_frag = total_internal_fragmentation();
     match hottest_class() {
         Some(cls) => std::format!(
-            "allocs={total_allocs} live_bytes={live} hottest_class={cls}({}b)",
+            "allocs={total_allocs} live_bytes={live} int_frag={int_frag:.1}% hottest_class={cls}({}b)",
             class_to_size(cls)
         ),
-        None => std::format!("allocs={total_allocs} live_bytes={live} hottest_class=none"),
+        None => std::format!(
+            "allocs={total_allocs} live_bytes={live} int_frag={int_frag:.1}% hottest_class=none"
+        ),
     }
 }
 

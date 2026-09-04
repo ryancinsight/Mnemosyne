@@ -308,6 +308,42 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.len = write;
     }
 
+    // ── Partitioning ─────────────────────────────────────────────────────────
+
+    /// Partitions the buffer in-place around a predicate.
+    ///
+    /// All `true` elements come before all `false` elements. Order within each
+    /// group is not preserved. Returns the count of `true` elements (the pivot
+    /// index). O(n), no allocation.
+    #[inline]
+    pub fn partition_in_place<F: FnMut(&T) -> bool>(&mut self, mut predicate: F) -> usize {
+        let mut lo = 0usize;
+        let mut hi = self.len;
+        loop {
+            while lo < hi {
+                // SAFETY: `lo < hi <= self.len`.
+                let elem = unsafe { core::ptr::read(self.ptr.add(lo)) };
+                if predicate(&elem) { lo += 1; } else { break; }
+            }
+            while lo < hi {
+                hi -= 1;
+                // SAFETY: `hi < self.len`.
+                let elem = unsafe { core::ptr::read(self.ptr.add(hi)) };
+                if predicate(&elem) { break; }
+            }
+            if lo >= hi { break; }
+            // SAFETY: lo and hi are distinct valid indices.
+            unsafe {
+                let a = core::ptr::read(self.ptr.add(lo));
+                let b = core::ptr::read(self.ptr.add(hi));
+                core::ptr::write(self.ptr.add(lo), b);
+                core::ptr::write(self.ptr.add(hi), a);
+            }
+            lo += 1;
+        }
+        lo
+    }
+
     // ── Deduplication ────────────────────────────────────────────────────────
 
     /// Removes consecutive duplicate elements.
