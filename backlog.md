@@ -163,7 +163,12 @@
   **Closed locally in `185f828` plus the baseline/report refresh.**
 
 - [ ] [patch] **MN-462 — the SnMalloc comparator column cannot be produced on
-  any MSYS2-flavoured Windows host.** status=todo; owner=unclaimed; diagnosed
+  any MSYS2-flavoured Windows host.** status=in-progress; integrator=codex;
+  branch=`perf/mnemosyne-scratch-release`;
+  lease=`crates/mnemosyne-benchmarks/Cargo.toml`,
+  `crates/mnemosyne-benchmarks/benches/allocator/`,
+  `benchmarks/allocator_baseline_metadata.md`;
+  diagnosed
   2026-09-01. `snmalloc-sys` 0.3.8's `build.rs` matches `config.is_windows()`
   before `config.is_msvc()` and, inside that arm, branches on the `MSYSTEM`
   environment variable — so a Git Bash / MSYS2 shell makes it pass
