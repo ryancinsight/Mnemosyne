@@ -5,14 +5,9 @@
 ## In progress
 
 <a id="mn-em-book-depth-1"></a>
-- [ ] **MNEM-BOOK-DEPTH-1** [docs][minor] status=in-progress owner=codex
-  branch=`perf/mnemosyne-scratch-release`; last-update=2026-09-04;
-  latest=`1706c5c`.
-  Vertical slice: correct the size-class geometry and teach its mapping,
-  page-density, and fragmentation implications with a runnable example.
-  Acceptance for this slice: implementation values and book claims agree;
-  example builds; `mdbook test docs/book` passes. The parent remains open for
-  the remaining chapters and Parts.
+- [x] **MNEM-BOOK-DEPTH-1** [docs][minor] status=done owner=codex
+  branch=`perf/mnemosyne-scratch-release`; latest=`af7a23a`.
+  Outcome: corrected the full book's implementation contracts, examples, and stack ownership; `mdbook test` and `mdbook build` pass.
 
 ### MN-SCRATCH-RELEASE-2026-09-04 — Pooled scratch had no reclamation path [minor] [perf] — in progress <a id="mn-scratch-release-2026-09-04"></a>
 
