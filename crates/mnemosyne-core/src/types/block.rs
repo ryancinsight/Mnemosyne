@@ -183,7 +183,12 @@ impl Block {
     ///
     /// # Safety
     ///
-    /// Same requirements as [`write_free_canary`][Block::write_free_canary].
+    /// Same requirements as [`write_free_canary`][Block::write_free_canary],
+    /// **and** the canary slot must already be initialized: this reads it, and
+    /// reading uninitialized memory is undefined behaviour regardless of the
+    /// value observed. A live allocation with an in-bounds slot is not enough —
+    /// a block that has never been through the free path has not had the slot
+    /// written, so the caller must establish initialization itself.
     #[inline(always)]
     pub unsafe fn check_double_free(block: *const Block, page_cookie: usize) -> bool {
         // SAFETY: the canary slot is within the block by the caller's contract.

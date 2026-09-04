@@ -50,10 +50,17 @@ zeroes newly exposed bytes, while a poisoned policy marks newly exposed and
 truncated ranges according to its policy contract. The old pointer is consumed
 by a successful replacement; callers must use only the returned pointer.
 
-Zero-size allocation requests return null. A null pointer passed to `realloc`
-acts as an allocation when the new size is nonzero; a non-null pointer with a
-zero new size is freed and returns null. These rules are part of the wrapper's
-`GlobalAlloc` contract and are exercised by the allocator test suite.
+These cases sit *below* the `GlobalAlloc` contract rather than inside it.
+That trait requires the caller to pass a non-zero `Layout` to `alloc` and a
+`new_size` greater than zero to `realloc`, with `realloc`'s pointer being a
+live allocation from this same allocator; violating any of those is undefined
+behaviour, so a conforming caller never reaches the cases below.
+
+The wrapper handles them anyway, as internal defensive behaviour and not as a
+guarantee the trait extends: a zero-size request returns null, a null pointer
+passed to `realloc` acts as an allocation when the new size is nonzero, and a
+non-null pointer with a zero new size is freed and returns null. The allocator
+test suite exercises these paths directly rather than through the trait.
 
 ## Runtime configuration
 

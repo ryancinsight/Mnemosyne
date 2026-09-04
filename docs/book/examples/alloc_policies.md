@@ -38,9 +38,12 @@ all memory-stats assertions passed
   one baseline runtime allocation on the measured host, so the live counter
   rises by five from `baseline: live=1`.
 
-- `mapped=6389760 B` stays constant after `drop(vecs)` because Mnemosyne
-  caches free segments in a thread-local pool rather than immediately releasing
-  them to the OS — the mapped range is still reserved.
+- `mapped=6389760 B` stays constant after `drop(vecs)` because the freed blocks
+  return to thread-local free lists while the segment backing them stays in
+  use; the mapped range is never released here. Note the run reports
+  `retained_free_segments=0` — nothing is cached as a *free* segment in this
+  example, so the constant `mapped` figure is an in-use segment, not a pooled
+  one.
 
 - The three policy lines are static metadata emitted by one generic helper.
   `zst=0` confirms that policy selection carries no instance storage, while the
