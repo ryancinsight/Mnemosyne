@@ -210,8 +210,9 @@
   aarch64-unknown-linux-gnu -- -D warnings` is clean locally, and the lint
   job now runs it as a second step, closing the uncovered target.
 - [ ] [patch] **MN-CONFORMANCE-COMMENTED-CODE-2026-08-31 — restore the
-  Atlas commented-code ratchet.** status=review; integrator=Codex
-  `/root/mnemosyne_conformance`; lease=none; last-update=2026-08-31. Source
+  Atlas commented-code ratchet.** status=in-progress; integrator=codex
+  (takeover); branch=`perf/mnemosyne-scratch-release`; lease=`backlog.md`;
+  last-update=2026-09-04. Source
   `c9b3367` rewords the newly counted prose line without changing the
   huge-pool soft-cap contract. Exact live-tree Atlas conformance reports zero
   regressions/tightenings without a baseline raise; affected all-target
