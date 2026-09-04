@@ -48,7 +48,7 @@ pub struct ScratchPool<T: ScratchElement> {
     /// depth, so only depth 0 touches slot 0). A `debug_assert!` in
     /// `with_scratch` fails the tests if a future mutation path escapes that
     /// set.
-    primary_capacity: Cell<usize>,
+    slot_capacities: [Cell<usize>; MAX_POOL_SLOTS],
 }
 
 // SAFETY: a `ScratchPool` uniquely owns its slot buffers (each `AlignedVec` owns
@@ -79,7 +79,7 @@ impl<T: ScratchElement> ScratchPool<T> {
             ],
             borrow_depth: Cell::new(0),
             provisions: [const { Cell::new(0) }; MAX_POOL_SLOTS],
-            primary_capacity: Cell::new(0),
+            slot_capacities: [const { Cell::new(0) }; MAX_POOL_SLOTS],
         }
     }
 
@@ -104,7 +104,11 @@ impl<T: ScratchElement> ScratchPool<T> {
             provisions: [const { Cell::new(0) }; MAX_POOL_SLOTS],
             // `mk()` gives every slot exactly `capacity` (a zero request yields
             // the zero-capacity dangling sentinel), so slot 0 starts here.
-            primary_capacity: Cell::new(capacity),
+            slot_capacities: {
+                let mirrors = [const { Cell::new(0) }; MAX_POOL_SLOTS];
+                mirrors[0].set(capacity);
+                mirrors
+            },
         }
     }
 
@@ -143,17 +147,15 @@ impl<T: ScratchElement> ScratchPool<T> {
             // added elements are zeroed by ensure_len).
             if n > vec.len() {
                 vec.ensure_len(n);
-                if depth == 0 {
-                    // Slot index equals borrow depth, so this is the only place
-                    // slot 0's capacity can change after construction. Reading
-                    // it through the live exclusive `vec` is the reborrow the
-                    // accessor itself must not perform.
-                    self.primary_capacity.set(vec.capacity());
-                }
+                // Republish this slot's capacity to its mirror. Reading it
+                // back through the live exclusive `vec` is the reborrow the
+                // accessors themselves must not perform, so every slot keeps a
+                // figure readable from outside the `UnsafeCell`.
+                self.slot_capacities[depth as usize].set(vec.capacity());
             }
             debug_assert!(
-                depth != 0 || self.primary_capacity.get() == vec.capacity(),
-                "primary_capacity drifted from slot 0's actual capacity"
+                self.slot_capacities[depth as usize].get() == vec.capacity(),
+                "slot capacity mirror drifted from the slot's actual capacity"
             );
             debug_assert_eq!(
                 vec.as_mut_ptr() as usize % T::ALIGN_BYTES,
@@ -220,13 +222,11 @@ impl<T: ScratchElement> ScratchPool<T> {
             let vec = unsafe { &mut *self.slots[idx].get() };
             if n > vec.len() {
                 vec.ensure_len(n);
-                if depth == 0 {
-                    self.primary_capacity.set(vec.capacity());
-                }
+                self.slot_capacities[idx].set(vec.capacity());
             }
             debug_assert!(
-                depth != 0 || self.primary_capacity.get() == vec.capacity(),
-                "primary_capacity drifted from slot 0's actual capacity"
+                self.slot_capacities[idx].get() == vec.capacity(),
+                "slot capacity mirror drifted from the slot's actual capacity"
             );
             debug_assert_eq!(
                 vec.as_mut_ptr() as usize % T::ALIGN_BYTES,
@@ -279,9 +279,7 @@ impl<T: ScratchElement> ScratchPool<T> {
                 if vec.capacity() != 0 {
                     // Drop returns the allocation, then the sentinel lands.
                     *vec = AlignedVec::dangling();
-                    if idx == 0 {
-                        self.primary_capacity.set(0);
-                    }
+                    self.slot_capacities[idx].set(0);
                 }
             } else if vec.capacity() > provision {
                 vec.shrink_to(provision);
@@ -290,9 +288,7 @@ impl<T: ScratchElement> ScratchPool<T> {
                 // memset on the warm path — the exact churn the pool
                 // exists to remove. The next growth re-zeros its new
                 // range as always.
-                if idx == 0 {
-                    self.primary_capacity.set(vec.capacity());
-                }
+                self.slot_capacities[idx].set(vec.capacity());
             }
             capacities[idx] = vec.capacity();
         }
@@ -327,9 +323,12 @@ impl<T: ScratchElement> ScratchPool<T> {
     /// never derives a reference that could alias the exclusive one the borrow
     /// holds — the reentrant call is sound rather than merely undetected, and it
     /// neither panics nor reports a stale value.
+    ///
+    /// Every slot carries such a mirror; see [`Self::total_capacity_bytes`] for
+    /// the sum across all of them.
     #[inline]
     pub fn capacity(&self) -> usize {
-        self.primary_capacity.get()
+        self.slot_capacities[0].get()
     }
 
     /// Ensures the primary slot has capacity for at least `min_capacity`
@@ -343,23 +342,22 @@ impl<T: ScratchElement> ScratchPool<T> {
         let vec = unsafe { &mut *self.slots[0].get() };
         if vec.capacity() < min_capacity {
             vec.ensure_len(min_capacity);
-            self.primary_capacity.set(vec.capacity());
+            self.slot_capacities[0].set(vec.capacity());
         }
     }
 
     /// Sum of backing capacities across all slots, in bytes.
     #[inline]
     pub fn total_capacity_bytes(&self) -> usize {
-        if self.borrow_depth.get() != 0 {
-            return self.primary_capacity.get() * core::mem::size_of::<T>();
-        }
-        let mut total = 0usize;
-        for slot in &self.slots {
-            // SAFETY: borrow_depth == 0 — no live exclusive references.
-            let cap = unsafe { (*slot.get()).capacity() };
-            total = total.saturating_add(cap * core::mem::size_of::<T>());
-        }
-        total
+        // Read from the per-slot mirrors, never through the slots
+        // themselves: a live `with_scratch` borrow holds one slot exclusively,
+        // and the mirrors are maintained outside the `UnsafeCell`s precisely so
+        // this stays a total — a borrow-time branch returning slot 0 alone
+        // would contradict the documented sum.
+        self.slot_capacities
+            .iter()
+            .map(|mirror| mirror.get().saturating_mul(core::mem::size_of::<T>()))
+            .fold(0usize, usize::saturating_add)
     }
 
     /// Releases all slot allocations when not borrowed. No-op when borrowed.
@@ -372,9 +370,7 @@ impl<T: ScratchElement> ScratchPool<T> {
             // SAFETY: borrow_depth == 0 — no live exclusive references.
             let vec = unsafe { &mut *slot.get() };
             *vec = AlignedVec::dangling();
-            if i == 0 {
-                self.primary_capacity.set(0);
-            }
+            self.slot_capacities[i].set(0);
         }
     }
 
@@ -407,9 +403,7 @@ impl<T: ScratchElement> ScratchPool<T> {
             let vec = unsafe { &mut *self.slots[depth as usize].get() };
             if vec.capacity() < n {
                 vec.ensure_len(n);
-                if depth == 0 {
-                    self.primary_capacity.set(vec.capacity());
-                }
+                self.slot_capacities[depth as usize].set(vec.capacity());
             }
             // SAFETY: caller must initialize [0, n) before safe reads.
             unsafe { vec.set_len_unchecked(n) };

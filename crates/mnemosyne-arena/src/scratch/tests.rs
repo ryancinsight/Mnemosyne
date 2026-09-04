@@ -716,3 +716,36 @@ fn pool_release_converges_across_growth_cycles() {
     });
     assert_eq!(pool.capacity(), before, "warm pass stays allocation-free");
 }
+
+#[test]
+fn total_capacity_counts_slots_grown_by_nested_borrows() {
+    let pool: ScratchPool<f64> = ScratchPool::new();
+    let element = size_of::<f64>();
+
+    // Slot 0 from the outer borrow, slot 1 from the nested one. Reading the
+    // total from *inside* the nested borrow is the case a slot-0-only answer
+    // got wrong: both slots are grown, and one of them is held exclusively.
+    pool.with_scratch(1024, |outer| {
+        outer[0] = 1.0;
+        pool.with_scratch(512, |inner| {
+            inner[0] = 2.0;
+            let total = pool.total_capacity_bytes();
+            assert!(
+                total >= (1024 + 512) * element,
+                "total_capacity_bytes reported {total} bytes during a nested                  borrow, which cannot cover slot 0 (>=1024) plus slot 1 (>=512)                  at {element} bytes per element"
+            );
+            assert!(
+                total > pool.capacity() * element,
+                "the total must exceed slot 0 alone once a nested borrow has                  grown a second slot"
+            );
+        });
+    });
+
+    // The same total holds once every borrow has ended.
+    let quiescent = pool.total_capacity_bytes();
+    assert!(quiescent >= (1024 + 512) * element);
+
+    let freed: usize = pool.release().iter().sum();
+    assert_eq!(freed, 0, "release leaves every slot at zero capacity");
+    assert_eq!(pool.total_capacity_bytes(), 0);
+}
