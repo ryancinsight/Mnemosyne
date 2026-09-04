@@ -148,20 +148,30 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
                     .next_free_segment
                     .load(core::sync::atomic::Ordering::Relaxed)
             };
-            match unsafe { release_segment_mapping::<B>(segment) } {
+            match {
+                // SAFETY: `segment` was exclusively acquired from `take_all`
+                // and has not yet been pushed back; it is a valid, initialized
+                // `Segment` whose allocation matches backend `B`.
+                unsafe { release_segment_mapping::<B>(segment) }
+            } {
                 SegmentRelease::Released => purged += 1,
                 SegmentRelease::RetainedAfterFailure => {
                     // The backend declined to release `segment`; re-cache it and
                     // every still-unprocessed segment for this node, then stop
                     // sweeping it (matching the prior stop-on-failure behavior so
                     // pool metadata never claims a purge for a mapping we own).
+                    // SAFETY: `segment` is exclusively owned by this purge sweep;
+                    // returning it to the node pool transfers ownership.
                     unsafe { node.push_unbounded(segment) };
                     while !head.is_null() {
                         let s = head;
+                        // SAFETY: `s` is a node of the detached chain; loading
+                        // its next link before re-caching is sound.
                         head = unsafe {
                             (*s).next_free_segment
                                 .load(core::sync::atomic::Ordering::Relaxed)
                         };
+                        // SAFETY: `s` is exclusively owned by this sweep pass.
                         unsafe { node.push_unbounded(s) };
                     }
                     break;

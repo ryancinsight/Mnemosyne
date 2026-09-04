@@ -283,6 +283,8 @@ pub fn decay_step() {
 
 fn decay_step_for_backend<B: HasSegmentPool>() {
     decay_orphan_pool::<B>();
+    // SAFETY: this maintenance step only touches backend-owned retained
+    // segments for `B`; no caller-provided pointers are involved.
     unsafe {
         mnemosyne_arena::purge_segment_pool::<B>();
     }
@@ -298,6 +300,8 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
         let dynamic_encrypted = unsafe { (*segment).free_list_encrypted };
         let mut total_allocations = 0;
 
+        // SAFETY: `segment` is exclusively owned (popped from orphan pool);
+        // `page_occupied_mask` is an initialized header field.
         let mut mask = unsafe { (*segment).page_occupied_mask };
         while mask != 0 {
             let i = mask.trailing_zeros() as usize;
@@ -308,17 +312,22 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
             // Addressed through `segment` rather than a `&mut Page`: reclaim
             // reads the segment header for the free-list cookie, and a page
             // borrow held across that access sits on a different provenance.
+            // SAFETY: `i < PAGES_PER_SEGMENT` (from the occupied mask); the
+            // segment is exclusively owned, so projecting the page is sound.
             let page = unsafe { &raw mut (*segment).pages[i] };
             // Reclaim any cross-thread frees to update the alloc_count, using
             // the segment-aware variant to avoid redundant segment-address masking.
+            // SAFETY: `segment` is exclusively owned and `i` is in-range.
             unsafe {
                 Page::reclaim_thread_free_if_present_in_segment(segment, i, dynamic_encrypted);
             }
+            // SAFETY: `page` is within the exclusively-owned segment's pages array.
             total_allocations += unsafe { (*page).alloc_count };
         }
 
         if total_allocations == 0 {
             // No allocations left! Deallocate segment mapping completely back to OS
+            // SAFETY: `segment` is exclusively owned and all its pages are empty.
             unsafe {
                 Segment::set_owner(segment, SegmentOwner::NONE);
                 (*segment).next_owned_segment = core::ptr::null_mut();
@@ -327,6 +336,8 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
             }
         } else {
             // Segment still has live allocations, retain it in the local intrusive list
+            // SAFETY: `segment` is exclusively owned; writing `next_free_segment`
+            // is the standard way to link it into a local chain.
             unsafe {
                 (*segment)
                     .next_free_segment
@@ -339,11 +350,15 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
     // Push back retained segments to the orphan pool
     let mut curr = retained_head;
     while !curr.is_null() {
+        // SAFETY: `curr` is a node of the locally-built retained chain;
+        // loading its `next_free_segment` before re-caching is sound.
         let next = unsafe {
             (*curr)
                 .next_free_segment
                 .load(core::sync::atomic::Ordering::Relaxed)
         };
+        // SAFETY: `curr` is exclusively owned; clearing the link and pushing
+        // back to the orphan pool transfers ownership to the pool.
         unsafe {
             (*curr)
                 .next_free_segment

@@ -247,6 +247,9 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
     unsafe fn with_allocator_unguarded<R>(
         f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
     ) -> Option<R> {
+        // SAFETY: forwarded unchanged — the caller satisfies
+        // `with_allocator_unguarded`'s contract: no other live borrow of this
+        // thread's allocator slot, and the fn is on the owning thread.
         unsafe { <NativeOsTls<B, S> as TlsProvider<B>>::with_allocator_unguarded(f) }
     }
 

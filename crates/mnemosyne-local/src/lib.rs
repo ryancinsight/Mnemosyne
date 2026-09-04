@@ -18,7 +18,10 @@ pub unsafe fn miri_cleanup_pools<B: mnemosyne_arena::HasSegmentPool>() {
     }
 
     for segment in orphaned {
+        // SAFETY: `segment` was just popped from the orphan pool, giving
+        // exclusive ownership; the header fields are valid and initialized.
         let mut occupied = unsafe { (*segment).page_occupied_mask };
+        // SAFETY: same ownership argument as above.
         let encrypted = unsafe { (*segment).free_list_encrypted };
         while occupied != 0 {
             let page_index = occupied.trailing_zeros() as usize;

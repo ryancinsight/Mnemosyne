@@ -155,7 +155,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
         }
         with_owned_segment_token::<B, _>(|mut token| {
+            // SAFETY: `segment` was just acquired by this thread and is
+            // exclusively owned; the token provides the permission proof.
             let branded_segment = unsafe { token.segment(segment) };
+            // SAFETY: forwarded — the branded segment and token satisfy the
+            // `push_owned_segment_front` contract.
             unsafe {
                 push_owned_segment_front(&mut token, &mut self.owned_segments_head, branded_segment)
             };
@@ -228,7 +232,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline]
     pub(crate) unsafe fn unlink_owned_segment(&mut self, segment: *mut Segment) {
         with_owned_segment_token::<B, _>(|mut token| {
+            // SAFETY: `segment` is exclusively owned by this thread's allocator
+            // (it is in the owned list); the token provides the permission proof.
             let branded_segment = unsafe { token.segment(segment) };
+            // SAFETY: forwarded — the branded segment and token satisfy the
+            // `unlink_owned_segment_from_list` contract.
             unsafe {
                 unlink_owned_segment_from_list(
                     &mut token,

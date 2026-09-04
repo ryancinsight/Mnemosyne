@@ -69,6 +69,8 @@ pub(crate) unsafe fn push_page_front<'id, B: HasSegmentPool>(
     list_state: u8,
 ) {
     let raw_page = page_ptr.ptr();
+    // SAFETY: `raw_page` is exclusively accessible via the branded token;
+    // writing `next_page` and `prev_page` does not alias any other borrow.
     unsafe {
         (*raw_page.as_ptr()).next_page = *head_slot;
         (*raw_page.as_ptr()).prev_page = None;
@@ -83,7 +85,9 @@ pub(crate) unsafe fn push_page_front<'id, B: HasSegmentPool>(
         }
     }
     *head_slot = Some(raw_page);
+    // SAFETY: `raw_page` is exclusively accessible via the branded token.
     unsafe { (*raw_page.as_ptr()).list_state = list_state };
+    // SAFETY: `page_index` is initialized metadata; `raw_page` is exclusive.
     let page_index = unsafe { (*raw_page.as_ptr()).page_index };
     if page_index > 0 {
         // SAFETY: list nodes retain the complete segment mapping provenance
@@ -111,6 +115,8 @@ pub(crate) unsafe fn unlink_page_from_list<'id, B: HasSegmentPool>(
     page_ptr: BrandedPage<'id>,
 ) {
     let raw_page = page_ptr.ptr();
+    // SAFETY: `raw_page` is exclusively accessible via the branded token;
+    // reading `next_page` and `prev_page` is sound.
     let next = unsafe { (*raw_page.as_ptr()).next_page };
     let prev = unsafe { (*raw_page.as_ptr()).prev_page };
 
@@ -136,11 +142,14 @@ pub(crate) unsafe fn unlink_page_from_list<'id, B: HasSegmentPool>(
         }
     }
 
+    // SAFETY: `raw_page` is exclusively accessible via the branded token;
+    // clearing its list links and state is sound.
     unsafe {
         (*raw_page.as_ptr()).next_page = None;
         (*raw_page.as_ptr()).prev_page = None;
         (*raw_page.as_ptr()).list_state = 0;
     }
+    // SAFETY: `page_index` is initialized metadata; `raw_page` is exclusive.
     let page_index = unsafe { (*raw_page.as_ptr()).page_index };
     if page_index > 0 {
         // SAFETY: as in `push_page_front`, this node is a raw projection from
@@ -177,10 +186,11 @@ pub(crate) unsafe fn move_page_between_lists_branded<'id, B: HasSegmentPool>(
     new_state: u8,
 ) {
     let raw_page = page_ptr.ptr();
+    // SAFETY: `raw_page` is exclusively accessible via the branded token.
     let next = unsafe { (*raw_page.as_ptr()).next_page };
     let prev = unsafe { (*raw_page.as_ptr()).prev_page };
 
-    // Unlink page from the source list.
+    // Unlink from source list.
     if let Some(prev_ptr) = prev {
         // SAFETY: the caller's token contract covers every page reachable from
         // either list, so `prev_ptr` is valid and exclusively reachable here.
@@ -203,6 +213,8 @@ pub(crate) unsafe fn move_page_between_lists_branded<'id, B: HasSegmentPool>(
 
     // Push page to the front of the destination list.
     let head = *to_head_slot;
+    // SAFETY: `raw_page` is exclusively accessible via the branded token;
+    // inserting it at the head of the destination list is sound.
     unsafe {
         (*raw_page.as_ptr()).next_page = head;
         (*raw_page.as_ptr()).prev_page = None;
@@ -216,5 +228,6 @@ pub(crate) unsafe fn move_page_between_lists_branded<'id, B: HasSegmentPool>(
         }
     }
     *to_head_slot = Some(raw_page);
+    // SAFETY: `raw_page` is exclusively accessible via the branded token.
     unsafe { (*raw_page.as_ptr()).list_state = new_state };
 }

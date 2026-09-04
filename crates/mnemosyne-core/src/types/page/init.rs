@@ -79,14 +79,19 @@ impl Page {
     /// uninitialized blocks remaining.
     #[inline(always)]
     pub unsafe fn pop_block<P: crate::policy::AllocPolicy>(page: *mut Self) -> NonNull<Block> {
+        // SAFETY: forwarded from `pop_block`'s contract — `page` is a live,
+        // exclusively-owned page with free or uninitialized blocks remaining.
         if let Some(block) = unsafe { Self::try_pop_bump_block(page) } {
             block
+        // SAFETY: same contract — reading `free` from an exclusively-owned page.
         } else if let Some(block) = unsafe { (*page).free } {
             let block_addr = block.as_ptr() as usize;
             let page_addr = page.addr();
             let segment_addr = page_addr & !(crate::constants::SEGMENT_SIZE - 1);
+            // SAFETY: `page` is exclusively owned; its `page_index` is initialized.
             let page_start = segment_addr
                 + (unsafe { (*page).page_index as usize } << crate::constants::PAGE_SHIFT);
+            // SAFETY: `page` is exclusively owned; `block_size` is initialized.
             let block_size = unsafe { (*page).block_size };
             if block_addr < page_start
                 || block_addr + block_size > page_start + crate::constants::PAGE_SIZE

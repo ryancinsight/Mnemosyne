@@ -67,6 +67,8 @@ use mnemosyne_local::internal::HasSegmentPool;
 /// scope::<StandardPolicy, MemoryBackendWrapper, _, _>(|heap, token| {
 ///     let val = heap.alloc_init(&token, 42)
 ///         .expect("branded box send-bound allocation failed");
+///     // SAFETY: `val` was just allocated through `heap` and is exclusively
+///     // owned; `BrandedBox::from_raw` takes the allocation back.
 ///     let boxed = unsafe { mnemosyne_heap::BrandedBox::from_raw(&heap, val) };
 ///     // BrandedBox is !Send, so sending it to another thread is a compile error:
 ///     thread::spawn(move || {

@@ -452,6 +452,9 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
                 }
             } else {
                 // Case 2: Went from full to active
+                // SAFETY: `class < NUM_SIZE_CLASSES` — validated upstream;
+                // `branded_page` is exclusively owned by this thread and the
+                // page list operations preserve ownership invariants.
                 unsafe {
                     move_page_between_lists_branded(
                         &mut token,
