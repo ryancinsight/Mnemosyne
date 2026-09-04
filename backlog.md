@@ -140,6 +140,10 @@
 
 ## Closed
 
+<a id="mn-pr126-miri-2026-09-04"></a>
+- [x] [patch] **MN-PR126-MIRI-2026-09-04 — bound the decay Miri wait.**
+  status=done; commit=`9709c57`; refs=PR #129.
+
 <a id="mn-em-pm-compact-1"></a>
 - [x] [pm-hygiene][patch] **MNEM-PM-COMPACT-1 — compact backlog and checklist.** status=done; commit=`a3b249a`; refs=backlog.md#mn-em-pm-compact-1.
 - [x] [arch] [minor] **MN-469 — Use Melinoe permits for branded heap handoff.**; refs=afbedd4
