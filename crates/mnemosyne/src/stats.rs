@@ -210,9 +210,10 @@ pub fn memory_stats_json() -> alloc::string::String {
     let _ = ::core::fmt::Write::write_fmt(
         &mut json,
         core::format_args!(
-            ",\"policy_name\":\"{}\",\"mitigation_flags\":{}}}",
+            ",\"policy_name\":\"{}\",\"mitigation_flags\":{},\"policy_fingerprint\":{}}}",
             mnemosyne_core::policy::StandardPolicy::POLICY_NAME,
             mnemosyne_core::policy::StandardPolicy::MITIGATION_FLAGS,
+            mnemosyne_core::policy::StandardPolicy::POLICY_FINGERPRINT,
         ),
     );
     json

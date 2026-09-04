@@ -225,3 +225,75 @@ fn huge_mapping_suffix_uses_raw_mapping_base() {
         "huge usable suffix must be raw_alloc_ptr + block_size - user_ptr"
     );
 }
+// -- Backward-edge free canary tests ------------------------------------------
+
+#[test]
+fn free_canary_write_check_clear_roundtrip() {
+    use crate::types::Block;
+    use crate::constants::MIN_BLOCK_SIZE;
+
+    // Allocate a block-sized buffer with the minimum block size.
+    let layout = Layout::from_size_align(MIN_BLOCK_SIZE, MIN_BLOCK_SIZE)
+        .expect("valid layout");
+    let ptr = unsafe { alloc_zeroed(layout) } as *mut Block;
+    assert!(!ptr.is_null());
+
+    let page_cookie: usize = 0xDEAD_BEEF_1234_5678;
+
+    // Initially no canary -- check_double_free should return false.
+    let has_canary = unsafe { Block::check_double_free(ptr, page_cookie) };
+    assert!(!has_canary, "fresh allocation must not carry a canary");
+
+    // Write the canary.
+    unsafe { Block::write_free_canary(ptr, page_cookie) };
+
+    // Now check_double_free should return true.
+    let has_canary = unsafe { Block::check_double_free(ptr, page_cookie) };
+    assert!(has_canary, "canary must be detected after write_free_canary");
+
+    // A different cookie must NOT match -- the canary is address+cookie bound.
+    let wrong_cookie: usize = 0x1111_2222_3333_4444;
+    let wrong_match = unsafe { Block::check_double_free(ptr, wrong_cookie) };
+    assert!(
+        !wrong_match,
+        "canary must not match a different page cookie"
+    );
+
+    // Clear the canary.
+    unsafe { Block::clear_free_canary(ptr) };
+    let has_canary = unsafe { Block::check_double_free(ptr, page_cookie) };
+    assert!(!has_canary, "canary must be gone after clear_free_canary");
+
+    unsafe { dealloc(ptr as *mut u8, layout) };
+}
+
+#[test]
+fn free_canary_is_address_bound() {
+    use crate::types::Block;
+    use crate::constants::MIN_BLOCK_SIZE;
+
+    // Two adjacent blocks with the same page_cookie must produce different canaries.
+    let layout = Layout::from_size_align(MIN_BLOCK_SIZE * 2, MIN_BLOCK_SIZE)
+        .expect("valid layout");
+    let base = unsafe { alloc_zeroed(layout) } as *mut Block;
+    assert!(!base.is_null());
+
+    // SAFETY: both pointers are within the MIN_BLOCK_SIZE * 2 allocation.
+    let block_a = base;
+    let block_b = unsafe { base.add(1) }; // MIN_BLOCK_SIZE offset
+
+    let cookie: usize = 0xCAFE_BABE_0000_0001;
+
+    unsafe { Block::write_free_canary(block_a, cookie) };
+    unsafe { Block::write_free_canary(block_b, cookie) };
+
+    // block_b's canary must not match block_a's slot.
+    let a_canary = unsafe { block_a.cast::<usize>().add(1).read() };
+    let b_canary = unsafe { block_b.cast::<usize>().add(1).read() };
+    assert_ne!(
+        a_canary, b_canary,
+        "adjacent blocks with the same cookie must have different canaries (address binding)"
+    );
+
+    unsafe { dealloc(base as *mut u8, layout) };
+}

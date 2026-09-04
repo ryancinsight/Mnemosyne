@@ -117,6 +117,41 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.len = new_len;
     }
 
+    /// Sets the length to `new_len`, filling any new elements using `f`.
+    ///
+    /// Like [`resize`][Self::resize] but uses a closure for the fill value.
+    /// Shrinking keeps the allocation.
+    #[inline]
+    pub fn resize_with<F: FnMut() -> T>(&mut self, new_len: usize, mut f: F) {
+        if new_len > self.len {
+            let additional = new_len - self.len;
+            self.reserve(additional);
+            // SAFETY: `reserve(additional)` leaves `capacity >= new_len`. Each
+            // write targets a distinct index in `[len, new_len)` inside the
+            // allocation; `T: Copy`, so each write fully initializes its element.
+            unsafe {
+                let base = self.ptr.add(self.len);
+                for offset in 0..additional {
+                    core::ptr::write(base.add(offset), f());
+                }
+            }
+        }
+        self.len = new_len;
+    }
+
+    /// Overwrites every initialized element with the value produced by `f`.
+    ///
+    /// Unlike [`fill`][Self::fill] (which takes a `Copy` value), this version
+    /// accepts a closure so non-`Copy` logic can produce each element.
+    #[inline]
+    pub fn fill_with<F: FnMut() -> T>(&mut self, mut f: F) {
+        // SAFETY: `[0, self.len)` is fully initialized; `T: Copy` makes
+        // overwriting sound.
+        for i in 0..self.len {
+            unsafe { core::ptr::write(self.ptr.add(i), f()) };
+        }
+    }
+
     /// Sets the length to zero, retaining the underlying allocation for reuse.
     ///
     /// Elements are not zeroed; subsequent [`push`][Self::push] or

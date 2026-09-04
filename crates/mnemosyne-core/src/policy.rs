@@ -93,6 +93,42 @@ pub trait AllocPolicy: private::Sealed + Send + Sync + 'static {
     /// Probabilistic guard-page sampling rate (GWP-ASan hook).
     /// `0` disables. Inspired by snmalloc 0.7.2 `gwp_asan.h`.
     const GWP_SAMPLE_RATE: u32 = 0;
+
+    /// Compile-time configuration fingerprint.
+    ///
+    /// A single `u64` that uniquely identifies the combination of all boolean
+    /// policy flags and key integer constants. Two policy types with identical
+    /// behaviour produce the same fingerprint; any difference in flags or
+    /// thresholds produces a different one. Useful for:
+    ///
+    /// - Embedding in binary metadata to identify the allocator configuration.
+    /// - `debug_assert!` checks that a data structure was built with the
+    ///   expected policy.
+    /// - Logging the full policy in one field without a string allocation.
+    ///
+    /// The encoding packs all scalar fields into a fixed-layout u64. It is
+    /// **not** a cryptographic hash — it is a deterministic bijection over the
+    /// policy's compile-time constants.
+    const POLICY_FINGERPRINT: u64 = {
+        // Layout (bits from LSB):
+        //  0      ENABLE_POISONING
+        //  1      ZERO_INITIALIZE
+        //  2      ENABLE_FREE_LIST_ENCRYPTION
+        //  3      RANDOMIZE_ALLOCATION
+        //  4      DELAY_PAGE_WAKE
+        //  5..20  WAKE_DENOMINATOR (16 bits)
+        // 20..28  SEGMENT_POOL_WARM_THRESHOLD (clamped to 8 bits)
+        // 28..60  MITIGATION_FLAGS (32 bits)
+        let b = (Self::ENABLE_POISONING as u64)
+            | ((Self::ZERO_INITIALIZE as u64) << 1)
+            | ((Self::ENABLE_FREE_LIST_ENCRYPTION as u64) << 2)
+            | ((Self::RANDOMIZE_ALLOCATION as u64) << 3)
+            | ((Self::DELAY_PAGE_WAKE as u64) << 4)
+            | ((Self::WAKE_DENOMINATOR as u64) << 5)
+            | (((Self::SEGMENT_POOL_WARM_THRESHOLD & 0xFF) as u64) << 20)
+            | ((Self::MITIGATION_FLAGS as u64) << 28);
+        b
+    };
 }
 
 /// Zero-Sized Type (ZST) representing the standard allocation policy with maximum performance.
@@ -238,3 +274,59 @@ const _: () = assert!(
     core::mem::size_of::<PolicyMarker<StandardPolicy>>() == 0,
     "PolicyMarker must be a ZST"
 );
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standard_policy_has_no_mitigations() {
+        assert_eq!(StandardPolicy::MITIGATION_FLAGS, mitigations::NONE);
+        assert_eq!(StandardPolicy::POLICY_NAME, "standard");
+        assert_eq!(StandardPolicy::POLICY_FINGERPRINT & 0x1F, 0); // no bool flags set
+    }
+
+    #[test]
+    fn hardened_policy_has_all_implemented_mitigations() {
+        assert_eq!(HardenedPolicy::POLICY_NAME, "hardened");
+        assert_ne!(HardenedPolicy::MITIGATION_FLAGS, mitigations::NONE);
+        // HardenedPolicy has poisoning and encryption enabled
+        assert!(HardenedPolicy::ENABLE_POISONING);
+        assert!(HardenedPolicy::ENABLE_FREE_LIST_ENCRYPTION);
+    }
+
+    #[test]
+    fn policy_fingerprints_are_distinct() {
+        // All three production policies must have different fingerprints.
+        assert_ne!(
+            StandardPolicy::POLICY_FINGERPRINT,
+            SecurePolicy::POLICY_FINGERPRINT
+        );
+        assert_ne!(
+            StandardPolicy::POLICY_FINGERPRINT,
+            HardenedPolicy::POLICY_FINGERPRINT
+        );
+        assert_ne!(
+            SecurePolicy::POLICY_FINGERPRINT,
+            HardenedPolicy::POLICY_FINGERPRINT
+        );
+    }
+
+    #[test]
+    fn policy_fingerprint_encodes_key_flags() {
+        // ENABLE_POISONING is bit 0 of the fingerprint.
+        assert_eq!(
+            StandardPolicy::POLICY_FINGERPRINT & 1,
+            StandardPolicy::ENABLE_POISONING as u64
+        );
+        assert_eq!(
+            HardenedPolicy::POLICY_FINGERPRINT & 1,
+            HardenedPolicy::ENABLE_POISONING as u64
+        );
+    }
+
+    #[test]
+    fn policy_marker_is_zero_sized() {
+        assert_eq!(core::mem::size_of::<PolicyMarker<StandardPolicy>>(), 0);
+        assert_eq!(core::mem::size_of::<PolicyMarker<HardenedPolicy>>(), 0);
+    }
+}
