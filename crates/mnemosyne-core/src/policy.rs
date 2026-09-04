@@ -12,24 +12,28 @@
 /// (`src/snmalloc/mitigations/mitigations.h`).
 pub mod mitigations {
     /// Poison freed and allocated bytes with sentinel patterns.
-    pub const POISONING: u32            = 1 << 0;
+    pub const POISONING: u32 = 1 << 0;
     /// Zero-initialize all allocations (more than just poison-on-alloc).
-    pub const ZERO_INIT: u32            = 1 << 1;
+    pub const ZERO_INIT: u32 = 1 << 1;
     /// XOR-encrypt free-list next-pointers per page cookie.
     pub const FREE_LIST_ENCRYPTION: u32 = 1 << 2;
     /// Fisher-Yates–shuffle free list on page initialization.
     pub const RANDOMIZE_ALLOCATION: u32 = 1 << 3;
     /// Hysteresis: delay page waking until ≥ capacity/WAKE_DENOMINATOR freed.
-    pub const DELAY_PAGE_WAKE: u32      = 1 << 4;
+    pub const DELAY_PAGE_WAKE: u32 = 1 << 4;
     /// Multiplicative backward-edge canary on freed blocks.
-    pub const FREE_CANARY: u32          = 1 << 5;
+    pub const FREE_CANARY: u32 = 1 << 5;
     /// Validate caller's size/align against stored block_size on sized free.
     pub const SIZED_FREE_VALIDATION: u32 = 1 << 6;
 
     /// All mitigations active (convenience constant for HardenedPolicy).
-    pub const ALL: u32 =
-        POISONING | ZERO_INIT | FREE_LIST_ENCRYPTION | RANDOMIZE_ALLOCATION
-        | DELAY_PAGE_WAKE | FREE_CANARY | SIZED_FREE_VALIDATION;
+    pub const ALL: u32 = POISONING
+        | ZERO_INIT
+        | FREE_LIST_ENCRYPTION
+        | RANDOMIZE_ALLOCATION
+        | DELAY_PAGE_WAKE
+        | FREE_CANARY
+        | SIZED_FREE_VALIDATION;
 
     /// No mitigations (StandardPolicy default).
     pub const NONE: u32 = 0;
@@ -221,6 +225,8 @@ const _: () = assert!(
 /// # Example
 ///
 /// ```rust
+/// extern crate alloc;
+///
 /// use mnemosyne_core::policy::{AllocPolicy, PolicyMarker, StandardPolicy};
 ///
 /// struct ScratchBuffer<P: AllocPolicy> {
@@ -263,7 +269,7 @@ impl<P: AllocPolicy> Default for PolicyMarker<P> {
 impl<P: AllocPolicy> Clone for PolicyMarker<P> {
     #[inline]
     fn clone(&self) -> Self {
-        Self::new()
+        *self
     }
 }
 
@@ -313,7 +319,11 @@ mod tests {
         // All SecurePolicy flags must be present in HardenedPolicy
         let secure = SecurePolicy::MITIGATION_FLAGS;
         let hardened = HardenedPolicy::MITIGATION_FLAGS;
-        assert_eq!(secure & hardened, secure, "all secure flags must be in hardened");
+        assert_eq!(
+            secure & hardened,
+            secure,
+            "all secure flags must be in hardened"
+        );
         // Secure must have at least poisoning and randomize
         assert_ne!(secure & mitigations::POISONING, 0);
         assert_ne!(secure & mitigations::RANDOMIZE_ALLOCATION, 0);
@@ -323,9 +333,12 @@ mod tests {
     fn mitigation_flags_are_independent_bits() {
         // Each flag must be a distinct power of two
         let all_flags = [
-            mitigations::POISONING, mitigations::ZERO_INIT,
-            mitigations::FREE_LIST_ENCRYPTION, mitigations::RANDOMIZE_ALLOCATION,
-            mitigations::DELAY_PAGE_WAKE, mitigations::FREE_CANARY,
+            mitigations::POISONING,
+            mitigations::ZERO_INIT,
+            mitigations::FREE_LIST_ENCRYPTION,
+            mitigations::RANDOMIZE_ALLOCATION,
+            mitigations::DELAY_PAGE_WAKE,
+            mitigations::FREE_CANARY,
             mitigations::SIZED_FREE_VALIDATION,
         ];
         for &f in &all_flags {

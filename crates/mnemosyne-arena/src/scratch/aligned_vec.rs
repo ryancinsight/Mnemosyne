@@ -191,11 +191,7 @@ impl<T: ScratchElement> AlignedVec<T> {
         if tail > 0 {
             // SAFETY: `[index+1, len)` → `[index, len-1)`, overlapping ranges.
             unsafe {
-                core::ptr::copy(
-                    self.ptr.add(index + 1),
-                    self.ptr.add(index),
-                    tail,
-                );
+                core::ptr::copy(self.ptr.add(index + 1), self.ptr.add(index), tail);
             }
         }
         self.len -= 1;
@@ -601,9 +597,8 @@ impl<T: ScratchElement> AlignedVec<T> {
         assert!(at <= self.len, "split_off: at > len");
         let tail_len = self.len - at;
         // SAFETY: `at .. at + tail_len` is within initialized bounds; T: Copy.
-        let tail = Self::from_slice(unsafe {
-            core::slice::from_raw_parts(self.ptr.add(at), tail_len)
-        });
+        let tail =
+            Self::from_slice(unsafe { core::slice::from_raw_parts(self.ptr.add(at), tail_len) });
         self.len = at;
         tail
     }
@@ -622,9 +617,7 @@ impl<T: ScratchElement> AlignedVec<T> {
         // grown to `>= len`). The resulting pointer-to-slice is only a raw
         // pointer, so no reference-aliasing rules apply until the caller
         // constructs a reference from it.
-        unsafe {
-            core::ptr::slice_from_raw_parts_mut(self.ptr.add(self.len), spare_len)
-        }
+        unsafe { core::ptr::slice_from_raw_parts_mut(self.ptr.add(self.len), spare_len) }
     }
 
     #[cold]

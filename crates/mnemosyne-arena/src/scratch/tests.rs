@@ -4,7 +4,7 @@ extern crate std;
 use super::aligned_vec::AlignedVec;
 use super::bank::ScratchBank;
 use super::element::DEFAULT_SCRATCH_ALIGN;
-use super::pool::{ScratchPool, MAX_POOL_SLOTS};
+use super::pool::{MAX_POOL_SLOTS, ScratchPool};
 
 #[test]
 fn aligned_vec_capacity_and_alignment() {
@@ -464,7 +464,9 @@ fn aligned_vec_sort_and_dedup() {
 #[test]
 fn aligned_vec_shrink_to_fit_releases_excess() {
     let mut v = AlignedVec::<u32>::with_capacity(256);
-    for i in 0..4u32 { v.push(i); }
+    for i in 0..4u32 {
+        v.push(i);
+    }
     assert!(v.capacity() >= 256);
     v.shrink_to_fit();
     assert_eq!(v.len(), 4);

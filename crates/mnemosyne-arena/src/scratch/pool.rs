@@ -263,11 +263,7 @@ impl<T: ScratchElement> ScratchPool<T> {
     /// Every element of the returned slice **must** be initialised before any
     /// read through a safe interface (`as_slice`, `Deref`, etc.) on the same
     /// `AlignedVec`. Violating this condition is undefined behaviour.
-    pub unsafe fn with_scratch_uninit<R>(
-        &self,
-        n: usize,
-        f: impl FnOnce(*mut [T]) -> R,
-    ) -> R {
+    pub unsafe fn with_scratch_uninit<R>(&self, n: usize, f: impl FnOnce(*mut [T]) -> R) -> R {
         struct BorrowGuard<'a> {
             depth: &'a Cell<u8>,
             original: u8,
@@ -282,7 +278,10 @@ impl<T: ScratchElement> ScratchPool<T> {
         let depth = self.borrow_depth.get();
         if depth < MAX_POOL_SLOTS as u8 {
             self.borrow_depth.set(depth + 1);
-            let _guard = BorrowGuard { depth: &self.borrow_depth, original: depth };
+            let _guard = BorrowGuard {
+                depth: &self.borrow_depth,
+                original: depth,
+            };
             // SAFETY: borrow_depth tracking ensures exclusive access to this slot.
             let vec = unsafe { &mut *self.slots[depth as usize].get() };
             // Grow only if capacity is insufficient; skip zeroing by using the raw

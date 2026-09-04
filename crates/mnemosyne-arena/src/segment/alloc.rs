@@ -549,14 +549,16 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
                 // pressure; the pool-link write below is non-lazy and stays committed.
                 // When THP is absent, skip page 0 to avoid an unnecessary reset of
                 // segment metadata.
-                let (reset_ptr, reset_size) =
-                    if B::THP_SEGMENT_RESET && B::thp_is_active() {
-                        // Full-segment reset: page 0 + user pages.
-                        (segment.cast::<u8>(), SEGMENT_SIZE)
-                    } else {
-                        // Standard: skip the page-0 metadata header.
-                        (segment.cast::<u8>().add(PAGE_SIZE), SEGMENT_SIZE - PAGE_SIZE)
-                    };
+                let (reset_ptr, reset_size) = if B::THP_SEGMENT_RESET && B::thp_is_active() {
+                    // Full-segment reset: page 0 + user pages.
+                    (segment.cast::<u8>(), SEGMENT_SIZE)
+                } else {
+                    // Standard: skip the page-0 metadata header.
+                    (
+                        segment.cast::<u8>().add(PAGE_SIZE),
+                        SEGMENT_SIZE - PAGE_SIZE,
+                    )
+                };
                 if B::page_reset(reset_ptr, reset_size) {
                     reset_count += 1;
                 }

@@ -41,9 +41,8 @@ rust-version = "1.95"
 
 [workspace.dependencies]
 themis = { package = "themis-topology", git = "https://github.com/ryancinsight/themis", version = "0.10.1", default-features = false, features = ["std"] }
-# Temporary co-evolution pin for Eunomia PR #87; remove `rev` after the
-# provider derive delivery merges to main and regenerate Cargo.lock.
-eunomia = { git = "https://github.com/ryancinsight/eunomia", version = "0.8.0", rev = "fdbf12275d35aa1545060a4277644c497ddcda37", default-features = false }
+# Eunomia PR #87 is merged; the lockfile records the reviewed default source.
+eunomia = { git = "https://github.com/ryancinsight/eunomia", version = "0.8.0", default-features = false }
 melinoe = { git = "https://github.com/ryancinsight/melinoe.git", version = "0.9.0", default-features = false }
 
 # Dev/test keep line tables only: full DWARF dominates target/ size for an

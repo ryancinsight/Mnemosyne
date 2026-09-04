@@ -2,6 +2,10 @@
 
 Status: Accepted
 
+Revision 2026-09-04: Eunomia PR #87 merged. The temporary revision pin used
+while that provider change was open is removed, restoring the provider-default
+source identity specified by this decision.
+
 ## Context
 
 Mnemosyne's direct Eunomia dependency follows the provider default branch.

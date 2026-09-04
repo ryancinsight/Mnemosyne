@@ -2,7 +2,7 @@
 //!
 //! Tracks process-wide allocation and deallocation counts per size class using
 //! relaxed atomic counters. The hot path uses **thread-local accumulators** that
-//! flush to the global atomics every [`FLUSH_THRESHOLD`] operations per class,
+//! flush to the global atomics every `FLUSH_THRESHOLD` operations per class,
 //! reducing `LOCK XADD` overhead by up to 64× under multi-threaded workloads.
 //!
 //! The counters are always enabled (no feature gate). They are not
@@ -20,12 +20,10 @@ use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::size_class::class_to_size;
 
 // Three process-wide per-class atomic arrays.
-static ALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] =
-    [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
+static ALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] = [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
 static DEALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] =
     [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
-static ALLOC_BYTES: [AtomicU64; NUM_SIZE_CLASSES] =
-    [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
+static ALLOC_BYTES: [AtomicU64; NUM_SIZE_CLASSES] = [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
 
 // ── Thread-local accumulator ──────────────────────────────────────────────────
 
@@ -40,14 +38,14 @@ const FLUSH_THRESHOLD: u32 = 64;
 /// added to the corresponding `AtomicU64` global with a single `LOCK XADD`.
 #[derive(Clone, Copy)]
 struct TlsBinAccumulator {
-    alloc_count:  [u32; NUM_SIZE_CLASSES],
+    alloc_count: [u32; NUM_SIZE_CLASSES],
     dealloc_count: [u32; NUM_SIZE_CLASSES],
 }
 
 impl TlsBinAccumulator {
     const fn zeroed() -> Self {
         Self {
-            alloc_count:  [0; NUM_SIZE_CLASSES],
+            alloc_count: [0; NUM_SIZE_CLASSES],
             dealloc_count: [0; NUM_SIZE_CLASSES],
         }
     }
@@ -136,10 +134,8 @@ pub fn flush_tls_stats() {
             let a = acc.alloc_count[class];
             if a > 0 {
                 ALLOC_COUNT[class].fetch_add(a as u64, Ordering::Relaxed);
-                ALLOC_BYTES[class].fetch_add(
-                    a as u64 * class_to_size(class) as u64,
-                    Ordering::Relaxed,
-                );
+                ALLOC_BYTES[class]
+                    .fetch_add(a as u64 * class_to_size(class) as u64, Ordering::Relaxed);
             }
             let d = acc.dealloc_count[class];
             if d > 0 {

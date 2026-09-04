@@ -95,13 +95,10 @@ pub unsafe fn thread_free_layout<P: AllocPolicy, B: HasSegmentPool + LocalAlloca
             // SAFETY: `page_index` is in `[1, PAGES_PER_SEGMENT)` so `segment`
             // is a real header whose pages array was initialized; reading
             // `block_size` is a valid unaliased load.
-            let recorded_size =
-                unsafe { (*segment).pages.get_unchecked(page_index).block_size };
+            let recorded_size = unsafe { (*segment).pages.get_unchecked(page_index).block_size };
             if recorded_size > 0 {
                 let caller_class = crate::alloc::small_path_class(size, align);
-                let block_class = mnemosyne_core::size_class::size_to_class_nonzero(
-                    recorded_size,
-                );
+                let block_class = mnemosyne_core::size_class::size_to_class_nonzero(recorded_size);
                 if caller_class != block_class {
                     std::process::abort();
                 }
@@ -510,11 +507,12 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
                 // least 25% of blocks are freed, preventing rapid LIFO reuse.
                 // SAFETY: `page` is an exclusively-owned page; reading
                 // `alloc_count` and `max_blocks()` is a valid unaliased load.
-                let should_wake = !encrypted || unsafe {
-                    let capacity = (*page).max_blocks();
-                    let free_count = capacity.saturating_sub((*page).alloc_count);
-                    free_count * 4 >= capacity
-                };
+                let should_wake = !encrypted
+                    || unsafe {
+                        let capacity = (*page).max_blocks();
+                        let free_count = capacity.saturating_sub((*page).alloc_count);
+                        free_count * 4 >= capacity
+                    };
                 if should_wake {
                     unsafe {
                         move_page_between_lists_branded(
