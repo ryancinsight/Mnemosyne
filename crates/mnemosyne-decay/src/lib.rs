@@ -12,7 +12,8 @@
 //! spawns no thread). [`decay_step`] performs one sweep across the active
 //! backends and is public so a caller running its own scheduler, or a test
 //! needing determinism, can drive reclamation without the background
-//! thread.
+//! thread. [`request_decay_step`] wakes an already-running worker when an
+//! immediate background sweep is useful.
 
 #![deny(missing_docs)]
 
@@ -32,6 +33,7 @@ static DECAY_FINAL_EXIT_GENERATION: core::sync::atomic::AtomicUsize =
 static DECAY_STEP_GENERATION: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 static DECAY_EVENT: OnceLock<(Mutex<()>, Condvar)> = OnceLock::new();
+static DECAY_WAKE_EVENT: OnceLock<(Mutex<bool>, Condvar)> = OnceLock::new();
 
 /// Triggers background decay thread initialization.
 ///
@@ -39,6 +41,11 @@ static DECAY_EVENT: OnceLock<(Mutex<()>, Condvar)> = OnceLock::new();
 /// `MNEMOSYNE_PURGE_CADENCE_MS` is non-zero.
 pub fn init_decay_engine() {
     let cadence = PURGE_CADENCE_MS.load(Ordering::Acquire);
+    if cadence == 0 {
+        wake_decay_worker();
+        return;
+    }
+
     // The claim is an unconditional `AcqRel` read-modify-write (no plain-load
     // fast path): every spawn attempt and the purger's shutdown handshake in
     // `decay_thread_loop` then meet as RMWs in `SPAWNED`'s single
@@ -59,6 +66,17 @@ pub fn init_decay_engine() {
             })
             .expect("Failed to spawn mnemosyne-decay thread");
     }
+}
+
+/// Requests one immediate background decay sweep.
+///
+/// Requests are coalesced while the worker is asleep. If no worker is active,
+/// the request remains pending until the next worker starts, which keeps a
+/// configuration change from losing a requested sweep during the restart
+/// handshake. The request does not run a sweep synchronously; observe its
+/// completion with [`wait_for_decay_step`].
+pub fn request_decay_step() {
+    wake_decay_worker();
 }
 
 /// Adaptive decay interval bounds.
@@ -90,7 +108,7 @@ fn decay_thread_loop(initial_cadence: usize, worker_generation: usize) {
     let mut current_interval = initial_cadence as u64;
 
     loop {
-        thread::sleep(Duration::from_millis(current_interval));
+        wait_for_decay_interval(current_interval);
 
         // Measure OS-returned bytes before and after the step.
         let before = os_returned_bytes();
@@ -142,6 +160,30 @@ fn decay_thread_loop(initial_cadence: usize, worker_generation: usize) {
 
 fn decay_step_event() -> &'static (Mutex<()>, Condvar) {
     DECAY_EVENT.get_or_init(|| (Mutex::new(()), Condvar::new()))
+}
+
+fn decay_wake_event() -> &'static (Mutex<bool>, Condvar) {
+    DECAY_WAKE_EVENT.get_or_init(|| (Mutex::new(false), Condvar::new()))
+}
+
+fn wake_decay_worker() {
+    let (lock, event) = decay_wake_event();
+    let mut wake_requested = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    *wake_requested = true;
+    event.notify_one();
+}
+
+fn wait_for_decay_interval(interval_ms: u64) {
+    let (lock, event) = decay_wake_event();
+    let wake_requested = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (mut wake_requested, _timeout) = event
+        .wait_timeout_while(
+            wake_requested,
+            Duration::from_millis(interval_ms),
+            |requested| !*requested,
+        )
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *wake_requested = false;
 }
 
 /// Returns the number of completed decay sweeps observed by this process.
