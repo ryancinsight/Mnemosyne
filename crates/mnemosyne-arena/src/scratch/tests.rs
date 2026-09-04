@@ -468,3 +468,177 @@ fn bank_release_is_all_or_nothing_across_pools() {
     assert_eq!(bank.capacity::<0>(), 0);
     assert_eq!(bank.capacity::<1>(), 0);
 }
+// -- Phase 16: New collection ops ---------------------------------------------
+
+#[test]
+fn aligned_vec_pop_returns_last_element() {
+    let mut v = AlignedVec::<u32>::from_slice(&[10, 20, 30]);
+    assert_eq!(v.pop(), Some(30));
+    assert_eq!(v.pop(), Some(20));
+    assert_eq!(v.pop(), Some(10));
+    assert_eq!(v.pop(), None);
+}
+
+#[test]
+fn aligned_vec_swap_remove_unordered() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4, 5]);
+    let r = v.swap_remove(1); // removes 2, swaps 5 in
+    assert_eq!(r, 2);
+    assert_eq!(v.len(), 4);
+    assert!(!v.as_slice().contains(&2));
+    assert!(v.as_slice().contains(&5));
+}
+
+#[test]
+fn aligned_vec_remove_preserves_order() {
+    let mut v = AlignedVec::<i32>::from_slice(&[10, 20, 30, 40]);
+    assert_eq!(v.remove(1), 20);
+    assert_eq!(v.as_slice(), &[10, 30, 40]);
+}
+
+#[test]
+fn aligned_vec_insert_shifts_right() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 3]);
+    v.insert(1, 2);
+    assert_eq!(v.as_slice(), &[1, 2, 3]);
+}
+
+#[test]
+fn aligned_vec_retain_filters_in_place() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4, 5, 6]);
+    v.retain(|&x| x % 2 == 0);
+    assert_eq!(v.as_slice(), &[2, 4, 6]);
+}
+
+#[test]
+fn aligned_vec_dedup_consecutive() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 1, 2, 3, 3, 3, 2]);
+    v.dedup();
+    assert_eq!(v.as_slice(), &[1, 2, 3, 2]);
+}
+
+#[test]
+fn aligned_vec_sort_and_dedup() {
+    let mut v = AlignedVec::<i32>::from_slice(&[3, 1, 2, 1, 3, 2]);
+    v.sort_unstable();
+    v.dedup();
+    assert_eq!(v.as_slice(), &[1, 2, 3]);
+}
+
+#[test]
+fn aligned_vec_append_drains_source() {
+    let mut a = AlignedVec::<u32>::from_slice(&[1, 2, 3]);
+    let mut b = AlignedVec::<u32>::from_slice(&[4, 5, 6]);
+    a.append(&mut b);
+    assert_eq!(a.as_slice(), &[1, 2, 3, 4, 5, 6]);
+    assert!(b.is_empty());
+}
+
+#[test]
+fn aligned_vec_split_off() {
+    let mut v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4, 5]);
+    let tail = v.split_off(2);
+    assert_eq!(v.as_slice(), &[1, 2]);
+    assert_eq!(tail.as_slice(), &[3, 4, 5]);
+}
+
+#[test]
+fn aligned_vec_shrink_to_fit() {
+    let mut v = AlignedVec::<u32>::with_capacity(256);
+    v.push(1);
+    v.shrink_to_fit();
+    assert_eq!(v.len(), 1);
+    assert!(v.capacity() < 256);
+}
+
+#[test]
+fn aligned_vec_drain_yields_and_collapses() {
+    let mut v = AlignedVec::<i32>::from_slice(&[10, 20, 30, 40, 50]);
+    let drained: std::vec::Vec<i32> = v.drain(1, 3).collect();
+    assert_eq!(drained, &[20, 30]);
+    assert_eq!(v.as_slice(), &[10, 40, 50]);
+}
+
+#[test]
+fn aligned_vec_from_fn() {
+    let v = AlignedVec::<u32>::from_fn(5, |i| (i as u32 + 1) * 10);
+    assert_eq!(v.as_slice(), &[10, 20, 30, 40, 50]);
+}
+
+#[test]
+fn aligned_vec_from_iterator() {
+    let v: AlignedVec<u32> = (0u32..5).collect();
+    assert_eq!(v.as_slice(), &[0, 1, 2, 3, 4]);
+}
+
+#[test]
+fn aligned_vec_extend_and_extend_by_ref() {
+    let mut v = AlignedVec::<u32>::from_slice(&[0, 1, 2]);
+    v.extend(3u32..6);
+    assert_eq!(v.as_slice(), &[0, 1, 2, 3, 4, 5]);
+    let extra = [10u32, 20];
+    v.extend(extra.iter());
+    assert_eq!(&v.as_slice()[6..], &[10, 20]);
+}
+
+#[test]
+fn aligned_vec_double_ended_iter() {
+    let v = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4]);
+    let rev: std::vec::Vec<i32> = v.into_iter().rev().collect();
+    assert_eq!(rev, &[4, 3, 2, 1]);
+}
+
+#[test]
+fn aligned_vec_as_ref_and_borrow() {
+    let v = AlignedVec::<u8>::from_slice(&[1, 2, 3]);
+    let r: &[u8] = v.as_ref();
+    assert_eq!(r, &[1, 2, 3]);
+    use core::borrow::Borrow;
+    let b: &[u8] = v.borrow();
+    assert_eq!(b, &[1, 2, 3]);
+}
+
+#[test]
+fn aligned_vec_spare_capacity_and_set_len() {
+    let mut v = AlignedVec::<u32>::with_capacity(8);
+    v.push(0);
+    let spare = v.spare_capacity_mut();
+    unsafe {
+        let slice = &mut *spare;
+        slice[0] = 1;
+        slice[1] = 2;
+        v.set_len_unchecked(3);
+    }
+    assert_eq!(v.as_slice(), &[0, 1, 2]);
+}
+
+#[test]
+fn scratch_pool_prewarm_grows_primary() {
+    let pool = ScratchPool::<f64>::new();
+    assert_eq!(pool.capacity(), 0);
+    pool.prewarm(128);
+    assert!(pool.capacity() >= 128);
+}
+
+#[test]
+fn scratch_pool_shrink_all_slots_releases_memory() {
+    let pool = ScratchPool::<u32>::new();
+    pool.with_scratch(64, |_| {});
+    assert!(pool.capacity() >= 64);
+    pool.shrink_all_slots();
+    assert_eq!(pool.capacity(), 0);
+}
+#[test]
+fn scratch_pool_with_scratch_uninit_initialises_before_read() {
+    let pool = ScratchPool::<u32>::new();
+    let result = unsafe {
+        pool.with_scratch_uninit(4, |raw| {
+            let slice = &mut *raw;
+            for (i, elem) in slice.iter_mut().enumerate() {
+                core::ptr::write(elem, i as u32 * 10);
+            }
+            (*raw)[3]
+        })
+    };
+    assert_eq!(result, 30);
+}
