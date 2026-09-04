@@ -215,7 +215,9 @@
   `origin/main`; board state reconciled from stale review.
 
 - [ ] [minor] **MN-458 — close the retag, provenance, and cold-branch
-  stragglers.** status=review; **class corrected from [patch] to [minor]
+  stragglers.** status=in-progress; integrator=codex (takeover);
+  branch=`perf/mnemosyne-scratch-release`; lease=`backlog.md`;
+  **class corrected from [patch] to [minor]
   2026-08-28**: N1 removes `Segment::is_owned_by`, a `pub unsafe fn` on a
   public type in the publishable `mnemosyne-memory-core`, which
   `cargo semver-checks` classifies as a major-class removal (`0.x` breaking →
