@@ -184,6 +184,48 @@ impl<T: ScratchElement> ScratchPool<T> {
         self.primary_capacity.get()
     }
 
+    /// Sum of backing capacities across all `MAX_POOL_SLOTS` slots in bytes.
+    ///
+    /// Useful for monitoring per-thread memory pressure from scratch pools.
+    #[inline]
+    pub fn total_capacity_bytes(&self) -> usize {
+        if self.borrow_depth.get() != 0 {
+            // Cannot safely read UnsafeCell slots while borrowed; return
+            // the primary slot's capacity as a conservative lower bound.
+            return self.primary_capacity.get() * core::mem::size_of::<T>();
+        }
+        let mut total = 0usize;
+        for slot in &self.slots {
+            // SAFETY: borrow_depth == 0 guarantees no live exclusive references.
+            let cap = unsafe { (*slot.get()).capacity() };
+            total = total.saturating_add(cap * core::mem::size_of::<T>());
+        }
+        total
+    }
+
+    /// Releases the backing allocations of all pool slots that are not
+    /// currently borrowed.
+    ///
+    /// After this call, subsequent [`Self::with_scratch`] calls will
+    /// re-allocate lazily. Useful when a thread is about to go idle and
+    /// scratch memory should be returned to the allocator.
+    ///
+    /// A no-op when the pool is currently borrowed (`borrow_depth > 0`).
+    #[inline]
+    pub fn shrink_all_slots(&self) {
+        if self.borrow_depth.get() != 0 {
+            return;
+        }
+        for (i, slot) in self.slots.iter().enumerate() {
+            // SAFETY: borrow_depth == 0 guarantees no live exclusive references.
+            let vec = unsafe { &mut *slot.get() };
+            *vec = AlignedVec::dangling();
+            if i == 0 {
+                self.primary_capacity.set(0);
+            }
+        }
+    }
+
     /// Ensures the primary slot has capacity for at least `min_capacity` elements,
     /// growing it if necessary. A no-op when the pool is currently borrowed.
     ///

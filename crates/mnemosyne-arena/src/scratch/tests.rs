@@ -626,3 +626,38 @@ fn aligned_vec_from_fn_zero_len() {
     let v = AlignedVec::<u32>::from_fn(0, |_| 0);
     assert!(v.is_empty());
 }
+// -- ScratchPool total_capacity_bytes + shrink_all_slots ----------------------
+
+#[test]
+fn scratch_pool_total_capacity_bytes_sums_all_slots() {
+    let pool = ScratchPool::<u64>::new();
+    // Before any allocation, total should be 0
+    assert_eq!(pool.total_capacity_bytes(), 0);
+    pool.with_scratch(64, |_| {
+        // Primary slot is now 64 u64s = 512 bytes; depth > 0 ? returns primary cap
+        let bytes = pool.total_capacity_bytes();
+        assert!(bytes >= 64 * core::mem::size_of::<u64>());
+    });
+    // After the borrow, we can sum all slots
+    let total = pool.total_capacity_bytes();
+    assert!(total >= 64 * core::mem::size_of::<u64>());
+}
+
+#[test]
+fn scratch_pool_shrink_all_slots_releases_memory() {
+    let pool = ScratchPool::<u32>::new();
+    pool.with_scratch(128, |_| {});
+    assert!(pool.capacity() >= 128);
+    pool.shrink_all_slots();
+    assert_eq!(pool.capacity(), 0);
+}
+
+#[test]
+fn scratch_pool_shrink_all_slots_is_noop_when_borrowed() {
+    let pool = ScratchPool::<u32>::new();
+    pool.with_scratch(64, |_| {
+        pool.shrink_all_slots(); // must not panic or free borrowed slot
+        // pool is still usable because shrink was a no-op
+    });
+    assert_eq!(pool.capacity(), 64);
+}

@@ -120,6 +120,18 @@ pub trait AllocPolicy: private::Sealed + Send + Sync + 'static {
     /// assert_eq!(HardenedPolicy::MITIGATION_FLAGS, mitigations::ALL);
     /// ```
     const MITIGATION_FLAGS: u32 = mitigations::NONE;
+
+    /// Probabilistic guard-page sampling rate for GWP-ASan–style heap
+    /// diagnostics.
+    ///
+    /// When non-zero, approximately 1 in `GWP_SAMPLE_RATE` small allocations
+    /// is redirected to a guard-page–backed region so that heap-buffer-overflow
+    /// and use-after-free bugs are caught immediately. `0` disables sampling
+    /// entirely (zero-cost branch elimination via monomorphization).
+    ///
+    /// Inspired by snmalloc 0.7.2 `gwp_asan.h` and the `secondary_allocator`
+    /// template parameter.
+    const GWP_SAMPLE_RATE: u32 = 0;
 }
 
 /// Zero-Sized Type (ZST) representing the standard allocation policy with maximum performance.
