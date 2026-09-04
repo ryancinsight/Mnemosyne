@@ -1,7 +1,9 @@
 # Global Allocator
 
-Mnemosyne registers as Rust's global allocator, intercepting all heap
-operations from the standard library.
+Mnemosyne provides a zero-sized adapter for Rust's `GlobalAlloc` contract.
+Every allocation request enters the same validated routing path: thread-local
+cache first, then the arena's page and segment machinery, with large and huge
+requests routed outside the size-class table.
 
 ## Registration
 
@@ -12,38 +14,81 @@ use mnemosyne::Mnemosyne;
 static ALLOC: Mnemosyne = Mnemosyne;
 ```
 
-`Mnemosyne` is a unit struct that implements `GlobalAlloc`. It dispatches
-to `StandardPolicy` plus the platform's default `MemoryBackend`.
+`Mnemosyne` is the standard-policy CPU allocator. Its `alloc`, `dealloc`, and
+`realloc` implementations are thin, monomorphized calls to the policy- and
+backend-generic local allocator; the unit struct carries no runtime state.
 
 ## `MnemosyneAllocator<P, B>`
 
-For custom policy or backend:
+For an explicit policy, use the generic allocator. The backend defaults to
+`MemoryBackendWrapper`:
 
 ```rust,ignore
 use mnemosyne::{MnemosyneAllocator, SecurePolicy};
 
 #[global_allocator]
-static ALLOC: MnemosyneAllocator<SecurePolicy, _> = MnemosyneAllocator::new();
+static ALLOC: MnemosyneAllocator<SecurePolicy> = MnemosyneAllocator::new();
 ```
 
-## Runtime Configuration
+`P` controls compile-time initialization, poisoning, free-list encoding, and
+page allocation order. `B` supplies the compatible segment-pool and local
+allocator implementation. Policy and backend are independent variation
+dimensions, so selecting either does not add a vtable or a per-allocation mode
+branch.
 
-`configure(opts)` sets `MnemosyneOptions` after startup:
+## Reallocation and memory reuse
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `max_retained_segments` | platform default | Cap on cached free segments |
-| `purge_cadence_ms` | 0 (disabled) | Background decay thread interval |
-| `enable_hugepage_hint` | false | Advise OS to use huge pages |
+Mnemosyne's `realloc` keeps the existing block when the requested size remains
+inside its current size class or usable mapping. This avoids an allocation,
+copy, and free sequence in the common growth case. A request that crosses a
+class boundary, needs a significant shrink, or changes the required alignment
+uses an allocate-copy-free replacement and copies only
+`min(old_size, new_size)` bytes.
 
-Setting a non-zero `purge_cadence_ms` spawns the background decay thread
-(`mnemosyne-decay`).
+The in-place path preserves the selected policy: a secure or hardened policy
+zeroes newly exposed bytes, while a poisoned policy marks newly exposed and
+truncated ranges according to its policy contract. The old pointer is consumed
+by a successful replacement; callers must use only the returned pointer.
 
-## Capacity Query
+Zero-size allocation requests return null. A null pointer passed to `realloc`
+acts as an allocation when the new size is nonzero; a non-null pointer with a
+zero new size is freed and returns null. These rules are part of the wrapper's
+`GlobalAlloc` contract and are exercised by the allocator test suite.
+
+## Runtime configuration
+
+`configure(opts)` changes subsequent allocator operations through three global,
+thread-safe atomic settings. `get_options` reads their current values as a
+point-in-time snapshot; concurrent reconfiguration may update the fields
+between those individual reads.
+
+| Field | Default | Effect |
+| --- | --- | --- |
+| `max_retained_segments` | `MAX_RETAINED_SEGMENTS_LIMIT` (`0` under Miri) | Bounds cached free segments |
+| `purge_cadence_ms` | `0` | Keeps background decay disabled |
+| `enable_hugepage_hint` | `true` | Enables the Linux huge-page mapping hint |
+
+Setting a non-zero `purge_cadence_ms` starts the background decay worker when
+one is not already running. The worker is bounded by the same retained-segment
+limit; setting the cadence to zero stops future automatic starts but does not
+retroactively undo a worker that has already been initialized.
+
+Use [`purge`] when all retained free segments must be released, [`reset`] when
+their virtual ranges should remain reusable while physical backing is dropped,
+and [`purge_lazy`] when a bounded warm cache should remain committed.
+
+## Capacity query
 
 ```rust,ignore
-let usable = mnemosyne::usable_size(ptr);
+let usable = unsafe { mnemosyne::usable_size(ptr) };
 ```
 
-Returns the usable capacity of an existing allocation — may exceed the
-requested size due to size-class rounding.
+`usable_size` returns the capacity of an existing allocator-owned allocation.
+For small allocations it is the selected class stride, which may exceed the
+requested size. The pointer must be live and owned by the queried allocator;
+foreign, null, or already-freed pointers do not satisfy the function's safety
+contract.
+
+[`purge`]: https://docs.rs/mnemosyne/latest/mnemosyne/fn.purge.html
+[`reset`]: https://docs.rs/mnemosyne/latest/mnemosyne/fn.reset.html
+[`purge_lazy`]: https://docs.rs/mnemosyne/latest/mnemosyne/fn.purge_lazy.html
