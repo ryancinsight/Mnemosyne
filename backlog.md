@@ -214,46 +214,12 @@
   source merge=`67a8b54` (PR #82). The conformance correction is already on
   `origin/main`; board state reconciled from stale review.
 
-- [ ] [minor] **MN-458 — close the retag, provenance, and cold-branch
-  stragglers.** status=in-progress; integrator=codex (takeover);
-  branch=`perf/mnemosyne-scratch-release`; lease=`backlog.md`;
-  **class corrected from [patch] to [minor]
-  2026-08-28**: N1 removes `Segment::is_owned_by`, a `pub unsafe fn` on a
-  public type in the publishable `mnemosyne-memory-core`, which
-  `cargo semver-checks` classifies as a major-class removal (`0.x` breaking →
-  minor bump at release). The removal stands — a forwarding wrapper would keep
-  the whole-header retag reachable, which is the defect — and no caller exists
-  in this repository or anywhere in the Atlas stack (verified by a stack-wide
-  scan of every member's sources). Recorded under CHANGELOG *Unreleased →
-  Changed → Breaking*; no manifest version is bumped, since a completed item
-  does not authorize a release. Missed at delivery because this repository has
-  no semver gate — see MN-460. integrator=claude-fable session 03d80d33
-  (atlas `ATLAS-PROVIDER-CHAIN-QUALITY-2026-08-27`); lease discharged by the
-  delivery commits; last-update=2026-08-28. Four findings from a follow-up
-  audit of the MN-437..MN-456 sweep, each the surviving instance of a pattern
-  that sweep removed elsewhere:
-  - **N1** `mnemosyne-local/src/realloc.rs` — the in-place small-realloc path
-    was the last caller of `Segment::is_owned_by(&self)`, whose shared
-    reference retags the whole 2 MiB header and races any concurrent
-    remote-thread field write (MN-439). Now reads through the raw
-    `Segment::owner` projection; the accessor is deleted.
-  - **N2** `mnemosyne-heap/src/raw_heap.rs` — the free path synthesized
-    segment provenance from a masked integer (MN-456) and held a `&mut Page`
-    across segment-rooted accesses including the occupancy decrement that
-    writes that same page (MN-438/MN-443). Now derives via `locate_segment`
-    and addresses pages through `locate_page`'s raw projection, matching
-    `do_local_free_internal`, which already takes `*mut Page`.
-  - **N3** `mnemosyne-local/src/tls/stable.rs` — the unguarded cold branch
-    passed the null cache value that routed it there instead of the freshly
-    cached allocator pointer, dereferencing null on a thread's first
-    unguarded touch. Latent (no production caller); regression test added.
-  - **N4** `mnemosyne-arena/.../huge_pool.rs` — recorded the advisory
-    soft-cap tradeoff its sibling `try_push_retained` already documents.
-  Evidence: workspace Clippy `-D warnings` clean, `cargo fmt --check` clean,
-  nextest 289/289, doctests 5/5. Miri both borrow models: `mnemosyne-local`
-  84/84 and `mnemosyne-memory-core` 18/18 (the N1/N3 crates). The N3 test was
-  falsified against the unfixed source — it dies with an access violation
-  nextest attributes to that test.
+- [x] [minor] **MN-458 — close the retag, provenance, and cold-branch
+  stragglers.** status=done (2026-09-04); integrator=codex; source
+  merge=`4682a79` (PR #79). Four audited fixes, their Miri/Nextest evidence,
+  and the `[minor]` semver classification are already on `origin/main`;
+  `Segment::is_owned_by` is absent from production code and the breaking
+  change is recorded in `CHANGELOG.md`.
 
 - [x] [patch] **MN-460 — add a semver gate for the publishable crates.**
   status=done 2026-09-01; owner=atlas session. This repository publishes
