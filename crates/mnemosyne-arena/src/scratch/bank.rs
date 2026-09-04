@@ -1,7 +1,7 @@
 //! Scratch bank implementation for keeping multiple related pools together.
 
 use super::element::ScratchElement;
-use super::pool::ScratchPool;
+use super::pool::{MAX_POOL_SLOTS, ScratchPool};
 
 /// A fixed set of same-typed scratch pools for domain-specific temporary roles.
 ///
@@ -53,6 +53,45 @@ impl<T: ScratchElement, const N: usize> ScratchBank<T, N> {
     ) -> R {
         assert!(INDEX < N, "ScratchBank slot index out of range");
         self.pools[INDEX].with_scratch(n, f)
+    }
+
+    /// Like [`with_scratch`](Self::with_scratch), but records the request so a
+    /// later [`release`](Self::release) can reclaim above the working set.
+    /// See [`ScratchPool::with_scratch_bounded`] for the full contract.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `INDEX >= N`.
+    #[inline]
+    pub fn with_scratch_bounded<const INDEX: usize, R>(
+        &self,
+        n: usize,
+        f: impl FnOnce(&mut [T]) -> R,
+    ) -> R {
+        assert!(INDEX < N, "ScratchBank slot index out of range");
+        self.pools[INDEX].with_scratch_bounded(n, f)
+    }
+
+    /// Reclaims every pool's storage above its recorded provision.
+    /// See [`ScratchPool::release`] for the contract and the quiescent-calling
+    /// rhythm this is designed for.
+    ///
+    /// Returns the per-pool, per-slot capacities after reclamation.
+    pub fn release(&self) -> [[usize; MAX_POOL_SLOTS]; N] {
+        let mut capacities = [[0usize; MAX_POOL_SLOTS]; N];
+        for (pool, out) in self.pools.iter().zip(capacities.iter_mut()) {
+            *out = pool.release();
+        }
+        capacities
+    }
+
+    /// Clears every pool's recorded provisions so a later
+    /// [`release`](Self::release) reclaims every slot entirely.
+    /// See [`ScratchPool::reset`].
+    pub fn reset(&self) {
+        for pool in &self.pools {
+            pool.reset();
+        }
     }
 
     /// Returns the primary capacity for slot `INDEX`.
