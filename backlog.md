@@ -572,7 +572,9 @@ its cited grep against current `HEAD` before editing (stale-memory rule).
   discharged; baseline **61**, next clusters `local/alloc.rs` (8),
   `decay/lib.rs` (7), `local/realloc.rs` (6), `local_alloc/page/transitions.rs`
   (6), `page/lists.rs` (5).
-- [ ] **MNEM-PM-COMPACT-1** [pm-hygiene][patch] status=todo owner=unclaimed
+- [ ] **MNEM-PM-COMPACT-1** [pm-hygiene][patch] status=in-progress owner=codex;
+  branch=`perf/mnemosyne-scratch-release`; lease=`backlog.md`, `checklist.md`
+  (closed entries only); last-update=2026-09-04.
   scope=`backlog.md`, `checklist.md`. Non-goals: deleting evidence — closed
   items keep their commit/PR references; touching any in-progress claim.
   **Outcome:** a cold-start agent can find the ready work in one place.
