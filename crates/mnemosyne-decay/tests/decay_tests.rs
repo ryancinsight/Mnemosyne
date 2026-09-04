@@ -9,7 +9,14 @@ use std::thread;
 use std::time::Duration;
 
 static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[cfg(not(miri))]
 const BACKGROUND_DECAY_TIMEOUT: Duration = Duration::from_secs(5);
+// Miri interprets every pointer operation and runs this binary concurrently
+// with other interpreters. The native timeout is sufficient for a real worker,
+// while the Miri-specific bound covers the measured interpreter cost without
+// changing the native test budget.
+#[cfg(miri)]
+const BACKGROUND_DECAY_TIMEOUT: Duration = Duration::from_secs(60);
 const FRAGMENTATION_SIZES: [usize; 4] = [16, 64, 256, 1024];
 const FRAGMENTATION_ROUNDS: usize = 64;
 const TEMPORARY_BLOCKS_PER_CLASS: usize = 32;
