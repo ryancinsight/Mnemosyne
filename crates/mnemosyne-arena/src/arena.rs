@@ -156,8 +156,9 @@ unsafe fn initialize_large_or_huge_segment(
 
 /// Allocates a block of memory of the given size and alignment.
 ///
-/// If the size is small (<= 8KB), it should be routed through the thread-local
-/// allocator instead of this global arena.
+/// If the request can be represented by a small size class (up to
+/// `MAX_SMALL_ALLOC_SIZE`, subject to alignment), it should be routed through
+/// the thread-local allocator instead of this global arena.
 ///
 /// # Safety
 ///

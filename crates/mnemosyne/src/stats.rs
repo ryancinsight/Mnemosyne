@@ -326,13 +326,14 @@ pub fn purge() {
     purge_generic::<mnemosyne_backend::MemoryBackendWrapper>();
 }
 
-/// Asks the OS to drop the physical backing of every retained free
+/// Asks the OS to drop the physical backing of every retained standard free
 /// segment for a specific backend without removing them from the cache.
 ///
 /// Use this as a lighter-weight RSS-reduction knob than `purge`: the
-/// segment cache stays warm so subsequent allocations skip the OS
-/// mapping syscall, while the resident memory footprint of idle
-/// segments drops to the kernel's demand-fault baseline.
+/// standard segment cache stays warm so subsequent small allocations skip the
+/// OS mapping syscall, while the resident memory footprint of idle segments
+/// drops to the kernel's demand-fault baseline. The separate huge-allocation
+/// cache is not reset by this operation.
 pub fn reset_generic<B: mnemosyne_arena::HasSegmentPool>() {
     // SAFETY: reset_segment_pool drains the retained pool, issues
     // page_reset on each segment's mapping, and pushes them back into
@@ -342,8 +343,11 @@ pub fn reset_generic<B: mnemosyne_arena::HasSegmentPool>() {
     }
 }
 
-/// Asks the OS to drop the physical backing of every retained free
+/// Asks the OS to drop the physical backing of every retained standard free
 /// segment without removing them from the cache.
+///
+/// The separate huge-allocation cache is not reset; use [`purge`] when both
+/// cache families must be released.
 pub fn reset() {
     reset_generic::<mnemosyne_backend::MemoryBackendWrapper>();
 }

@@ -8,6 +8,10 @@
 - [ ] **MNEM-BOOK-DEPTH-1** [docs][minor] status=in-progress owner=codex
   branch=`perf/mnemosyne-scratch-release`; last-update=2026-09-04;
   latest=`71d4e80`.
+  lease: codex `docs/book/segment_lifecycle.md`,
+  `docs/book/decay_purge_reset.md`,
+  `crates/mnemosyne-arena/src/arena.rs`,
+  `crates/mnemosyne/src/stats.rs`;
   Vertical slice: correct the size-class geometry and teach its mapping,
   page-density, and fragmentation implications with a runnable example.
   Acceptance for this slice: implementation values and book claims agree;
