@@ -2,6 +2,13 @@
 
 ## In progress
 
+- [ ] [patch] **MN-PR126-MIRI-2026-09-04 — Keep decay integration waits
+  valid under Miri.** status=in-progress; owner=atlas-session;
+  branch=`fix/mnemosyne-pr126-reconcile`; PR #126. Preserve the measured
+  Miri-only timeout bound while retaining the five-second native test budget.
+  Acceptance: decay/backend Miri tests pass, native decay tests retain their
+  existing bound, and format, strict Clippy, and focused Nextest pass.
+
 - [x] [arch] [minor] **MN-469 — Use Melinoe permits for branded heap handoff.**
   status=complete 2026-09-03; owner=atlas-session; branch=
   `feat/mnemosyne-melinoe-sync`; ADR=0010; commit=`afbedd4`.
