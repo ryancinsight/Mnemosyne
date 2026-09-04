@@ -175,7 +175,11 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// Panics if `index >= self.len()`.
     #[inline]
     pub fn swap_remove(&mut self, index: usize) -> T {
-        assert!(index < self.len, "swap_remove: index {index} >= len {}", self.len);
+        assert!(
+            index < self.len,
+            "swap_remove: index {index} >= len {}",
+            self.len
+        );
         // SAFETY: both `index` and `self.len - 1` are `< self.len`, so both are
         // inside the initialized region; `T: Copy`.
         let last = unsafe { core::ptr::read(self.ptr.add(self.len - 1)) };
@@ -197,7 +201,11 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// Panics if `index >= self.len()`.
     #[inline]
     pub fn remove(&mut self, index: usize) -> T {
-        assert!(index < self.len, "remove: index {index} >= len {}", self.len);
+        assert!(
+            index < self.len,
+            "remove: index {index} >= len {}",
+            self.len
+        );
         // SAFETY: `index < len` so the element is initialized; `T: Copy`.
         let removed = unsafe { core::ptr::read(self.ptr.add(index)) };
         let tail = self.len - index - 1;
@@ -206,11 +214,7 @@ impl<T: ScratchElement> AlignedVec<T> {
             // overlap, so we use `copy` (memmove semantics), not
             // `copy_nonoverlapping`.
             unsafe {
-                core::ptr::copy(
-                    self.ptr.add(index + 1),
-                    self.ptr.add(index),
-                    tail,
-                );
+                core::ptr::copy(self.ptr.add(index + 1), self.ptr.add(index), tail);
             }
         }
         self.len -= 1;
@@ -226,7 +230,11 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// Panics if `index > self.len()`.
     #[inline]
     pub fn insert(&mut self, index: usize, value: T) {
-        assert!(index <= self.len, "insert: index {index} > len {}", self.len);
+        assert!(
+            index <= self.len,
+            "insert: index {index} > len {}",
+            self.len
+        );
         self.reserve(1);
         if index < self.len {
             // SAFETY: `index < len < capacity` (reserve ensured it). Source
@@ -328,9 +336,8 @@ impl<T: ScratchElement> AlignedVec<T> {
         assert!(at <= self.len, "split_off: at {at} > len {}", self.len);
         let tail_len = self.len - at;
         // SAFETY: `[at, at + tail_len)` is within the initialized region; T: Copy.
-        let tail = Self::from_slice(unsafe {
-            core::slice::from_raw_parts(self.ptr.add(at), tail_len)
-        });
+        let tail =
+            Self::from_slice(unsafe { core::slice::from_raw_parts(self.ptr.add(at), tail_len) });
         self.len = at;
         tail
     }
@@ -357,7 +364,7 @@ impl<T: ScratchElement> AlignedVec<T> {
                 let layout = Self::layout_for(self.capacity);
                 // SAFETY: `capacity > 0` so `self.ptr` is a live allocation
                 // matching `layout`. After dealloc both len and capacity are 0.
-                unsafe { alloc::alloc::dealloc(self.ptr as *mut u8, layout) };
+                unsafe { ::alloc::alloc::dealloc(self.ptr as *mut u8, layout) };
                 self.ptr = core::ptr::NonNull::dangling().as_ptr();
                 self.capacity = 0;
             }
@@ -370,7 +377,7 @@ impl<T: ScratchElement> AlignedVec<T> {
         // is non-zero (layout_for clamps to >= 1). Null result means the
         // allocator declined; we leave `self` unchanged.
         let new_ptr = unsafe {
-            alloc::alloc::realloc(self.ptr as *mut u8, old_layout, new_layout.size()) as *mut T
+            ::alloc::alloc::realloc(self.ptr as *mut u8, old_layout, new_layout.size()) as *mut T
         };
         if !new_ptr.is_null() {
             self.ptr = new_ptr;
@@ -432,7 +439,12 @@ impl<T: ScratchElement> AlignedVec<T> {
     pub fn drain(&mut self, start: usize, end: usize) -> Drain<'_, T> {
         assert!(start <= end, "drain: start > end");
         assert!(end <= self.len, "drain: end > len");
-        Drain { buf: self, start, end, current: start }
+        Drain {
+            buf: self,
+            start,
+            end,
+            current: start,
+        }
     }
 }
 

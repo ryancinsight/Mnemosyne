@@ -177,6 +177,61 @@ pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
     unsafe { B::global_huge_pool().purge::<B>() };
 }
 
+/// Like [`purge_segment_pool`] but retains up to `warm_threshold` committed
+/// segments in the pool after the sweep.
+///
+/// Segments above the threshold are released to the OS as normal. Retained
+/// segments stay committed so the next burst of allocations skips the
+/// `VirtualAlloc`/`mmap` round-trip.
+///
+/// Pass `warm_threshold = 0` for identical behaviour to `purge_segment_pool`.
+///
+/// # Safety
+///
+/// Same contract as `purge_segment_pool`.
+pub unsafe fn purge_segment_pool_with_warm<B: HasSegmentPool>(warm_threshold: usize) {
+    let pool = B::global_segment_pool();
+    let mut purged = 0usize;
+    let mut kept = 0usize;
+    for node in pool.nodes() {
+        let (mut head, _count) = node.take_all();
+        while !head.is_null() {
+            let segment = head;
+            // SAFETY: `segment` is exclusively owned by this purge sweep.
+            head = unsafe {
+                (*segment)
+                    .next_free_segment
+                    .load(core::sync::atomic::Ordering::Relaxed)
+            };
+            if kept < warm_threshold {
+                // SAFETY: segment is exclusively owned; returning to the node
+                // pool transfers ownership.
+                unsafe { node.push_unbounded(segment) };
+                kept += 1;
+                continue;
+            }
+            match unsafe { release_segment_mapping::<B>(segment) } {
+                SegmentRelease::Released => purged += 1,
+                SegmentRelease::RetainedAfterFailure => {
+                    unsafe { node.push_unbounded(segment) };
+                    while !head.is_null() {
+                        let s = head;
+                        head = unsafe {
+                            (*s).next_free_segment
+                                .load(core::sync::atomic::Ordering::Relaxed)
+                        };
+                        unsafe { node.push_unbounded(s) };
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    pool.record_purge(purged);
+    // SAFETY: Releases all cached huge blocks back to the OS.
+    unsafe { B::global_huge_pool().purge::<B>() };
+}
+
 /// Drops the physical backing of every retained free segment without
 /// removing them from the cache.
 ///
