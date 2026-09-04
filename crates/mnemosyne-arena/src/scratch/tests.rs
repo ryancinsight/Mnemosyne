@@ -928,7 +928,7 @@ fn aligned_vec_partition_all_false() {
 fn aligned_vec_write_sink_fmt() {
     use core::fmt::Write as _;
     let mut buf = AlignedVec::<u8>::with_capacity(64);
-    write!(buf, "hello {}", 42).unwrap();
+    write!(buf, "hello {}", 42).expect("invariant: AlignedVec's Write sink never fails");
     assert_eq!(buf.as_slice(), b"hello 42");
 }
 

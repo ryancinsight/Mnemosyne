@@ -446,13 +446,28 @@ mod tests {
 
     #[test]
     fn round_up_size_saturating_never_returns_zero_for_positive() {
-        for sz in [1usize, 16, 17, 100, 512, 2048, MAX_SMALL_ALLOC_SIZE, MAX_SMALL_ALLOC_SIZE + 1] {
+        for sz in [
+            1usize,
+            16,
+            17,
+            100,
+            512,
+            2048,
+            MAX_SMALL_ALLOC_SIZE,
+            MAX_SMALL_ALLOC_SIZE + 1,
+        ] {
             let result = round_up_size_saturating(sz);
-            if sz == 0 { assert_eq!(result, 0); }
-            else { assert!(result > 0, "round_up_size_saturating({sz}) must be > 0"); }
+            if sz == 0 {
+                assert_eq!(result, 0);
+            } else {
+                assert!(result > 0, "round_up_size_saturating({sz}) must be > 0");
+            }
         }
         assert_eq!(round_up_size_saturating(0), 0);
-        assert_eq!(round_up_size_saturating(MAX_SMALL_ALLOC_SIZE + 1), MAX_SMALL_ALLOC_SIZE);
+        assert_eq!(
+            round_up_size_saturating(MAX_SMALL_ALLOC_SIZE + 1),
+            MAX_SMALL_ALLOC_SIZE
+        );
     }
 
     #[test]

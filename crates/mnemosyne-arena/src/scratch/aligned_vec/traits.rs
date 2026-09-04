@@ -375,4 +375,3 @@ impl core::fmt::Display for AlignedVec<u8> {
         }
     }
 }
-

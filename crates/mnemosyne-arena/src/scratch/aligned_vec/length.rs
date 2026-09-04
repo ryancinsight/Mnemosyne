@@ -605,6 +605,28 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.as_mut_slice().sort_unstable();
     }
 
+    /// Sorts with a custom comparator. Delegates to `[T]::sort_unstable_by`.
+    #[inline]
+    pub fn sort_unstable_by<F: FnMut(&T, &T) -> core::cmp::Ordering>(&mut self, compare: F) {
+        self.as_mut_slice().sort_unstable_by(compare);
+    }
+
+    /// Sorts by a key function. Delegates to `[T]::sort_unstable_by_key`.
+    #[inline]
+    pub fn sort_unstable_by_key<K: Ord, F: FnMut(&T) -> K>(&mut self, f: F) {
+        self.as_mut_slice().sort_unstable_by_key(f);
+    }
+
+    /// Returns `true` if the slice is sorted in ascending order.
+    #[inline]
+    #[must_use]
+    pub fn is_sorted(&self) -> bool
+    where
+        T: PartialOrd,
+    {
+        self.as_slice().windows(2).all(|w| w[0] <= w[1])
+    }
+
     // ── Slice pattern queries ─────────────────────────────────────────────────
 
     /// Returns `true` if the buffer starts with `prefix`.
