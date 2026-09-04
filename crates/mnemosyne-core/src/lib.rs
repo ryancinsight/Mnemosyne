@@ -21,7 +21,9 @@ pub mod validation;
 
 pub use constants::*;
 pub use kernel_budget::{KernelResourceBudget, OccupancyLimits};
-pub use policy::{AllocPolicy, HardenedPolicy, PolicyMarker, SecurePolicy, StandardPolicy};
+pub use policy::{
+    AllocPolicy, HardenedPolicy, PolicyMarker, SecurePolicy, StandardPolicy, mitigations,
+};
 pub use size_class::*;
 pub use sync::*;
 pub use types::*;

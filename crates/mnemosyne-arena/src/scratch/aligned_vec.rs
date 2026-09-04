@@ -218,6 +218,29 @@ impl<T: ScratchElement> AlignedVec<T> {
         v
     }
 
+    /// Creates a buffer of exactly `len` elements initialized by `f(index)`.
+    ///
+    /// The closure receives the zero-based index of the element being written.
+    /// Equivalent to `(0..len).map(f).collect::<AlignedVec<T>>()` but without
+    /// iterator overhead — the backing allocation is made upfront.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use mnemosyne_arena::AlignedVec;
+    /// let v = AlignedVec::<u32>::from_fn(4, |i| i as u32 * 2);
+    /// assert_eq!(v.as_slice(), &[0, 2, 4, 6]);
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn from_fn<F: FnMut(usize) -> T>(len: usize, mut f: F) -> Self {
+        let mut buf = Self::with_capacity(len);
+        for i in 0..len {
+            buf.push(f(i));
+        }
+        buf
+    }
+
     /// Ensures capacity for at least `min_len` elements. Only grows; never
     /// shrinks. Only zeroes **newly** allocated elements, not existing ones.
     #[inline]

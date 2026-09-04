@@ -16,7 +16,7 @@ pub use mnemosyne_backend::{
     MemoryBackendWrapper, is_cuda_available,
 };
 pub use mnemosyne_core::{
-    AllocPolicy, HardenedPolicy, PolicyMarker, SecurePolicy, StandardPolicy,
+    AllocPolicy, HardenedPolicy, PolicyMarker, SecurePolicy, StandardPolicy, mitigations,
     options::MnemosyneOptions,
 };
 #[cfg(feature = "branded")]

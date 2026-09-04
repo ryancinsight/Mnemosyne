@@ -613,3 +613,16 @@ fn aligned_vec_into_iter_front_and_back() {
     assert_eq!(it.next(), None);
     assert_eq!(it.next_back(), None);
 }
+// -- Phase 15: from_fn constructor --------------------------------------------
+
+#[test]
+fn aligned_vec_from_fn_generates_elements() {
+    let v = AlignedVec::<u32>::from_fn(5, |i| (i as u32 + 1) * 10);
+    assert_eq!(v.as_slice(), &[10, 20, 30, 40, 50]);
+}
+
+#[test]
+fn aligned_vec_from_fn_zero_len() {
+    let v = AlignedVec::<u32>::from_fn(0, |_| 0);
+    assert!(v.is_empty());
+}
