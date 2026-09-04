@@ -392,7 +392,8 @@
 
 - [ ] [patch] **MN-459 — bring `mnemosyne-heap` under the Miri gate.**
   status=in-progress; integrator=codex; branch=`perf/mnemosyne-scratch-release`;
-  lease=`crates/mnemosyne-heap/src/tests/`; last-update=2026-09-04. The Miri job covers `mnemosyne-arena`,
+  lease=`crates/mnemosyne-heap/src/tests/`, `.github/workflows/ci.yml`;
+  last-update=2026-09-04. The Miri job covers `mnemosyne-arena`,
   `mnemosyne-memory-core`, `mnemosyne-local`, `mnemosyne-decay`, and
   `mnemosyne-backend`, but not `mnemosyne-heap` — which is why MN-458's N2
   kept the exact int-to-ptr and `&mut Page`-across-segment patterns the

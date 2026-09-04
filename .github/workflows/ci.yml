@@ -320,12 +320,27 @@ jobs:
           cargo +nightly miri nextest run -p mnemosyne-local --locked
           --profile miri
 
-      # decay and backend join under MN-436, which records this job's
+      - name: Miri — heap (Stacked Borrows)
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+        run: >-
+          cargo +nightly miri nextest run -p mnemosyne-heap --locked
+          --profile miri
+
+      - name: Miri — heap (Tree Borrows)
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-tree-borrows
+        run: >-
+          cargo +nightly miri nextest run -p mnemosyne-heap --locked
+          --profile miri
+
+      # Heap joins under MN-459 after its own test helpers pass both borrow
+      # models. Decay and backend join under MN-436, which records this job's
       # exclusions so none is silent and shrinks them as crates come clean.
-      # Measured rather than assumed: heap, prof, c-shim and the top-level
-      # crate still report Undefined Behavior from pointers reconstructed out
-      # of exposed provenance, and stay out until that is migrated; hardened
-      # has no tests.
+      # Measured rather than assumed: prof, c-shim and the top-level crate
+      # still report Undefined Behavior from pointers reconstructed out of
+      # exposed provenance, and stay out until that is migrated; hardened has
+      # no tests.
       #
       # backend was reverted once (MN-454): it passed Miri on a Windows
       # development host and failed here, because that host compiles the

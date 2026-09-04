@@ -18,6 +18,10 @@ use mnemosyne_core::StandardPolicy;
 use themis::NumaNodeId;
 
 #[test]
+#[cfg_attr(
+    all(miri, target_os = "windows"),
+    ignore = "Windows NUMA discovery uses unsupported system FFI under Miri"
+)]
 fn allocate_interleaved_returns_usable_aligned_memory() {
     let layout = Layout::from_size_align(64 * 1024, 4096).expect("valid layout");
     let ptr = allocate_interleaved(layout).expect("interleaved allocation succeeds");
@@ -46,7 +50,7 @@ fn first_touch_is_idempotent_and_touches_every_page() {
     unsafe { first_touch(ptr, layout.size()) };
     // SAFETY: same range, still live; the first byte of each stride slot was
     // written as zero by the touch.
-    for offset in [0usize, 4096, 8192, 12_288] {
+    for offset in (0..layout.size()).step_by(4096) {
         assert_eq!(
             unsafe { core::ptr::read(ptr.add(offset)) },
             0u8,
