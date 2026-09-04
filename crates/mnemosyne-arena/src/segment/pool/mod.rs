@@ -13,6 +13,17 @@ pub use huge_pool::GlobalHugePool;
 pub use list::NodeSegmentPool;
 pub use segment_pool::GlobalSegmentPool;
 
+/// Point-in-time snapshot of [`GlobalHugePool`] counters.
+///
+/// All fields are individually relaxed reads; not jointly consistent.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct HugePoolStats {
+    /// Huge blocks currently held in the warm cache.
+    pub retained_blocks: usize,
+    /// Total bytes of huge blocks in the warm cache.
+    pub retained_bytes: usize,
+}
+
 /// Point-in-time snapshot of [`GlobalSegmentPool`] telemetry counters.
 ///
 /// All fields are individually monotone-non-decreasing relaxed reads;

@@ -604,6 +604,50 @@ impl<T: ScratchElement> AlignedVec<T> {
     {
         self.as_mut_slice().sort_unstable();
     }
+
+    // ── Slice pattern queries ─────────────────────────────────────────────────
+
+    /// Returns `true` if the buffer starts with `prefix`.
+    #[inline]
+    #[must_use]
+    pub fn starts_with(&self, prefix: &[T]) -> bool
+    where
+        T: PartialEq,
+    {
+        self.as_slice().starts_with(prefix)
+    }
+
+    /// Returns `true` if the buffer ends with `suffix`.
+    #[inline]
+    #[must_use]
+    pub fn ends_with(&self, suffix: &[T]) -> bool
+    where
+        T: PartialEq,
+    {
+        self.as_slice().ends_with(suffix)
+    }
+
+    /// Returns the buffer's content without the leading `prefix`, or `None`
+    /// if it does not start with `prefix`.
+    #[inline]
+    #[must_use]
+    pub fn strip_prefix(&self, prefix: &[T]) -> Option<&[T]>
+    where
+        T: PartialEq,
+    {
+        self.as_slice().strip_prefix(prefix)
+    }
+
+    /// Returns the buffer's content without the trailing `suffix`, or `None`
+    /// if it does not end with `suffix`.
+    #[inline]
+    #[must_use]
+    pub fn strip_suffix(&self, suffix: &[T]) -> Option<&[T]>
+    where
+        T: PartialEq,
+    {
+        self.as_slice().strip_suffix(suffix)
+    }
 }
 
 // ── Drain iterator ───────────────────────────────────────────────────────────

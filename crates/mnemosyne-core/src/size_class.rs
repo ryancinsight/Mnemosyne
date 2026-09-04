@@ -149,6 +149,8 @@ const fn size_to_class_nonzero_arithmetic(size: usize) -> Option<usize> {
 }
 
 /// Returns the rounded size-class block size for a given allocation size.
+///
+/// Equivalent to `size_to_class(size).map(class_to_size)`.
 #[inline(always)]
 pub const fn round_up_size(size: usize) -> Option<usize> {
     if size == 0 {
@@ -161,6 +163,45 @@ pub const fn round_up_size(size: usize) -> Option<usize> {
         Some(class) => Some(class_to_size(class)),
         None => None,
     }
+}
+
+/// Returns the class stride for the given request, saturating to the largest
+/// class when `size > MAX_SMALL_ALLOC_SIZE`.
+///
+/// This is the `round_up_size` variant that never returns `None`:
+/// - `size == 0` → `0`
+/// - `size > MAX_SMALL_ALLOC_SIZE` → `MAX_SMALL_ALLOC_SIZE`
+///
+/// Useful when you need an aligned stride without separately handling the
+/// large-allocation path.
+#[inline(always)]
+pub const fn round_up_size_saturating(size: usize) -> usize {
+    if size == 0 {
+        return 0;
+    }
+    match round_up_size(size) {
+        Some(s) => s,
+        None => MAX_SMALL_ALLOC_SIZE,
+    }
+}
+
+/// Returns the internal fragmentation for a request of `size` bytes:
+/// `(class_stride - size) / class_stride`, in `[0.0, 1.0]`.
+///
+/// Returns `0.0` when `size == 0` or `size > MAX_SMALL_ALLOC_SIZE`.
+#[inline]
+pub fn size_class_fragmentation(size: usize) -> f64 {
+    if size == 0 {
+        return 0.0;
+    }
+    let Some(stride) = round_up_size(size) else {
+        return 0.0;
+    };
+    if stride == 0 {
+        return 0.0;
+    }
+    let waste = stride.saturating_sub(size);
+    waste as f64 / stride as f64
 }
 
 const CLASS_TO_SIZE: [u16; NUM_SIZE_CLASSES] = [
@@ -401,5 +442,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn round_up_size_saturating_never_returns_zero_for_positive() {
+        for sz in [1usize, 16, 17, 100, 512, 2048, MAX_SMALL_ALLOC_SIZE, MAX_SMALL_ALLOC_SIZE + 1] {
+            let result = round_up_size_saturating(sz);
+            if sz == 0 { assert_eq!(result, 0); }
+            else { assert!(result > 0, "round_up_size_saturating({sz}) must be > 0"); }
+        }
+        assert_eq!(round_up_size_saturating(0), 0);
+        assert_eq!(round_up_size_saturating(MAX_SMALL_ALLOC_SIZE + 1), MAX_SMALL_ALLOC_SIZE);
+    }
+
+    #[test]
+    fn size_class_fragmentation_is_bounded() {
+        for sz in [1usize, 15, 16, 17, 32, 100, 512, 1000, MAX_SMALL_ALLOC_SIZE] {
+            let frag = size_class_fragmentation(sz);
+            assert!(
+                (0.0..=1.0).contains(&frag),
+                "fragmentation for sz={sz} is {frag}, out of [0,1]"
+            );
+        }
+        // Exactly on a class boundary: zero fragmentation
+        assert_eq!(size_class_fragmentation(16), 0.0);
+        assert_eq!(size_class_fragmentation(32), 0.0);
+        // Above max: 0.0
+        assert_eq!(size_class_fragmentation(MAX_SMALL_ALLOC_SIZE + 1), 0.0);
     }
 }

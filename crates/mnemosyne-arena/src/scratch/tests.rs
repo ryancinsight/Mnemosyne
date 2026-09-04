@@ -922,3 +922,29 @@ fn aligned_vec_partition_all_false() {
     let pivot = v.partition_in_place(|&x| x % 2 == 0);
     assert_eq!(pivot, 0);
 }
+// ---- Phase 22: Write + starts_with/ends_with + strip_prefix/suffix ---------
+
+#[test]
+fn aligned_vec_write_sink_fmt() {
+    use core::fmt::Write as _;
+    let mut buf = AlignedVec::<u8>::with_capacity(64);
+    write!(buf, "hello {}", 42).unwrap();
+    assert_eq!(buf.as_slice(), b"hello 42");
+}
+
+#[test]
+fn aligned_vec_starts_with_ends_with() {
+    let v = AlignedVec::<u8>::from_slice(b"hello world");
+    assert!(v.starts_with(b"hello"));
+    assert!(v.ends_with(b"world"));
+    assert!(!v.starts_with(b"world"));
+    assert!(!v.ends_with(b"hello"));
+}
+
+#[test]
+fn aligned_vec_strip_prefix_suffix() {
+    let v = AlignedVec::<u8>::from_slice(b"foobar");
+    assert_eq!(v.strip_prefix(b"foo"), Some(b"bar".as_ref()));
+    assert_eq!(v.strip_suffix(b"bar"), Some(b"foo".as_ref()));
+    assert_eq!(v.strip_prefix(b"baz"), None);
+}

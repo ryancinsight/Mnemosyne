@@ -13,5 +13,7 @@ pub use alloc::{
     purge_segment_pool, purge_segment_pool_with_warm, release_segment_mapping, reset_segment_pool,
     try_deallocate_segment,
 };
-pub use pool::{GlobalHugePool, GlobalSegmentPool, HasSegmentPool, SegmentPoolStats};
+pub use pool::{
+    GlobalHugePool, GlobalSegmentPool, HasSegmentPool, HugePoolStats, SegmentPoolStats,
+};
 pub use stats::{ArenaMemoryStats, SegmentRelease, arena_memory_stats};

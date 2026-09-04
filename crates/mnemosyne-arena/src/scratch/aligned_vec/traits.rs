@@ -334,3 +334,45 @@ impl<T: ScratchElement> From<alloc::boxed::Box<[T]>> for AlignedVec<T> {
         Self::from_slice(&b)
     }
 }
+
+// ── Write sink ────────────────────────────────────────────────────────────────
+
+/// `AlignedVec<u8>` as a `core::fmt::Write` sink.
+///
+/// Enables zero-allocation formatted output into an aligned buffer:
+///
+/// ```rust
+/// use core::fmt::Write as _;
+/// use mnemosyne_arena::AlignedVec;
+///
+/// let mut buf = AlignedVec::<u8>::with_capacity(64);
+/// write!(buf, "hello {}", 42).unwrap();
+/// assert_eq!(buf.as_slice(), b"hello 42");
+/// ```
+impl core::fmt::Write for AlignedVec<u8> {
+    /// Appends the UTF-8 bytes of `s` to the buffer, growing if needed.
+    #[inline]
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.extend_from_slice(s.as_bytes());
+        Ok(())
+    }
+}
+
+// ── Display ───────────────────────────────────────────────────────────────────
+
+/// Formats an `AlignedVec<u8>` as a UTF-8 string (lossy).
+///
+/// Non-UTF-8 bytes are replaced with the Unicode replacement character U+FFFD.
+impl core::fmt::Display for AlignedVec<u8> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match core::str::from_utf8(self.as_slice()) {
+            Ok(s) => f.write_str(s),
+            Err(_) => {
+                // Replace non-UTF-8 bytes with U+FFFD replacement character.
+                let s = alloc::string::String::from_utf8_lossy(self.as_slice());
+                f.write_str(&s)
+            }
+        }
+    }
+}
+
