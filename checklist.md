@@ -45,15 +45,6 @@ not a leak. It costs whatever a long-lived worker pool holds.
       without a verdict; the policy-permitted routine self-review found no
       blocking issue and does not claim independent evidence.
 
-## MN-457 (owner: codex)
-
-- [x] Reproduce the AArch64 Windows `dead_code` diagnostic and localize it to
-      the architecture mismatch between `ExitThread` and its only caller.
-- [x] Scope the import to x86_64 and verify host plus AArch64 Windows builds
-      under `-D warnings`.
-- [x] Run host all-target Clippy and 14/14 focused nextest tests, synchronize
-      PM state, and deliver the fix.
-
 ## MN-436 (owner: codex)
 
 - [x] Reproduce and localize the exposed-provenance warnings through the Leto

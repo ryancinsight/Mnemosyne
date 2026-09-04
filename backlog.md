@@ -374,12 +374,10 @@
   three tests at their cause, then add the crate to both borrow-model steps.
   Until then the crate's unsafe surface is reviewed but unchecked.
 
-- [ ] [patch] **MN-457 — scope the Windows CUDA thread-exit import to
-  x86_64.** status=in-progress; integrator=codex (takeover);
-  branch=`perf/mnemosyne-scratch-release`; lease=`backlog.md`;
-  last-update=2026-09-04. The import now matches its x86_64-only
-  redirect caller. AArch64 Windows strict-warning check, host all-target
-  Clippy, and 14/14 focused nextest tests pass.
+- [x] [patch] **MN-457 — scope the Windows CUDA thread-exit import to
+  x86_64.** status=done (2026-09-04); integrator=codex; source=`8be9ec3`;
+  landed on `origin/main`. The import, strict-warning checks, host Clippy,
+  and 14/14 focused tests are reconciled from stale review.
 
 ## Ready — gap-audit 2026-08-20 intake
 
