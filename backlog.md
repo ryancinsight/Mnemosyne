@@ -209,15 +209,10 @@
   cast on either target; `cargo clippy --workspace --all-targets --target
   aarch64-unknown-linux-gnu -- -D warnings` is clean locally, and the lint
   job now runs it as a second step, closing the uncovered target.
-- [ ] [patch] **MN-CONFORMANCE-COMMENTED-CODE-2026-08-31 — restore the
-  Atlas commented-code ratchet.** status=in-progress; integrator=codex
-  (takeover); branch=`perf/mnemosyne-scratch-release`; lease=`backlog.md`;
-  last-update=2026-09-04. Source
-  `c9b3367` rewords the newly counted prose line without changing the
-  huge-pool soft-cap contract. Exact live-tree Atlas conformance reports zero
-  regressions/tightenings without a baseline raise; affected all-target
-  warning-denied Clippy, 50/50 Nextest, rustfmt, and diff checks pass.
-  Independent review, hosted checks, PR, and merge remain open.
+- [x] [patch] **MN-CONFORMANCE-COMMENTED-CODE-2026-08-31 — restore the
+  Atlas commented-code ratchet.** status=done (2026-09-04); integrator=codex;
+  source merge=`67a8b54` (PR #82). The conformance correction is already on
+  `origin/main`; board state reconciled from stale review.
 
 - [ ] [minor] **MN-458 — close the retag, provenance, and cold-branch
   stragglers.** status=review; **class corrected from [patch] to [minor]
