@@ -7,11 +7,7 @@
 <a id="mn-em-book-depth-1"></a>
 - [ ] **MNEM-BOOK-DEPTH-1** [docs][minor] status=in-progress owner=codex
   branch=`perf/mnemosyne-scratch-release`; last-update=2026-09-04;
-  latest=`5016386`.
-  lease: codex `crates/mnemosyne-core/src/policy.rs`,
-  `docs/book/alloc_policies.md`, `docs/book/examples/alloc_policies.md`,
-  `docs/book/README.md`, `docs/book/SUMMARY.md`,
-  `crates/mnemosyne/examples/book_alloc_policies.rs`;
+  latest=`7f12d22`.
   last-update=2026-09-04.
   Vertical slice: correct the size-class geometry and teach its mapping,
   page-density, and fragmentation implications with a runnable example.
