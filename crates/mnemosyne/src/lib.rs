@@ -16,8 +16,14 @@ pub use mnemosyne_backend::{
     MemoryBackendWrapper, is_cuda_available,
 };
 pub use mnemosyne_core::{
-    AllocPolicy, HardenedPolicy, PolicyMarker, SecurePolicy, StandardPolicy, mitigations,
+    AllocPolicy, HardenedPolicy, PolicyMarker, SecurePolicy, StandardPolicy,
+    constants::NUM_SIZE_CLASSES,
+    mitigations,
     options::MnemosyneOptions,
+    size_class::{
+        LEMIRE_DIV_SHIFT, block_index_in_page, class_to_max_blocks, class_to_size, size_to_class,
+        size_to_class_nonzero,
+    },
 };
 #[cfg(feature = "branded")]
 pub use mnemosyne_heap::{
