@@ -29,6 +29,11 @@ pub const MAX_POOL_SLOTS: usize = 4;
 pub struct ScratchPool<T: ScratchElement> {
     slots: [UnsafeCell<AlignedVec<T>>; MAX_POOL_SLOTS],
     borrow_depth: Cell<u8>,
+    /// Per-depth high-water request, recorded by
+    /// [`with_scratch_bounded`](Self::with_scratch_bounded) and honored by
+    /// [`release`](Self::release). Provisioned slots keep capacity for their
+    /// working set across a release; unprovisioned slots reclaim entirely.
+    provisions: [Cell<usize>; MAX_POOL_SLOTS],
     /// Slot 0's capacity, republished by the borrow that grows it.
     ///
     /// [`ScratchPool::capacity`] is reachable from inside a live
@@ -73,6 +78,7 @@ impl<T: ScratchElement> ScratchPool<T> {
                 UnsafeCell::new(AlignedVec::dangling()),
             ],
             borrow_depth: Cell::new(0),
+            provisions: [const { Cell::new(0) }; MAX_POOL_SLOTS],
             primary_capacity: Cell::new(0),
         }
     }
@@ -95,6 +101,7 @@ impl<T: ScratchElement> ScratchPool<T> {
                 UnsafeCell::new(mk()),
             ],
             borrow_depth: Cell::new(0),
+            provisions: [const { Cell::new(0) }; MAX_POOL_SLOTS],
             // `mk()` gives every slot exactly `capacity` (a zero request yields
             // the zero-capacity dangling sentinel), so slot 0 starts here.
             primary_capacity: Cell::new(capacity),
@@ -162,6 +169,147 @@ impl<T: ScratchElement> ScratchPool<T> {
             let mut owned = AlignedVec::with_capacity(n);
             owned.ensure_len(n);
             f(owned.as_mut_slice())
+        }
+    }
+
+    /// Like [`with_scratch`](Self::with_scratch), but records the request for
+    /// [`release`](Self::release).
+    ///
+    /// Each depth's largest-ever request becomes that slot's provision; a
+    /// later [`release`] may reclaim everything a slot holds above it. The
+    /// two forms share the slot storage, so a pool can be driven through
+    /// either (or both) — only the provisions differ.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `f` panics and leaves `self.borrow_depth` at `u8::MAX`, where
+    /// the depth increment would wrap; [`with_scratch`] has the same bound via
+    /// slot exhaustion, so this is not a new failure mode.
+    ///
+    /// [`release`]: Self::release
+    /// [`with_scratch`]: Self::with_scratch
+    #[inline]
+    pub fn with_scratch_bounded<R>(&self, n: usize, f: impl FnOnce(&mut [T]) -> R) -> R {
+        struct BorrowGuard<'a> {
+            depth: &'a Cell<u8>,
+            original: u8,
+        }
+
+        impl Drop for BorrowGuard<'_> {
+            #[inline(always)]
+            fn drop(&mut self) {
+                self.depth.set(self.original);
+            }
+        }
+
+        let depth = self.borrow_depth.get();
+        if depth < MAX_POOL_SLOTS as u8 {
+            self.borrow_depth.set(depth + 1);
+            let _guard = BorrowGuard {
+                depth: &self.borrow_depth,
+                original: depth,
+            };
+            let idx = depth as usize;
+            // Record this depth's high-water request before the buffer is
+            // grown, so `release` can distinguish the requested size from
+            // growth-policy headroom.
+            let provision = &self.provisions[idx];
+            provision.set(provision.get().max(n));
+            // SAFETY: exclusive access guaranteed by borrow_depth tracking.
+            // Each nesting level gets its own slot index.
+            let vec = unsafe { &mut *self.slots[idx].get() };
+            if n > vec.len() {
+                vec.ensure_len(n);
+                if depth == 0 {
+                    self.primary_capacity.set(vec.capacity());
+                }
+            }
+            debug_assert!(
+                depth != 0 || self.primary_capacity.get() == vec.capacity(),
+                "primary_capacity drifted from slot 0's actual capacity"
+            );
+            debug_assert_eq!(
+                vec.as_mut_ptr() as usize % T::ALIGN_BYTES,
+                0,
+                "Scratch buffer not aligned to {} bytes",
+                T::ALIGN_BYTES
+            );
+            let slice = &mut vec.as_mut_slice()[..n];
+            f(slice)
+        } else {
+            let mut owned = AlignedVec::with_capacity(n);
+            owned.ensure_len(n);
+            f(owned.as_mut_slice())
+        }
+    }
+
+    /// Reclaims every slot's storage above its recorded provision.
+    ///
+    /// With [`with_scratch_bounded`](Self::with_scratch_bounded) as the only
+    /// entry point, a provision is the largest request ever seen at that
+    /// depth; the slot keeps capacity for it (warm reuse stays allocation-free)
+    /// and surrenders everything above — growth headroom included, so the
+    /// retained steady state is exactly the working set. Slots whose provision
+    /// is zero are dropped entirely. A slot is reclaimed only when its depth
+    /// is idle; busy slots are skipped, never torn from under a live borrow.
+    ///
+    /// The intended quiescent rhythm: run transforms normally, then call this
+    /// when the workload idles — not on every `with_scratch` exit, which would
+    /// reintroduce the churn the pool exists to remove. Provisions persist, so
+    /// repeated release/idle cycles converge; a smaller *steady-state* working
+    /// set needs [`reset`](Self::reset).
+    ///
+    /// Returns the per-slot capacities after reclamation. A slot that is
+    /// currently borrowed reports its provision instead: its live capacity is
+    /// not observable without deriving a reference under an existing exclusive
+    /// borrow, the same aliasing [`capacity`](Self::capacity) exists to avoid.
+    pub fn release(&self) -> [usize; MAX_POOL_SLOTS] {
+        let mut capacities = [0usize; MAX_POOL_SLOTS];
+        for (idx, slot) in self.slots.iter().enumerate() {
+            let provision = self.provisions[idx].get();
+            if self.borrow_depth.get() > idx as u8 {
+                capacities[idx] = provision;
+                continue;
+            }
+            // SAFETY: exclusive access — the depth guard above proved this
+            // slot's nesting level is not on the stack, so no borrow of the
+            // slot can be live.
+            let vec = unsafe { &mut *slot.get() };
+            if provision == 0 {
+                if vec.capacity() != 0 {
+                    // Drop returns the allocation, then the sentinel lands.
+                    *vec = AlignedVec::dangling();
+                    if idx == 0 {
+                        self.primary_capacity.set(0);
+                    }
+                }
+            } else if vec.capacity() > provision {
+                vec.shrink_to(provision);
+                // No `clear`: reuse is explicitly not re-zeroed (see
+                // `with_scratch`), and zeroing here would put an O(n)
+                // memset on the warm path — the exact churn the pool
+                // exists to remove. The next growth re-zeros its new
+                // range as always.
+                if idx == 0 {
+                    self.primary_capacity.set(vec.capacity());
+                }
+            }
+            capacities[idx] = vec.capacity();
+        }
+        capacities
+    }
+
+    /// Clears the recorded provisions so a later [`release`](Self::release)
+    /// reclaims every slot entirely.
+    ///
+    /// For a full working-set changeover (a consumer tearing down one workload
+    /// and starting another): reset, then run the new workload through
+    /// [`with_scratch_bounded`](Self::with_scratch_bounded), then release.
+    /// Slots that are not idle keep their buffers; the next release sees their
+    /// cleared provisions and reclaims them.
+    pub fn reset(&self) {
+        for provision in &self.provisions {
+            provision.set(0);
         }
     }
 

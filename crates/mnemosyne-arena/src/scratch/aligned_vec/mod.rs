@@ -105,7 +105,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     fn reserve(&mut self, additional: usize) {
         let needed = self.len.saturating_add(additional);
         if needed > self.capacity {
-            self.grow_to(needed.max(self.capacity.saturating_mul(2)));
+            self.grow_bounded(needed);
         }
     }
 
@@ -168,6 +168,89 @@ impl<T: ScratchElement> AlignedVec<T> {
         }
         self.ptr = new_ptr;
         self.capacity = new_capacity;
+    }
+
+    /// Growth policy shared by every length-changing operation.
+    ///
+    /// A virgin allocation (capacity 0) is sized **exactly** to the request:
+    /// there is no prior usage pattern to amortize against, so any headroom
+    /// would be pure overshoot, retained for the buffer's life unless a
+    /// shrink path reclaims it (the apollo retention probe measured exactly
+    /// this overshoot held permanently by worker-resident scratch,
+    /// `ATLAS-APOLLO-WORKER-RETENTION`). Growth of an existing buffer adds
+    /// one-eighth headroom (at least 8 elements, so small buffers keep
+    /// amortized growth instead of growing one element per push) — a
+    /// geometric factor of 9/8, so pushes stay amortized O(1) and overshoot
+    /// is capped at 12.5% where the old doubling policy allowed 100%.
+    #[cold]
+    #[inline(never)]
+    fn grow_bounded(&mut self, needed: usize) {
+        let target = if self.capacity == 0 {
+            needed
+        } else {
+            needed.saturating_add(needed / 8).max(needed + 8)
+        };
+        self.grow_to(target);
+    }
+
+    /// Reallocates the buffer down to exactly `new_capacity` elements,
+    /// returning the surplus to the allocator.
+    ///
+    /// This is the counterpart of [`grow_to`](Self::grow_to) and the only
+    /// operation on this type that gives memory back. It never grows: when
+    /// `new_capacity >= self.capacity()` it is a no-op. `len` is clamped to
+    /// the new capacity, so the type's `len <= capacity` invariant survives;
+    /// the retained elements keep their values.
+    ///
+    /// Callers that need the released region to read as fresh later should
+    /// re-zero it themselves (see [`ScratchPool::release`](super::ScratchPool::release),
+    /// which does exactly that around this method).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the allocator reports failure for the smaller layout.
+    fn shrink_to_capacity(&mut self, new_capacity: usize) {
+        if new_capacity >= self.capacity {
+            return;
+        }
+        if new_capacity == 0 {
+            if self.capacity > 0 {
+                // Let `Drop` return the old allocation, then install the
+                // dangling sentinel: `*self =` drops the old value first, so a
+                // manual `dealloc` here would free the same block twice.
+                *self = Self::dangling();
+            }
+            return;
+        }
+        let old_layout = Self::layout_for(self.capacity);
+        let new_layout = Self::layout_for(new_capacity);
+        // SAFETY: `self.ptr` was allocated by this same allocator with
+        // `old_layout` (`capacity != 0` is guaranteed by the early return
+        // above), and both layouts share the alignment of `T`.
+        // `new_layout.size()` is non-zero (`layout_for` clamps to >= 1), so
+        // this shrinks rather than frees; the result is null-checked before
+        // it replaces `self.ptr`.
+        let new_ptr =
+            unsafe { alloc::alloc::realloc(self.ptr as *mut u8, old_layout, new_layout.size()) }
+                as *mut T;
+        if new_ptr.is_null() {
+            alloc::alloc::handle_alloc_error(new_layout);
+        }
+        self.ptr = new_ptr;
+        self.capacity = new_capacity;
+        if self.len > self.capacity {
+            self.len = self.capacity;
+        }
+    }
+
+    /// Reallocates the buffer down to exactly `new_capacity` elements,
+    /// returning the surplus to the allocator.
+    ///
+    /// See [`shrink_to_capacity`](Self::shrink_to_capacity); this is its
+    /// public name, kept beside the length operations it complements.
+    #[inline]
+    pub fn shrink_to(&mut self, new_capacity: usize) {
+        self.shrink_to_capacity(new_capacity);
     }
 
     #[inline]
