@@ -396,6 +396,14 @@ pub fn purge_lazy(warm_threshold: usize) {
     }
 }
 
+/// Purges with `StandardPolicy::SEGMENT_POOL_WARM_THRESHOLD` warm segments kept.
+///
+/// A higher-level shortcut for `purge_lazy(StandardPolicy::SEGMENT_POOL_WARM_THRESHOLD)`.
+pub fn purge_standard() {
+    use mnemosyne_core::policy::AllocPolicy;
+    purge_lazy(mnemosyne_core::policy::StandardPolicy::SEGMENT_POOL_WARM_THRESHOLD);
+}
+
 /// Triggers a manual background decay and defragmentation cycle across all active memory backends.
 pub fn decay() {
     mnemosyne_decay::decay_step();
@@ -441,14 +449,7 @@ impl BinStatsWindow {
         core::array::from_fn(|class| {
             let b = &self.bins[class];
             let n = &now[class];
-            mnemosyne_local::BinSnapshot {
-                alloc_count: n.alloc_count.saturating_sub(b.alloc_count),
-                dealloc_count: n.dealloc_count.saturating_sub(b.dealloc_count),
-                alloc_bytes: n.alloc_bytes.saturating_sub(b.alloc_bytes),
-                requested_bytes: n.requested_bytes.saturating_sub(b.requested_bytes),
-                block_size: n.block_size,
-                live_estimate: n.live_estimate.saturating_sub(b.live_estimate),
-            }
+            n.saturating_delta(b)
         })
     }
 

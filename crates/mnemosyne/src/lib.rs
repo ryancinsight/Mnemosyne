@@ -32,9 +32,10 @@ pub use mnemosyne_heap::{
 };
 pub use mnemosyne_local::{
     BinSnapshot, FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics,
-    LocalAllocatorSelector, SizeClassCache, SizeClassOccupancy, all_bin_snapshots, bin_snapshot,
-    flush_tls_stats, hottest_class, reset_bin_stats, summary_line, total_alloc_count,
-    total_internal_fragmentation, total_live_bytes, total_requested_bytes, usable_size,
+    LocalAllocatorSelector, SizeClassCache, SizeClassOccupancy, all_bin_snapshots,
+    alloc_distribution, bin_snapshot, flush_tls_stats, hottest_class, reset_bin_stats,
+    summary_line, total_alloc_count, total_internal_fragmentation, total_live_bytes,
+    total_requested_bytes, usable_size,
 };
 pub use mnemosyne_prof::{
     disable_leak_detector, disable_profiling, dump_leaks, dump_profile, enable_leak_detector,
@@ -45,7 +46,7 @@ pub use options::{configure, get_options};
 pub use scratch::{AlignedVec, Drain, IntoIter};
 pub use stats::{
     BinStatsWindow, MemoryStats, decay, memory_stats, memory_stats_generic, memory_stats_json,
-    purge, purge_generic, purge_lazy, reset, reset_generic,
+    purge, purge_generic, purge_lazy, purge_standard, reset, reset_generic,
 };
 
 /// Forces the Mnemosyne thread-local allocator to initialize for the current

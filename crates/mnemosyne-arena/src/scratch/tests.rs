@@ -948,3 +948,27 @@ fn aligned_vec_strip_prefix_suffix() {
     assert_eq!(v.strip_suffix(b"bar"), Some(b"foo".as_ref()));
     assert_eq!(v.strip_prefix(b"baz"), None);
 }
+// ---- Phase 23: sort_unstable_by + alloc_distribution + is_sorted -----------
+
+#[test]
+fn aligned_vec_sort_unstable_by_reverse() {
+    let mut v = AlignedVec::<i32>::from_slice(&[3, 1, 4, 1, 5]);
+    v.sort_unstable_by(|a, b| b.cmp(a));
+    // Reverse order
+    assert_eq!(&v.as_slice()[0], &5);
+}
+
+#[test]
+fn aligned_vec_sort_unstable_by_key() {
+    let mut v = AlignedVec::<i32>::from_slice(&[-3, 1, -4, 1, 5]);
+    v.sort_unstable_by_key(|x| x.unsigned_abs());
+    assert_eq!(v.as_slice()[0], 1); // smallest absolute value
+}
+
+#[test]
+fn aligned_vec_is_sorted() {
+    let asc = AlignedVec::<i32>::from_slice(&[1, 2, 3, 4]);
+    assert!(asc.is_sorted());
+    let unsorted = AlignedVec::<i32>::from_slice(&[1, 3, 2]);
+    assert!(!unsorted.is_sorted());
+}

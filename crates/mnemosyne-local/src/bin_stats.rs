@@ -169,7 +169,13 @@ fn flush_current_thread() {
 }
 
 /// Per-size-class allocation statistics snapshot.
+///
+/// Non-exhaustive: this is telemetry the allocator *produces*, and its field
+/// set grows as new counters are added — `requested_bytes` was the most recent.
+/// Marking it so keeps each addition a non-breaking change instead of a major
+/// one. Construct via [`Default`] and read the fields.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct BinSnapshot {
     /// Total allocations served from this size class.
     pub alloc_count: u64,
@@ -196,6 +202,27 @@ pub struct BinSnapshot {
 }
 
 impl BinSnapshot {
+    /// Counters advanced since `baseline`, saturating at zero where one
+    /// decreased or was reset.
+    ///
+    /// Lives here rather than at the call site because [`BinSnapshot`] is
+    /// `#[non_exhaustive]`: only this crate may build one by literal, so a new
+    /// counter field extends this method instead of breaking every consumer
+    /// that computes a delta.
+    #[must_use]
+    pub fn saturating_delta(&self, baseline: &Self) -> Self {
+        Self {
+            alloc_count: self.alloc_count.saturating_sub(baseline.alloc_count),
+            dealloc_count: self.dealloc_count.saturating_sub(baseline.dealloc_count),
+            alloc_bytes: self.alloc_bytes.saturating_sub(baseline.alloc_bytes),
+            requested_bytes: self
+                .requested_bytes
+                .saturating_sub(baseline.requested_bytes),
+            block_size: self.block_size,
+            live_estimate: self.live_estimate.saturating_sub(baseline.live_estimate),
+        }
+    }
+
     /// Fragmentation ratio: `live_bytes / alloc_bytes`, in `[0.0, 1.0]`.
     ///
     /// Returns `0.0` when nothing has ever been allocated in this class.
@@ -374,6 +401,30 @@ pub fn total_internal_fragmentation() -> f64 {
     }
     let waste = alloc.saturating_sub(requested);
     (waste as f64 / alloc as f64).min(1.0)
+}
+
+/// Returns the fractional distribution of `alloc_count` across all size
+/// classes as an array of `f64` values in `[0.0, 1.0]` that sum to 1.0.
+///
+/// The `i`-th element is `alloc_count[i] / total_alloc_count`. If no
+/// allocations have been recorded, every element is `0.0`.
+///
+/// Useful for understanding which size classes dominate the workload.
+#[must_use]
+pub fn alloc_distribution() -> [f64; NUM_SIZE_CLASSES] {
+    let snapshots = all_bin_snapshots();
+    let total: u64 = snapshots
+        .iter()
+        .map(|s| s.alloc_count)
+        .fold(0, u64::saturating_add);
+    if total == 0 {
+        return [0.0; NUM_SIZE_CLASSES];
+    }
+    let mut dist = [0.0f64; NUM_SIZE_CLASSES];
+    for (i, s) in snapshots.iter().enumerate() {
+        dist[i] = s.alloc_count as f64 / total as f64;
+    }
+    dist
 }
 
 #[cfg(test)]
