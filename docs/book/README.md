@@ -27,7 +27,8 @@ parametric API that lets callers trade safety for throughput at compile time.
 2. Allocation policies as compile-time ZST parameters, including their active
    mitigation masks and zeroing/poisoning costs.
 3. The global allocator: `#[global_allocator] static A: Mnemosyne = Mnemosyne`.
-4. Scratch pools: zero-allocation temporary buffers with nested borrow support.
+4. Scratch pools: zero-allocation temporary buffers with nested borrowing and
+   quiescent reclamation.
 5. Segment lifecycle: how free segments are cached, decayed, purged, and reset.
 6. NUMA placement and the `themis::PlacementHint` integration.
 7. Hardened and secure policies for safety-critical subsystems.
