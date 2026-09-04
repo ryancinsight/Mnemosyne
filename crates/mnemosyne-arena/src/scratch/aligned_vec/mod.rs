@@ -105,7 +105,7 @@ impl<T: ScratchElement> AlignedVec<T> {
     fn reserve(&mut self, additional: usize) {
         let needed = self.len.saturating_add(additional);
         if needed > self.capacity {
-            self.grow_bounded(needed);
+            self.grow_geometric(needed);
         }
     }
 
@@ -170,27 +170,16 @@ impl<T: ScratchElement> AlignedVec<T> {
         self.capacity = new_capacity;
     }
 
-    /// Growth policy shared by every length-changing operation.
+    /// Applies the shared geometric growth policy to a required capacity.
     ///
-    /// A virgin allocation (capacity 0) is sized **exactly** to the request:
-    /// there is no prior usage pattern to amortize against, so any headroom
-    /// would be pure overshoot, retained for the buffer's life unless a
-    /// shrink path reclaims it (the apollo retention probe measured exactly
-    /// this overshoot held permanently by worker-resident scratch,
-    /// `ATLAS-APOLLO-WORKER-RETENTION`). Growth of an existing buffer adds
-    /// one-eighth headroom (at least 8 elements, so small buffers keep
-    /// amortized growth instead of growing one element per push) — a
-    /// geometric factor of 9/8, so pushes stay amortized O(1) and overshoot
-    /// is capped at 12.5% where the old doubling policy allowed 100%.
+    /// A virgin allocation is exact because `capacity` is zero; an existing
+    /// allocation doubles unless the request is larger. The policy keeps
+    /// reallocation and copy traffic amortized, while [`shrink_to_capacity`]
+    /// and the scratch-pool release path bound idle retention separately.
     #[cold]
     #[inline(never)]
-    fn grow_bounded(&mut self, needed: usize) {
-        let target = if self.capacity == 0 {
-            needed
-        } else {
-            needed.saturating_add(needed / 8).max(needed + 8)
-        };
-        self.grow_to(target);
+    fn grow_geometric(&mut self, needed: usize) {
+        self.grow_to(needed.max(self.capacity.saturating_mul(2)));
     }
 
     /// Reallocates the buffer down to exactly `new_capacity` elements,
@@ -202,9 +191,8 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// the new capacity, so the type's `len <= capacity` invariant survives;
     /// the retained elements keep their values.
     ///
-    /// Callers that need the released region to read as fresh later should
-    /// re-zero it themselves (see [`ScratchPool::release`](super::ScratchPool::release),
-    /// which does exactly that around this method).
+    /// Callers that need the released region to read as fresh later must
+    /// re-zero it themselves; shrinking only preserves the initialized prefix.
     ///
     /// # Panics
     ///
@@ -246,8 +234,8 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// Reallocates the buffer down to exactly `new_capacity` elements,
     /// returning the surplus to the allocator.
     ///
-    /// See [`shrink_to_capacity`](Self::shrink_to_capacity); this is its
-    /// public name, kept beside the length operations it complements.
+    /// This is the public length-oriented entry point for the capacity
+    /// reduction operation.
     #[inline]
     pub fn shrink_to(&mut self, new_capacity: usize) {
         self.shrink_to_capacity(new_capacity);

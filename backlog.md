@@ -2,6 +2,20 @@
 
 ## In progress
 
+## MN-SCRATCH-GROWTH-COST-2026-09-04 [patch] [perf] — in-progress <a id="mn-scratch-growth-cost-2026-09-04"></a>
+
+- **Outcome:** Preserve geometric scratch growth while `release` reclaims
+  capacity above each recorded provision, avoiding a reallocation regression
+  in the retention fix.
+- **Scope:** `mnemosyne-arena` aligned scratch storage, focused scratch tests,
+  and synchronized changelog/backlog text on PR #127.
+- **Acceptance:** growth retains its overflow-safe doubling policy and remains
+  amortized; release retains the requested provision exactly; a regression test
+  bounds growth events;
+  format, strict Clippy, Nextest, and Miri pass.
+- **Risk / delivery:** `[patch]` private growth policy and regression coverage;
+  integrator current Atlas session; branch `perf/scratch-release`.
+
 - [x] [arch] [minor] **MN-469 — Use Melinoe permits for branded heap handoff.**
   status=complete 2026-09-03; owner=atlas-session; branch=
   `feat/mnemosyne-melinoe-sync`; ADR=0010; commit=`afbedd4`.

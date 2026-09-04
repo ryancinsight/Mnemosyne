@@ -36,15 +36,11 @@
 
 ### Changed
 
-- **Scratch growth is bounded** (`ATLAS-APOLLO-WORKER-RETENTION`).
-  `AlignedVec` previously doubled capacity on growth, letting a slot overshoot
-  its request by up to 100% — with no shrink path, that overshoot was held for
-  the life of the thread (measured at 6.25% beyond need, permanently). A virgin
-  allocation is now sized exactly to the request (headroom there is pure
-  permanent overshoot: there is no prior pattern to amortize against), and
-  growth of an existing buffer adds one-eighth headroom (12.5% cap, 8-element
-  floor so small buffers stay amortized). Reallocation counts are unchanged:
-  same geometric-growth class, so amortized costs are preserved.
+- **Scratch retention is bounded** (`ATLAS-APOLLO-WORKER-RETENTION`).
+  `AlignedVec` retains its existing doubling growth policy, preserving
+  amortized reallocation and copy traffic. The new quiescent `release` path
+  trims idle slots to their recorded provisions, returning high-water storage
+  without putting an allocation or shrink operation on the warm path.
 
 - **Small-class ceiling raised to 16 KiB** (`MAX_SMALL_ALLOC_SIZE`, MN-461).
   Requests of 8-16 KiB previously left the size-class path for the large/huge
