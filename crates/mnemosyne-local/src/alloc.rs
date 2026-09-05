@@ -56,6 +56,10 @@ pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
     if !is_valid_alloc_request(size, align) {
         return core::ptr::null_mut();
     }
+    // Per-policy allocation size limit (zero means no limit beyond the global ceiling).
+    if P::MAX_ALLOC_SIZE_LIMIT != 0 && size > P::MAX_ALLOC_SIZE_LIMIT {
+        return core::ptr::null_mut();
+    }
 
     let ptr = {
         // SAFETY: `is_valid_alloc_request` validated `size` and `align` above,

@@ -374,6 +374,22 @@ impl<T: ScratchElement> ScratchPool<T> {
         }
     }
 
+    /// Returns `true` when the pool has at least one slot available for a
+    /// new borrow (`borrow_depth < MAX_POOL_SLOTS`).
+    #[inline]
+    #[must_use]
+    pub fn is_available(&self) -> bool {
+        self.borrow_depth.get() < MAX_POOL_SLOTS as u8
+    }
+
+    /// Returns the backing capacity of slot `idx`, or `0` when `idx` is out
+    /// of range. Callable at any time including during a live borrow.
+    #[inline]
+    #[must_use]
+    pub fn slot_capacity(&self, idx: usize) -> usize {
+        self.slot_capacities.get(idx).map_or(0, |c| c.get())
+    }
+
     /// Like [`with_scratch`][Self::with_scratch] but provides uninitialized
     /// memory via a raw pointer. The caller must initialize all elements.
     ///

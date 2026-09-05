@@ -13,11 +13,20 @@
 //! until the owning thread flushes its pending batch rather than a negative
 //! artefact.
 //!
+//! ## Reset boundary (generation counter)
+//!
+//! `reset_bin_stats()` increments a process-wide `RESET_GENERATION` counter.
+//! Each TLS batch records the generation it was started in. When a batch flush
+//! sees that the global generation has advanced past its recorded generation,
+//! it silently discards the batch instead of adding stale observations to the
+//! fresh counters. This ensures that every worker's pre-reset activity is
+//! excluded from post-reset snapshots regardless of flush ordering.
+//!
 //! Fragmentation ratio per class: `(alloc_bytes - dealloc_bytes) /
 //! alloc_bytes`.  Internal fragmentation per class: `(alloc_bytes -
 //! requested_bytes) / alloc_bytes`.
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicU32, Ordering};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::size_class::class_to_size;
 
@@ -37,6 +46,13 @@ static DEALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] =
 static REQUESTED_BYTES: [AtomicU64; NUM_SIZE_CLASSES] =
     [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
 
+/// Process-wide reset generation counter. Incremented on every `reset_bin_stats()`.
+///
+/// Each TLS batch records the generation it was started in. When a flush
+/// observes that this counter has advanced, the batch is discarded rather
+/// than adding stale pre-reset counts to the fresh global arrays.
+static RESET_GENERATION: AtomicU32 = AtomicU32::new(0);
+
 // Eight direct-mapped entries cover the common case of one or a few active
 // size classes while keeping the per-thread footprint bounded at 256 bytes.
 // A class collision flushes the displaced entry; it never drops observations.
@@ -50,6 +66,10 @@ const _: () = assert!(PENDING_SLOTS.is_power_of_two());
 struct PendingCount {
     class: usize,
     count: u32,
+    /// The `RESET_GENERATION` value when this slot was first populated.
+    /// If the global generation has since advanced, this batch is stale
+    /// and will be discarded rather than flushed.
+    generation: u32,
 }
 
 impl PendingCount {
@@ -57,6 +77,7 @@ impl PendingCount {
         Self {
             class: EMPTY_CLASS,
             count: 0,
+            generation: 0,
         }
     }
 
@@ -65,6 +86,8 @@ impl PendingCount {
         if self.class != class {
             self.flush(global);
             self.class = class;
+            // Stamp the generation when starting a new accumulation slot.
+            self.generation = RESET_GENERATION.load(Ordering::Relaxed);
         }
 
         self.count += 1;
@@ -76,8 +99,17 @@ impl PendingCount {
     #[inline]
     fn flush(&mut self, global: &[AtomicU64; NUM_SIZE_CLASSES]) {
         if self.count != 0 {
-            global[self.class].fetch_add(self.count as u64, Ordering::Relaxed);
+            // If the global reset generation has advanced past the one
+            // recorded when we started accumulating, discard the stale batch.
+            let current_gen = RESET_GENERATION.load(Ordering::Relaxed);
+            if current_gen == self.generation {
+                if self.class < NUM_SIZE_CLASSES {
+                    global[self.class].fetch_add(self.count as u64, Ordering::Relaxed);
+                }
+            }
+            // Always reset regardless of whether we flushed.
             self.count = 0;
+            self.class = EMPTY_CLASS;
         }
     }
 }
@@ -334,6 +366,12 @@ pub fn total_alloc_count() -> u64 {
 /// Useful for marking the start of a profiling window so subsequent
 /// snapshots reflect only activity since the reset.
 pub fn reset_bin_stats() {
+    // Advance the reset generation BEFORE zeroing, so any concurrent
+    // flush that reads the new generation discards its batch rather than
+    // flushing stale pre-reset counts that would be immediately zeroed.
+    // SeqCst here provides a total order that any thread observes before
+    // its next flush (which uses Relaxed on the generation load).
+    RESET_GENERATION.fetch_add(1, Ordering::SeqCst);
     flush_current_thread();
     for class in 0..NUM_SIZE_CLASSES {
         ALLOC_COUNT[class].store(0, Ordering::Relaxed);
@@ -431,7 +469,10 @@ pub fn alloc_distribution() -> [f64; NUM_SIZE_CLASSES] {
 mod tests {
     use core::sync::atomic::AtomicU64;
 
-    use super::{FLUSH_BATCH, NUM_SIZE_CLASSES, PendingCount, all_bin_snapshots, bin_snapshot};
+    use super::{
+        FLUSH_BATCH, NUM_SIZE_CLASSES, PendingCount, RESET_GENERATION, all_bin_snapshots,
+        bin_snapshot,
+    };
 
     #[test]
     fn pending_counts_flush_without_dropping_observations() {
@@ -447,6 +488,27 @@ mod tests {
             FLUSH_BATCH as u64
         );
         assert_eq!(pending.count, 0);
+    }
+
+    #[test]
+    fn generation_counter_discards_stale_batches() {
+        // Build a pending slot with the CURRENT generation.
+        let global = [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
+        let mut pending = PendingCount::new();
+        // Prime the slot so `generation` is stamped.
+        pending.record(2, &global);
+        // Advance the global generation (simulates a reset_bin_stats call).
+        RESET_GENERATION.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+        // Flush: the batch is stale and must be discarded.
+        pending.flush(&global);
+        // The global array must not have received the stale count.
+        assert_eq!(
+            global[2].load(core::sync::atomic::Ordering::Relaxed),
+            0,
+            "stale batch must not flush after generation advance"
+        );
+        // Undo the generation increment to avoid interfering with other tests.
+        RESET_GENERATION.fetch_sub(1, core::sync::atomic::Ordering::SeqCst);
     }
 
     #[test]

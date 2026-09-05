@@ -106,6 +106,16 @@ pub trait AllocPolicy: private::Sealed + Send + Sync + 'static {
     /// `0` disables. Inspired by snmalloc 0.7.2 `gwp_asan.h`.
     const GWP_SAMPLE_RATE: u32 = 0;
 
+    /// Maximum allocation size this policy will serve without a panic/error.
+    ///
+    /// Defaults to `MAX_ALLOC_SIZE` (the global ceiling). A more restrictive
+    /// policy can lower this to limit the maximum allocation size it serves,
+    /// useful for security envelopes or domain-specific allocators that
+    /// should not serve arbitrarily large objects.
+    ///
+    /// Zero means "no policy limit" (uses the global ceiling).
+    const MAX_ALLOC_SIZE_LIMIT: usize = 0;
+
     /// Compile-time configuration fingerprint.
     ///
     /// A single `u64` that uniquely identifies the combination of all boolean
