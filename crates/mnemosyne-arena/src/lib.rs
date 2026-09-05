@@ -24,3 +24,34 @@ pub use segment::{
     arena_memory_stats, checked_align_up, deallocate_segment, purge_segment_pool,
     purge_segment_pool_with_warm, reset_segment_pool, try_deallocate_segment,
 };
+
+/// Constructs an [`AlignedVec`] from a literal list of elements.
+///
+/// Syntax mirrors `vec!` from the standard library:
+/// - `aligned_vec![1u32, 2, 3]` — create from elements
+/// - `aligned_vec![0u8; 64]` — fill with `n` copies of a value
+///
+/// # Examples
+///
+/// ```rust
+/// use mnemosyne_arena::aligned_vec;
+/// let v = aligned_vec![1u32, 2, 3];
+/// assert_eq!(v.as_slice(), &[1, 2, 3]);
+///
+/// let zeros = aligned_vec![0u8; 8];
+/// assert_eq!(zeros.len(), 8);
+/// assert!(zeros.iter().all(|&b| b == 0));
+/// ```
+#[macro_export]
+macro_rules! aligned_vec {
+    () => {
+        $crate::AlignedVec::dangling()
+    };
+    ($elem:expr; $n:expr) => {
+        $crate::AlignedVec::filled($n, $elem)
+    };
+    ($($x:expr),+ $(,)?) => {{
+        let slice: &[_] = &[$($x),+];
+        $crate::AlignedVec::from_slice(slice)
+    }};
+}

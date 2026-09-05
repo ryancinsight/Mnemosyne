@@ -441,6 +441,16 @@ pub fn total_internal_fragmentation() -> f64 {
     (waste as f64 / alloc as f64).min(1.0)
 }
 
+/// Returns the current value of the reset generation counter.
+///
+/// Increments monotonically on every [`reset_bin_stats`] call. Useful
+/// for asserting that a snapshot spans exactly one reset-free window.
+#[inline]
+#[must_use]
+pub fn reset_generation_count() -> u32 {
+    RESET_GENERATION.load(Ordering::Relaxed)
+}
+
 /// Returns the fractional distribution of `alloc_count` across all size
 /// classes as an array of `f64` values in `[0.0, 1.0]` that sum to 1.0.
 ///

@@ -994,3 +994,23 @@ fn aligned_vec_u8_display_utf8() {
     let s = std::format!("{v}");
     assert_eq!(s, "display");
 }
+// ---- Phase 26: aligned_vec! macro ----------------------------------------
+
+#[test]
+fn aligned_vec_macro_from_literals() {
+    let v = crate::aligned_vec![1u32, 2, 3];
+    assert_eq!(v.as_slice(), &[1, 2, 3]);
+}
+
+#[test]
+fn aligned_vec_macro_fill() {
+    let v = crate::aligned_vec![42u8; 5];
+    assert_eq!(v.len(), 5);
+    assert!(v.iter().all(|&b| b == 42));
+}
+
+#[test]
+fn aligned_vec_macro_empty() {
+    let v: AlignedVec<u32> = crate::aligned_vec![];
+    assert!(v.is_empty());
+}

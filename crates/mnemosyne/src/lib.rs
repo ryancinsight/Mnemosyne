@@ -42,6 +42,7 @@ pub use mnemosyne_prof::{
     enable_profiling, is_leak_detector_enabled, is_profiling_enabled, register_alloc_hook,
     register_free_hook,
 };
+pub use mnemosyne_arena::aligned_vec;
 pub use options::{configure, get_options};
 pub use scratch::{AlignedVec, Drain, IntoIter};
 pub use stats::{

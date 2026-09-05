@@ -207,25 +207,32 @@ pub fn memory_stats_json() -> alloc::string::String {
     // with the build configuration without consulting the binary.
     use mnemosyne_core::policy::AllocPolicy;
     json.pop(); // remove trailing '}'
-    // Include segment pool telemetry for completeness.
+    // Include segment and huge pool telemetry.
     use mnemosyne_arena::HasSegmentPool as _;
     let sp = mnemosyne_backend::MemoryBackendWrapper::global_segment_pool().stats();
+    let hp = mnemosyne_backend::MemoryBackendWrapper::global_huge_pool().stats();
     let total_req = mnemosyne_local::total_requested_bytes();
     let int_frag = mnemosyne_local::total_internal_fragmentation();
+    let reset_gen = mnemosyne_local::reset_generation_count();
     let _ = ::core::fmt::Write::write_fmt(
         &mut json,
         core::format_args!(
             ",\"pool_retained\":{},\"pool_purged\":{},\"pool_purge_calls\":{},\
              \"pool_reset_segments\":{},\"pool_reset_calls\":{},\
+             \"huge_retained_blocks\":{},\"huge_retained_bytes\":{},\
              \"total_requested_bytes\":{},\"total_internal_fragmentation\":{:.4},\
+             \"reset_generation\":{},\
              \"policy_name\":\"{}\",\"mitigation_flags\":{},\"policy_fingerprint\":{}}}",
             sp.retained,
             sp.purged_segments,
             sp.purge_calls,
             sp.reset_segments,
             sp.reset_calls,
+            hp.retained_blocks,
+            hp.retained_bytes,
             total_req,
             int_frag,
+            reset_gen,
             mnemosyne_core::policy::StandardPolicy::POLICY_NAME,
             mnemosyne_core::policy::StandardPolicy::MITIGATION_FLAGS,
             mnemosyne_core::policy::StandardPolicy::POLICY_FINGERPRINT,
@@ -500,5 +507,32 @@ impl BinStatsWindow {
             .iter()
             .map(|s| s.live_bytes())
             .fold(0u64, u64::saturating_add)
+    }
+
+    /// Total user-requested bytes during the window across all size classes.
+    ///
+    /// Requires `record_alloc_with_size` to have been used at call sites.
+    #[must_use]
+    pub fn total_requested_bytes_delta(&self) -> u64 {
+        self.delta()
+            .iter()
+            .map(|s| s.requested_bytes)
+            .fold(0u64, u64::saturating_add)
+    }
+
+    /// Internal fragmentation ratio over the window:
+    /// `(total_alloc_bytes_delta - total_requested_bytes_delta) / total_alloc_bytes_delta`.
+    ///
+    /// Returns `0.0` when `total_alloc_bytes_delta == 0` or `requested` is zero.
+    #[must_use]
+    pub fn window_internal_fragmentation(&self) -> f64 {
+        let d = self.delta();
+        let alloc: u64 = d.iter().map(|s| s.alloc_bytes).fold(0, u64::saturating_add);
+        let req: u64 = d.iter().map(|s| s.requested_bytes).fold(0, u64::saturating_add);
+        if alloc == 0 || req == 0 {
+            return 0.0;
+        }
+        let waste = alloc.saturating_sub(req);
+        (waste as f64 / alloc as f64).min(1.0)
     }
 }
