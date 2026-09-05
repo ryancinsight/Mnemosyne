@@ -1014,3 +1014,34 @@ fn aligned_vec_macro_empty() {
     let v: AlignedVec<u32> = crate::aligned_vec![];
     assert!(v.is_empty());
 }
+// ---- Phase 27: SizeClassInfo + ScratchPool::preload -----------------------
+
+#[test]
+fn size_class_info_for_class_round_trips() {
+    use mnemosyne_core::size_class::{SizeClassInfo, class_to_size, class_to_max_blocks};
+    use mnemosyne_core::constants::NUM_SIZE_CLASSES;
+    for class in 0..NUM_SIZE_CLASSES {
+        let info = SizeClassInfo::for_class(class).expect("in range");
+        assert_eq!(info.block_size, class_to_size(class));
+        assert_eq!(info.max_blocks, class_to_max_blocks(class));
+        assert_eq!(info.class, class);
+    }
+    assert!(SizeClassInfo::for_class(NUM_SIZE_CLASSES).is_none());
+}
+
+#[test]
+fn size_class_info_block_index_matches() {
+    use mnemosyne_core::size_class::{SizeClassInfo, block_index_in_page};
+    let info = SizeClassInfo::for_class(0).unwrap(); // 16-byte class
+    for offset in (0..mnemosyne_core::constants::PAGE_SIZE).step_by(16) {
+        assert_eq!(info.block_index(offset), block_index_in_page(0, offset));
+    }
+}
+
+#[test]
+fn scratch_pool_preload_sets_capacity() {
+    let pool = ScratchPool::<f64>::new();
+    pool.preload(&[64, 128]);
+    assert!(pool.slot_capacity(0) >= 64);
+    assert!(pool.slot_capacity(1) >= 128);
+}

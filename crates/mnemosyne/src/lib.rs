@@ -21,8 +21,9 @@ pub use mnemosyne_core::{
     mitigations,
     options::MnemosyneOptions,
     size_class::{
-        LEMIRE_DIV_SHIFT, block_index_in_page, class_to_max_blocks, class_to_size, size_to_class,
-        size_to_class_nonzero,
+        LEMIRE_DIV_SHIFT, SizeClassInfo, all_class_info, block_index_in_page,
+        class_to_max_blocks, class_to_size, size_class_fragmentation,
+        round_up_size_saturating, size_to_class, size_to_class_nonzero,
     },
 };
 #[cfg(feature = "branded")]
