@@ -409,6 +409,37 @@ pub fn decay() {
     mnemosyne_decay::decay_step();
 }
 
+/// Returns a human-readable one-line summary of the current policy and telemetry.
+///
+/// Format: `policy=<name> mitigations=0x<flags> allocs=<n> live_bytes=<b> int_frag=<x>%`
+#[must_use]
+pub fn policy_summary() -> alloc::string::String {
+    use alloc::format;
+    use mnemosyne_core::policy::AllocPolicy;
+    let stats = mnemosyne_local::summary_line();
+    format!(
+        "policy={} mitigations=0x{:08X} fingerprint=0x{:016X} {stats}",
+        mnemosyne_core::policy::StandardPolicy::POLICY_NAME,
+        mnemosyne_core::policy::StandardPolicy::MITIGATION_FLAGS,
+        mnemosyne_core::policy::StandardPolicy::POLICY_FINGERPRINT,
+    )
+}
+
+/// Returns the `n` hottest size classes by alloc_count, sorted descending.
+///
+/// Flushes TLS stats before sampling. Returns at most `n` entries; fewer
+/// if fewer than `n` classes have been allocated from.
+#[must_use]
+pub fn top_n_classes(n: usize) -> alloc::vec::Vec<mnemosyne_local::BinSnapshot> {
+    let mut snapshots: alloc::vec::Vec<_> = mnemosyne_local::all_bin_snapshots()
+        .into_iter()
+        .filter(|s| s.alloc_count > 0)
+        .collect();
+    snapshots.sort_unstable_by(|a, b| b.alloc_count.cmp(&a.alloc_count));
+    snapshots.truncate(n);
+    snapshots
+}
+
 // ── Stats window ──────────────────────────────────────────────────────────────
 
 /// A snapshot of bin stats taken at a fixed point in time.

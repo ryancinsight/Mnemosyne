@@ -133,3 +133,16 @@ const _: () = assert!(
     PAGE_SIZE.is_multiple_of(MIN_BLOCK_SIZE),
     "MIN_BLOCK_SIZE must divide PAGE_SIZE exactly"
 );
+
+/// `MIN_BLOCK_SIZE` must be a power of two for alignment arithmetic.
+const _: () = assert!(
+    MIN_BLOCK_SIZE.is_power_of_two(),
+    "MIN_BLOCK_SIZE must be a power of two for alignment checks"
+);
+
+/// `MAX_SMALL_ALLOC_SIZE` must be a power of two to simplify Lemire
+/// reciprocal table bounds and keep the size-class table regular.
+const _: () = assert!(
+    MAX_SMALL_ALLOC_SIZE.is_power_of_two(),
+    "MAX_SMALL_ALLOC_SIZE must be a power of two"
+);

@@ -375,3 +375,30 @@ impl core::fmt::Display for AlignedVec<u8> {
         }
     }
 }
+
+// ── UTF-8 construction ────────────────────────────────────────────────────────
+
+impl AlignedVec<u8> {
+    /// Creates an `AlignedVec<u8>` by copying the bytes of `s`.
+    #[inline]
+    #[must_use]
+    pub fn from_str(s: &str) -> Self {
+        Self::from_slice(s.as_bytes())
+    }
+
+    /// Interprets the initialized bytes as a UTF-8 string slice.
+    ///
+    /// Returns `Err` if the bytes are not valid UTF-8.
+    #[inline]
+    pub fn as_str(&self) -> Result<&str, core::str::Utf8Error> {
+        core::str::from_utf8(self.as_slice())
+    }
+
+    /// Interprets the initialized bytes as a UTF-8 string, replacing invalid
+    /// sequences with U+FFFD.
+    #[inline]
+    #[must_use]
+    pub fn to_string_lossy(&self) -> alloc::borrow::Cow<'_, str> {
+        alloc::string::String::from_utf8_lossy(self.as_slice())
+    }
+}

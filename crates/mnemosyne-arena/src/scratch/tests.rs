@@ -972,3 +972,25 @@ fn aligned_vec_is_sorted() {
     let unsorted = AlignedVec::<i32>::from_slice(&[1, 3, 2]);
     assert!(!unsorted.is_sorted());
 }
+// ---- Phase 24: AlignedVec<u8> string utilities ----------------------------
+
+#[test]
+fn aligned_vec_u8_from_str() {
+    let v = AlignedVec::<u8>::from_str("hello");
+    assert_eq!(v.as_slice(), b"hello");
+}
+
+#[test]
+fn aligned_vec_u8_as_str_roundtrip() {
+    let mut v = AlignedVec::<u8>::from_str("rust");
+    assert_eq!(v.as_str().unwrap(), "rust");
+    v.push(b'!');
+    assert_eq!(v.as_str().unwrap(), "rust!");
+}
+
+#[test]
+fn aligned_vec_u8_display_utf8() {
+    let v = AlignedVec::<u8>::from_str("display");
+    let s = std::format!("{v}");
+    assert_eq!(s, "display");
+}
