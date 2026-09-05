@@ -30,6 +30,15 @@ pub mod mitigations {
     pub const SIZED_FREE_VALIDATION: u32 = 1 << 6;
     /// Free-canary is now wired: it IS enforced at runtime.
     pub const FREE_CANARY_WIRED: u32 = 1 << 7;
+    /// Dual free-list per page (random-preserve): each page maintains a second
+    /// free list so that the allocator can randomly select from two lists,
+    /// widening the temporal distance between consecutive free and alloc of the
+    /// same block.
+    ///
+    /// Inspired by snmalloc 0.7.x `random_preserve` proposal. This bit is
+    /// defined for future use — a full page-struct extension is needed to
+    /// activate it.
+    pub const DUAL_FREELIST: u32 = 1 << 8;
     /// Mitigations with an end-to-end runtime implementation.
     ///
     /// `DELAY_PAGE_WAKE` and `FREE_CANARY_WIRED` belong here.
@@ -48,7 +57,7 @@ pub mod mitigations {
     /// policy. Use [`IMPLEMENTED`] or a policy's
     /// [`MITIGATION_FLAGS`][super::AllocPolicy::MITIGATION_FLAGS]
     /// for the currently enforced data-plane mitigations.
-    pub const ALL: u32 = IMPLEMENTED | SIZED_FREE_VALIDATION;
+    pub const ALL: u32 = IMPLEMENTED | SIZED_FREE_VALIDATION | DUAL_FREELIST;
     /// No mitigations.
     pub const NONE: u32 = 0;
 }

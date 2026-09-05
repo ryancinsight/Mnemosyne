@@ -35,8 +35,8 @@ pub use mnemosyne_local::{
     BinSnapshot, FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics,
     LocalAllocatorSelector, SizeClassCache, SizeClassOccupancy, all_bin_snapshots,
     alloc_distribution, bin_snapshot, flush_tls_stats, hottest_class, reset_bin_stats,
-    summary_line, total_alloc_count, total_internal_fragmentation, total_live_bytes,
-    total_requested_bytes, usable_size,
+    reset_generation_count, summary_line, total_alloc_count, total_internal_fragmentation,
+    total_live_bytes, total_requested_bytes, usable_size,
 };
 pub use mnemosyne_prof::{
     disable_leak_detector, disable_profiling, dump_leaks, dump_profile, enable_leak_detector,
@@ -45,7 +45,7 @@ pub use mnemosyne_prof::{
 };
 pub use mnemosyne_arena::aligned_vec;
 pub use options::{configure, get_options};
-pub use scratch::{AlignedVec, Drain, IntoIter};
+pub use scratch::{AlignedBuf, AlignedVec, Drain, IntoIter, ScratchElement};
 pub use stats::{
     BinStatsWindow, MemoryStats, decay, memory_stats, memory_stats_generic, memory_stats_json,
     policy_summary, purge, purge_generic, purge_lazy, purge_standard, reset, reset_generic,

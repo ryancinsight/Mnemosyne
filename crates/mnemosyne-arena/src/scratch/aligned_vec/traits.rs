@@ -386,6 +386,16 @@ impl AlignedVec<u8> {
         Self::from_slice(s.as_bytes())
     }
 
+    /// Appends the bytes of `s` to the buffer.
+    ///
+    /// Equivalent to `self.extend_from_slice(s.as_bytes())` but named for
+    /// discoverability alongside [`from_str`][Self::from_str] and the
+    /// [`fmt::Write`] impl.
+    #[inline]
+    pub fn push_str(&mut self, s: &str) {
+        self.extend_from_slice(s.as_bytes());
+    }
+
     /// Interprets the initialized bytes as a UTF-8 string slice.
     ///
     /// Returns `Err` if the bytes are not valid UTF-8.
