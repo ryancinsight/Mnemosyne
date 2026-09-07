@@ -11,6 +11,7 @@ pub mod scratch;
 mod stats;
 
 pub use allocator::{Mnemosyne, MnemosyneAllocator};
+pub use mnemosyne_arena::aligned_vec;
 pub use mnemosyne_backend::{
     CudaDeviceBackend, CudaGddrBackend, CudaHbmBackend, CudaHostPinnedBackend, CudaUnifiedBackend,
     MemoryBackendWrapper, is_cuda_available,
@@ -21,7 +22,8 @@ pub use mnemosyne_core::{
     mitigations,
     options::MnemosyneOptions,
     size_class::{
-        LEMIRE_DIV_SHIFT, block_index_in_page, class_to_max_blocks, class_to_size, size_to_class,
+        LEMIRE_DIV_SHIFT, SizeClassInfo, all_class_info, block_index_in_page, class_to_max_blocks,
+        class_to_size, round_up_size_saturating, size_class_fragmentation, size_to_class,
         size_to_class_nonzero,
     },
 };
@@ -34,8 +36,8 @@ pub use mnemosyne_local::{
     BinSnapshot, FastPathCacheConfig, FastPathCacheManager, FastPathEfficiencyMetrics,
     LocalAllocatorSelector, SizeClassCache, SizeClassOccupancy, all_bin_snapshots,
     alloc_distribution, bin_snapshot, flush_tls_stats, hottest_class, reset_bin_stats,
-    summary_line, total_alloc_count, total_internal_fragmentation, total_live_bytes,
-    total_requested_bytes, usable_size,
+    reset_generation_count, summary_line, total_alloc_count, total_internal_fragmentation,
+    total_live_bytes, total_requested_bytes, usable_size,
 };
 pub use mnemosyne_prof::{
     disable_leak_detector, disable_profiling, dump_leaks, dump_profile, enable_leak_detector,
@@ -43,10 +45,11 @@ pub use mnemosyne_prof::{
     register_free_hook,
 };
 pub use options::{configure, get_options};
-pub use scratch::{AlignedVec, Drain, IntoIter};
+pub use scratch::{AlignedBuf, AlignedVec, Drain, IntoIter, ScratchElement};
 pub use stats::{
     BinStatsWindow, MemoryStats, decay, memory_stats, memory_stats_generic, memory_stats_json,
-    purge, purge_generic, purge_lazy, purge_standard, reset, reset_generic,
+    policy_summary, purge, purge_generic, purge_lazy, purge_standard, reset, reset_generic,
+    top_n_classes,
 };
 
 /// Forces the Mnemosyne thread-local allocator to initialize for the current

@@ -972,3 +972,82 @@ fn aligned_vec_is_sorted() {
     let unsorted = AlignedVec::<i32>::from_slice(&[1, 3, 2]);
     assert!(!unsorted.is_sorted());
 }
+// ---- Phase 24: AlignedVec<u8> string utilities ----------------------------
+
+#[test]
+fn aligned_vec_u8_from_str() {
+    let v = AlignedVec::<u8>::from("hello");
+    assert_eq!(v.as_slice(), b"hello");
+}
+
+#[test]
+fn aligned_vec_u8_as_str_roundtrip() {
+    let mut v = AlignedVec::<u8>::from("rust");
+    assert_eq!(
+        v.as_str().expect("invariant: pushed bytes are ASCII"),
+        "rust"
+    );
+    v.push(b'!');
+    assert_eq!(
+        v.as_str().expect("invariant: pushed bytes are ASCII"),
+        "rust!"
+    );
+}
+
+#[test]
+fn aligned_vec_u8_display_utf8() {
+    let v = AlignedVec::<u8>::from("display");
+    let s = std::format!("{v}");
+    assert_eq!(s, "display");
+}
+// ---- Phase 26: aligned_vec! macro ----------------------------------------
+
+#[test]
+fn aligned_vec_macro_from_literals() {
+    let v = crate::aligned_vec![1u32, 2, 3];
+    assert_eq!(v.as_slice(), &[1, 2, 3]);
+}
+
+#[test]
+fn aligned_vec_macro_fill() {
+    let v = crate::aligned_vec![42u8; 5];
+    assert_eq!(v.len(), 5);
+    assert!(v.iter().all(|&b| b == 42));
+}
+
+#[test]
+fn aligned_vec_macro_empty() {
+    let v: AlignedVec<u32> = crate::aligned_vec![];
+    assert!(v.is_empty());
+}
+// ---- Phase 27: SizeClassInfo + ScratchPool::preload -----------------------
+
+#[test]
+fn size_class_info_for_class_round_trips() {
+    use mnemosyne_core::constants::NUM_SIZE_CLASSES;
+    use mnemosyne_core::size_class::{SizeClassInfo, class_to_max_blocks, class_to_size};
+    for class in 0..NUM_SIZE_CLASSES {
+        let info = SizeClassInfo::for_class(class).expect("in range");
+        assert_eq!(info.block_size, class_to_size(class));
+        assert_eq!(info.max_blocks, class_to_max_blocks(class));
+        assert_eq!(info.class, class);
+    }
+    assert!(SizeClassInfo::for_class(NUM_SIZE_CLASSES).is_none());
+}
+
+#[test]
+fn size_class_info_block_index_matches() {
+    use mnemosyne_core::size_class::{SizeClassInfo, block_index_in_page};
+    let info = SizeClassInfo::for_class(0).expect("invariant: class 0 is the 16-byte class");
+    for offset in (0..mnemosyne_core::constants::PAGE_SIZE).step_by(16) {
+        assert_eq!(info.block_index(offset), block_index_in_page(0, offset));
+    }
+}
+
+#[test]
+fn scratch_pool_preload_sets_capacity() {
+    let pool = ScratchPool::<f64>::new();
+    pool.preload(&[64, 128]);
+    assert!(pool.slot_capacity(0) >= 64);
+    assert!(pool.slot_capacity(1) >= 128);
+}

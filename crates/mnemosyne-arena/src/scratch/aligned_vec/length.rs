@@ -670,6 +670,153 @@ impl<T: ScratchElement> AlignedVec<T> {
     {
         self.as_slice().strip_suffix(suffix)
     }
+
+    // ── In-place reordering ──────────────────────────────────────────────────
+
+    /// Swaps the elements at indices `i` and `j` in-place.
+    ///
+    /// Delegates to `[T]::swap`. O(1).
+    ///
+    /// # Panics
+    ///
+    /// Panics if either index is out of bounds.
+    #[inline]
+    pub fn swap(&mut self, i: usize, j: usize) {
+        self.as_mut_slice().swap(i, j);
+    }
+
+    /// Reverses the order of all initialized elements in-place. O(n).
+    ///
+    /// Delegates to `[T]::reverse`.
+    #[inline]
+    pub fn reverse_inplace(&mut self) {
+        self.as_mut_slice().reverse();
+    }
+
+    /// Rotates all elements `mid` positions to the left.
+    ///
+    /// Element at index `mid` becomes the new first element. Equivalent to
+    /// `[T]::rotate_left`. O(n).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mid > len()`.
+    #[inline]
+    pub fn rotate_left(&mut self, mid: usize) {
+        self.as_mut_slice().rotate_left(mid);
+    }
+
+    /// Rotates all elements `k` positions to the right.
+    ///
+    /// Equivalent to `[T]::rotate_right`. O(n).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `k > len()`.
+    #[inline]
+    pub fn rotate_right(&mut self, k: usize) {
+        self.as_mut_slice().rotate_right(k);
+    }
+
+    // ── Element access ────────────────────────────────────────────────────────
+
+    /// Returns a reference to the first element, or `None` if empty.
+    #[inline]
+    #[must_use]
+    pub fn first(&self) -> Option<&T> {
+        self.as_slice().first()
+    }
+
+    /// Returns a mutable reference to the first element, or `None` if empty.
+    #[inline]
+    pub fn first_mut(&mut self) -> Option<&mut T> {
+        self.as_mut_slice().first_mut()
+    }
+
+    /// Returns a reference to the last element, or `None` if empty.
+    #[inline]
+    #[must_use]
+    pub fn last(&self) -> Option<&T> {
+        self.as_slice().last()
+    }
+
+    /// Returns a mutable reference to the last element, or `None` if empty.
+    #[inline]
+    pub fn last_mut(&mut self) -> Option<&mut T> {
+        self.as_mut_slice().last_mut()
+    }
+
+    // ── Windowed / chunked iteration ─────────────────────────────────────────
+
+    /// Returns an iterator over overlapping windows of length `size`.
+    ///
+    /// Delegates to `[T]::windows`. Each window is a contiguous `&[T]` of
+    /// exactly `size` elements.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `size == 0`.
+    #[inline]
+    pub fn windows_iter(&self, size: usize) -> core::slice::Windows<'_, T> {
+        self.as_slice().windows(size)
+    }
+
+    /// Returns an iterator over non-overlapping chunks of length `chunk_size`.
+    ///
+    /// Delegates to `[T]::chunks`. The last chunk may be shorter than
+    /// `chunk_size` if the length is not a multiple.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `chunk_size == 0`.
+    #[inline]
+    pub fn chunks_iter(&self, chunk_size: usize) -> core::slice::Chunks<'_, T> {
+        self.as_slice().chunks(chunk_size)
+    }
+
+    /// Returns an iterator over non-overlapping mutable chunks.
+    ///
+    /// Delegates to `[T]::chunks_mut`. The last chunk may be shorter.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `chunk_size == 0`.
+    #[inline]
+    pub fn chunks_mut(&mut self, chunk_size: usize) -> core::slice::ChunksMut<'_, T> {
+        self.as_mut_slice().chunks_mut(chunk_size)
+    }
+
+    /// Returns an iterator over non-overlapping chunks of exactly `chunk_size`.
+    ///
+    /// Delegates to `[T]::chunks_exact`. Elements that don't fit a complete
+    /// chunk are accessible via the iterator's `remainder()`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `chunk_size == 0`.
+    #[inline]
+    pub fn chunks_exact(&self, chunk_size: usize) -> core::slice::ChunksExact<'_, T> {
+        self.as_slice().chunks_exact(chunk_size)
+    }
+
+    /// Splits the initialized elements into two slices at `mid`.
+    ///
+    /// Returns `(&[0, mid), &[mid, len))`. Delegates to `[T]::split_at`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `mid > len()`.
+    #[inline]
+    #[must_use]
+    pub fn split_at(&self, mid: usize) -> (&[T], &[T]) {
+        self.as_slice().split_at(mid)
+    }
+
+    /// Mutable counterpart of [`split_at`][Self::split_at].
+    #[inline]
+    pub fn split_at_mut(&mut self, mid: usize) -> (&mut [T], &mut [T]) {
+        self.as_mut_slice().split_at_mut(mid)
+    }
 }
 
 // ── Drain iterator ───────────────────────────────────────────────────────────

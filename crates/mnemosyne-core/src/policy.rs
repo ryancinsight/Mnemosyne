@@ -30,6 +30,15 @@ pub mod mitigations {
     pub const SIZED_FREE_VALIDATION: u32 = 1 << 6;
     /// Free-canary is now wired: it IS enforced at runtime.
     pub const FREE_CANARY_WIRED: u32 = 1 << 7;
+    /// Dual free-list per page (random-preserve): each page maintains a second
+    /// free list so that the allocator can randomly select from two lists,
+    /// widening the temporal distance between consecutive free and alloc of the
+    /// same block.
+    ///
+    /// Inspired by snmalloc 0.7.x `random_preserve` proposal. This bit is
+    /// defined for future use — a full page-struct extension is needed to
+    /// activate it.
+    pub const DUAL_FREELIST: u32 = 1 << 8;
     /// Mitigations with an end-to-end runtime implementation.
     ///
     /// `DELAY_PAGE_WAKE` and `FREE_CANARY_WIRED` belong here.
@@ -48,7 +57,7 @@ pub mod mitigations {
     /// policy. Use [`IMPLEMENTED`] or a policy's
     /// [`MITIGATION_FLAGS`][super::AllocPolicy::MITIGATION_FLAGS]
     /// for the currently enforced data-plane mitigations.
-    pub const ALL: u32 = IMPLEMENTED | SIZED_FREE_VALIDATION;
+    pub const ALL: u32 = IMPLEMENTED | SIZED_FREE_VALIDATION | DUAL_FREELIST;
     /// No mitigations.
     pub const NONE: u32 = 0;
 }
@@ -105,6 +114,16 @@ pub trait AllocPolicy: private::Sealed + Send + Sync + 'static {
     /// Probabilistic guard-page sampling rate (GWP-ASan hook).
     /// `0` disables. Inspired by snmalloc 0.7.2 `gwp_asan.h`.
     const GWP_SAMPLE_RATE: u32 = 0;
+
+    /// Maximum allocation size this policy will serve without a panic/error.
+    ///
+    /// Defaults to `MAX_ALLOC_SIZE` (the global ceiling). A more restrictive
+    /// policy can lower this to limit the maximum allocation size it serves,
+    /// useful for security envelopes or domain-specific allocators that
+    /// should not serve arbitrarily large objects.
+    ///
+    /// Zero means "no policy limit" (uses the global ceiling).
+    const MAX_ALLOC_SIZE_LIMIT: usize = 0;
 
     /// Compile-time configuration fingerprint.
     ///

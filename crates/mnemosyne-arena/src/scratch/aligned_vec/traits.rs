@@ -375,3 +375,41 @@ impl core::fmt::Display for AlignedVec<u8> {
         }
     }
 }
+
+// ── UTF-8 construction ────────────────────────────────────────────────────────
+
+impl From<&str> for AlignedVec<u8> {
+    /// Copies the bytes of `s` into a new buffer.
+    #[inline]
+    fn from(s: &str) -> Self {
+        Self::from_slice(s.as_bytes())
+    }
+}
+
+impl AlignedVec<u8> {
+    /// Appends the bytes of `s` to the buffer.
+    ///
+    /// Equivalent to `self.extend_from_slice(s.as_bytes())` but named for
+    /// discoverability alongside the [`From<&str>`][From] impl and the
+    /// [`fmt::Write`] impl.
+    #[inline]
+    pub fn push_str(&mut self, s: &str) {
+        self.extend_from_slice(s.as_bytes());
+    }
+
+    /// Interprets the initialized bytes as a UTF-8 string slice.
+    ///
+    /// Returns `Err` if the bytes are not valid UTF-8.
+    #[inline]
+    pub fn as_str(&self) -> Result<&str, core::str::Utf8Error> {
+        core::str::from_utf8(self.as_slice())
+    }
+
+    /// Interprets the initialized bytes as a UTF-8 string, replacing invalid
+    /// sequences with U+FFFD.
+    #[inline]
+    #[must_use]
+    pub fn to_string_lossy(&self) -> alloc::borrow::Cow<'_, str> {
+        alloc::string::String::from_utf8_lossy(self.as_slice())
+    }
+}

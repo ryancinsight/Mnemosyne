@@ -346,6 +346,29 @@ impl<T: ScratchElement> ScratchPool<T> {
         }
     }
 
+    /// Prewarms multiple slots in one call.
+    ///
+    /// `sizes[i]` specifies the minimum capacity for slot `i` (depth `i`).
+    /// Out-of-range indices or a borrowed slot are silently skipped.
+    /// Entries of `0` skip that slot.
+    #[inline]
+    pub fn preload(&self, sizes: &[usize]) {
+        if self.borrow_depth.get() != 0 {
+            return;
+        }
+        for (idx, &min_cap) in sizes.iter().enumerate().take(MAX_POOL_SLOTS) {
+            if min_cap == 0 {
+                continue;
+            }
+            // SAFETY: borrow_depth == 0; idx < MAX_POOL_SLOTS.
+            let vec = unsafe { &mut *self.slots[idx].get() };
+            if vec.capacity() < min_cap {
+                vec.ensure_len(min_cap);
+                self.slot_capacities[idx].set(vec.capacity());
+            }
+        }
+    }
+
     /// Sum of backing capacities across all slots, in bytes.
     #[inline]
     pub fn total_capacity_bytes(&self) -> usize {
@@ -372,6 +395,22 @@ impl<T: ScratchElement> ScratchPool<T> {
             *vec = AlignedVec::dangling();
             self.slot_capacities[i].set(0);
         }
+    }
+
+    /// Returns `true` when the pool has at least one slot available for a
+    /// new borrow (`borrow_depth < MAX_POOL_SLOTS`).
+    #[inline]
+    #[must_use]
+    pub fn is_available(&self) -> bool {
+        self.borrow_depth.get() < MAX_POOL_SLOTS as u8
+    }
+
+    /// Returns the backing capacity of slot `idx`, or `0` when `idx` is out
+    /// of range. Callable at any time including during a live borrow.
+    #[inline]
+    #[must_use]
+    pub fn slot_capacity(&self, idx: usize) -> usize {
+        self.slot_capacities.get(idx).map_or(0, |c| c.get())
     }
 
     /// Like [`with_scratch`][Self::with_scratch] but provides uninitialized
