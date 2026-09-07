@@ -39,11 +39,12 @@ size.
 
 ## Verification
 
-The segment-key regression passes in the current tree. The backend compiled for
-`wasm32-unknown-unknown` and passed warning-denied Clippy on both targets before
-an unrelated peer edit introduced an overflowing literal in
-`types/page/mod.rs`; the current WASM check therefore stops at that peer-owned
-file. The full native core Nextest run likewise reports two peer-owned page
-test failures. Those files remain outside this increment. The remaining browser
-execution trace belongs to the Moirai browser reactor and Metis integration
-items; this ADR only establishes the portable memory substrate.
+On the clean `fix/mnemosyne-wasm-backend` branch from `origin/main`,
+`cargo check --target wasm32-unknown-unknown --offline`, warning-denied Clippy
+for native and `wasm32-unknown-unknown` all-target builds, and
+`cargo nextest run --offline` (369/369) pass. The canary and stack-interner
+fixtures use pointer-width-safe synthetic values so the same value contracts
+are exercised on wasm32. The shared main checkout still carries unrelated peer
+WIP; this branch does not claim to verify those uncommitted edits. The remaining
+browser execution trace belongs to the Moirai browser reactor and Metis
+integration items; this ADR only establishes the portable memory substrate.
