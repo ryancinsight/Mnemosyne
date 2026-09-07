@@ -27,6 +27,11 @@ melinoe::thread_cached! {
 /// it is committed.
 static PROCESS_KEY: AtomicUsize = AtomicUsize::new(0);
 
+// Keep the fallback bit pattern stable on 64-bit hosts while explicitly
+// truncating it to the pointer width used by 32-bit targets such as WASM.
+const PROCESS_KEY_FALLBACK: usize = 0xABCDABCDABCDABCDu64 as usize;
+const TLS_SEED_FALLBACK: usize = 0xDEADBEEFFACEFEEDu64 as usize;
+
 /// Returns the process-wide component of the freelist XOR key, initializing it
 /// once on the first call.
 ///
@@ -54,7 +59,7 @@ fn init_process_key() -> usize {
     hasher.write_usize(usize::MAX);
     let mut key = hasher.finish() as usize;
     if key == 0 {
-        key = 0xABCDABCDABCDABCD;
+        key = PROCESS_KEY_FALLBACK;
     }
     // CAS: if another thread already set it, use their value; otherwise use ours.
     match PROCESS_KEY.compare_exchange(0, key, Ordering::Release, Ordering::Relaxed) {
@@ -72,7 +77,7 @@ pub(crate) fn get_tls_seed() -> usize {
         hasher.write_usize(0);
         let mut seed = hasher.finish() as usize;
         if seed == 0 {
-            seed = 0xdeadbeeffacefeed;
+            seed = TLS_SEED_FALLBACK;
         }
         seed
     })

@@ -18,3 +18,4 @@
 | [0008](0008-policy-keyed-allocator-statistics.md) | Policy-keyed allocator statistics | Accepted |
 | [0009](0009-preserve-allocator-mapping-provenance.md) | Preserve allocator mapping provenance | Accepted |
 | [0010](0010-melinoe-permits-for-branded-heaps.md) | Use Melinoe permits for branded heap access | Accepted |
+| [0011](0011-wasm-memory-backend.md) | Provide a portable WebAssembly memory backend | Accepted |
