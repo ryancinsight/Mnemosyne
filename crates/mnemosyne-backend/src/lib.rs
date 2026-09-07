@@ -29,6 +29,8 @@
 #![no_std]
 #![deny(missing_docs)]
 
+extern crate alloc;
+
 pub mod backends;
 pub mod guard;
 pub mod mapping;

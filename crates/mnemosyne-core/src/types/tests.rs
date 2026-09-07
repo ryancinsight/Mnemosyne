@@ -217,6 +217,14 @@ fn huge_mapping_suffix_uses_raw_mapping_base() {
         (*segment).pages[0].block_size = 0x4000;
     }
 
+    let expected_key =
+        (segment as usize).wrapping_add(crate::constants::PAGE_SIZE) ^ (usize::MAX / 3);
+    assert_eq!(
+        unsafe { (*segment).keys[1] },
+        expected_key,
+        "segment page keys must use the pointer-width mask"
+    );
+
     let user_ptr = unsafe { raw.add(0x1800) }.cast_const();
     let suffix = unsafe { (*segment).huge_mapping_suffix_from(user_ptr) };
 
@@ -237,7 +245,9 @@ fn free_canary_write_check_clear_roundtrip() {
     let ptr = unsafe { alloc_zeroed(layout) } as *mut Block;
     assert!(!ptr.is_null());
 
-    let page_cookie: usize = 0xDEAD_BEEF_1234_5678;
+    // Keep the fixture within the wasm32 pointer width so the same canary
+    // contract is exercised on every supported target.
+    let page_cookie: usize = 0x1234_5678;
 
     // Initially no canary -- check_double_free should return false.
     let has_canary = unsafe { Block::check_double_free(ptr, page_cookie) };
@@ -254,7 +264,7 @@ fn free_canary_write_check_clear_roundtrip() {
     );
 
     // A different cookie must NOT match -- the canary is address+cookie bound.
-    let wrong_cookie: usize = 0x1111_2222_3333_4444;
+    let wrong_cookie: usize = 0x3333_4444;
     let wrong_match = unsafe { Block::check_double_free(ptr, wrong_cookie) };
     assert!(
         !wrong_match,
@@ -283,7 +293,7 @@ fn free_canary_is_address_bound() {
     let block_a = base;
     let block_b = unsafe { base.add(1) }; // MIN_BLOCK_SIZE offset
 
-    let cookie: usize = 0xCAFE_BABE_0000_0001;
+    let cookie: usize = 0xCAFE_0001;
 
     unsafe { Block::write_free_canary(block_a, cookie) };
     unsafe { Block::write_free_canary(block_b, cookie) };

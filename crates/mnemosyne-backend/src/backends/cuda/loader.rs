@@ -6,8 +6,11 @@
 //! behind an atomic state machine so concurrent first callers observe exactly
 //! one initialization.
 
-use core::ffi::{CStr, c_char, c_void};
+use core::ffi::{CStr, c_void};
 use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+
+#[cfg(any(target_family = "windows", target_family = "unix"))]
+use core::ffi::c_char;
 
 #[cfg(target_family = "windows")]
 unsafe extern "system" {
@@ -71,7 +74,7 @@ pub(super) unsafe fn cuda_library() -> *mut c_void {
         return cached;
     }
 
-    let lib = {
+    let lib: *mut c_void = {
         #[cfg(target_family = "windows")]
         {
             // SAFETY: `lpLibFileName` is a valid NUL-terminated string.
@@ -130,7 +133,7 @@ pub(super) unsafe fn resolve_sym(lib: *mut c_void, name: &CStr) -> *mut c_void {
     }
     #[cfg(not(any(target_family = "windows", target_family = "unix")))]
     {
-        let _unsupported = (lib, name);
+        let _ = (lib, name);
         core::ptr::null_mut()
     }
 }

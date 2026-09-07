@@ -26,6 +26,23 @@
 
 ## Ready
 
+<a id="MN-WASM-2026-09-06"></a>
+- [ ] [arch] [minor] **MN-WASM-2026-09-06 — provide a portable WebAssembly memory backend.**
+  status=review; integrator=atlas-session; branch=`fix/mnemosyne-wasm-backend`;
+  last-update=2026-09-06; lease=discharged.
+  **Outcome:** the core segment key and allocator fallback constants compile on
+  32-bit WebAssembly, and `mnemosyne-backend` selects a real page-aligned
+  global-allocator backend instead of inheriting a host-only default.
+  **Acceptance:** pointer-width-safe key derivation; WASM backend allocates and
+  deallocates through `Layout`; native and WASM warning-denied Clippy, full
+  native tests, and WASM compile pass. **Evidence:** clean branch
+  `fix/mnemosyne-wasm-backend` from `origin/main` passes the segment-key
+  regression, `cargo check --target wasm32-unknown-unknown --offline`, both
+  all-target Clippy runs, and `cargo nextest run --offline` (369/369).
+  Pointer-width-safe synthetic fixtures cover wasm32. The shared main checkout
+  retains unrelated peer WIP; the provider browser/DICOM consumer remains
+  external to this item.
+
 ## In progress
 
 <a id="mn-em-book-depth-1"></a>

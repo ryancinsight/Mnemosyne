@@ -16,4 +16,9 @@ mod unix;
 #[cfg(target_family = "unix")]
 pub use self::unix::UnixBackend as DefaultBackend;
 
+#[cfg(target_arch = "wasm32")]
+mod wasm;
+#[cfg(target_arch = "wasm32")]
+pub use self::wasm::WasmBackend as DefaultBackend;
+
 pub mod cuda;

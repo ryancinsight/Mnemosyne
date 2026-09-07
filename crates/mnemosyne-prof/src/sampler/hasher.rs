@@ -64,9 +64,11 @@ mod tests {
     fn fast_hasher_depends_on_every_word_position() {
         // Two-frame "stacks" sharing the last word model the real degenerate
         // case: distinct call sites all ending in the common thread root.
-        let a = 0x7ff6_0000_1000_usize;
-        let b = 0x7ff6_0000_2000_usize;
-        let c = 0x7ff6_0000_3000_usize;
+        // The exact virtual-address prefix is irrelevant; keep the fixtures
+        // within the wasm32 pointer width so this hash contract is portable.
+        let a = 0x1000_usize;
+        let b = 0x2000_usize;
+        let c = 0x3000_usize;
 
         let ab = slice_hash(&[a, b]);
         let ac = slice_hash(&[a, c]);
@@ -82,8 +84,8 @@ mod tests {
 
     #[test]
     fn fast_hasher_is_order_sensitive() {
-        let a = 0x7ff6_0000_1000_usize;
-        let b = 0x7ff6_0000_2000_usize;
+        let a = 0x1000_usize;
+        let b = 0x2000_usize;
         assert_ne!(
             slice_hash(&[a, b]),
             slice_hash(&[b, a]),
@@ -93,11 +95,7 @@ mod tests {
 
     #[test]
     fn fast_hasher_equal_input_yields_equal_hash() {
-        let frames = [
-            0x7ff6_0000_1000_usize,
-            0x7ff6_0000_2000_usize,
-            0x7ff6_0000_3000_usize,
-        ];
+        let frames = [0x1000_usize, 0x2000_usize, 0x3000_usize];
         assert_eq!(
             slice_hash(&frames),
             slice_hash(&frames),
