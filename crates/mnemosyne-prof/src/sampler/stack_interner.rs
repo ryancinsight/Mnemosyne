@@ -223,7 +223,9 @@ mod tests {
         let mut frames = [(usize::MAX, [0usize; 2]); N];
         let mut found = 0usize;
         for word in 1..16_384usize {
-            let stack = [0x7ff6_0000_0000usize | word, 0x7ff6_ffff_ffffusize];
+            // Synthetic frame values exercise shard diversity without relying
+            // on a 64-bit virtual-address layout unavailable to wasm32.
+            let stack = [0x1000usize | word, usize::MAX - 0x1000];
             let shard = stack_interner_shard(&stack);
             if frames[..found].iter().all(|(seen, _)| *seen != shard) {
                 frames[found] = (shard, stack);
@@ -238,7 +240,7 @@ mod tests {
 
     fn distinct_frames_for_shard(shard: usize, excluded: &[usize]) -> [usize; 2] {
         for word in 1..16_384usize {
-            let stack = [0x7ff6_1000_0000usize | word, 0x7ff6_ffff_ffffusize];
+            let stack = [0x0010_0000usize | word, usize::MAX - 0x1000];
             if stack_interner_shard(&stack) == shard && stack.as_slice() != excluded {
                 return stack;
             }

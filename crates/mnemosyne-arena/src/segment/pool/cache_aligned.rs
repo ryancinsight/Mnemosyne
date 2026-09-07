@@ -145,8 +145,6 @@ impl Drop for SegmentLockGuard<'_> {
 impl TaggedHead {
     #[cfg(target_pointer_width = "64")]
     const PACKED_PTR_BITS: u32 = 48;
-    #[cfg(not(target_pointer_width = "64"))]
-    const PACKED_PTR_BITS: u32 = usize::BITS;
 
     #[cfg(target_pointer_width = "64")]
     const PTR_MASK: usize = (1usize << Self::PACKED_PTR_BITS) - 1;
@@ -155,8 +153,6 @@ impl TaggedHead {
 
     #[cfg(target_pointer_width = "64")]
     const TAG_MASK: usize = (1usize << (usize::BITS - Self::PACKED_PTR_BITS)) - 1;
-    #[cfg(not(target_pointer_width = "64"))]
-    const TAG_MASK: usize = 0;
 
     /// Creates a new empty head: the null pointer packed with tag 0.
     #[inline(always)]
@@ -178,20 +174,22 @@ impl TaggedHead {
 
     #[inline(always)]
     pub(crate) fn tagged_successor(ptr: *mut Segment, current: *mut Segment) -> *mut Segment {
-        let addr = ptr.addr();
-        if (addr & !Self::PTR_MASK) != 0 {
-            #[cfg(any(feature = "std", test))]
-            {
-                std::process::abort();
-            }
-            #[cfg(not(any(feature = "std", test)))]
-            {
-                panic!("Segment address does not fit in packed huge-pool head");
-            }
-        }
-
+        #[cfg(not(target_pointer_width = "64"))]
+        let _ = current;
         #[cfg(target_pointer_width = "64")]
         {
+            let addr = ptr.addr();
+            if (addr & !Self::PTR_MASK) != 0 {
+                #[cfg(any(feature = "std", test))]
+                {
+                    std::process::abort();
+                }
+                #[cfg(not(any(feature = "std", test)))]
+                {
+                    panic!("Segment address does not fit in packed huge-pool head");
+                }
+            }
+
             let tag = (((current.addr() >> Self::PACKED_PTR_BITS) + 1) & Self::TAG_MASK)
                 << Self::PACKED_PTR_BITS;
             ptr.map_addr(|_| tag | addr)

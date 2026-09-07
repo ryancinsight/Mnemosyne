@@ -3,6 +3,11 @@
 use crate::constants::{PAGE_SIZE, PAGES_PER_SEGMENT};
 use crate::types::{Page, SegmentOwner};
 
+// The key mask is a repeated `01` bit pattern. Deriving it from the pointer
+// width keeps segment initialization valid for both 32-bit WASM and 64-bit
+// desktop targets without an overflowing literal.
+const PAGE_KEY_MASK: usize = usize::MAX / 3;
+
 /// Metadata representing a segment of memory.
 ///
 /// A segment is a large, aligned virtual memory allocation (typically 2MB).
@@ -277,7 +282,7 @@ impl Segment {
             // down to `SEGMENT_ALIGN`.
             for i in 0..PAGES_PER_SEGMENT {
                 segment.keys[i] =
-                    (aligned_ptr as usize).wrapping_add(i * PAGE_SIZE) ^ 0x5555555555555555;
+                    (aligned_ptr as usize).wrapping_add(i * PAGE_SIZE) ^ PAGE_KEY_MASK;
                 segment.pages[i] = Page::new();
                 segment.pages[i].page_index = i as u8;
             }
