@@ -26,7 +26,7 @@
 //! alloc_bytes`.  Internal fragmentation per class: `(alloc_bytes -
 //! requested_bytes) / alloc_bytes`.
 
-use core::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::size_class::class_to_size;
 
@@ -102,10 +102,8 @@ impl PendingCount {
             // If the global reset generation has advanced past the one
             // recorded when we started accumulating, discard the stale batch.
             let current_gen = RESET_GENERATION.load(Ordering::Relaxed);
-            if current_gen == self.generation {
-                if self.class < NUM_SIZE_CLASSES {
-                    global[self.class].fetch_add(self.count as u64, Ordering::Relaxed);
-                }
+            if current_gen == self.generation && self.class < NUM_SIZE_CLASSES {
+                global[self.class].fetch_add(self.count as u64, Ordering::Relaxed);
             }
             // Always reset regardless of whether we flushed.
             self.count = 0;

@@ -11,6 +11,7 @@ pub mod scratch;
 mod stats;
 
 pub use allocator::{Mnemosyne, MnemosyneAllocator};
+pub use mnemosyne_arena::aligned_vec;
 pub use mnemosyne_backend::{
     CudaDeviceBackend, CudaGddrBackend, CudaHbmBackend, CudaHostPinnedBackend, CudaUnifiedBackend,
     MemoryBackendWrapper, is_cuda_available,
@@ -21,9 +22,9 @@ pub use mnemosyne_core::{
     mitigations,
     options::MnemosyneOptions,
     size_class::{
-        LEMIRE_DIV_SHIFT, SizeClassInfo, all_class_info, block_index_in_page,
-        class_to_max_blocks, class_to_size, size_class_fragmentation,
-        round_up_size_saturating, size_to_class, size_to_class_nonzero,
+        LEMIRE_DIV_SHIFT, SizeClassInfo, all_class_info, block_index_in_page, class_to_max_blocks,
+        class_to_size, round_up_size_saturating, size_class_fragmentation, size_to_class,
+        size_to_class_nonzero,
     },
 };
 #[cfg(feature = "branded")]
@@ -43,7 +44,6 @@ pub use mnemosyne_prof::{
     enable_profiling, is_leak_detector_enabled, is_profiling_enabled, register_alloc_hook,
     register_free_hook,
 };
-pub use mnemosyne_arena::aligned_vec;
 pub use options::{configure, get_options};
 pub use scratch::{AlignedBuf, AlignedVec, Drain, IntoIter, ScratchElement};
 pub use stats::{

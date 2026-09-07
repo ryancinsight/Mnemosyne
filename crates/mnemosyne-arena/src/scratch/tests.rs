@@ -976,21 +976,27 @@ fn aligned_vec_is_sorted() {
 
 #[test]
 fn aligned_vec_u8_from_str() {
-    let v = AlignedVec::<u8>::from_str("hello");
+    let v = AlignedVec::<u8>::from("hello");
     assert_eq!(v.as_slice(), b"hello");
 }
 
 #[test]
 fn aligned_vec_u8_as_str_roundtrip() {
-    let mut v = AlignedVec::<u8>::from_str("rust");
-    assert_eq!(v.as_str().unwrap(), "rust");
+    let mut v = AlignedVec::<u8>::from("rust");
+    assert_eq!(
+        v.as_str().expect("invariant: pushed bytes are ASCII"),
+        "rust"
+    );
     v.push(b'!');
-    assert_eq!(v.as_str().unwrap(), "rust!");
+    assert_eq!(
+        v.as_str().expect("invariant: pushed bytes are ASCII"),
+        "rust!"
+    );
 }
 
 #[test]
 fn aligned_vec_u8_display_utf8() {
-    let v = AlignedVec::<u8>::from_str("display");
+    let v = AlignedVec::<u8>::from("display");
     let s = std::format!("{v}");
     assert_eq!(s, "display");
 }
@@ -1018,8 +1024,8 @@ fn aligned_vec_macro_empty() {
 
 #[test]
 fn size_class_info_for_class_round_trips() {
-    use mnemosyne_core::size_class::{SizeClassInfo, class_to_size, class_to_max_blocks};
     use mnemosyne_core::constants::NUM_SIZE_CLASSES;
+    use mnemosyne_core::size_class::{SizeClassInfo, class_to_max_blocks, class_to_size};
     for class in 0..NUM_SIZE_CLASSES {
         let info = SizeClassInfo::for_class(class).expect("in range");
         assert_eq!(info.block_size, class_to_size(class));
@@ -1032,7 +1038,7 @@ fn size_class_info_for_class_round_trips() {
 #[test]
 fn size_class_info_block_index_matches() {
     use mnemosyne_core::size_class::{SizeClassInfo, block_index_in_page};
-    let info = SizeClassInfo::for_class(0).unwrap(); // 16-byte class
+    let info = SizeClassInfo::for_class(0).expect("invariant: class 0 is the 16-byte class");
     for offset in (0..mnemosyne_core::constants::PAGE_SIZE).step_by(16) {
         assert_eq!(info.block_index(offset), block_index_in_page(0, offset));
     }

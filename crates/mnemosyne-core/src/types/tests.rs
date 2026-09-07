@@ -217,8 +217,8 @@ fn huge_mapping_suffix_uses_raw_mapping_base() {
         (*segment).pages[0].block_size = 0x4000;
     }
 
-    let expected_key = (segment as usize).wrapping_add(crate::constants::PAGE_SIZE)
-        ^ (usize::MAX / 3);
+    let expected_key =
+        (segment as usize).wrapping_add(crate::constants::PAGE_SIZE) ^ (usize::MAX / 3);
     assert_eq!(
         unsafe { (*segment).keys[1] },
         expected_key,

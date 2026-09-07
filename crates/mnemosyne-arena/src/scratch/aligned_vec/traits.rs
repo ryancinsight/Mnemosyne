@@ -378,18 +378,19 @@ impl core::fmt::Display for AlignedVec<u8> {
 
 // ── UTF-8 construction ────────────────────────────────────────────────────────
 
-impl AlignedVec<u8> {
-    /// Creates an `AlignedVec<u8>` by copying the bytes of `s`.
+impl From<&str> for AlignedVec<u8> {
+    /// Copies the bytes of `s` into a new buffer.
     #[inline]
-    #[must_use]
-    pub fn from_str(s: &str) -> Self {
+    fn from(s: &str) -> Self {
         Self::from_slice(s.as_bytes())
     }
+}
 
+impl AlignedVec<u8> {
     /// Appends the bytes of `s` to the buffer.
     ///
     /// Equivalent to `self.extend_from_slice(s.as_bytes())` but named for
-    /// discoverability alongside [`from_str`][Self::from_str] and the
+    /// discoverability alongside the [`From<&str>`][From] impl and the
     /// [`fmt::Write`] impl.
     #[inline]
     pub fn push_str(&mut self, s: &str) {
