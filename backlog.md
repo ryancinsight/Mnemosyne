@@ -1,5 +1,48 @@
 # Backlog
 
+<a id="mn-randomized-free-list-guard-regression"></a>
+## MN-RANDOMIZED-FREE-LIST-GUARD-REGRESSION — Uncommitted dual-free-list work disables the out-of-bounds abort [major] — blocked
+
+- **Status:** blocked; **found by:** claude-opus-5, 2026-09-07; **re-open
+  trigger:** the working-tree change below is committed, corrected, or dropped.
+- **What is in the tree.** 251 uncommitted lines across `page/{init,mod,reclaim}.rs`,
+  `local_alloc/page/allocation.rs`, `free.rs`, `free_helpers.rs`, `realloc.rs`
+  and two test files add a second per-page free list — `Page::secondary_free`
+  plus a `RANDOMIZE_ALLOCATION` policy flag — so LIFO reuse does not always
+  return blocks in the same order. It carries no board item and no claim.
+- **The regression.** `mnemosyne-local tests::test_free_list_corruption_out_of_bounds_aborts_process`
+  fails: *"Subprocess succeeded but was expected to abort!"* The test frees a
+  block under `StandardPolicy`, writes `0x12345678` as its encrypted next
+  pointer, and allocates twice; the second pop must validate the corrupt link
+  and `abort()`. With this change in the tree the subprocess exits cleanly —
+  the guard no longer fires. `StandardPolicy` has `RANDOMIZE_ALLOCATION`
+  false, so this is a regression on the *default* policy path, not only the
+  hardened one.
+- **Not the test's fault.** That test is untouched by the diff
+  (`git diff -- crates/mnemosyne-local/src/tests.rs | grep out_of_bounds`
+  is empty). The diff does rewrite the neighbouring
+  `hardened_policy_detects_freelist_tamper`, and that rewrite reads as a
+  genuine strengthening — it now asserts the decoded next pointer differs
+  after tampering rather than asserting on the head address — so it is not
+  the cause either.
+- **Ruled out so far.** `try_allocate_page_local` is behaviour-neutral under
+  `StandardPolicy`: every new disjunct is guarded by `P::RANDOMIZE_ALLOCATION`
+  or by `secondary_free.is_none()`, which always holds there. The remaining
+  candidates are `Page::try_pop_bump_block`'s new early return, `pop_block`,
+  and `reclaim_thread_free_in_segment`'s added parameter — `page/init.rs` is
+  the largest hunk at 95 lines and is where the pop-side validation lives.
+- **State.** `cargo check --workspace --all-targets` passes; nextest reports
+  **356/442 passed, 1 failed, 85 not run** behind the failure. Not committed:
+  green per commit is a precondition, and a security guard that stops firing
+  is not a state to land and fix later.
+- **Also worth deciding before it lands.** `Page` gains an
+  `Option<NonNull<Block>>`, and `page_struct_size_stays_within_one_cache_line`
+  asserts `size_of::<Page>() <= 64`. That test currently passes, so the field
+  fits — but the margin should be recorded, since the whole point of the
+  assertion is that page metadata stays one cache line on the allocation hot
+  path.
+
+
 ## MN-BIN-STATS-RESET-BOUNDARY-2026-09-04 — `reset_bin_stats` is not a synchronized profiling boundary [minor] [perf] — todo <a id="mn-bin-stats-reset-boundary-2026-09-04"></a>
 
 - **Integrator:** unclaimed; **branch:** none; **lease:** none.
