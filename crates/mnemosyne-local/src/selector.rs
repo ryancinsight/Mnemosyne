@@ -85,12 +85,20 @@ macro_rules! impl_local_allocator_selector {
                 #[cfg(nightly_tls_active)]
                 #[inline(always)]
                 fn get_quick_allocator_ptr() -> *mut core::ffi::c_void {
+                    // SAFETY: `QUICK_ALLOCATOR_PTR` is `#[thread_local]`, so this
+                    // reads the calling thread's own instance and no other thread
+                    // can observe or race it. The read copies a pointer value and
+                    // creates no reference, so it cannot alias a live borrow.
                     unsafe { QUICK_ALLOCATOR_PTR }
                 }
 
                 #[cfg(nightly_tls_active)]
                 #[inline(always)]
                 fn set_quick_allocator_ptr(ptr: *mut core::ffi::c_void) {
+                    // SAFETY: as above -- a `#[thread_local]` static written by
+                    // its owning thread. The write stores a pointer value and
+                    // takes no reference, so no borrow of the static is live
+                    // across it.
                     unsafe { QUICK_ALLOCATOR_PTR = ptr; }
                 }
             }
@@ -196,12 +204,18 @@ macro_rules! impl_local_allocator_selector {
                 #[cfg(nightly_tls_active)]
                 #[inline(always)]
                 fn get_quick_allocator_ptr() -> *mut core::ffi::c_void {
+                    // SAFETY: `ENCRYPTED_QUICK_ALLOCATOR_PTR` is `#[thread_local]`,
+                    // so this reads the calling thread's own instance. The read
+                    // copies a pointer value and creates no reference.
                     unsafe { ENCRYPTED_QUICK_ALLOCATOR_PTR }
                 }
 
                 #[cfg(nightly_tls_active)]
                 #[inline(always)]
                 fn set_quick_allocator_ptr(ptr: *mut core::ffi::c_void) {
+                    // SAFETY: as above -- a `#[thread_local]` static written by
+                    // its owning thread, storing a pointer value with no
+                    // reference taken.
                     unsafe { ENCRYPTED_QUICK_ALLOCATOR_PTR = ptr; }
                 }
             }
@@ -235,6 +249,9 @@ macro_rules! impl_local_allocator_selector {
                 unsafe fn with_allocator_unguarded<R>(
                     f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
                 ) -> Option<R> {
+                    // SAFETY: this function is itself `unsafe`, and its contract
+                    // is the provider's: `f` must not re-enter the allocator.
+                    // The obligation is forwarded to the caller unchanged.
                     unsafe { <SelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator_unguarded(f) }
                 }
 
@@ -265,8 +282,13 @@ macro_rules! impl_local_allocator_selector {
                     f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
                 ) -> Option<R> {
                     if P::ENABLE_FREE_LIST_ENCRYPTION {
+                        // SAFETY: this function is itself `unsafe` and carries the
+                        // provider's contract -- `f` must not re-enter the
+                        // allocator -- which is forwarded unchanged. The branch
+                        // only selects which provider owns the thread's cache.
                         unsafe { <EncryptedSelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator_unguarded(f) }
                     } else {
+                        // SAFETY: as in the encrypted branch above.
                         unsafe { <SelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator_unguarded(f) }
                     }
                 }
