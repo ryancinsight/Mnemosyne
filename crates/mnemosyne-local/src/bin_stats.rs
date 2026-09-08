@@ -367,9 +367,16 @@ pub fn reset_bin_stats() {
     // Advance the reset generation BEFORE zeroing, so any concurrent
     // flush that reads the new generation discards its batch rather than
     // flushing stale pre-reset counts that would be immediately zeroed.
-    // SeqCst here provides a total order that any thread observes before
-    // its next flush (which uses Relaxed on the generation load).
-    RESET_GENERATION.fetch_add(1, Ordering::SeqCst);
+    //
+    // Relaxed is the whole requirement: the flush guard compares this one
+    // variable against its own stamped value, and single-variable
+    // modification-order coherence -- which Relaxed already guarantees --
+    // is what makes that comparison monotonic. No happens-before edge with
+    // the counters is needed, because every counter access is Relaxed and a
+    // flush that still reads the old generation only adds counts the
+    // zeroing below immediately erases. A stronger ordering here would not
+    // change what the Relaxed loads at the guard can observe.
+    RESET_GENERATION.fetch_add(1, Ordering::Relaxed);
     flush_current_thread();
     for class in 0..NUM_SIZE_CLASSES {
         ALLOC_COUNT[class].store(0, Ordering::Relaxed);
@@ -506,7 +513,7 @@ mod tests {
         // Prime the slot so `generation` is stamped.
         pending.record(2, &global);
         // Advance the global generation (simulates a reset_bin_stats call).
-        RESET_GENERATION.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+        RESET_GENERATION.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         // Flush: the batch is stale and must be discarded.
         pending.flush(&global);
         // The global array must not have received the stale count.
@@ -516,7 +523,7 @@ mod tests {
             "stale batch must not flush after generation advance"
         );
         // Undo the generation increment to avoid interfering with other tests.
-        RESET_GENERATION.fetch_sub(1, core::sync::atomic::Ordering::SeqCst);
+        RESET_GENERATION.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
     }
 
     #[test]

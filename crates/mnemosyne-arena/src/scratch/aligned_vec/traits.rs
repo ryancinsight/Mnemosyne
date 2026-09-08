@@ -391,7 +391,7 @@ impl AlignedVec<u8> {
     ///
     /// Equivalent to `self.extend_from_slice(s.as_bytes())` but named for
     /// discoverability alongside the [`From<&str>`][From] impl and the
-    /// [`fmt::Write`] impl.
+    /// [`core::fmt::Write`] impl.
     #[inline]
     pub fn push_str(&mut self, s: &str) {
         self.extend_from_slice(s.as_bytes());
