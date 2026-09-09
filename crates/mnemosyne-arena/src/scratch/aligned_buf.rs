@@ -46,6 +46,9 @@ use core::mem::MaybeUninit;
 /// assert_eq!(buf.as_slice(), &[1, 2]);
 /// assert_eq!(buf.pop(), Some(2));
 /// ```
+// `ScratchElement` already requires `Copy`, so the derived bounds add no
+// constraint an instantiation could fail. Deriving keeps the copy bitwise
+// rather than looping over the initialized prefix.
 #[derive(Clone, Copy)]
 pub struct AlignedBuf<T: ScratchElement, const N: usize> {
     /// Inline storage for up to `N` elements.
@@ -283,8 +286,6 @@ impl<T: ScratchElement + core::fmt::Debug, const N: usize> core::fmt::Debug for 
 
 // SAFETY: every `ScratchElement` is `Copy`; `MaybeUninit<T>: Copy` always, so
 // the struct copy is a bitwise copy of the inline array + len field.
-// `Clone` is derived because `Copy` is already the canonical semantics for this
-// inline fixed-capacity buffer: `*self` is the exact bytewise clone.
 
 impl<T: ScratchElement + PartialEq, const N: usize> PartialEq for AlignedBuf<T, N> {
     #[inline]

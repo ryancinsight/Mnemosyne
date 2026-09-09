@@ -176,20 +176,20 @@ impl TaggedHead {
     pub(crate) fn tagged_successor(ptr: *mut Segment, current: *mut Segment) -> *mut Segment {
         #[cfg(not(target_pointer_width = "64"))]
         let _ = current;
-        let addr = ptr.addr();
-        if (addr & !Self::PTR_MASK) != 0 {
-            #[cfg(any(feature = "std", test))]
-            {
-                std::process::abort();
-            }
-            #[cfg(not(any(feature = "std", test)))]
-            {
-                panic!("Segment address does not fit in packed huge-pool head");
-            }
-        }
-
         #[cfg(target_pointer_width = "64")]
         {
+            let addr = ptr.addr();
+            if (addr & !Self::PTR_MASK) != 0 {
+                #[cfg(any(feature = "std", test))]
+                {
+                    std::process::abort();
+                }
+                #[cfg(not(any(feature = "std", test)))]
+                {
+                    panic!("Segment address does not fit in packed huge-pool head");
+                }
+            }
+
             let tag = (((current.addr() >> Self::PACKED_PTR_BITS) + 1) & Self::TAG_MASK)
                 << Self::PACKED_PTR_BITS;
             ptr.map_addr(|_| tag | addr)
