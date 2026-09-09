@@ -5,6 +5,22 @@
 
 - **Status:** blocked; **found by:** claude-opus-5, 2026-09-07; **re-open
   trigger:** the working-tree change below is committed, corrected, or dropped.
+- **Re-measured 2026-09-09, and the original regression is cured.**
+  `test_free_list_corruption_out_of_bounds_aborts_process` now **passes**: the
+  guard aborts as it should. The working tree has meanwhile grown from 10 dirty
+  files to **48**, spanning `local_alloc`, `tls`, `page` types and arena
+  scratch, with no commit in 61 hours.
+- **A different integrity test is now red.** Full workspace run on that tree:
+  **380 passed, 1 failed** — `mnemosyne-local::policy_integration_tests`
+  `mixed_encryption_modes_round_trip_without_corruption`. So the work is still
+  not committable, for a different reason than when this was filed.
+- **Not taken over.** The newest edit was 41 minutes old at the time of
+  measurement, inside the stale-claim window, so this is a live peer's work
+  and the measurement is recorded rather than the tree claimed. Their files
+  were not touched; only this board entry is edited.
+- **This item closes when that work commits green**, not when the guard alone
+  passes — the original trigger wording ("committed, corrected, or dropped")
+  reads too narrowly now that a second failure has appeared under it.
 - **What is in the tree.** 251 uncommitted lines across `page/{init,mod,reclaim}.rs`,
   `local_alloc/page/allocation.rs`, `free.rs`, `free_helpers.rs`, `realloc.rs`
   and two test files add a second per-page free list — `Page::secondary_free`
