@@ -259,6 +259,11 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
     const IDENTIFIER: &'static str = "AsmTls (Fallback)";
 
     #[inline(always)]
+    fn register_current_allocator_ptr(ptr: *mut core::ffi::c_void) {
+        <NativeOsTls<B, S> as TlsProvider<B>>::register_current_allocator_ptr(ptr);
+    }
+
+    #[inline(always)]
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
         <NativeOsTls<B, S> as TlsProvider<B>>::with_allocator(f)
     }
