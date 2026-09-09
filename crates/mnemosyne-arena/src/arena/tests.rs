@@ -65,7 +65,7 @@ fn huge_allocation_metadata_slot_round_trips_across_alignments() {
             "metadata slot returned a null segment pointer for align {align}"
         );
         let raw_ptr = unsafe { (*recovered).raw_alloc_ptr };
-        let huge_size = unsafe { (*recovered).pages[0].block_size };
+        let huge_size = unsafe { (*recovered).pages[0].block_size as usize };
         assert!(
             raw_ptr as usize <= user_ptr as usize,
             "raw_ptr {raw_ptr:?} above user_ptr {user_ptr:?} for align {align}"
@@ -200,7 +200,7 @@ fn huge_deallocation_returns_backend_release_status() {
 
     unsafe {
         Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0);
-        (*segment_ptr).pages[0].block_size = SEGMENT_SIZE * 10;
+        (*segment_ptr).pages[0].block_size = (SEGMENT_SIZE * 10) as _;
     }
 
     let released = unsafe {

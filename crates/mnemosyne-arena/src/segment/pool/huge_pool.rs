@@ -128,7 +128,7 @@ impl GlobalHugePool {
         // SAFETY: by this function's contract `segment` is a valid, initialized,
         // exclusively-owned huge-allocation `Segment`, so reading its page-0
         // `block_size` is sound.
-        let size = unsafe { (*segment).pages[0].block_size };
+        let size = unsafe { (*segment).pages[0].block_size as usize };
         if size > Self::MAX_CACHED_HUGE_SIZE {
             return false;
         }
@@ -285,7 +285,7 @@ impl GlobalHugePool {
             if let Some(segment) = popped {
                 // SAFETY: the pop transferred exclusive ownership of `segment`
                 // to this caller, so reading its page-0 `block_size` is sound.
-                let block_size = unsafe { (*segment).pages[0].block_size };
+                let block_size = unsafe { (*segment).pages[0].block_size as usize };
                 pool_node
                     .total_count
                     .value
@@ -325,7 +325,7 @@ impl GlobalHugePool {
         let mut fit = None;
         while let Some(segment) = bucket.pop_head(band) {
             // SAFETY: `pop_head` transfers exclusive ownership of `segment`.
-            let block_size = unsafe { (*segment).pages[0].block_size };
+            let block_size = unsafe { (*segment).pages[0].block_size as usize };
             if block_size >= size {
                 fit = Some(segment);
                 break;
@@ -444,7 +444,7 @@ impl GlobalHugePool {
                                 .next_free_segment
                                 .load(core::sync::atomic::Ordering::Relaxed);
                             let raw_ptr = (*head).raw_alloc_ptr;
-                            let block_size = (*head).pages[0].block_size;
+                            let block_size = (*head).pages[0].block_size as usize;
                             let _ = B::deallocate(raw_ptr, block_size);
                             next
                         };

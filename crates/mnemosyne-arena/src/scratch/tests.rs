@@ -120,6 +120,26 @@ fn aligned_vec_extend_from_iter_appends_mapped_values() {
 }
 
 #[test]
+fn scratch_bank_reports_slot_capacity_and_can_shrink_all_slots() {
+    let bank = ScratchBank::<f64, 3>::new();
+    bank.prewarm::<0>(256);
+    bank.prewarm::<1>(128);
+    bank.prewarm::<2>(64);
+
+    assert_eq!(bank.capacity::<0>(), 256);
+    assert_eq!(bank.slot_capacity::<1>(0), 128);
+    assert_eq!(
+        bank.total_capacity_bytes::<2>(),
+        64 * core::mem::size_of::<f64>()
+    );
+
+    bank.shrink_all_slots();
+    assert_eq!(bank.capacity::<0>(), 0);
+    assert_eq!(bank.capacity::<1>(), 0);
+    assert_eq!(bank.capacity::<2>(), 0);
+}
+
+#[test]
 fn scratch_pool_single_borrow() {
     let pool = ScratchPool::<f64>::new();
     pool.with_scratch(128, |scratch| {
@@ -235,6 +255,39 @@ fn with_slot_capacity_preallocates() {
         assert_eq!(scratch.len(), 256);
         assert_eq!(scratch.as_ptr() as usize % DEFAULT_SCRATCH_ALIGN, 0);
     });
+}
+
+#[test]
+fn with_slot_capacity_tracks_all_slot_mirrors() {
+    let pool = ScratchPool::<f64>::with_slot_capacity(128);
+    for idx in 0..MAX_POOL_SLOTS {
+        assert_eq!(
+            pool.slot_capacity(idx),
+            128,
+            "slot {idx} mirror must match backing capacity"
+        );
+    }
+    assert_eq!(
+        pool.total_capacity_bytes(),
+        MAX_POOL_SLOTS * 128 * core::mem::size_of::<f64>()
+    );
+}
+
+#[test]
+fn scratch_bank_preload_warms_every_pool_slot() {
+    let bank = ScratchBank::<f64, 2>::new();
+    bank.preload(&[64, 128, 256]);
+
+    assert!(
+        bank.capacity::<0>() >= 64,
+        "primary slot in pool 0 should be woken"
+    );
+    assert!(
+        bank.capacity::<1>() >= 64,
+        "primary slot in pool 1 should be woken"
+    );
+    assert!(bank.total_capacity_bytes::<0>() >= 64 * core::mem::size_of::<f64>());
+    assert!(bank.total_capacity_bytes::<1>() >= 64 * core::mem::size_of::<f64>());
 }
 
 #[test]
@@ -975,22 +1028,22 @@ fn aligned_vec_is_sorted() {
 // ---- Phase 24: AlignedVec<u8> string utilities ----------------------------
 
 #[test]
-fn aligned_vec_u8_from_str() {
-    let v = AlignedVec::<u8>::from_str("hello");
+fn aligned_vec_u8_from_utf8() {
+    let v = AlignedVec::<u8>::from_utf8("hello");
     assert_eq!(v.as_slice(), b"hello");
 }
 
 #[test]
 fn aligned_vec_u8_as_str_roundtrip() {
-    let mut v = AlignedVec::<u8>::from_str("rust");
-    assert_eq!(v.as_str().unwrap(), "rust");
+    let mut v = AlignedVec::<u8>::from_utf8("rust");
+    assert_eq!(v.as_str().expect("valid utf-8"), "rust");
     v.push(b'!');
-    assert_eq!(v.as_str().unwrap(), "rust!");
+    assert_eq!(v.as_str().expect("valid utf-8"), "rust!");
 }
 
 #[test]
 fn aligned_vec_u8_display_utf8() {
-    let v = AlignedVec::<u8>::from_str("display");
+    let v = AlignedVec::<u8>::from_utf8("display");
     let s = std::format!("{v}");
     assert_eq!(s, "display");
 }
@@ -1018,8 +1071,9 @@ fn aligned_vec_macro_empty() {
 
 #[test]
 fn size_class_info_for_class_round_trips() {
-    use mnemosyne_core::size_class::{SizeClassInfo, class_to_size, class_to_max_blocks};
-    use mnemosyne_core::constants::NUM_SIZE_CLASSES;
+    use mnemosyne_core::{
+        SizeClassInfo, class_to_max_blocks, class_to_size, constants::NUM_SIZE_CLASSES,
+    };
     for class in 0..NUM_SIZE_CLASSES {
         let info = SizeClassInfo::for_class(class).expect("in range");
         assert_eq!(info.block_size, class_to_size(class));
@@ -1031,8 +1085,8 @@ fn size_class_info_for_class_round_trips() {
 
 #[test]
 fn size_class_info_block_index_matches() {
-    use mnemosyne_core::size_class::{SizeClassInfo, block_index_in_page};
-    let info = SizeClassInfo::for_class(0).unwrap(); // 16-byte class
+    use mnemosyne_core::{SizeClassInfo, block_index_in_page};
+    let info = SizeClassInfo::for_class(0).expect("class 0 exists"); // 16-byte class
     for offset in (0..mnemosyne_core::constants::PAGE_SIZE).step_by(16) {
         assert_eq!(info.block_index(offset), block_index_in_page(0, offset));
     }

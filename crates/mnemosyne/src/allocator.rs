@@ -4,6 +4,7 @@ use core::marker::PhantomData;
 use mnemosyne_local::{thread_alloc_layout, thread_free_layout, thread_realloc};
 
 use crate::{AllocPolicy, LocalAllocatorSelector, StandardPolicy};
+use mnemosyne_local::tls_slot::PolicySlotSelection;
 
 /// The Mnemosyne global allocator structure.
 ///
@@ -91,8 +92,10 @@ pub struct MnemosyneAllocator<
     B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B> = mnemosyne_backend::MemoryBackendWrapper,
 >(PhantomData<(P, B)>);
 
-impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>>
-    MnemosyneAllocator<P, B>
+impl<
+    P: AllocPolicy + PolicySlotSelection<B>,
+    B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>,
+> MnemosyneAllocator<P, B>
 {
     /// Creates a new `MnemosyneAllocator` with the specified policy and backend.
     pub const fn new() -> Self {
@@ -100,16 +103,20 @@ impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector
     }
 }
 
-impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>> Default
-    for MnemosyneAllocator<P, B>
+impl<
+    P: AllocPolicy + PolicySlotSelection<B>,
+    B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>,
+> Default for MnemosyneAllocator<P, B>
 {
     fn default() -> Self {
         Self::new()
     }
 }
 
-unsafe impl<P: AllocPolicy, B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>>
-    GlobalAlloc for MnemosyneAllocator<P, B>
+unsafe impl<
+    P: AllocPolicy + PolicySlotSelection<B>,
+    B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>,
+> GlobalAlloc for MnemosyneAllocator<P, B>
 {
     // SAFETY: thread_alloc handles alignment constraints, size validation, and
     // OS mapping, returning null on failure or a valid memory block pointer on success.

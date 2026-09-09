@@ -15,7 +15,7 @@ fn block_stride_for(ptr: *mut u8) -> usize {
     let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
     let segment = segment_addr as *mut mnemosyne_core::types::Segment;
     let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-    unsafe { (*segment).pages[page_index].block_size }
+    unsafe { (*segment).pages[page_index].block_size as usize }
 }
 
 /// Realloc within the same size class returns the same pointer (in-place reuse).

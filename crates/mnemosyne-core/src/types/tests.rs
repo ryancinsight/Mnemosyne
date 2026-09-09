@@ -1,5 +1,9 @@
-use crate::types::{Page, Segment};
-use ::std::alloc::{Layout, alloc_zeroed, dealloc};
+use crate::types::{Block, Page, Segment};
+use ::std::{
+    alloc::{Layout, alloc_zeroed, dealloc},
+    string::String,
+};
+use core::ptr::NonNull;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct RandomizedTestPolicy;
@@ -30,6 +34,69 @@ fn page_struct_size_stays_within_one_cache_line() {
         core::mem::size_of::<Page>() <= 64,
         "Page exceeds one 64-byte cache line ({} bytes)",
         core::mem::size_of::<Page>()
+    );
+}
+
+#[test]
+fn segment_default_free_list_mode_matches_standard_runtime_state() {
+    let segment = Segment::default();
+    assert!(!segment.free_list_encrypted);
+    assert!(unsafe { Segment::free_list_mode_matches(&segment, false) });
+    assert!(!unsafe { Segment::free_list_mode_matches(&segment, true) });
+}
+
+#[test]
+fn free_list_mode_matches_segment_state() {
+    let layout = segment_layout();
+    let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+    assert!(
+        !segment_ptr.is_null(),
+        "alloc_zeroed failed to allocate segment"
+    );
+    unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
+
+    assert!(unsafe { Segment::free_list_mode_matches(segment_ptr, false) });
+    assert!(!unsafe { Segment::free_list_mode_matches(segment_ptr, true) });
+
+    unsafe { (*segment_ptr).free_list_encrypted = true };
+    assert!(unsafe { Segment::free_list_mode_matches(segment_ptr, true) });
+    assert!(!unsafe { Segment::free_list_mode_matches(segment_ptr, false) });
+
+    unsafe {
+        dealloc(segment_ptr as *mut u8, layout);
+    }
+}
+
+#[test]
+fn reclaim_thread_free_if_present_rejects_mismatched_mode() {
+    if std::env::var_os("MNEMOSYNE_RECLAIM_MODE_GUARD").is_some() {
+        let layout = segment_layout();
+        let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+        assert!(
+            !segment_ptr.is_null(),
+            "alloc_zeroed failed to allocate segment"
+        );
+        unsafe {
+            Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0);
+            (*segment_ptr).free_list_encrypted = true;
+            Page::reclaim_thread_free_if_present_in_segment(segment_ptr, 1, false);
+        }
+        panic!("raw reclaim path should have aborted on free-list mode mismatch");
+    }
+
+    let output = std::process::Command::new(
+        std::env::current_exe().expect("invariant: a test binary knows its own path"),
+    )
+    .env("MNEMOSYNE_RECLAIM_MODE_GUARD", "1")
+    .arg("reclaim_thread_free_if_present_rejects_mismatched_mode")
+    .arg("--nocapture")
+    .output()
+    .expect("child test process should run");
+
+    assert!(
+        !output.status.success(),
+        "raw reclaim path must abort on a mode mismatch; child stderr: {}",
+        std::string::String::from_utf8_lossy(&output.stderr)
     );
 }
 
@@ -160,6 +227,26 @@ fn test_page_reclaim_thread_free_hot_path() {
 }
 
 #[test]
+fn page_wake_hysteresis_uses_single_threshold_source() {
+    let class = 0;
+    let denom = 4;
+    let max_blocks = crate::size_class::class_to_max_blocks(class);
+    let threshold = Page::wake_threshold_for_class(class, denom);
+
+    assert_eq!(threshold, max_blocks / denom.max(1));
+    assert!(!Page::should_reactivate_after_free(
+        class,
+        max_blocks - 1,
+        denom
+    ));
+    assert!(Page::should_reactivate_after_free(
+        class,
+        max_blocks - threshold,
+        denom
+    ));
+}
+
+#[test]
 fn randomized_page_free_list_uses_seeded_permutation() {
     let layout = segment_layout();
     let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
@@ -187,21 +274,151 @@ fn randomized_page_free_list_uses_seeded_permutation() {
             (7 << 16) | 5,
         );
 
+        let primary = (*page).free;
+        let secondary = (*page).secondary_free;
+        assert!(
+            primary.is_some(),
+            "randomized page must keep a primary free-list head"
+        );
+        assert!(
+            secondary.is_some(),
+            "randomized page must keep a secondary free-list head"
+        );
+
+        let expected_head = if Page::prefer_secondary_free(page, (*page).alloc_count as usize) {
+            secondary
+        } else {
+            primary
+        };
         let first = Page::pop_block::<RandomizedTestPolicy>(page);
+        assert_eq!(
+            Some(first),
+            expected_head,
+            "the seeded random policy must choose the active free-list head"
+        );
+
+        let cookie = Segment::cookie_for::<RandomizedTestPolicy>(segment_ptr, PAGE_INDEX);
         let second = Page::pop_block::<RandomizedTestPolicy>(page);
-        let block_size = (*page).block_size;
-
+        let expected_second = (*first.as_ptr()).get_next::<RandomizedTestPolicy>(cookie);
         assert_eq!(
-            first.as_ptr() as usize - page_start as usize,
-            7 * block_size,
-            "randomized free list must start at the seed-derived index"
-        );
-        assert_eq!(
-            second.as_ptr() as usize - page_start as usize,
-            12 * block_size,
-            "randomized free list must advance by the seed-derived coprime stride"
+            Some(second),
+            expected_second,
+            "the second pop must follow the active list's next link"
         );
 
+        dealloc(segment_ptr as *mut u8, layout);
+    }
+}
+
+#[test]
+fn reclaim_if_present_for_policy_keeps_randomized_head_selection() {
+    let layout = segment_layout();
+    let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+    assert!(
+        !segment_ptr.is_null(),
+        "alloc_zeroed failed to allocate segment"
+    );
+    unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
+
+    const PAGE_INDEX: usize = 1;
+    let page = unsafe { &raw mut (*segment_ptr).pages[PAGE_INDEX] };
+    let page_start = unsafe { Page::page_start_in_segment(segment_ptr, PAGE_INDEX) };
+    unsafe {
+        (*page).block_size = 16;
+        (*page).size_class = 0;
+        (*page).alloc_count = 1;
+        (*page).free = None;
+        (*page).secondary_free = None;
+    }
+
+    let block_a = unsafe { NonNull::new_unchecked(page_start.add(0) as *mut Block) };
+    let block_b = unsafe { NonNull::new_unchecked(page_start.add(16) as *mut Block) };
+    let remote = unsafe { NonNull::new_unchecked(page_start.add(32) as *mut Block) };
+    unsafe {
+        (*block_a.as_ptr()).set_next::<RandomizedTestPolicy>(None, 0);
+        (*block_b.as_ptr()).set_next::<RandomizedTestPolicy>(None, 0);
+        (*page).secondary_free = Some(block_a);
+        (*page).free = Some(block_b);
+        (*page).thread_free.push::<RandomizedTestPolicy>(remote);
+    }
+
+    let reclaimed = unsafe {
+        Page::reclaim_thread_free_if_present_for_policy::<RandomizedTestPolicy>(
+            segment_ptr,
+            PAGE_INDEX,
+        )
+    };
+    assert_eq!(
+        reclaimed, 1,
+        "the remote-free drain must reclaim the queued block"
+    );
+
+    let (expected_head, _expected_secondary) =
+        unsafe { Page::choose_free_head(page, (*page).alloc_count as usize, true) };
+    let active_head = unsafe {
+        if (*page).secondary_free.is_some() && (*page).free.is_some() {
+            if Page::prefer_secondary_free(page, (*page).alloc_count as usize) {
+                (*page).secondary_free
+            } else {
+                (*page).free
+            }
+        } else {
+            (*page).secondary_free.or((*page).free)
+        }
+    };
+    assert_eq!(
+        active_head, expected_head,
+        "randomized remote-free drain must preserve the active free-list head"
+    );
+
+    unsafe {
+        dealloc(segment_ptr as *mut u8, layout);
+    }
+}
+
+#[test]
+fn standard_policy_keeps_secondary_free_list_active_when_present() {
+    let layout = segment_layout();
+    let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+    assert!(
+        !segment_ptr.is_null(),
+        "alloc_zeroed failed to allocate segment"
+    );
+    unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
+
+    const PAGE_INDEX: usize = 1;
+    let page = unsafe { &raw mut (*segment_ptr).pages[PAGE_INDEX] };
+    let page_start = unsafe { Page::page_start_in_segment(segment_ptr, PAGE_INDEX) };
+    unsafe {
+        (*page).block_size = 16;
+        (*page).size_class = 0;
+        (*page).free = None;
+        (*page).secondary_free = None;
+    }
+
+    let block_a = unsafe { NonNull::new_unchecked(page_start.add(0) as *mut Block) };
+    let block_b = unsafe { NonNull::new_unchecked(page_start.add(16) as *mut Block) };
+    unsafe {
+        (*block_a.as_ptr()).set_next::<crate::policy::StandardPolicy>(Some(block_b), 0);
+        (*block_b.as_ptr()).set_next::<crate::policy::StandardPolicy>(None, 0);
+        (*page).secondary_free = Some(block_a);
+    }
+
+    let first = unsafe { Page::pop_block::<crate::policy::StandardPolicy>(page) };
+    assert_eq!(
+        Some(first),
+        Some(block_a),
+        "standard policy must pop the active secondary list head"
+    );
+
+    let second = unsafe { Page::pop_block::<crate::policy::StandardPolicy>(page) };
+    assert_eq!(
+        Some(second),
+        Some(block_b),
+        "standard policy must preserve the secondary list order"
+    );
+
+    unsafe {
         dealloc(segment_ptr as *mut u8, layout);
     }
 }
@@ -217,8 +434,8 @@ fn huge_mapping_suffix_uses_raw_mapping_base() {
         (*segment).pages[0].block_size = 0x4000;
     }
 
-    let expected_key = (segment as usize).wrapping_add(crate::constants::PAGE_SIZE)
-        ^ (usize::MAX / 3);
+    let expected_key =
+        (segment as usize).wrapping_add(crate::constants::PAGE_SIZE) ^ (usize::MAX / 3);
     assert_eq!(
         unsafe { (*segment).keys[1] },
         expected_key,
@@ -231,6 +448,25 @@ fn huge_mapping_suffix_uses_raw_mapping_base() {
     assert_eq!(
         suffix, 0x2800,
         "huge usable suffix must be raw_alloc_ptr + block_size - user_ptr"
+    );
+}
+
+#[test]
+fn huge_mapping_suffix_is_address_space_safe() {
+    let mut segment_storage = core::mem::MaybeUninit::<Segment>::uninit();
+    let segment = segment_storage.as_mut_ptr();
+    let raw = (usize::MAX - 0x4000) as *mut u8;
+    unsafe {
+        Segment::initialize(segment, raw, 0);
+        (*segment).pages[0].block_size = 0x4000;
+    }
+
+    let user_ptr = unsafe { raw.add(0x1800) }.cast_const();
+    let suffix = unsafe { (*segment).huge_mapping_suffix_from(user_ptr) };
+
+    assert_eq!(
+        suffix, 0x2800,
+        "huge suffix must avoid wrapping near the top of the address space"
     );
 }
 // -- Backward-edge free canary tests ------------------------------------------
@@ -305,4 +541,228 @@ fn free_canary_is_address_bound() {
     );
 
     unsafe { dealloc(base as *mut u8, layout) };
+}
+
+#[test]
+fn segment_cookie_for_hardened_policy_uses_page_key() {
+    let layout = segment_layout();
+    let segment = unsafe { alloc_zeroed(layout) as *mut Segment };
+    assert!(!segment.is_null());
+
+    unsafe { Segment::initialize(segment, segment as *mut u8, 0) };
+    unsafe { (*segment).free_list_encrypted = true };
+
+    let page_index = 1;
+    let cookie =
+        unsafe { Segment::cookie_for::<crate::policy::HardenedPolicy>(segment, page_index) };
+    assert_eq!(
+        cookie,
+        unsafe { (*segment).keys[page_index] },
+        "HardenedPolicy must derive the free-list cookie from the page key"
+    );
+
+    unsafe { dealloc(segment as *mut u8, layout) };
+}
+
+#[test]
+fn atomic_free_list_standard_mode_keeps_lifo_order_and_exact_count() {
+    let layout = segment_layout();
+    let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+    assert!(!segment_ptr.is_null(), "segment allocation failed");
+    unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
+
+    const PAGE_INDEX: usize = 1;
+    let page = unsafe { &raw mut (*segment_ptr).pages[PAGE_INDEX] };
+    unsafe {
+        (*page).block_size = 16;
+        (*page).size_class = 0;
+    }
+
+    let page_start = unsafe { Page::page_start_in_segment(segment_ptr, PAGE_INDEX) };
+    unsafe {
+        Page::initialize_free_list_in_segment::<crate::policy::StandardPolicy>(
+            segment_ptr,
+            PAGE_INDEX,
+            page_start,
+            0,
+        );
+    }
+
+    let block_a = unsafe { Page::pop_block::<crate::policy::StandardPolicy>(page) };
+    let block_b = unsafe { Page::pop_block::<crate::policy::StandardPolicy>(page) };
+    let block_c = unsafe { Page::pop_block::<crate::policy::StandardPolicy>(page) };
+    let queue = unsafe { &(*page).thread_free };
+
+    queue.push_raw(block_a);
+    queue.push_raw(block_b);
+    queue.push_raw(block_c);
+
+    let (head, count) = queue.pop_all_raw().expect("queue must contain 3 blocks");
+    assert_eq!(
+        count, 3,
+        "standard-mode count must equal detached chain length"
+    );
+    assert_eq!(head, block_c, "last push must become the new head");
+    assert_eq!(unsafe { (*head.as_ptr()).get_next_raw() }, Some(block_b));
+    assert_eq!(unsafe { (*block_b.as_ptr()).get_next_raw() }, Some(block_a));
+    assert_eq!(unsafe { (*block_a.as_ptr()).get_next_raw() }, None);
+
+    unsafe {
+        dealloc(segment_ptr as *mut u8, layout);
+    }
+}
+
+#[test]
+fn atomic_free_list_encrypted_mode_keeps_lifo_order_and_exact_count() {
+    let layout = segment_layout();
+    let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+    assert!(!segment_ptr.is_null(), "segment allocation failed");
+    unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
+    unsafe { (*segment_ptr).free_list_encrypted = true };
+
+    const PAGE_INDEX: usize = 1;
+    let page = unsafe { &raw mut (*segment_ptr).pages[PAGE_INDEX] };
+    unsafe {
+        (*page).block_size = 16;
+        (*page).size_class = 0;
+    }
+
+    let page_start = unsafe { Page::page_start_in_segment(segment_ptr, PAGE_INDEX) };
+    unsafe {
+        Page::initialize_free_list_in_segment::<crate::policy::HardenedPolicy>(
+            segment_ptr,
+            PAGE_INDEX,
+            page_start,
+            0,
+        );
+    }
+
+    let block_a = unsafe { Page::pop_block::<crate::policy::HardenedPolicy>(page) };
+    let block_b = unsafe { Page::pop_block::<crate::policy::HardenedPolicy>(page) };
+    let cookie =
+        unsafe { Segment::cookie_for::<crate::policy::HardenedPolicy>(segment_ptr, PAGE_INDEX) };
+    let queue = unsafe { &(*page).thread_free };
+
+    queue.push_dynamic(block_a, true);
+    queue.push_dynamic(block_b, true);
+
+    let (head, count) = queue
+        .pop_all(true, cookie)
+        .expect("queue must contain 2 blocks");
+    assert_eq!(
+        count, 2,
+        "encrypted-mode count must equal detached chain length"
+    );
+    assert_eq!(head, block_b, "last push must become the new head");
+    assert_eq!(
+        unsafe { (*head.as_ptr()).get_next_dynamic(true, cookie) },
+        Some(block_a)
+    );
+    assert_eq!(
+        unsafe { (*block_a.as_ptr()).get_next_dynamic(true, cookie) },
+        None
+    );
+
+    unsafe {
+        dealloc(segment_ptr as *mut u8, layout);
+    }
+}
+
+#[test]
+fn atomic_free_list_rejects_duplicate_push_in_standard_mode() {
+    if std::env::var_os("MNEMOSYNE_ATOMIC_FREE_LIST_DUPLICATE_GUARD").is_some() {
+        let layout = segment_layout();
+        let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+        assert!(!segment_ptr.is_null(), "segment allocation failed");
+        unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
+
+        const PAGE_INDEX: usize = 1;
+        let page = unsafe { &raw mut (*segment_ptr).pages[PAGE_INDEX] };
+        unsafe {
+            (*page).block_size = 16;
+            (*page).size_class = 0;
+        }
+
+        let page_start = unsafe { Page::page_start_in_segment(segment_ptr, PAGE_INDEX) };
+        unsafe {
+            Page::initialize_free_list_in_segment::<crate::policy::StandardPolicy>(
+                segment_ptr,
+                PAGE_INDEX,
+                page_start,
+                0,
+            );
+        }
+
+        let block = unsafe { Page::pop_block::<crate::policy::StandardPolicy>(page) };
+        let queue = unsafe { &(*page).thread_free };
+        queue.push_raw(block);
+        queue.push_raw(block);
+        panic!("standard-mode duplicate push should abort after the second enqueue");
+    }
+
+    let output = std::process::Command::new(
+        std::env::current_exe().expect("invariant: a test binary knows its own path"),
+    )
+    .env("MNEMOSYNE_ATOMIC_FREE_LIST_DUPLICATE_GUARD", "1")
+    .arg("atomic_free_list_rejects_duplicate_push_in_standard_mode")
+    .arg("--nocapture")
+    .output()
+    .expect("child test process should run");
+
+    assert!(
+        !output.status.success(),
+        "standard-mode duplicate push must abort; child stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn atomic_free_list_rejects_duplicate_push_in_encrypted_mode() {
+    if std::env::var_os("MNEMOSYNE_ATOMIC_FREE_LIST_DUPLICATE_GUARD").is_some() {
+        let layout = segment_layout();
+        let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+        assert!(!segment_ptr.is_null(), "segment allocation failed");
+        unsafe {
+            Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0);
+            (*segment_ptr).free_list_encrypted = true;
+        }
+
+        const PAGE_INDEX: usize = 1;
+        let page = unsafe { &raw mut (*segment_ptr).pages[PAGE_INDEX] };
+        unsafe {
+            (*page).block_size = 16;
+            (*page).size_class = 0;
+        }
+
+        let page_start = unsafe { Page::page_start_in_segment(segment_ptr, PAGE_INDEX) };
+        unsafe {
+            Page::initialize_free_list_in_segment::<crate::policy::HardenedPolicy>(
+                segment_ptr,
+                PAGE_INDEX,
+                page_start,
+                0,
+            );
+        }
+
+        let block = unsafe { Page::pop_block::<crate::policy::HardenedPolicy>(page) };
+        let queue = unsafe { &(*page).thread_free };
+        queue.push_dynamic(block, true);
+        queue.push_dynamic(block, true);
+        panic!("encrypted-mode duplicate push should abort after the second enqueue");
+    }
+
+    let output = std::process::Command::new(
+        std::env::current_exe().expect("invariant: a test binary knows its own path"),
+    )
+    .env("MNEMOSYNE_ATOMIC_FREE_LIST_DUPLICATE_GUARD", "1")
+    .arg("atomic_free_list_rejects_duplicate_push_in_encrypted_mode")
+    .arg("--nocapture")
+    .output()
+    .expect("child test process should run");
+
+    assert!(
+        !output.status.success(),
+        "encrypted-mode duplicate push must abort; child stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

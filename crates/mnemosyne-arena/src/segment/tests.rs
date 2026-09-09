@@ -572,7 +572,7 @@ fn boxed_huge_segment(raw: usize, block_size: usize) -> *mut Segment {
     // SAFETY: `segment` is the live Box allocation just created above, so
     // mutating its page-0 size metadata through the raw pointer is exclusive.
     unsafe {
-        (*segment).pages[0].block_size = block_size;
+        (*segment).pages[0].block_size = block_size as _;
     }
     segment
 }
@@ -629,7 +629,7 @@ fn test_huge_pool_exact_bucket_restores_rejected_head() {
             .expect("rejected segment must be restored to the bucket");
         assert_eq!(restored, expected);
         unsafe {
-            assert_eq!((*restored).pages[0].block_size, expected_size);
+            assert_eq!((*restored).pages[0].block_size as usize, expected_size);
             assert_eq!(
                 (*restored)
                     .next_free_segment

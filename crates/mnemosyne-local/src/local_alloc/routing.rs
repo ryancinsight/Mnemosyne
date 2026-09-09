@@ -1,4 +1,5 @@
 use super::page::{pop_page_free_block, try_allocate_page_local, try_reclaim_and_allocate};
+use crate::LocalAllocatorSelector;
 use crate::local_alloc::ThreadAllocator;
 use core::ptr::NonNull;
 use mnemosyne_arena::{HasSegmentPool, allocate_segment};
@@ -19,7 +20,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// `ENABLE_FREE_LIST_ENCRYPTION` value; the public `thread_*` entry points
     /// enforce that separation through their mode-keyed TLS slots.
     #[inline(always)]
-    pub unsafe fn alloc_class<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
+    pub unsafe fn alloc_class<P: AllocPolicy>(&mut self, class: usize) -> *mut u8
+    where
+        B: LocalAllocatorSelector<B>,
+    {
+        B::register_current_allocator_ptr(
+            self as *mut ThreadAllocator<B> as *mut core::ffi::c_void,
+        );
         if let Some(page_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
             // Raw pointer, not `&mut`: these paths reach the parent segment, and
             // a `Unique` tag minted here would have to be popped by that access.
@@ -64,7 +71,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// pages already owned by this allocator instance.
     #[cfg(test)]
     #[inline(always)]
-    pub unsafe fn alloc<P: AllocPolicy>(&mut self, size: usize) -> *mut u8 {
+    pub unsafe fn alloc<P: AllocPolicy>(&mut self, size: usize) -> *mut u8
+    where
+        B: LocalAllocatorSelector<B>,
+    {
         let class = match size_to_class(size) {
             Some(c) => c,
             None => return core::ptr::null_mut(),
@@ -82,7 +92,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// class index is within bounds of the `active_pages` array, and the policy
     /// mode matches the mode used by all pages already owned by this allocator.
     #[inline(never)]
-    pub unsafe fn alloc_cold<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
+    pub unsafe fn alloc_cold<P: AllocPolicy>(&mut self, class: usize) -> *mut u8
+    where
+        B: LocalAllocatorSelector<B>,
+    {
         // The container's gate is raised across this call, so the sweep takes
         // its guarded branch.
         unsafe { self.record_defrag_operation::<P>(true) };
@@ -137,7 +150,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             let block_opt =
                 unsafe { try_reclaim_and_allocate::<P>(page, &mut self.cross_thread_reclaimed) };
             if let Some(block) = block_opt {
-                if unsafe { (*page).alloc_count < (*page).max_blocks() } {
+                if unsafe { ((*page).alloc_count as usize) < (*page).max_blocks() } {
                     // Page is no longer full! Move it back to active list.
                     // SAFETY: `page_ptr` is a live `Page` owned by this
                     // allocator (just walked from `full_pages[class]`), and
@@ -180,7 +193,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         }
 
         // If it becomes full immediately, move to full list
-        if unsafe { (*page).alloc_count == (*page).max_blocks() } {
+        if unsafe { (*page).alloc_count as usize == (*page).max_blocks() } {
             // SAFETY: `new_page_ptr` is the non-null page from `get_new_page`,
             // so `NonNull::new_unchecked` is valid; `class` is the
             // caller-validated size class the page was installed under, keeping
@@ -212,7 +225,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 };
                 let page = page_ptr.as_ptr();
 
-                (*page).block_size = block_size;
+                (*page).block_size = block_size as _;
                 (*page).size_class = class as u8;
                 // Segment-addressed: free-list init reads the segment cookie, so
                 // no page reference may be live across it.
@@ -283,8 +296,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                     P::ENABLE_FREE_LIST_ENCRYPTION,
                                     "adopted an orphan whose free-list mode does not match the policy"
                                 );
-                                let reclaimed = Page::reclaim_thread_free_if_present_in_segment(
-                                    seg_ptr, i, encrypted,
+                                let reclaimed = Page::reclaim_thread_free_if_present_for_policy::<P>(
+                                    seg_ptr, i,
                                 );
                                 if reclaimed > 0 {
                                     self.record_cross_thread_reclaimed(reclaimed);
@@ -293,7 +306,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                 if (*page_ptr).alloc_count > 0 {
                                     let pg_class = (*page_ptr).size_class as usize;
                                     let ptr = NonNull::new_unchecked(page_ptr);
-                                    if (*page_ptr).alloc_count < (*page_ptr).max_blocks() {
+                                    if ((*page_ptr).alloc_count as usize) < (*page_ptr).max_blocks()
+                                    {
                                         self.push_active_page(ptr, pg_class);
                                     } else {
                                         self.push_full_page(ptr, pg_class);
@@ -320,7 +334,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                             0
                         };
                         unsafe {
-                            (*found_page).block_size = block_size;
+                            (*found_page).block_size = block_size as _;
                             (*found_page).size_class = class as u8;
                         }
                         // SAFETY: `found_page_index` was recorded with
@@ -373,7 +387,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         self.next_page_index += 1;
 
         unsafe {
-            (*page_ptr).block_size = block_size;
+            (*page_ptr).block_size = block_size as _;
             (*page_ptr).size_class = class as u8;
         }
         // SAFETY: `seg` is the current live segment and `page_index` was

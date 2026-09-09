@@ -43,6 +43,44 @@ impl AtomicFreeList {
     /// Mask wrapping the push counter to the remaining high bits.
     const COUNT_WRAP_MASK: usize = (1usize << (usize::BITS - Self::PACKED_PTR_BITS)) - 1;
 
+    #[inline]
+    fn assert_not_in_queue(&self, block_ptr: *mut Block, encrypted: bool, cookie: usize) {
+        let block_addr = block_ptr.addr();
+        let mut current = self.head.load(Ordering::Relaxed);
+        let mut seen = 0usize;
+        while !current.is_null() {
+            seen += 1;
+            if seen > crate::constants::PAGE_SIZE {
+                crate::abort::abort_on_corruption("Cycle detected in AtomicFreeList");
+            }
+            let current_value = current.addr();
+            let current_addr = current_value & Self::PTR_MASK;
+            if current_addr == 0 {
+                if current_value != 0 {
+                    crate::abort::abort_on_corruption(
+                        "AtomicFreeList head pointer is null while the packed count is non-zero",
+                    );
+                }
+                break;
+            }
+            if current_addr == block_addr {
+                crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
+            }
+            let current_ptr = current.map_addr(|_| current_addr);
+            if current_ptr == block_ptr {
+                crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
+            }
+            let next = unsafe {
+                if encrypted {
+                    (*current_ptr).get_next_dynamic(encrypted, cookie)
+                } else {
+                    (*current_ptr).get_next_raw()
+                }
+            };
+            current = next.map_or(core::ptr::null_mut(), |next| next.as_ptr());
+        }
+    }
+
     /// Creates a new empty `AtomicFreeList`.
     ///
     /// `const` in ordinary builds so `Page::new()` can stay const. Loom's
@@ -81,6 +119,17 @@ impl AtomicFreeList {
     #[inline]
     pub fn push_dynamic(&self, block: NonNull<Block>, encrypted: bool) {
         let block_ptr = block.as_ptr();
+        let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
+        if !unsafe { Segment::free_list_mode_matches(segment.cast_const(), encrypted) } {
+            crate::abort::abort_on_corruption(
+                "free-list mode mismatch: AtomicFreeList push path does not match the segment",
+            );
+        }
+        if !encrypted {
+            self.push_raw(block);
+            return;
+        }
+
         let block_addr = block_ptr.addr();
         if (block_addr & !Self::PTR_MASK) != 0 {
             crate::abort::abort_on_corruption("Block address does not fit in 48 bits");
@@ -94,14 +143,16 @@ impl AtomicFreeList {
             Segment::cookie_for_dynamic(segment.cast_const(), encrypted, page_index)
         };
 
+        self.assert_not_in_queue(block_ptr, encrypted, cookie);
+
         let mut current = self.head.load(Ordering::Relaxed);
         loop {
             let current_value = current.addr();
             let current_addr = current_value & Self::PTR_MASK;
-            if block_addr == current_addr {
+            let current_ptr = current.map_addr(|_| current_addr);
+            if current_ptr == block_ptr {
                 crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
             }
-            let current_ptr = current.map_addr(|_| current_addr);
             let next_count = ((current_value >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
 
             // SAFETY: block_ptr is valid, writeable, aligned memory, exclusive
@@ -125,14 +176,110 @@ impl AtomicFreeList {
         }
     }
 
+    /// Raw push used by the standard-policy hot path, skipping the encrypted
+    /// branch and the parent-segment cookie walk entirely.
+    ///
+    /// This remains internal-only and must only be reached after the segment's
+    /// `free_list_encrypted` flag has already been checked; otherwise the raw
+    /// path bypasses the XOR metadata entirely and reintroduces the mode-mismatch
+    /// invariant the encrypted policy is designed to prevent.
+    #[inline]
+    pub(crate) fn push_raw(&self, block: NonNull<Block>) {
+        let block_ptr = block.as_ptr();
+        let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
+        if unsafe { Segment::free_list_encrypted(segment.cast_const()) } {
+            crate::abort::abort_on_corruption(
+                "raw AtomicFreeList push used while segment free-list links are encrypted",
+            );
+        }
+        let block_addr = block_ptr.addr();
+        if (block_addr & !Self::PTR_MASK) != 0 {
+            crate::abort::abort_on_corruption("Block address does not fit in 48 bits");
+        }
+
+        self.assert_not_in_queue(block_ptr, false, 0);
+
+        let mut current = self.head.load(Ordering::Relaxed);
+        loop {
+            let current_value = current.addr();
+            let current_addr = current_value & Self::PTR_MASK;
+            let current_ptr = current.map_addr(|_| current_addr);
+            if current_ptr == block_ptr {
+                crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
+            }
+            let next_count = ((current_value >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
+
+            unsafe {
+                (*block_ptr).set_next_raw(NonNull::new(current_ptr));
+            }
+
+            let next_val = (next_count << Self::PACKED_PTR_BITS) | block_addr;
+            let next = block_ptr.map_addr(|_| next_val);
+
+            match self.head.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
     /// Atomically removes all blocks from the list and returns the head and the count.
     ///
     /// This is wait-free and returns a standard local linked list along with its count in O(1).
     #[inline]
-    pub fn pop_all(&self, _encrypted: bool, _cookie: usize) -> Option<(NonNull<Block>, usize)> {
+    pub fn pop_all(&self, encrypted: bool, cookie: usize) -> Option<(NonNull<Block>, usize)> {
+        if !encrypted {
+            return self.pop_all_raw();
+        }
         let val = self.head.swap(core::ptr::null_mut(), Ordering::Acquire);
         let packed = val.addr();
         let addr = packed & Self::PTR_MASK;
+        if addr == 0 && packed != 0 {
+            crate::abort::abort_on_corruption(
+                "AtomicFreeList head pointer is null while the packed count is non-zero",
+            );
+        }
+        let count = packed >> Self::PACKED_PTR_BITS;
+        let ptr = val.map_addr(|_| addr);
+        let head = NonNull::new(ptr)?;
+
+        let mut visited = 0usize;
+        let mut current = Some(head);
+        while let Some(node) = current {
+            visited += 1;
+            if visited > crate::constants::PAGE_SIZE {
+                crate::abort::abort_on_corruption("Cycle detected in AtomicFreeList");
+            }
+            current = unsafe { (*node.as_ptr()).get_next_dynamic(encrypted, cookie) };
+        }
+        if visited != count {
+            crate::abort::abort_on_corruption(
+                "AtomicFreeList packed count does not match the detached chain length",
+            );
+        }
+        Some((head, count))
+    }
+
+    /// Raw pop used by the non-encrypted hot path, avoiding the branch and the
+    /// unused cookie argument entirely.
+    ///
+    /// This remains internal-only, because the caller must already have verified
+    /// that the page's free-list links are not encrypted.
+    #[inline]
+    pub(crate) fn pop_all_raw(&self) -> Option<(NonNull<Block>, usize)> {
+        let val = self.head.swap(core::ptr::null_mut(), Ordering::Acquire);
+        let packed = val.addr();
+        let addr = packed & Self::PTR_MASK;
+        if addr == 0 && packed != 0 {
+            crate::abort::abort_on_corruption(
+                "AtomicFreeList head pointer is null while the packed count is non-zero",
+            );
+        }
         let count = packed >> Self::PACKED_PTR_BITS;
         let ptr = val.map_addr(|_| addr);
         NonNull::new(ptr).map(|head| (head, count))
@@ -147,6 +294,33 @@ impl AtomicFreeList {
 
 #[cfg(not(target_pointer_width = "64"))]
 impl AtomicFreeList {
+    #[inline]
+    fn assert_not_in_queue(&self, block_ptr: *mut Block, encrypted: bool, cookie: usize) {
+        let mut current = self.head.load(Ordering::Relaxed);
+        let block_addr = block_ptr.addr();
+        let mut seen = 0usize;
+        while !current.is_null() {
+            seen += 1;
+            if seen > crate::constants::PAGE_SIZE {
+                crate::abort::abort_on_corruption("Cycle detected in AtomicFreeList");
+            }
+            if block_addr == current.addr() {
+                crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
+            }
+            if current == block_ptr {
+                crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
+            }
+            let next = unsafe {
+                if encrypted {
+                    (*current).get_next_dynamic(encrypted, cookie)
+                } else {
+                    (*current).get_next_raw()
+                }
+            };
+            current = next.map_or(core::ptr::null_mut(), |next| next.as_ptr());
+        }
+    }
+
     /// Creates a new empty `AtomicFreeList`.
     pub const fn new() -> Self {
         Self {
@@ -168,6 +342,17 @@ impl AtomicFreeList {
     #[inline]
     pub fn push_dynamic(&self, block: NonNull<Block>, encrypted: bool) {
         let block_ptr = block.as_ptr();
+        let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
+        if !unsafe { Segment::free_list_mode_matches(segment.cast_const(), encrypted) } {
+            crate::abort::abort_on_corruption(
+                "free-list mode mismatch: AtomicFreeList push path does not match the segment",
+            );
+        }
+        if !encrypted {
+            self.push_raw(block);
+            return;
+        }
+
         // SAFETY: as in the 64-bit `push`, `block_ptr` identifies a live block
         // inside its parent segment and therefore carries the mapping
         // provenance needed by `locate_segment` and `cookie_for_dynamic`.
@@ -175,6 +360,8 @@ impl AtomicFreeList {
             let (segment, page_index) = crate::types::locate_segment(block_ptr.cast::<u8>());
             Segment::cookie_for_dynamic(segment.cast_const(), encrypted, page_index)
         };
+
+        self.assert_not_in_queue(block_ptr, encrypted, cookie);
 
         let mut current = self.head.load(Ordering::Relaxed);
         loop {
@@ -198,11 +385,51 @@ impl AtomicFreeList {
         }
     }
 
+    /// Raw push used by the standard-policy hot path, skipping the encrypted
+    /// branch and the parent-segment cookie walk.
+    ///
+    /// This remains internal-only and must only be reached after the owning
+    /// segment has already validated that the free-list links are in the raw
+    /// mode, or the standard path silently bypasses the encrypted metadata.
+    #[inline]
+    pub(crate) fn push_raw(&self, block: NonNull<Block>) {
+        let block_ptr = block.as_ptr();
+        let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
+        if unsafe { Segment::free_list_encrypted(segment.cast_const()) } {
+            crate::abort::abort_on_corruption(
+                "raw AtomicFreeList push used while segment free-list links are encrypted",
+            );
+        }
+        self.assert_not_in_queue(block_ptr, false, 0);
+        let mut current = self.head.load(Ordering::Relaxed);
+        loop {
+            if block_ptr == current {
+                crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
+            }
+            unsafe {
+                (*block_ptr).set_next_raw(NonNull::new(current));
+            }
+            match self.head.compare_exchange_weak(
+                current,
+                block_ptr,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
     /// Atomically removes all blocks from the list and returns the head and the count.
     ///
     /// This walks the list to count blocks in O(k).
     #[inline]
     pub fn pop_all(&self, encrypted: bool, cookie: usize) -> Option<(NonNull<Block>, usize)> {
+        if !encrypted {
+            return self.pop_all_raw();
+        }
+
         let ptr = self.head.swap(core::ptr::null_mut(), Ordering::Acquire);
         NonNull::new(ptr).map(|head| {
             let mut count = 0;
@@ -218,6 +445,28 @@ impl AtomicFreeList {
                 // thread exclusive ownership of the detached chain, so reading the
                 // next-link is sound. The cycle guard above bounds the walk.
                 current = unsafe { (*node.as_ptr()).get_next_dynamic(encrypted, cookie) };
+            }
+            (head, count)
+        })
+    }
+
+    /// Raw pop used by the standard-policy hot path, skipping the encrypted
+    /// decode branch while preserving the same detached-chain semantics.
+    ///
+    /// Internal-only because the caller has already validated the segment is in
+    /// the raw free-list mode.
+    #[inline]
+    pub(crate) fn pop_all_raw(&self) -> Option<(NonNull<Block>, usize)> {
+        let ptr = self.head.swap(core::ptr::null_mut(), Ordering::Acquire);
+        NonNull::new(ptr).map(|head| {
+            let mut count = 0;
+            let mut current = Some(head);
+            while let Some(node) = current {
+                count += 1;
+                if count > crate::constants::PAGE_SIZE {
+                    crate::abort::abort_on_corruption("Cycle detected in AtomicFreeList");
+                }
+                current = unsafe { (*node.as_ptr()).get_next_raw() };
             }
             (head, count)
         })

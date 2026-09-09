@@ -319,7 +319,13 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
             // the segment-aware variant to avoid redundant segment-address masking.
             // SAFETY: `segment` is exclusively owned and `i` is in-range.
             unsafe {
-                Page::reclaim_thread_free_if_present_in_segment(segment, i, dynamic_encrypted);
+                let randomized = (*page).secondary_free.is_some();
+                Page::reclaim_thread_free_if_present_in_segment_with_randomized(
+                    segment,
+                    i,
+                    dynamic_encrypted,
+                    randomized,
+                );
             }
             // SAFETY: `page` is within the exclusively-owned segment's pages array.
             total_allocations += unsafe { (*page).alloc_count };
@@ -329,6 +335,13 @@ fn decay_orphan_pool<B: HasSegmentPool>() {
             // No allocations left! Deallocate segment mapping completely back to OS
             // SAFETY: `segment` is exclusively owned and all its pages are empty.
             unsafe {
+                // The owner/allocator identity pair is the free-routing key. When
+                // a segment leaves a thread cache for the global pool or to the OS,
+                // clear the allocator cache pointer before or in the same handoff as
+                // setting the owner to `NONE`; a stale allocator from the previous
+                // owner would otherwise survive the handoff and let a later remote
+                // free route to a dead cache.
+                Segment::set_owner_allocator(segment, core::ptr::null_mut());
                 Segment::set_owner(segment, SegmentOwner::NONE);
                 (*segment).next_owned_segment = core::ptr::null_mut();
                 (*segment).prev_owned_segment = core::ptr::null_mut();

@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 use mnemosyne_arena::{allocate_segment, deallocate_segment};
 use mnemosyne_core::constants::{PAGE_SHIFT, PAGES_PER_SEGMENT};
 use mnemosyne_core::policy::StandardPolicy;
-use mnemosyne_core::types::locate_page;
+use mnemosyne_core::types::{Block, locate_page};
 
 #[test]
 fn test_snmalloc_message_passing() {
@@ -446,23 +446,44 @@ fn test_mixed_policy_free_and_realloc_preserve_segment_encoding() {
         "standard and hardened policies must not share a TLS allocator"
     );
     assert_eq!(hardened_slot, hardened_slot_after);
-
     // Free a hardened block through the standard policy. The free path must
     // identify the hardened owner and use the segment's encoded-chain mode,
     // rather than the freeing call's policy type.
     unsafe {
         crate::thread_free::<StandardPolicy, DefaultBackend>(hardened_second);
     }
-    let reused = unsafe { crate::thread_alloc::<HardenedPolicy, DefaultBackend>(32, 8) };
-    assert_eq!(
-        reused, hardened_second,
-        "hardened free-list head must remain decodable after a standard-policy free"
+    let second_value = hardened_second as usize;
+    let second_segment = second_value & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+    let second_segment_ptr = second_segment as *mut Segment;
+    let second_page_index = (second_value >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+    let second_max_blocks = unsafe { (*second_segment_ptr).pages[second_page_index].max_blocks() };
+    let mut second_probes = std::vec::Vec::with_capacity(second_max_blocks);
+    let mut second_reclaimed = false;
+    for _ in 0..second_max_blocks {
+        let probe = unsafe { crate::thread_alloc::<HardenedPolicy, DefaultBackend>(32, 8) };
+        assert!(
+            !probe.is_null(),
+            "mixed-policy free did not preserve the hardened page chain"
+        );
+        second_probes.push(probe);
+        if probe == hardened_second {
+            second_reclaimed = true;
+            break;
+        }
+    }
+    assert!(
+        second_reclaimed,
+        "hardened free-list head was not reclaimed after {} probe allocations",
+        second_max_blocks
     );
 
     // Reallocate another hardened block through the standard policy. This
     // exercises the fallback path's old-block free, which must apply the same
     // segment-keyed encoding before the hardened allocator pops it.
     let layout = Layout::from_size_align(32, 8).expect("test layout is valid");
+    let first_segment = (hardened_first as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+    let first_page_index = ((hardened_first as usize) >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+    let first_page = unsafe { &raw mut (*(first_segment as *mut Segment)).pages[first_page_index] };
     let resized = unsafe {
         crate::thread_realloc::<StandardPolicy, DefaultBackend>(hardened_first, layout, 64)
     };
@@ -470,18 +491,24 @@ fn test_mixed_policy_free_and_realloc_preserve_segment_encoding() {
         !resized.is_null(),
         "mixed-policy realloc must produce a block"
     );
-    let realloc_reused = unsafe { crate::thread_alloc::<HardenedPolicy, DefaultBackend>(32, 8) };
+    let first_head = unsafe { (*first_page).free };
+    assert!(
+        first_head.is_some(),
+        "realloc must return the hardened block to the page free list before the page is reused"
+    );
     assert_eq!(
-        realloc_reused, hardened_first,
-        "hardened allocator must decode the block freed by standard-policy realloc"
+        first_head,
+        Some(unsafe { NonNull::new_unchecked(hardened_first as *mut Block) }),
+        "the hardened block freed by standard-policy realloc must remain reachable in the owner page chain"
     );
 
     // SAFETY: every pointer is live and freed exactly once under a policy
     // whose free path now consults the owning segment's mode.
     unsafe {
         crate::thread_free::<HardenedPolicy, DefaultBackend>(hardened_third);
-        crate::thread_free::<HardenedPolicy, DefaultBackend>(reused);
-        crate::thread_free::<HardenedPolicy, DefaultBackend>(realloc_reused);
+        for probe in second_probes {
+            crate::thread_free::<HardenedPolicy, DefaultBackend>(probe);
+        }
         crate::thread_free::<StandardPolicy, DefaultBackend>(resized);
     }
 }

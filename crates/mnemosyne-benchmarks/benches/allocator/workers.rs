@@ -134,37 +134,47 @@ pub struct ThreadCycleWorker {
 }
 
 pub struct ThreadCycleWorkers<A: GlobalAlloc + Send + Sync + 'static> {
-    pub workers: [ThreadCycleWorker; THREADS],
+    pub workers: Vec<ThreadCycleWorker>,
     pub done: Receiver<()>,
     pub _allocator: &'static A,
 }
 
 impl<A: GlobalAlloc + Send + Sync + 'static> ThreadCycleWorkers<A> {
     pub fn new(allocator: &'static A, layout: Layout) -> Self {
+        Self::new_with_thread_count(allocator, layout, THREADS)
+    }
+
+    pub fn new_with_thread_count(
+        allocator: &'static A,
+        layout: Layout,
+        thread_count: usize,
+    ) -> Self {
         let (done_sender, done) = sync_channel::<()>(THREAD_WORK_QUEUE_BOUND);
-        let workers = std::array::from_fn(|_| {
-            let (sender, receiver) = sync_channel::<Option<usize>>(THREAD_WORK_QUEUE_BOUND);
-            let worker_done = done_sender.clone();
-            let handle_allocator = allocator;
-            let handle = thread::spawn(move || {
-                while let Ok(Some(iterations)) = receiver.recv() {
-                    for _ in 0..iterations {
-                        // SAFETY: `layout` is a valid static layout and
-                        // `alloc_dealloc` validates non-null allocations.
-                        unsafe {
-                            alloc_dealloc(handle_allocator, layout);
+        let workers = (0..thread_count)
+            .map(|_| {
+                let (sender, receiver) = sync_channel::<Option<usize>>(THREAD_WORK_QUEUE_BOUND);
+                let worker_done = done_sender.clone();
+                let handle_allocator = allocator;
+                let handle = thread::spawn(move || {
+                    while let Ok(Some(iterations)) = receiver.recv() {
+                        for _ in 0..iterations {
+                            // SAFETY: `layout` is a valid static layout and
+                            // `alloc_dealloc` validates non-null allocations.
+                            unsafe {
+                                alloc_dealloc(handle_allocator, layout);
+                            }
+                        }
+                        if worker_done.send(()).is_err() {
+                            return;
                         }
                     }
-                    if worker_done.send(()).is_err() {
-                        return;
-                    }
+                });
+                ThreadCycleWorker {
+                    sender,
+                    handle: Some(handle),
                 }
-            });
-            ThreadCycleWorker {
-                sender,
-                handle: Some(handle),
-            }
-        });
+            })
+            .collect();
 
         Self {
             workers,
@@ -183,7 +193,7 @@ impl<A: GlobalAlloc + Send + Sync + 'static> ThreadCycleWorkers<A> {
                 benchmark_failure("threaded allocation cycle", "worker command channel closed");
             }
         }
-        for _ in 0..THREADS {
+        for _ in 0..self.workers.len() {
             if self.done.recv().is_err() {
                 benchmark_failure(
                     "threaded allocation cycle",

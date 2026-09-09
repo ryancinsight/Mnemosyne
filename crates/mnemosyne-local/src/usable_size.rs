@@ -77,7 +77,7 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
         // the real header of the segment containing `ptr` and its page metadata
         // was initialized by `Segment::initialize`.
         let page = unsafe { (*segment).pages.get_unchecked(page_index) };
-        let size = page.block_size;
+        let size = page.block_size as usize;
         if size > 0 {
             return size;
         }
@@ -92,12 +92,14 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
 }
 
 /// Returns the usable byte size of a large/huge allocation from its metadata
-/// slot: the recorded `pages[0].alloc_count` when set, else the mapping suffix
-/// from `ptr`.
+/// slot.
 ///
-/// This is the single authoritative huge-allocation size recovery, shared by
-/// [`usable_size`] and the free-profiling path so the metadata-slot layout and
-/// its fallback live in one place.
+/// `pages[0].alloc_count` stores the requested payload size, not the allocator's
+/// reservation. Large and huge mappings may include alignment or prefix slack,
+/// so the actual usable span is the distance from `ptr` to the end of the
+/// recorded raw mapping (`huge_mapping_suffix_from`), not the requested payload
+/// length. This is the single authoritative size recovery shared by [`usable_size`]
+/// and the free-profiling path.
 ///
 /// # Safety
 ///
@@ -109,14 +111,10 @@ pub(crate) unsafe fn huge_allocation_size(ptr: *mut u8) -> usize {
     // SAFETY: per the contract, the slot one pointer before `ptr` holds the
     // originating segment header written at `allocate_large_or_huge` time.
     let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-    let size = unsafe { (*segment).pages[0].alloc_count };
-    if size > 0 {
-        size
-    } else {
-        // SAFETY: a zero recorded size means a non-segment-aligned huge mapping;
-        // `huge_mapping_suffix_from` returns the distance to the mapping end.
-        unsafe { (*segment).huge_mapping_suffix_from(ptr) }
-    }
+    // SAFETY: the segment's raw mapping length is authoritative for large/huge
+    // allocations because it includes any prefix or alignment slack in addition
+    // to the requested payload size.
+    unsafe { (*segment).huge_mapping_suffix_from(ptr) }
 }
 
 /// Returns a statistics snapshot for the current thread's allocator under
@@ -156,8 +154,10 @@ pub(crate) unsafe fn huge_allocation_size(ptr: *mut u8) -> usize {
 /// // SAFETY: `p` came from the allocation above and is freed exactly once.
 /// unsafe { thread_free::<StandardPolicy, Backend>(p) };
 /// ```
-pub fn thread_allocator_stats<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>()
--> ThreadAllocatorStats {
+pub fn thread_allocator_stats<
+    P: AllocPolicy + crate::tls_slot::PolicySlotSelection<B>,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+>() -> ThreadAllocatorStats {
     B::with_allocator_for_policy::<P, _>(|alloc| alloc.stats()).unwrap_or_else(|| {
         ThreadAllocatorStats {
             cross_thread_reclaimed_blocks: ThreadAllocator::<B>::cross_thread_reclaimed_blocks(),

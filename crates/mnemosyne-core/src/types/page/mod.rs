@@ -16,14 +16,24 @@ use core::ptr::NonNull;
 pub struct Page {
     /// Thread-local free list of blocks.
     pub free: Option<NonNull<Block>>,
+    /// Alternate free list used by the random-preserve sharding policy.
+    ///
+    /// This second list keeps the allocator's LIFO reuse pattern from always
+    /// returning the same block order on high-contention pages. It is enabled
+    /// when a page is initialized with `RANDOMIZE_ALLOCATION` or when a page
+    /// hits an active dual-free-list policy. The page still preserves the
+    /// single `block_size`/`alloc_count` layout: the second head is just a
+    /// compact zero-overhead extension of the page metadata that is checked
+    /// with a deterministic parity bit rather than a full `rand` dependency.
+    pub secondary_free: Option<NonNull<Block>>,
     /// Lock-free list of blocks freed by other threads.
     pub thread_free: AtomicFreeList,
     /// Size of the blocks allocated in this page.
-    pub block_size: usize,
+    pub block_size: u32,
     /// Number of active allocations.
-    pub alloc_count: usize,
+    pub alloc_count: u32,
     /// Number of blocks initialized so far (for lazy/bump-allocated fresh pages).
-    pub initialized_blocks: usize,
+    pub initialized_blocks: u32,
     /// Pointer to the next page in the thread-local size class list.
     pub next_page: Option<NonNull<Page>>,
     /// Pointer to the previous page in the thread-local size class list.
@@ -59,6 +69,7 @@ impl Page {
     pub const fn new() -> Self {
         Self {
             free: None,
+            secondary_free: None,
             thread_free: AtomicFreeList::new(),
             block_size: 0,
             alloc_count: 0,
@@ -76,6 +87,7 @@ impl Page {
     pub fn new() -> Self {
         Self {
             free: None,
+            secondary_free: None,
             thread_free: AtomicFreeList::new(),
             block_size: 0,
             alloc_count: 0,
@@ -148,6 +160,88 @@ impl Page {
     #[inline(always)]
     pub fn max_blocks(&self) -> usize {
         crate::size_class::class_to_max_blocks(self.size_class as usize)
+    }
+
+    /// Returns the page-wake threshold for a given size class under a policy's
+    /// hysteresis denominator.
+    ///
+    /// This centralizes the snmalloc-inspired hysteresis rule so every page-list
+    /// transition uses the same SSOT for wake eligibility and the tuning knob is
+    /// one compile-time constant instead of multiple ad hoc computations.
+    #[inline(always)]
+    pub fn wake_threshold_for_class(class: usize, denominator: usize) -> usize {
+        let max_blocks = crate::size_class::class_to_max_blocks(class);
+        max_blocks / denominator.max(1)
+    }
+
+    /// Returns `true` when the page has freed enough blocks to re-enter the
+    /// active list under the policy's wake-delay hysteresis.
+    #[inline(always)]
+    pub fn should_reactivate_after_free(
+        class: usize,
+        alloc_count: usize,
+        denominator: usize,
+    ) -> bool {
+        let max_blocks = crate::size_class::class_to_max_blocks(class);
+        let freed_so_far = max_blocks.saturating_sub(alloc_count);
+        let wake_threshold = Self::wake_threshold_for_class(class, denominator);
+        freed_so_far >= wake_threshold
+    }
+
+    /// Returns `true` when the alternate free list should be preferred for this
+    /// page, using a deterministic parity bit rather than a runtime RNG.
+    ///
+    /// This is the low-overhead core of the snmalloc-inspired "random preserve"
+    /// policy: the allocator rotates between the primary and secondary lists
+    /// without introducing a heap allocation or entropy dependency in the hot
+    /// path.
+    ///
+    /// # Safety
+    ///
+    /// `page` must identify a live, initialized page whose metadata is owned by
+    /// the current allocator context. The function reads `secondary_free` and
+    /// `block_size` directly from that page header.
+    #[inline(always)]
+    pub unsafe fn prefer_secondary_free(page: *mut Page, alloc_count: usize) -> bool {
+        if unsafe { (*page).secondary_free }.is_none() {
+            return false;
+        }
+        let block_size = unsafe { (*page).block_size } as usize;
+        let seed = page.addr()
+            ^ alloc_count.wrapping_mul(0x9E3779B97F4A7C15)
+            ^ block_size.wrapping_mul(0xD1B54A35);
+        (seed & 1) != 0
+    }
+
+    /// Returns the policy-specific active free-list head for `page`.
+    ///
+    /// The decision is centralized here so the allocator keeps one SSOT for the
+    /// random-preserve policy instead of reimplementing the same parity check in
+    /// the free/reclaim paths.
+    ///
+    /// # Safety
+    /// `page` must point at live, initialized page metadata and stay live for
+    /// the call. `alloc_count` is the page's current allocation count, used
+    /// only to derive the preference; a wrong value changes which list is
+    /// chosen, never whether the chosen head is valid.
+    #[inline(always)]
+    pub unsafe fn choose_free_head(
+        page: *mut Page,
+        alloc_count: usize,
+        randomized: bool,
+    ) -> (Option<NonNull<Block>>, bool) {
+        let has_secondary = unsafe { (*page).secondary_free }.is_some();
+        let randomized = randomized || has_secondary;
+        let use_secondary = randomized
+            && has_secondary
+            && (unsafe { (*page).free }.is_none()
+                || unsafe { Self::prefer_secondary_free(page, alloc_count) });
+        let head = if use_secondary {
+            unsafe { (*page).secondary_free }
+        } else {
+            unsafe { (*page).free }
+        };
+        (head, use_secondary)
     }
 }
 

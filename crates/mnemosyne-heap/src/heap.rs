@@ -81,8 +81,11 @@ impl<'brand, T: ?Sized> core::fmt::Debug for ReallocError<'brand, T> {
 /// `Heap` is the single public heap surface. It statically validates local
 /// block ownership through the scoped brand lifetime while delegating all
 /// allocation mechanics to the monomorphized `RawHeap` core.
-pub struct Heap<'brand, P: AllocPolicy, B: HasSegmentPool = mnemosyne_backend::MemoryBackendWrapper>
-{
+pub struct Heap<
+    'brand,
+    P: AllocPolicy,
+    B: HasSegmentPool + LocalAllocatorSelector<B> = mnemosyne_backend::MemoryBackendWrapper,
+> {
     pub(crate) raw: RawHeap<P, B>,
     pub(crate) _phantom: InvariantLifetime<'brand>,
 }
@@ -97,7 +100,10 @@ pub struct Heap<'brand, P: AllocPolicy, B: HasSegmentPool = mnemosyne_backend::M
 // RawHeap<P, B>` (see `raw_heap.rs`) for the same ownership-transfer reason.
 // `sync_scope` therefore transfers only `BrandedCell` handles and a
 // `SyncRegionToken`; it never shares this heap across workers.
-unsafe impl<'brand, P: AllocPolicy, B: HasSegmentPool> Send for Heap<'brand, P, B> {}
+unsafe impl<'brand, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Send
+    for Heap<'brand, P, B>
+{
+}
 
 /// Returns one block to its heap when dropped, on the normal path and on an
 /// unwind alike.

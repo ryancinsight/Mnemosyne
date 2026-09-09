@@ -145,17 +145,25 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     // so a `&mut` here would assert an exclusivity the design
                     // does not have — Miri reports the retag as a data race
                     // against those reads.
-                    let page = &raw mut (*curr).pages[i];
-                    let reclaimed =
-                        Page::reclaim_thread_free_if_present_in_segment(curr, i, dynamic_encrypted);
+                    let page = Page::page_in_segment(curr, i);
+                    let randomized = (*page).secondary_free.is_some();
+                    let reclaimed = Page::reclaim_thread_free_if_present_in_segment_with_randomized(
+                        curr,
+                        i,
+                        dynamic_encrypted,
+                        randomized,
+                    );
                     if reclaimed > 0 {
                         self.record_cross_thread_reclaimed(reclaimed);
                     }
                     total_allocations += (*page).alloc_count;
                 }
 
-                Segment::set_owner(curr, SegmentOwner::NONE);
+                // Clear the allocator cache before the owner token so a remote
+                // thread cannot observe a stale, non-null allocator on a segment
+                // that has already been handed back to the global pool.
                 Segment::set_owner_allocator(curr, core::ptr::null_mut());
+                Segment::set_owner(curr, SegmentOwner::NONE);
                 Segment::set_current(curr, false);
                 (*curr).next_owned_segment = core::ptr::null_mut();
                 (*curr).prev_owned_segment = core::ptr::null_mut();
@@ -217,12 +225,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 if i == 0 {
                     continue;
                 }
-                let pg = &raw mut (*segment).pages[i];
+                let pg = Page::page_in_segment(segment, i);
                 if (*pg).alloc_count > 0 {
-                    let reclaimed = Page::reclaim_thread_free_if_present_in_segment(
+                    let randomized = (*pg).secondary_free.is_some();
+                    let reclaimed = Page::reclaim_thread_free_if_present_in_segment_with_randomized(
                         segment,
                         i,
                         dynamic_encrypted,
+                        randomized,
                     );
                     if reclaimed > 0 {
                         self.record_cross_thread_reclaimed(reclaimed);
@@ -293,11 +303,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                 continue;
                             }
                             let pg = &raw mut (*segment).pages[i];
-                            let reclaimed = Page::reclaim_thread_free_if_present_in_segment(
-                                segment,
-                                i,
-                                dynamic_encrypted,
-                            );
+                            let randomized = (*pg).secondary_free.is_some();
+                            let reclaimed =
+                                Page::reclaim_thread_free_if_present_in_segment_with_randomized(
+                                    segment,
+                                    i,
+                                    dynamic_encrypted,
+                                    randomized,
+                                );
                             if reclaimed > 0 {
                                 self.record_cross_thread_reclaimed(reclaimed);
                             }
@@ -421,8 +434,8 @@ unsafe fn detach_and_release_segment<B: HasSegmentPool>(segment: *mut Segment) {
     // writing its owner identity and releasing it is a valid, exclusive final
     // access before ownership returns to the pool.
     unsafe {
-        Segment::set_owner(segment, SegmentOwner::NONE);
         Segment::set_owner_allocator(segment, core::ptr::null_mut());
+        Segment::set_owner(segment, SegmentOwner::NONE);
         deallocate_segment::<B>(segment);
     }
 }

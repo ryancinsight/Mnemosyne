@@ -128,7 +128,7 @@ impl Default for MemoryStats {
 /// (ADR 0001), so naming the wrong policy reports a different allocator's
 /// counters rather than failing (ADR 0008).
 pub fn memory_stats_generic<
-    P: crate::AllocPolicy,
+    P: crate::AllocPolicy + mnemosyne_local::tls_slot::PolicySlotSelection<B>,
     B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>,
 >() -> MemoryStats {
     let backend = mnemosyne_backend::backend_memory_stats();
@@ -442,7 +442,7 @@ pub fn top_n_classes(n: usize) -> alloc::vec::Vec<mnemosyne_local::BinSnapshot> 
         .into_iter()
         .filter(|s| s.alloc_count > 0)
         .collect();
-    snapshots.sort_unstable_by(|a, b| b.alloc_count.cmp(&a.alloc_count));
+    snapshots.sort_unstable_by_key(|snapshot| core::cmp::Reverse(snapshot.alloc_count));
     snapshots.truncate(n);
     snapshots
 }
@@ -528,7 +528,10 @@ impl BinStatsWindow {
     pub fn window_internal_fragmentation(&self) -> f64 {
         let d = self.delta();
         let alloc: u64 = d.iter().map(|s| s.alloc_bytes).fold(0, u64::saturating_add);
-        let req: u64 = d.iter().map(|s| s.requested_bytes).fold(0, u64::saturating_add);
+        let req: u64 = d
+            .iter()
+            .map(|s| s.requested_bytes)
+            .fold(0, u64::saturating_add);
         if alloc == 0 || req == 0 {
             return 0.0;
         }

@@ -109,6 +109,23 @@ impl<T: ScratchElement, const N: usize> ScratchBank<T, N> {
         self.pools[INDEX].capacity()
     }
 
+    /// Returns the capacity of slot `slot` in pool `INDEX`.
+    ///
+    /// This is the bank-level equivalent of [`ScratchPool::slot_capacity`]. It
+    /// keeps the per-slot mirror visible without requiring a live borrow to the
+    /// slot itself, which makes hot-loop capacity accounting and warmup tuning
+    /// easier to reason about while preserving the same zero-copy semantics.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `INDEX >= N` or `slot >= MAX_POOL_SLOTS`.
+    #[inline]
+    pub fn slot_capacity<const INDEX: usize>(&self, slot: usize) -> usize {
+        assert!(INDEX < N, "ScratchBank pool index out of range");
+        assert!(slot < MAX_POOL_SLOTS, "ScratchBank slot index out of range");
+        self.pools[INDEX].slot_capacity(slot)
+    }
+
     /// Returns the current borrow depth for slot `INDEX`.
     ///
     /// # Panics
@@ -158,6 +175,20 @@ impl<T: ScratchElement, const N: usize> ScratchBank<T, N> {
         self.pools[INDEX].prewarm(min_capacity);
     }
 
+    /// Batch-prewarms every pool in the bank using the per-pool slot layout.
+    ///
+    /// `sizes[i]` is interpreted as the minimum capacity for the `i`th slot of
+    /// every pool inside this bank. The method mirrors
+    /// [`ScratchPool::preload`]: out-of-range entries are ignored and zero-sized
+    /// entries are skipped. This lets a caller warm the entire bank in one call
+    /// while keeping the same single-threaded, zero-copy semantics.
+    #[inline]
+    pub fn preload(&self, sizes: &[usize]) {
+        for pool in &self.pools {
+            pool.preload(sizes);
+        }
+    }
+
     /// Returns the total backing bytes for slot `INDEX` across all of its slots.
     ///
     /// # Panics
@@ -167,5 +198,17 @@ impl<T: ScratchElement, const N: usize> ScratchBank<T, N> {
     pub fn total_capacity_bytes<const INDEX: usize>(&self) -> usize {
         assert!(INDEX < N, "ScratchBank slot index out of range");
         self.pools[INDEX].total_capacity_bytes()
+    }
+
+    /// Releases every slot in every pool without tearing down the bank itself.
+    ///
+    /// This is the bank-level companion to [`ScratchPool::shrink_all_slots`].
+    /// It is useful for workload boundaries where the allocator should drop all
+    /// warm scratch allocations before switching to a new transform pipeline.
+    #[inline]
+    pub fn shrink_all_slots(&self) {
+        for pool in &self.pools {
+            pool.shrink_all_slots();
+        }
     }
 }

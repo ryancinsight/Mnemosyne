@@ -165,7 +165,7 @@ fn test_page_recycling_different_classes() {
 
     assert_eq!(segment_addr2, segment_addr);
     assert_eq!(page2.size_class as usize, expected_class);
-    assert_eq!(page2.block_size, class_to_size(expected_class));
+    assert_eq!(page2.block_size as usize, class_to_size(expected_class));
     assert!(
         page2.alloc_count > 0,
         "recycled page should hold at least one allocation but had {}",
@@ -244,7 +244,7 @@ fn smallest_class_page_saturates_without_duplicate_or_early_refill() {
     }
 
     // The page's allocation count must now read exactly max_blocks.
-    let saturated = unsafe { (*segment).pages[page_index].alloc_count };
+    let saturated = unsafe { (*segment).pages[page_index].alloc_count as usize };
     assert_eq!(
         saturated, max_blocks,
         "saturated alloc_count {saturated} != max_blocks {max_blocks}"

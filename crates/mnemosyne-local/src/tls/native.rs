@@ -19,6 +19,14 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
     const IDENTIFIER: &'static str = "NativeOsTls";
 
     #[inline(always)]
+    fn register_current_allocator_ptr(ptr: *mut core::ffi::c_void) {
+        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
+            return;
+        };
+        set_os_tls_value(key, ptr);
+    }
+
+    #[inline(always)]
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
         let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
             return S::get_slot_standard(|slot| {
@@ -122,6 +130,18 @@ pub struct AsmTls<B, S>(core::marker::PhantomData<(B, S)>);
 #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
 impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
     const IDENTIFIER: &'static str = "AsmTls";
+
+    #[inline(always)]
+    #[expect(
+        clippy::not_unsafe_ptr_arg_deref,
+        reason = "set_teb_tls_slot writes the pointer value into a TEB slot and never reads through it, so no dereference reaches `ptr`"
+    )]
+    fn register_current_allocator_ptr(ptr: *mut core::ffi::c_void) {
+        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
+            return;
+        };
+        unsafe { set_teb_tls_slot(key, ptr) };
+    }
 
     #[inline(always)]
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {

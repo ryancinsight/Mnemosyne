@@ -73,7 +73,7 @@ unsafe fn init_segment_layout(
     // requested allocation size. `metadata_slot` is the word immediately
     // before `user_ptr`, inside the reserved prefix computed above.
     unsafe {
-        (*aligned_ptr).pages[0].alloc_count = size;
+        (*aligned_ptr).pages[0].alloc_count = size as _;
         let metadata_slot = (user_ptr as *mut *mut Segment).sub(1);
         metadata_slot.write(aligned_ptr);
     }
@@ -104,7 +104,7 @@ unsafe fn initialize_large_or_huge_segment_fresh(
     unsafe {
         let node = crate::current_numa_node();
         Segment::initialize(aligned_ptr, raw_ptr, node);
-        (*aligned_ptr).pages[0].block_size = total_alloc_size;
+        (*aligned_ptr).pages[0].block_size = total_alloc_size as _;
     }
     // SAFETY: same contract as the caller's unsafe block.
     unsafe { init_segment_layout(raw_ptr, total_alloc_size, alignment, size) }
@@ -191,7 +191,12 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(
             // SAFETY: `segment` was just popped from the huge pool, so it points
             // to a valid, initialized, exclusively-owned `Segment` whose header
             // fields (`raw_alloc_ptr`, page-0 `block_size`) are live.
-            unsafe { ((*segment).raw_alloc_ptr, (*segment).pages[0].block_size) }
+            unsafe {
+                (
+                    (*segment).raw_alloc_ptr,
+                    (*segment).pages[0].block_size as usize,
+                )
+            }
         }
         None => {
             // SAFETY: `total_alloc_size <= MAX_ALLOC_SIZE` is non-zero (validated
@@ -320,7 +325,7 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
         // SAFETY: the pool declined to cache this huge segment, so `raw_ptr`/
         // `huge_size` name its still-live OS mapping, released here through the
         // allocating backend `B`.
-        unsafe { B::deallocate(raw_ptr, huge_size) }
+        unsafe { B::deallocate(raw_ptr, huge_size as usize) }
     } else {
         // It is a standard segment containing page allocations.
         // Return it to the global segment pool.

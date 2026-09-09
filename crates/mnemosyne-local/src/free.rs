@@ -37,7 +37,10 @@ use mnemosyne_core::types::{Block, Page, Segment, locate_page, locate_segment};
 /// }
 /// ```
 #[inline(always)]
-pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+pub unsafe fn thread_free<
+    P: AllocPolicy + crate::tls_slot::PolicySlotSelection<B>,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+>(
     ptr: *mut u8,
 ) {
     // SAFETY: forwarded under `thread_free`'s own contract — `ptr` came from this
@@ -74,7 +77,10 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
 /// }
 /// ```
 #[inline(always)]
-pub unsafe fn thread_free_layout<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+pub unsafe fn thread_free_layout<
+    P: AllocPolicy + crate::tls_slot::PolicySlotSelection<B>,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+>(
     ptr: *mut u8,
     size: usize,
     align: usize,
@@ -97,7 +103,7 @@ pub unsafe fn thread_free_layout<P: AllocPolicy, B: HasSegmentPool + LocalAlloca
 
 #[inline(always)]
 unsafe fn thread_free_classified<
-    P: AllocPolicy,
+    P: AllocPolicy + crate::tls_slot::PolicySlotSelection<B>,
     B: HasSegmentPool + LocalAllocatorSelector<B>,
     const LAYOUT_PROVES_SMALL: bool,
 >(
@@ -131,20 +137,15 @@ unsafe fn thread_free_classified<
         // from the metadata slot one pointer slot directly preceding the
         // user payload (`(ptr as *mut *mut Segment) - 1`); every huge
         // allocation writes this slot at `allocate_large_or_huge` time.
-        // The `pages[0].alloc_count` / `huge_mapping_suffix_from` reads,
-        // the `poison_freed_bytes` write, and the `deallocate_large_or_huge`
-        // call all stay inside the originating huge mapping.
+        // The `huge_mapping_suffix_from` read, the `poison_freed_bytes` write,
+        // and the `deallocate_large_or_huge` call all stay inside the
+        // originating huge mapping.
         let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
         if P::ENABLE_POISONING {
-            let size = unsafe { (*segment).pages[0].alloc_count };
-            let size = if size > 0 {
-                size
-            } else {
-                unsafe { (*segment).huge_mapping_suffix_from(ptr) }
-            };
-            // SAFETY: covered by the huge-allocation metadata argument above: `segment` is
-            // the originating mapping and `size` its extent from `ptr`, so the poison write
-            // and the release stay inside that mapping.
+            // SAFETY: covered by the huge-allocation metadata argument above: the
+            // segment's raw mapping length is the actual reservation for this
+            // pointer, and it includes any alignment or prefix slack.
+            let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
             unsafe { poison_freed_bytes::<P>(ptr, size) };
         }
         let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
@@ -157,7 +158,7 @@ unsafe fn thread_free_classified<
     // `ptr`'s segment and index; `block_size` is written once at page
     // initialization and only read here.
     debug_assert_eq!(
-        (ptr_val & (PAGE_SIZE - 1)) % unsafe { (*page_ptr).block_size },
+        (ptr_val & (PAGE_SIZE - 1)) % unsafe { (*page_ptr).block_size as usize },
         0,
         "small free ptr must be aligned to the page's block stride"
     );
@@ -167,7 +168,7 @@ unsafe fn thread_free_classified<
     // mean no memory-fence overhead on the hot path.
     {
         use mnemosyne_core::size_class::size_to_class_nonzero;
-        let block_size = unsafe { (*page_ptr).block_size };
+        let block_size = unsafe { (*page_ptr).block_size as usize };
         if let Some(class) = size_to_class_nonzero(block_size) {
             crate::bin_stats::record_dealloc(class);
         }
@@ -177,7 +178,7 @@ unsafe fn thread_free_classified<
     // exclusively until the block re-enters a free list — so the poison write
     // stays inside the block.
     if P::ENABLE_POISONING {
-        unsafe { poison_freed_bytes::<P>(ptr, (*page_ptr).block_size) };
+        unsafe { poison_freed_bytes::<P>(ptr, (*page_ptr).block_size as usize) };
     }
 
     let block = ptr as *mut Block;
@@ -185,42 +186,49 @@ unsafe fn thread_free_classified<
     // `owner` reads its ownership token, which is immutable while the segment
     // is mapped.
     let owner = unsafe { Segment::owner(segment) };
+    let encrypted = unsafe { Segment::free_list_encrypted(segment) };
+    let randomized =
+        (P::RANDOMIZE_ALLOCATION && encrypted) || unsafe { (*page_ptr).secondary_free.is_some() };
 
     #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
     let (is_owner, owner_allocator) = {
         let tid = mnemosyne_core::types::current_thread_id();
-        if owner.matches_thread_id(tid) {
-            // SAFETY: `segment` is live (above) and `owner` matched this thread's id, so
-            // the owner-allocator pointer names this thread's own allocator.
-            (true, unsafe { Segment::owner_allocator(segment) })
+        let owner_allocator_ptr = unsafe { Segment::owner_allocator(segment) };
+        let caller_allocator = B::get_allocator_ptr_raw_for_policy::<P>();
+        let same_thread_owner = !owner_allocator_ptr.is_null() && owner.matches_thread_id(tid);
+        let caller_owner = !caller_allocator.is_null() && owner.matches(caller_allocator);
+        if same_thread_owner {
+            (true, owner_allocator_ptr)
+        } else if caller_owner {
+            (true, caller_allocator)
         } else {
             (false, core::ptr::null_mut())
         }
     };
     #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
     let (is_owner, owner_allocator) = {
-        let standard_allocator = B::get_allocator_ptr_raw_for_encryption::<false>();
-        let encrypted_allocator = B::get_allocator_ptr_raw_for_encryption::<true>();
-        if owner.matches(standard_allocator) {
-            (true, standard_allocator)
-        } else if owner.matches(encrypted_allocator) {
-            (true, encrypted_allocator)
+        let caller_allocator = B::get_allocator_ptr_raw_for_policy::<P>();
+        if owner.matches(caller_allocator) {
+            (true, caller_allocator)
         } else {
             (false, core::ptr::null_mut())
         }
     };
-
     if is_owner && !owner_allocator.is_null() {
         // SAFETY: `page_ptr` is live (above) and this thread owns the segment, so no
         // other thread writes `alloc_count` while it is read.
-        let page_alloc_count = unsafe { (*page_ptr).alloc_count };
+        let page_alloc_count = unsafe { (*page_ptr).alloc_count as usize };
         if page_alloc_count == 0 {
             std::process::abort();
         }
         // SAFETY: `block` is a user pointer previously returned by the
         // allocator; non-nullness is the allocator invariant. Equality
         // with `page.free` is the double-free guard.
-        if Some(unsafe { NonNull::new_unchecked(block) }) == unsafe { (*page_ptr).free } {
+        if Some(unsafe { NonNull::new_unchecked(block) }) == unsafe { (*page_ptr).free }
+            || (randomized
+                && Some(unsafe { NonNull::new_unchecked(block) })
+                    == unsafe { (*page_ptr).secondary_free })
+        {
             std::process::abort();
         }
         // `owner_allocator` is the owner token, which by the slot's offset-0
@@ -234,7 +242,6 @@ unsafe fn thread_free_classified<
         let page_free = unsafe { (*page_ptr).free };
         // SAFETY: `segment`/`page_index` locate this page's parent header and its
         // key slot, satisfying `cookie_for`'s contract.
-        let encrypted = unsafe { Segment::free_list_encrypted(segment) };
         let cookie = unsafe { Segment::cookie_for_dynamic(segment, encrypted, page_index) };
 
         if unsafe { (*page_ptr).list_state } != 2 {
@@ -260,6 +267,7 @@ unsafe fn thread_free_classified<
                         cookie,
                         encrypted,
                         page_alloc_count,
+                        randomized,
                     )
                 };
                 #[cfg(feature = "dealloc-probe")]
@@ -288,9 +296,15 @@ unsafe fn thread_free_classified<
                 // free-path inputs (guards above) with `alloc` the owning
                 // allocator — exactly `do_local_free_internal`'s contract.
                 let _became_empty = unsafe {
-                    do_local_free_internal_policy::<P, B>(
-                        alloc, block, page_ptr, segment, page_index,
-                    )
+                    if encrypted {
+                        do_local_free_internal_policy::<mnemosyne_core::policy::HardenedPolicy, B>(
+                            alloc, block, page_ptr, segment, page_index,
+                        )
+                    } else {
+                        do_local_free_internal_policy::<P, B>(
+                            alloc, block, page_ptr, segment, page_index,
+                        )
+                    }
                 };
                 // SAFETY: `alloc` is the exclusively-borrowed owning allocator
                 // with `is_allocating` raised, the precondition of the cold sweep.
@@ -315,7 +329,15 @@ unsafe fn thread_free_classified<
             // SAFETY: as above — validated free-path inputs and the owning
             // `alloc`, satisfying `do_local_free_internal`'s contract.
             let _became_empty = unsafe {
-                do_local_free_internal_policy::<P, B>(alloc, block, page_ptr, segment, page_index)
+                if encrypted {
+                    do_local_free_internal_policy::<mnemosyne_core::policy::HardenedPolicy, B>(
+                        alloc, block, page_ptr, segment, page_index,
+                    )
+                } else {
+                    do_local_free_internal_policy::<P, B>(
+                        alloc, block, page_ptr, segment, page_index,
+                    )
+                }
             };
             #[cfg(feature = "dealloc-probe")]
             crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::FullToActive);
@@ -342,7 +364,7 @@ unsafe fn record_free_profile(ptr: *mut u8, page: *const Page, page_index: usize
         // `huge_allocation_size`'s precondition.
         unsafe { crate::usable_size::huge_allocation_size(ptr) }
     } else {
-        block_size
+        block_size as usize
     };
     mnemosyne_prof::on_free(ptr, size);
 }
@@ -428,7 +450,12 @@ pub unsafe fn do_local_free_internal_policy<
     // returned by a prior allocation in `page`/`segment`; non-nullness is the
     // allocator invariant, so `new_unchecked` is sound. Equality with
     // `page.free` is the double-free guard (the head was just freed).
-    if Some(unsafe { NonNull::new_unchecked(block) }) == unsafe { (*page).free } {
+    let randomized = (P::RANDOMIZE_ALLOCATION && unsafe { Segment::free_list_encrypted(segment) })
+        || unsafe { (*page).secondary_free.is_some() };
+    if Some(unsafe { NonNull::new_unchecked(block) }) == unsafe { (*page).free }
+        || (randomized
+            && Some(unsafe { NonNull::new_unchecked(block) }) == unsafe { (*page).secondary_free })
+    {
         std::process::abort();
     }
     let was_full = unsafe { (*page).list_state } == 2;
@@ -438,9 +465,12 @@ pub unsafe fn do_local_free_internal_policy<
     let encrypted = unsafe { Segment::free_list_encrypted(segment) };
     let cookie = unsafe { Segment::cookie_for_dynamic(segment, encrypted, page_index) };
 
-    // Backward-edge canary check (HardenedPolicy with ENABLE_FREE_LIST_ENCRYPTION).
-    // Under StandardPolicy this is dead code (ENABLE_FREE_LIST_ENCRYPTION = false).
-    if P::ENABLE_FREE_LIST_ENCRYPTION {
+    // Backward-edge canary check (the segment's free-list encoding mode is the
+    // source of truth for ownership-proven metadata, not the caller's transient
+    // policy type). A standard-policy caller can still free a hardened segment,
+    // but the page chain itself remains encrypted and must keep the canary keyed
+    // to the segment's mode.
+    if encrypted {
         // SAFETY: `block` is a live, MIN_BLOCK_SIZE-aligned block per the
         // caller's contract; the canary slot lies at block+size_of::<Block>()
         // which is within the allocation by the MIN_BLOCK_SIZE constraint.
@@ -452,21 +482,30 @@ pub unsafe fn do_local_free_internal_policy<
         unsafe { mnemosyne_core::types::Block::write_free_canary(block, cookie) };
     }
 
+    let (next, use_secondary) = unsafe {
+        mnemosyne_core::types::Page::choose_free_head(
+            page,
+            (*page).alloc_count as usize,
+            randomized,
+        )
+    };
     // SAFETY: `block` points to a valid block in `page` per the `# Safety`
     // contract; writing its embedded next pointer reinitializes the free-list
     // link and stays inside the block this caller now owns.
     unsafe {
-        (*block).set_next_dynamic((*page).free, encrypted, cookie);
+        (*block).set_next_dynamic(next, encrypted, cookie);
+        if use_secondary {
+            (*page).secondary_free = Some(NonNull::new_unchecked(block));
+        } else {
+            (*page).free = Some(NonNull::new_unchecked(block));
+        }
     }
-    // SAFETY: `block` is non-null (allocator invariant, re-confirmed by the
-    // double-free guard above); publishing it as the new free-list head.
-    unsafe { (*page).free = Some(NonNull::new_unchecked(block)) };
 
     // SAFETY: `segment`/`page`/`page_index` are the matching segment, page, and
     // its index per the `# Safety` contract; the decrement updates this page's
     // and segment's occupancy bookkeeping under the caller's exclusive access.
     let becomes_empty = unsafe {
-        let count = (*page).alloc_count - 1;
+        let count = ((*page).alloc_count as usize).wrapping_sub(1) as u32;
         (*page).alloc_count = count;
         if count == 0 && !Segment::is_current(segment) {
             (*segment).page_occupied_mask &= !(1 << page_index);
@@ -507,12 +546,15 @@ pub unsafe fn do_local_free_internal_policy<
                 //
                 // Under `StandardPolicy`, `DELAY_PAGE_WAKE = false` and the compiler
                 // eliminates the entire guard as dead code (zero-cost monomorphization).
-                let max_blocks = mnemosyne_core::size_class::class_to_max_blocks(class);
                 // SAFETY: `page` is exclusively owned per this function's contract;
                 // `alloc_count` is a valid initialized field.
-                let freed_so_far = max_blocks.saturating_sub(unsafe { (*page).alloc_count });
-                let wake_threshold = max_blocks / (P::WAKE_DENOMINATOR as usize).max(1);
-                if !P::DELAY_PAGE_WAKE || freed_so_far >= wake_threshold {
+                let wake_ready = !P::DELAY_PAGE_WAKE
+                    || mnemosyne_core::types::Page::should_reactivate_after_free(
+                        class,
+                        unsafe { (*page).alloc_count as usize },
+                        P::WAKE_DENOMINATOR as usize,
+                    );
+                if wake_ready {
                     // SAFETY: `class < NUM_SIZE_CLASSES` — validated upstream;
                     // `branded_page` is exclusively owned by this thread and the
                     // page list operations preserve ownership invariants.

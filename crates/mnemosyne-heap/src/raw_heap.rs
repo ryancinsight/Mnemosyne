@@ -1,6 +1,7 @@
 use core::alloc::Layout;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
+use mnemosyne_local::LocalAllocatorSelector;
 use mnemosyne_local::internal::{
     Block, HasSegmentPool, MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, Segment, ThreadAllocator,
     allocate_large_or_huge, deallocate_large_or_huge, do_local_free_internal,
@@ -8,7 +9,7 @@ use mnemosyne_local::internal::{
     poison_freed_bytes, size_to_class_nonzero,
 };
 
-pub(crate) struct RawHeap<P: AllocPolicy, B: HasSegmentPool> {
+pub(crate) struct RawHeap<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> {
     allocator: core::cell::UnsafeCell<ThreadAllocator<B>>,
     /// Re-entrancy gate for `allocator`, a sibling rather than a field inside
     /// it: the gate decides whether forming `&mut ThreadAllocator` is legal, so
@@ -37,16 +38,16 @@ pub(crate) struct RawHeap<P: AllocPolicy, B: HasSegmentPool> {
 // patterns; the brand mint, not this impl, is what precludes two threads
 // touching the same `ThreadAllocator` concurrently. This mirrors the
 // `unsafe impl Send for TieredHeap` reasoning in `tiered_heap.rs`.
-unsafe impl<P: AllocPolicy, B: HasSegmentPool> Send for RawHeap<P, B> {}
+unsafe impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Send for RawHeap<P, B> {}
 
-impl<P: AllocPolicy, B: HasSegmentPool> Default for RawHeap<P, B> {
+impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> Default for RawHeap<P, B> {
     #[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
+impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> RawHeap<P, B> {
     #[inline(always)]
     pub(crate) const fn new() -> Self {
         Self {
@@ -219,7 +220,7 @@ impl<P: AllocPolicy, B: HasSegmentPool> RawHeap<P, B> {
             // SAFETY: small-page free — `(*page).block_size` is the exact block
             // stride of `page`, and `ptr` is a live block of that page, so
             // poisoning `block_size` bytes stays within the block.
-            unsafe { poison_freed_bytes::<P>(ptr, (*page).block_size) };
+            unsafe { poison_freed_bytes::<P>(ptr, (*page).block_size as usize) };
         }
 
         // SAFETY: `ptr` is a small-page block (`page_index != 0`,
@@ -449,7 +450,7 @@ unsafe fn allocation_size(
         unsafe { huge_or_large_size(ptr, segment) }
     } else {
         // SAFETY: as above — `page` is the live projection for `ptr`.
-        unsafe { (*page).block_size }
+        unsafe { (*page).block_size as usize }
     }
 }
 
@@ -459,14 +460,8 @@ unsafe fn allocation_size(
 /// (as recovered from the metadata slot preceding the payload).
 #[inline(always)]
 unsafe fn huge_or_large_size(ptr: *mut u8, segment: *mut Segment) -> usize {
-    // SAFETY: `segment` is the live owning segment; `pages[0].alloc_count`
-    // holds the large allocation's byte length (repurposed for large blocks).
-    let size = unsafe { (*segment).pages[0].alloc_count };
-    if size > 0 {
-        size
-    } else {
-        // SAFETY: a zero `pages[0].alloc_count` marks a huge mapping, whose
-        // length is derived from `ptr`'s offset within `segment`'s mapping.
-        unsafe { (*segment).huge_mapping_suffix_from(ptr) }
-    }
+    // SAFETY: `segment` is the live owning segment; the actual reservation for a
+    // large/huge block is the raw mapping suffix, which may exceed the
+    // requested payload size when alignment or prefix slack is present.
+    unsafe { (*segment).huge_mapping_suffix_from(ptr) }
 }

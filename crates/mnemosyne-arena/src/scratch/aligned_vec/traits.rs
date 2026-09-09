@@ -382,14 +382,14 @@ impl AlignedVec<u8> {
     /// Creates an `AlignedVec<u8>` by copying the bytes of `s`.
     #[inline]
     #[must_use]
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_utf8(s: &str) -> Self {
         Self::from_slice(s.as_bytes())
     }
 
     /// Appends the bytes of `s` to the buffer.
     ///
     /// Equivalent to `self.extend_from_slice(s.as_bytes())` but named for
-    /// discoverability alongside [`from_str`][Self::from_str] and the
+    /// discoverability alongside [`from_utf8`][Self::from_utf8] and the
     /// [`fmt::Write`] impl.
     #[inline]
     pub fn push_str(&mut self, s: &str) {

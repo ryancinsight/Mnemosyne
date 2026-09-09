@@ -1,8 +1,8 @@
 use crate::alloc::small_path_class;
 use crate::usable_size;
 use crate::{
-    LocalAllocatorSelector, ThreadAllocator, do_local_free_internal, initialize_allocated_bytes,
-    poison_freed_bytes, thread_alloc_layout, thread_free,
+    LocalAllocatorSelector, ThreadAllocator, initialize_allocated_bytes, poison_freed_bytes,
+    thread_alloc_layout, thread_free,
 };
 use core::alloc::Layout;
 use core::ptr::NonNull;
@@ -77,7 +77,10 @@ pub fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> boo
 /// }
 /// ```
 #[inline]
-pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+pub unsafe fn thread_realloc<
+    P: AllocPolicy + crate::tls_slot::PolicySlotSelection<B>,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+>(
     ptr: *mut u8,
     layout: Layout,
     new_size: usize,
@@ -210,114 +213,142 @@ pub unsafe fn thread_realloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorS
 
     if is_old_small && let Some(class) = new_class {
         let slot_ptr = B::get_allocator_ptr_raw_for_policy::<P>();
-        if !slot_ptr.is_null() {
-            // SAFETY: `get_allocator_ptr_raw` returns this thread's TLS slot
-            // address (identical in value to the allocator address by the
-            // slot's offset-0 invariant); the non-null check confirms
-            // initialization and the slot is thread-affine.
-            // Gate before borrowing.
-            if !unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::is_allocating(slot_ptr) } {
-                // SAFETY: as above; the gate permits this borrow.
-                let alloc = unsafe { &mut *(slot_ptr as *mut ThreadAllocator<B>) };
-                // SAFETY: `segment` is the live header recovered from `ptr`;
-                // the raw-pointer accessor projects only the ownership field.
-                // A shared `&Segment` here would retag the whole 2 MiB header
-                // and race any concurrent remote-thread field write — for
-                // example a `thread_free` push into a sibling page of this
-                // same segment (MN-439).
-                let owner = unsafe { Segment::owner(segment) };
-                #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
-                let is_owner = owner.matches_thread_id(mnemosyne_core::types::current_thread_id());
-                #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
-                let is_owner = owner.matches(slot_ptr);
+        let owner = unsafe { Segment::owner(segment) };
+        #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
+        let (is_owner, owner_slot) = {
+            let tid = mnemosyne_core::types::current_thread_id();
+            let owner_allocator = unsafe { Segment::owner_allocator(segment) };
+            let same_thread_owner = !owner_allocator.is_null() && owner.matches_thread_id(tid);
+            let caller_owner = !slot_ptr.is_null() && owner.matches(slot_ptr);
+            if same_thread_owner {
+                (true, owner_allocator)
+            } else if caller_owner {
+                (true, slot_ptr)
+            } else {
+                (false, core::ptr::null_mut())
+            }
+        };
+        #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
+        let (is_owner, owner_slot) = {
+            let caller_owner = !slot_ptr.is_null() && owner.matches(slot_ptr);
+            if caller_owner {
+                (true, slot_ptr)
+            } else {
+                (false, core::ptr::null_mut())
+            }
+        };
 
-                if is_owner {
+        if is_owner && !owner_slot.is_null() {
+            // SAFETY: `owner_slot` is the live allocator slot that owns this
+            // segment, even when the caller uses a different policy slot for the
+            // same thread. The holder of that slot remains the authoritative owner
+            // for the segment-local free-list mutation below.
+            if !unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::is_allocating(owner_slot) } {
+                let alloc = unsafe { &mut *(owner_slot as *mut ThreadAllocator<B>) };
+                unsafe {
+                    crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(owner_slot, true)
+                };
+                // SAFETY: `segment` owns the free-list encoding and page
+                // randomization bits, so a standard-policy caller may still
+                // need to allocate/free under the owning hardened mode.
+                let encrypted = unsafe { Segment::free_list_encrypted(segment) };
+                let allocated = if encrypted {
+                    unsafe { alloc.alloc_class::<mnemosyne_core::policy::HardenedPolicy>(class) }
+                } else {
+                    unsafe { alloc.alloc_class::<P>(class) }
+                };
+                new_ptr = allocated;
+                if !new_ptr.is_null() {
+                    crate::bin_stats::record_alloc_with_size(class, new_adjusted);
                     unsafe {
-                        crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(slot_ptr, true)
-                    };
-                    // SAFETY: `alloc` is the exclusively-borrowed owning
-                    // allocator and `is_allocating` is set to guard re-entry;
-                    // `class` is a valid size class from `small_path_class`.
-                    let allocated = unsafe { alloc.alloc_class::<P>(class) };
-                    new_ptr = allocated;
-                    if !new_ptr.is_null() {
-                        crate::bin_stats::record_alloc_with_size(class, new_adjusted);
-                        unsafe {
-                            // SAFETY: `new_ptr` is a fresh block of at least
-                            // `new_adjusted` bytes; init writes only within it.
-                            initialize_allocated_bytes::<P>(new_ptr, new_adjusted);
-                            // SAFETY: `ptr` (old, valid for `layout.size()`)
-                            // and `new_ptr` (fresh, distinct block) are
-                            // non-overlapping; copy length is the smaller size.
-                            core::ptr::copy_nonoverlapping(
-                                ptr,
-                                new_ptr,
-                                core::cmp::min(layout.size(), new_size),
-                            );
-                            // SAFETY: `segment`/`page_index` identify the
-                            // live page and its key slot. Read the segment
-                            // metadata before materializing `page_ref`,
-                            // because the exclusive page borrow must not
-                            // overlap this shared parent-segment access.
-                            let encrypted = Segment::free_list_encrypted(segment);
-                            let cookie =
-                                Segment::cookie_for_dynamic(segment, encrypted, page_index);
-                            // SAFETY: `page` is the exclusively-borrowed page
-                            // owning the old block; reborrowing yields the sole
-                            // live `&mut` for the free bookkeeping below.
-                            let page_ref = &mut *page;
-                            if P::ENABLE_POISONING {
-                                // SAFETY: `ptr` is the old block, valid for the
-                                // page's `block_size` bytes being poisoned.
-                                poison_freed_bytes::<P>(ptr, page_ref.block_size);
-                            }
-                            let block = ptr as *mut Block;
-                            let page_free = page_ref.free;
-                            let page_alloc_count = page_ref.alloc_count;
-                            if page_ref.alloc_count == 0 {
-                                std::process::abort();
-                            }
-                            // SAFETY: `block` is the old user pointer, non-null
-                            // by the allocator invariant; `new_unchecked` is
-                            // sound and equality with `page_free` is the
-                            // double-free guard.
-                            if Some(NonNull::new_unchecked(block)) == page_free {
-                                std::process::abort();
-                            }
-                            if page_free.is_some()
-                                && (page_alloc_count != 1 || alloc.is_current_segment(segment))
-                            {
-                                // SAFETY: in-place free — `block` is the guarded
-                                // old block, `page_free`/`cookie` are `page_ref`'s
-                                // current head and cookie, and `page_alloc_count`
-                                // is its live count (`>= 1`), so the shared commit
-                                // stays inside this owned page.
-                                crate::free_helpers::commit_in_place_free(
-                                    block,
-                                    page_ref,
-                                    page_free,
-                                    cookie,
-                                    encrypted,
-                                    page_alloc_count,
-                                );
-                            } else {
-                                // SAFETY: `block` belongs to `page_ref` in
-                                // `segment` at `page_index`, and `alloc` owns
-                                // them — exactly `do_local_free_internal`'s
-                                // contract for the page-list transition path.
-                                let _became_empty = do_local_free_internal::<B>(
-                                    alloc, block, page_ref, segment, page_index,
-                                );
-                            }
+                        // SAFETY: `new_ptr` is a fresh block of at least
+                        // `new_adjusted` bytes; init writes only within it.
+                        initialize_allocated_bytes::<P>(new_ptr, new_adjusted);
+                        // SAFETY: `ptr` (old, valid for `layout.size()`)
+                        // and `new_ptr` (fresh, distinct block) are
+                        // non-overlapping; copy length is the smaller size.
+                        core::ptr::copy_nonoverlapping(
+                            ptr,
+                            new_ptr,
+                            core::cmp::min(layout.size(), new_size),
+                        );
+                        // SAFETY: `segment`/`page_index` identify the
+                        // live page and its key slot. Read the segment
+                        // metadata before materializing `page_ref`,
+                        // because the exclusive page borrow must not
+                        // overlap this shared parent-segment access.
+                        let cookie = Segment::cookie_for_dynamic(segment, encrypted, page_index);
+                        // SAFETY: `page` is the exclusively-borrowed page
+                        // owning the old block; reborrowing yields the sole
+                        // live `&mut` for the free bookkeeping below.
+                        let page_ref = &mut *page;
+                        if P::ENABLE_POISONING {
+                            // SAFETY: `ptr` is the old block, valid for the
+                            // page's `block_size` bytes being poisoned.
+                            poison_freed_bytes::<P>(ptr, page_ref.block_size as usize);
                         }
-                        local_free_done = true;
+                        let block = ptr as *mut Block;
+                        let page_free = page_ref.free;
+                        let page_alloc_count = page_ref.alloc_count as usize;
+                        let randomized = (P::RANDOMIZE_ALLOCATION && encrypted)
+                            || page_ref.secondary_free.is_some();
+                        if page_ref.alloc_count == 0 {
+                            std::process::abort();
+                        }
+                        // SAFETY: `block` is the old user pointer, non-null
+                        // by the allocator invariant; `new_unchecked` is
+                        // sound and equality with `page_free` is the
+                        // double-free guard.
+                        if Some(NonNull::new_unchecked(block)) == page_free
+                            || (randomized
+                                && Some(NonNull::new_unchecked(block)) == page_ref.secondary_free)
+                        {
+                            std::process::abort();
+                        }
+                        if page_free.is_some()
+                            && (page_alloc_count != 1 || alloc.is_current_segment(segment))
+                        {
+                            // SAFETY: in-place free — `block` is the guarded
+                            // old block, `page_free`/`cookie` are `page_ref`'s
+                            // current head and cookie, and `page_alloc_count`
+                            // is its live count (`>= 1`), so the shared commit
+                            // stays inside this owned page.
+                            crate::free_helpers::commit_in_place_free(
+                                block,
+                                page_ref,
+                                page_free,
+                                cookie,
+                                encrypted,
+                                page_alloc_count,
+                                randomized,
+                            );
+                        } else {
+                            // SAFETY: `block` belongs to `page_ref` in
+                            // `segment` at `page_index`, and `alloc` owns
+                            // them — exactly `do_local_free_internal`'s
+                            // contract for the page-list transition path.
+                            let _became_empty = if encrypted {
+                                crate::do_local_free_internal_policy::<
+                                    mnemosyne_core::policy::HardenedPolicy,
+                                    B,
+                                >(
+                                    alloc, block, page_ref, segment, page_index
+                                )
+                            } else {
+                                crate::do_local_free_internal_policy::<P, B>(
+                                    alloc, block, page_ref, segment, page_index,
+                                )
+                            };
+                        }
                     }
-                    // SAFETY: `slot_ptr` is this thread's TLS slot pointer,
-                    // exclusively owned; clearing the `allocating` flag is safe.
-                    unsafe {
-                        crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(slot_ptr, false)
-                    };
+                    local_free_done = true;
                 }
+                // SAFETY: `owner_slot` is the owning allocator slot for the
+                // segment; clearing the gate on that slot is the matching
+                // release of the borrow above.
+                unsafe {
+                    crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(owner_slot, false)
+                };
             }
         }
     }

@@ -46,6 +46,7 @@ use core::mem::MaybeUninit;
 /// assert_eq!(buf.as_slice(), &[1, 2]);
 /// assert_eq!(buf.pop(), Some(2));
 /// ```
+#[derive(Clone, Copy)]
 pub struct AlignedBuf<T: ScratchElement, const N: usize> {
     /// Inline storage for up to `N` elements.
     data: [MaybeUninit<T>; N],
@@ -280,21 +281,10 @@ impl<T: ScratchElement + core::fmt::Debug, const N: usize> core::fmt::Debug for 
     }
 }
 
-impl<T: ScratchElement, const N: usize> Clone for AlignedBuf<T, N> {
-    #[inline]
-    fn clone(&self) -> Self {
-        let mut new = Self::new();
-        for &v in self.as_slice() {
-            new.data[new.len] = MaybeUninit::new(v);
-            new.len += 1;
-        }
-        new
-    }
-}
-
 // SAFETY: every `ScratchElement` is `Copy`; `MaybeUninit<T>: Copy` always, so
 // the struct copy is a bitwise copy of the inline array + len field.
-impl<T: ScratchElement, const N: usize> Copy for AlignedBuf<T, N> {}
+// `Clone` is derived because `Copy` is already the canonical semantics for this
+// inline fixed-capacity buffer: `*self` is the exact bytewise clone.
 
 impl<T: ScratchElement + PartialEq, const N: usize> PartialEq for AlignedBuf<T, N> {
     #[inline]
@@ -493,7 +483,7 @@ mod tests {
 
     #[test]
     fn filled_and_clear() {
-        let mut buf = AlignedBuf::<f32, 8>::filled(3.14);
+        let mut buf = AlignedBuf::<f32, 8>::filled(core::f32::consts::PI);
         assert_eq!(buf.len(), 8);
         buf.clear();
         assert!(buf.is_empty());
@@ -539,7 +529,7 @@ mod tests {
         buf.push(1);
         buf.push(2);
         let copy = buf;
-        let clone = buf.clone();
+        let clone = buf;
         assert_eq!(copy.as_slice(), &[1, 2]);
         assert_eq!(clone.as_slice(), &[1, 2]);
     }
@@ -548,8 +538,10 @@ mod tests {
     fn partial_eq() {
         let mut a = AlignedBuf::<u32, 4>::new();
         let mut b = AlignedBuf::<u32, 4>::new();
-        a.push(1); a.push(2);
-        b.push(1); b.push(2);
+        a.push(1);
+        a.push(2);
+        b.push(1);
+        b.push(2);
         assert_eq!(a, b);
         b.push(3);
         assert_ne!(a, b);

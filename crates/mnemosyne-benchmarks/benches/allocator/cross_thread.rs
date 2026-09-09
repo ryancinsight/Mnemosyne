@@ -5,7 +5,7 @@ use std::alloc::System;
 use super::compat::bench_jemalloc;
 use super::constants::{
     CROSS_THREAD_ALLOCS, HUGE_LAYOUT, LARGE_LAYOUT, MEDIUM_LAYOUT, SATURATED_THREAD_ALLOCS,
-    SMALL_LAYOUT, THREAD_ALLOCS, THREADS,
+    SMALL_LAYOUT, THREAD_ALLOCS, THREAD_SWEEP, THREADS,
 };
 use super::failure::benchmark_failure;
 #[cfg(feature = "snmalloc")]
@@ -191,6 +191,72 @@ pub fn bench_multithreaded_alloc(c: &mut Criterion) {
         }
         group.finish();
     }
+}
+
+pub fn bench_thread_count_sweep(c: &mut Criterion) {
+    static MNEMOSYNE: mnemosyne::Mnemosyne = mnemosyne::Mnemosyne;
+    static SYSTEM: System = System;
+    static MIMALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+    static RPMALLOC: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
+    #[cfg(feature = "snmalloc")]
+    static SNMALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
+    #[cfg(jemalloc_available)]
+    static JEMALLOC: bench_jemalloc::Jemalloc = bench_jemalloc::Jemalloc;
+
+    let mut group = c.benchmark_group("Thread count scaling");
+    for &thread_count in &THREAD_SWEEP {
+        let id = format!("workers/{thread_count}");
+        group.throughput(Throughput::Elements((thread_count * THREAD_ALLOCS) as u64));
+
+        let mnemosyne_workers =
+            ThreadCycleWorkers::new_with_thread_count(&MNEMOSYNE, SMALL_LAYOUT, thread_count);
+        bench_column(&mut group, "Mnemosyne", id.as_str(), &(), |b, _| {
+            b.iter(|| mnemosyne_workers.run())
+        });
+        drop(mnemosyne_workers);
+
+        let system_workers =
+            ThreadCycleWorkers::new_with_thread_count(&SYSTEM, SMALL_LAYOUT, thread_count);
+        bench_column(&mut group, "System", id.as_str(), &(), |b, _| {
+            b.iter(|| system_workers.run())
+        });
+        drop(system_workers);
+
+        let mimalloc_workers =
+            ThreadCycleWorkers::new_with_thread_count(&MIMALLOC, SMALL_LAYOUT, thread_count);
+        bench_column(&mut group, "MiMalloc", id.as_str(), &(), |b, _| {
+            b.iter(|| mimalloc_workers.run())
+        });
+        drop(mimalloc_workers);
+
+        let rpmalloc_workers =
+            ThreadCycleWorkers::new_with_thread_count(&RPMALLOC, SMALL_LAYOUT, thread_count);
+        bench_column(&mut group, "RpMalloc", id.as_str(), &(), |b, _| {
+            b.iter(|| rpmalloc_workers.run())
+        });
+        drop(rpmalloc_workers);
+
+        #[cfg(feature = "snmalloc")]
+        {
+            let snmalloc_workers =
+                ThreadCycleWorkers::new_with_thread_count(&SNMALLOC, SMALL_LAYOUT, thread_count);
+            bench_column(&mut group, "SnMalloc", id.as_str(), &(), |b, _| {
+                b.iter(|| snmalloc_workers.run())
+            });
+            drop(snmalloc_workers);
+        }
+
+        #[cfg(jemalloc_available)]
+        {
+            let jemalloc_workers =
+                ThreadCycleWorkers::new_with_thread_count(&JEMALLOC, SMALL_LAYOUT, thread_count);
+            bench_column(&mut group, "Jemalloc", id.as_str(), &(), |b, _| {
+                b.iter(|| jemalloc_workers.run())
+            });
+            drop(jemalloc_workers);
+        }
+    }
+    group.finish();
 }
 
 pub fn bench_saturated_multithreaded_alloc(c: &mut Criterion) {
