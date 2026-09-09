@@ -21,6 +21,34 @@
 - **This item closes when that work commits green**, not when the guard alone
   passes — the original trigger wording ("committed, corrected, or dropped")
   reads too narrowly now that a second failure has appeared under it.
+- **Root-caused 2026-09-09, and the cure is a decision rather than a test
+  edit.** The tree is now 61 dirty files, 96 minutes past its last edit (so
+  reclaimable) and **two** integration tests red:
+  `mixed_encryption_modes_round_trip_without_corruption` and
+  `test_secure_and_standard_policies_preserve_hardened_segment_encoding`, both
+  in `policy_integration_tests`.
+  - **Not stranding.** `Page::choose_free_head` (`types/page/mod.rs:228`)
+    already forces `randomized` true whenever `secondary_free` is non-empty,
+    regardless of the allocating policy's `RANDOMIZE_ALLOCATION`, so no block
+    becomes unreachable to a policy that did not free it. The earlier
+    entry-condition hole in `try_allocate_page_local` is likewise closed.
+  - **What actually fails.** With both lists non-empty, `prefer_secondary_free`
+    picks the head, so the allocator legitimately returns the *other* freed
+    block. Both tests free under a deliberately mismatched policy and then
+    assert **pointer identity** on reuse (`reused_std == ptr_std`) as the proxy
+    for "the free-list link remains decodable". Randomization breaks the proxy
+    without necessarily breaking the property it stands for.
+  - **Why this is not a test to edit.** Those assertions are the executable
+    form of [ADR 0001](docs/adr/0001-free-list-encryption-mode-binding.md)
+    (Accepted, [arch], "Binding free-list encryption mode to avoid mixed-policy
+    corruption"). Work contradicting an Accepted ADR conforms or explicitly
+    revises it. So the open question is whether ADR 0001's contract includes
+    reuse *identity* or only decodability — and the answer belongs in a dated
+    revision of that ADR, alongside a replacement assertion that checks the
+    property rather than the proxy (the returned pointer is one of the freed
+    blocks and its payload round-trips intact).
+  - Not taken further: making that call is the feature author's, and the
+    randomization carries no board item or ADR of its own to record it against.
 - **What is in the tree.** 251 uncommitted lines across `page/{init,mod,reclaim}.rs`,
   `local_alloc/page/allocation.rs`, `free.rs`, `free_helpers.rs`, `realloc.rs`
   and two test files add a second per-page free list — `Page::secondary_free`
