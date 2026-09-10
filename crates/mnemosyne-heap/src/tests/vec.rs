@@ -9,21 +9,25 @@ fn test_branded_vec_growth_and_drop() {
         assert_eq!(vec.len(), 0);
         assert_eq!(vec.capacity(), 0);
 
-        // Push elements to trigger growth
-        for _ in 0..10 {
-            vec.push(&mut token, DropTracker(&counter))
+        // Push elements to trigger growth. The index rides along so a pop can
+        // be identified: `DropTracker` alone is indistinguishable from every
+        // other element.
+        for index in 0..10 {
+            vec.push(&mut token, (index, DropTracker(&counter)))
                 .expect("branded vector growth push failed");
         }
         assert_eq!(vec.len(), 10);
         assert!(vec.capacity() >= 10);
 
-        // Pop half of the elements
-        for _ in 0..5 {
-            // The values come back in push order's reverse; `is_some` would
-            // pass on a vector that popped the wrong element or the same one
-            // twice, which the drop counter below cannot distinguish either.
-            let popped = vec.pop();
-            assert!(popped.is_some(), "a vector of ten must yield five pops");
+        // Pop half of the elements. Which element comes back is the contract:
+        // `is_some` passed on a vector that popped the wrong element or the
+        // same one twice, and the drop counter below cannot see either.
+        for expected in (5..10).rev() {
+            let popped = vec.pop().expect("a vector of ten must yield five pops");
+            assert_eq!(
+                popped.0, expected,
+                "pop must return elements in reverse push order"
+            );
             drop(popped);
         }
         assert_eq!(vec.len(), 5);
