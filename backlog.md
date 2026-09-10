@@ -1,10 +1,33 @@
 # Backlog
 
-<a id="mn-randomized-free-list-guard-regression"></a>
-## MN-RANDOMIZED-FREE-LIST-GUARD-REGRESSION — Uncommitted dual-free-list work disables the out-of-bounds abort [major] — blocked
+<a id="mn-test-lock-poisoning-hides-results"></a>
 
-- **Status:** blocked; **found by:** claude-opus-5, 2026-09-07; **re-open
-  trigger:** the working-tree change below is committed, corrected, or dropped.
+## MN-TEST-LOCK-POISONING-HIDES-RESULTS — One failing test blanks the rest of the run [patch] — todo
+
+- **Observed 2026-09-09** on PR #137's ThreadSanitizer job: one real failure
+  in `test_mixed_policy_free_and_realloc_preserve_segment_encoding` was
+  followed by twenty `PoisonError { .. }` failures. Every serialized test
+  opens with `TEST_LOCK.lock().expect("local allocator test lock was
+  poisoned")`, so the first panic while holding it converts every later test
+  into a failure that reports nothing about its own subject.
+- **Cost:** triage reads twenty red tests and cannot tell which of them the
+  change actually broke. Here the answer was one; the run said twenty-one.
+- **Fix:** recover the guard rather than propagate the poison --
+  `.unwrap_or_else(PoisonError::into_inner)` at each acquisition, behind one
+  helper so the choice is stated once. A poisoned lock means an earlier test
+  panicked, not that this test's fixture is unusable: each of these tests
+  drains the pools it needs on entry.
+- **Non-goals:** changing what the tests assert, or the serialization itself.
+- **Acceptance:** a deliberately panicking test leaves the following tests
+  reporting their own results, and the suite still runs serialized.
+
+<a id="mn-randomized-free-list-guard-regression"></a>
+## MN-RANDOMIZED-FREE-LIST-GUARD-REGRESSION — Uncommitted dual-free-list work disables the out-of-bounds abort [major] — review
+
+- **Status:** review; **integrator:** claude-opus-5; **found by:**
+  claude-opus-5, 2026-09-07. The re-open trigger fired 2026-09-09: the
+  working-tree change is committed and corrected on
+  `perf/mnemosyne-scratch-release` (PR #137).
 - **Re-measured 2026-09-09, and the original regression is cured.**
   `test_free_list_corruption_out_of_bounds_aborts_process` now **passes**: the
   guard aborts as it should. The working tree has meanwhile grown from 10 dirty
