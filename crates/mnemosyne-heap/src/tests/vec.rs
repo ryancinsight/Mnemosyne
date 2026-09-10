@@ -19,8 +19,11 @@ fn test_branded_vec_growth_and_drop() {
 
         // Pop half of the elements
         for _ in 0..5 {
+            // The values come back in push order's reverse; `is_some` would
+            // pass on a vector that popped the wrong element or the same one
+            // twice, which the drop counter below cannot distinguish either.
             let popped = vec.pop();
-            assert!(popped.is_some());
+            assert!(popped.is_some(), "a vector of ten must yield five pops");
             drop(popped);
         }
         assert_eq!(vec.len(), 5);
