@@ -1,5 +1,4 @@
 use super::page::{pop_page_free_block, try_allocate_page_local, try_reclaim_and_allocate};
-use crate::LocalAllocatorSelector;
 use crate::local_alloc::ThreadAllocator;
 use core::ptr::NonNull;
 use mnemosyne_arena::{HasSegmentPool, allocate_segment};
@@ -20,13 +19,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// `ENABLE_FREE_LIST_ENCRYPTION` value; the public `thread_*` entry points
     /// enforce that separation through their mode-keyed TLS slots.
     #[inline(always)]
-    pub unsafe fn alloc_class<P: AllocPolicy>(&mut self, class: usize) -> *mut u8
-    where
-        B: LocalAllocatorSelector<B>,
-    {
-        B::register_current_allocator_ptr(
-            self as *mut ThreadAllocator<B> as *mut core::ffi::c_void,
-        );
+    pub unsafe fn alloc_class<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
         if let Some(page_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
             // Raw pointer, not `&mut`: these paths reach the parent segment, and
             // a `Unique` tag minted here would have to be popped by that access.
@@ -71,10 +64,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// pages already owned by this allocator instance.
     #[cfg(test)]
     #[inline(always)]
-    pub unsafe fn alloc<P: AllocPolicy>(&mut self, size: usize) -> *mut u8
-    where
-        B: LocalAllocatorSelector<B>,
-    {
+    pub unsafe fn alloc<P: AllocPolicy>(&mut self, size: usize) -> *mut u8 {
         let class = match size_to_class(size) {
             Some(c) => c,
             None => return core::ptr::null_mut(),
@@ -92,10 +82,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// class index is within bounds of the `active_pages` array, and the policy
     /// mode matches the mode used by all pages already owned by this allocator.
     #[inline(never)]
-    pub unsafe fn alloc_cold<P: AllocPolicy>(&mut self, class: usize) -> *mut u8
-    where
-        B: LocalAllocatorSelector<B>,
-    {
+    pub unsafe fn alloc_cold<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
         // The container's gate is raised across this call, so the sweep takes
         // its guarded branch.
         unsafe { self.record_defrag_operation::<P>(true) };

@@ -43,44 +43,26 @@ impl AtomicFreeList {
     /// Mask wrapping the push counter to the remaining high bits.
     const COUNT_WRAP_MASK: usize = (1usize << (usize::BITS - Self::PACKED_PTR_BITS)) - 1;
 
+    /// Aborts when `block_ptr` is already the queue's head.
+    ///
+    /// The check is the head and only the head. Walking the chain would read
+    /// each block's `next` link, and those links are written non-atomically by
+    /// whichever thread pushed them -- a concurrent walk is a data race, which
+    /// is what Miri and ThreadSanitizer both reported here. The head is an
+    /// atomic load and races with nothing, and it is where a double push lands:
+    /// the second push of a block sees the first still on top. A block pushed
+    /// twice with other pushes interleaved escapes this guard, and no
+    /// race-free O(1) check catches that case -- the free-canary check on the
+    /// block itself is the mechanism that does (`Block::check_double_free`).
+    ///
+    /// It is also the only form that keeps a cross-thread free O(1); the walk
+    /// made every push cost the length of the queue.
     #[inline]
-    fn assert_not_in_queue(&self, block_ptr: *mut Block, encrypted: bool, cookie: usize) {
-        let block_addr = block_ptr.addr();
-        let mut current = self.head.load(Ordering::Relaxed);
-        let mut seen = 0usize;
-        while !current.is_null() {
-            seen += 1;
-            if seen > crate::constants::PAGE_SIZE {
-                crate::abort::abort_on_corruption("Cycle detected in AtomicFreeList");
-            }
-            let current_value = current.addr();
-            let current_addr = current_value & Self::PTR_MASK;
-            if current_addr == 0 {
-                if current_value != 0 {
-                    crate::abort::abort_on_corruption(
-                        "AtomicFreeList head pointer is null while the packed count is non-zero",
-                    );
-                }
-                break;
-            }
-            if current_addr == block_addr {
-                crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
-            }
-            let current_ptr = current.map_addr(|_| current_addr);
-            if current_ptr == block_ptr {
-                crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
-            }
-            // SAFETY: `current_ptr` is the chain head this thread just won
-            // by CAS, so it is a live block of the same page; `encrypted` and
-            // `cookie` come from that page's own segment header.
-            let next = unsafe {
-                if encrypted {
-                    (*current_ptr).get_next_dynamic(encrypted, cookie)
-                } else {
-                    (*current_ptr).get_next_raw()
-                }
-            };
-            current = next.map_or(core::ptr::null_mut(), |next| next.as_ptr());
+    fn assert_not_in_queue(&self, block_ptr: *mut Block, _encrypted: bool, _cookie: usize) {
+        let head = self.head.load(Ordering::Relaxed);
+        let head_addr = head.addr() & Self::PTR_MASK;
+        if head_addr != 0 && head_addr == (block_ptr.addr() & Self::PTR_MASK) {
+            crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
         }
     }
 
@@ -310,33 +292,25 @@ impl AtomicFreeList {
 
 #[cfg(not(target_pointer_width = "64"))]
 impl AtomicFreeList {
+    /// Aborts when `block_ptr` is already the queue's head.
+    ///
+    /// The check is the head and only the head. Walking the chain would read
+    /// each block's `next` link, and those links are written non-atomically by
+    /// whichever thread pushed them -- a concurrent walk is a data race, which
+    /// is what Miri and ThreadSanitizer both reported here. The head is an
+    /// atomic load and races with nothing, and it is where a double push lands:
+    /// the second push of a block sees the first still on top. A block pushed
+    /// twice with other pushes interleaved escapes this guard, and no
+    /// race-free O(1) check catches that case -- the free-canary check on the
+    /// block itself is the mechanism that does (`Block::check_double_free`).
+    ///
+    /// It is also the only form that keeps a cross-thread free O(1); the walk
+    /// made every push cost the length of the queue.
     #[inline]
-    fn assert_not_in_queue(&self, block_ptr: *mut Block, encrypted: bool, cookie: usize) {
-        let mut current = self.head.load(Ordering::Relaxed);
-        let block_addr = block_ptr.addr();
-        let mut seen = 0usize;
-        while !current.is_null() {
-            seen += 1;
-            if seen > crate::constants::PAGE_SIZE {
-                crate::abort::abort_on_corruption("Cycle detected in AtomicFreeList");
-            }
-            if block_addr == current.addr() {
-                crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
-            }
-            if current == block_ptr {
-                crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
-            }
-            // SAFETY: `current` is the chain head this thread just won by
-            // CAS, so it is a live block of the same page; `encrypted` and
-            // `cookie` come from that page's own segment header.
-            let next = unsafe {
-                if encrypted {
-                    (*current).get_next_dynamic(encrypted, cookie)
-                } else {
-                    (*current).get_next_raw()
-                }
-            };
-            current = next.map_or(core::ptr::null_mut(), |next| next.as_ptr());
+    fn assert_not_in_queue(&self, block_ptr: *mut Block, _encrypted: bool, _cookie: usize) {
+        let head = self.head.load(Ordering::Relaxed);
+        if !head.is_null() && head.addr() == block_ptr.addr() {
+            crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
         }
     }
 
