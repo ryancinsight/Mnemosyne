@@ -6,6 +6,15 @@ use crate::types::Block;
 use crate::types::Segment;
 use core::ptr::NonNull;
 
+#[cfg(target_pointer_width = "64")]
+const PARITY_MULTIPLIER: usize = 0x9E37_79B9_7F4A_7C15;
+
+#[cfg(target_pointer_width = "32")]
+// The 32-bit word is the low half of the 64-bit mixer constant. Keeping the
+// same low-word mixing preserves deterministic parity without an overflowing
+// literal on wasm32 and other 32-bit targets.
+const PARITY_MULTIPLIER: usize = 0x7F4A_7C15;
+
 /// Metadata representing a page of memory.
 ///
 /// Each page manages blocks of a single size class. The field layout keeps
@@ -210,7 +219,7 @@ impl Page {
         }
         let block_size = unsafe { (*page).block_size } as usize;
         let seed = page.addr()
-            ^ alloc_count.wrapping_mul(0x9E3779B97F4A7C15)
+            ^ alloc_count.wrapping_mul(PARITY_MULTIPLIER)
             ^ block_size.wrapping_mul(0xD1B54A35);
         (seed & 1) != 0
     }
