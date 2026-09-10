@@ -2,66 +2,93 @@
 
 use super::*;
 
+/// A blind write into a freed hardened block must not survive the next
+/// allocation from that page.
+///
+/// The earlier form of this test flipped a bit, read the link back, observed
+/// that it decoded to something else, and then repaired it -- which proves
+/// only that the encoding is an encoding, since any XOR decodes a flipped
+/// word differently. Nothing allocated through the tampered chain, so the
+/// check the test is named for never ran. The abort is the observable, so
+/// the tamper runs in a re-executed child like the three cases below.
+///
+/// The encoding is `addr ^ (cookie | 1)`, so flipping bit `SEGMENT_SIZE` of
+/// the encoded word moves the decoded address exactly one segment away while
+/// leaving its alignment intact: the attacker needs no knowledge of the
+/// cookie, and `pop_block`'s in-page bound is what has to reject it. A
+/// tamper that merely misaligned the link would be caught by the cheaper
+/// alignment test instead.
 #[test]
+// Re-executes the test binary to observe the abort; Miri cannot spawn a
+// subprocess, so the assertion is unobservable under it rather than failing.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
 fn hardened_policy_detects_freelist_tamper() {
     use mnemosyne_core::policy::HardenedPolicy;
+    use std::env;
+    use std::process::Command;
+    use std::string::String;
 
-    let _guard = crate::local_alloc::TEST_LOCK
-        .lock()
-        .expect("local allocator test lock was poisoned");
+    if env::var("RUN_HARDENED_FREELIST_TAMPER_ABORT_TEST").is_ok() {
+        let _guard = crate::local_alloc::TEST_LOCK
+            .lock()
+            .expect("local allocator test lock was poisoned");
 
-    // We want to verify that tamper detection works under HardenedPolicy.
-    // Let's allocate two blocks on a fresh page of class 0 (16 bytes).
-    // Since we want them on the same page, we can allocate them in sequence.
-    let ptr1 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(16, 8) };
-    let ptr2 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(16, 8) };
-    assert!(!ptr1.is_null());
-    assert!(!ptr2.is_null());
+        // Two blocks of class 0 (16 bytes) allocated in sequence share a page,
+        // and freeing both leaves a head with a real next-link to tamper with.
+        let ptr1 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(16, 8) };
+        let ptr2 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(16, 8) };
+        assert!(!ptr1.is_null());
+        assert!(!ptr2.is_null());
+        unsafe {
+            thread_free::<HardenedPolicy, MemoryBackendWrapper>(ptr1);
+            thread_free::<HardenedPolicy, MemoryBackendWrapper>(ptr2);
+        }
 
-    // Free them in sequence so they end up in the thread-local free list
-    unsafe {
-        thread_free::<HardenedPolicy, MemoryBackendWrapper>(ptr1);
-        thread_free::<HardenedPolicy, MemoryBackendWrapper>(ptr2);
+        let ptr_val = ptr1 as usize;
+        let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
+        let segment = segment_addr as *mut Segment;
+        let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+        let page = unsafe { &raw mut (*segment).pages[page_index] };
+
+        // The randomized head (ADR 0001, revised 2026-09-09) decides which of
+        // the two chains holds the block the next allocation pops, so the
+        // tamper follows the head rather than naming an address.
+        let active_head = unsafe { (*page).free.or((*page).secondary_free) }
+            .expect("invariant: two frees onto one page leave a live head in one of its chains");
+        let raw_word = active_head.as_ptr() as *mut usize;
+
+        // SAFETY: `raw_word` is the head block's own first word, which holds
+        // the encoded link; the block is free, so no live allocation aliases
+        // it. This is the whole tamper -- no cookie is read.
+        unsafe {
+            *raw_word ^= SEGMENT_SIZE;
+        }
+
+        // Allocating from this page consults the free chain (the bump region
+        // is skipped while either chain is non-empty) and decodes the tampered
+        // link, which lands one segment outside the page.
+        let _ = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(16, 8) };
+        return;
     }
 
-    // The randomized head (ADR 0001, revised 2026-09-09) makes "which block is
-    // reused" unpredictable, so the tamper is applied to whichever block is
-    // actually at the head and the claim is made about decoding rather than
-    // about an address. Reading the link back under the same cookie must not
-    // reproduce what was there before the flip; if it did, the encoding would
-    // be carrying tampered bits through faithfully.
-    let ptr_val = ptr1 as usize;
-    let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
-    let segment = segment_addr as *mut Segment;
-    let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-    let page = unsafe { &raw mut (*segment).pages[page_index] };
+    let current_exe = env::current_exe().expect("invariant: a running test binary has a path");
+    let output = Command::new(current_exe)
+        .arg("tests::corruption::hardened_policy_detects_freelist_tamper")
+        .arg("--exact")
+        .env("RUN_HARDENED_FREELIST_TAMPER_ABORT_TEST", "1")
+        .output()
+        .expect("invariant: re-executing this test binary succeeds");
 
-    let active_head = unsafe { (*page).free.or((*page).secondary_free) }
-        .expect("HardenedPolicy should keep at least one free block live after the paired free");
-    let cookie = unsafe { Segment::cookie_for::<HardenedPolicy>(segment, page_index) };
-    let expected_next = unsafe { (*active_head.as_ptr()).get_next::<HardenedPolicy>(cookie) };
-    let raw_word = active_head.as_ptr() as *mut usize;
-
-    // SAFETY: `raw_word` is the head block's own first word, which holds the
-    // encoded link; the block is free, so no live allocation aliases it.
-    unsafe {
-        let original = *raw_word;
-        *raw_word = original ^ 0x08;
-    }
-
-    // SAFETY: same block, same cookie -- this reads the link the flip left.
-    let tampered_next = unsafe { (*active_head.as_ptr()).get_next::<HardenedPolicy>(cookie) };
-    assert_ne!(
-        tampered_next, expected_next,
-        "HardenedPolicy must not faithfully decode a tampered free-list link"
-    );
-
-    // Restore the link so the page returns to a consistent state and its
-    // segment reclaims normally; every observation above was made against the
-    // tampered state, so the repair changes nothing the test measures.
-    // SAFETY: same block and cookie, writing back the value read before the flip.
-    unsafe {
-        (*active_head.as_ptr()).set_next::<HardenedPolicy>(expected_next, cookie);
+    if output.status.success() {
+        std::println!(
+            "Subprocess stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        std::println!(
+            "Subprocess stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        panic!("allocating through a tampered hardened free-list link must abort the process");
     }
 }
 

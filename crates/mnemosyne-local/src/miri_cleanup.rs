@@ -1,6 +1,17 @@
 //! Orphan-pool teardown used to give miri a quiescent heap at the end
 //! of a test run.
 
+/// Drain `B`'s orphan pool, reclaiming what is dead and returning what is
+/// still live, then purge the segment pool.
+///
+/// # Safety
+///
+/// The caller must hold the serialized test lock (`TEST_LOCK`) for the whole
+/// call, so that no allocator operation on any thread can reach `B`'s pools
+/// or the segments detached from them while they are detached. Every segment
+/// in `B`'s orphan pool must belong to backend `B`: the reclamation and the
+/// deallocation below both run through `B`, and a segment mapped by another
+/// backend would be released through the wrong one.
 #[doc(hidden)]
 pub unsafe fn miri_cleanup_pools<B: mnemosyne_arena::HasSegmentPool>() {
     let mut orphaned = std::vec::Vec::new();
