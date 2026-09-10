@@ -386,7 +386,20 @@ fn test_scratch_pool_panic_resilience() {
             panic!("intended panic inside closure");
         });
     });
-    assert!(result.is_err());
+    // The panic must be the closure's own, and the pool must have unwound
+    // back to depth zero: `is_err` alone would also accept a panic raised by
+    // the borrow accounting itself, which is the failure under test.
+    let payload = result.expect_err("the closure's panic must propagate");
+    let reason = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .expect("invariant: a `panic!` with a literal carries a &str payload");
+    assert_eq!(reason, "intended panic inside closure");
+    assert_eq!(
+        pool.borrow_depth(),
+        0,
+        "the scratch borrow must be released along the unwind path"
+    );
     assert_eq!(
         pool.borrow_depth(),
         0,
@@ -821,7 +834,12 @@ fn uninit_callback_panic_leaves_no_uninitialized_length_behind() {
             })
         }
     }));
-    assert!(panicked.is_err(), "the callback must have unwound");
+    let payload = panicked.expect_err("the callback must have unwound");
+    let reason = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .expect("invariant: a `panic!` with a literal carries a &str payload");
+    assert_eq!(reason, "callback unwinds before initializing anything");
 
     // The safe path must not inherit a length covering memory the unwound
     // callback never wrote. Under Miri this read is the assertion: an
