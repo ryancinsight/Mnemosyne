@@ -273,7 +273,11 @@ impl Default for Segment {
             page_occupied_mask: 0,
             page_linked_mask: 0,
             keys: [0; PAGES_PER_SEGMENT],
-            pages: [const { Page::new() }; PAGES_PER_SEGMENT],
+            // `from_fn` rather than an inline const block: under `cfg(loom)`
+            // `Page::new` is not `const` (loom's atomics have no const
+            // constructor), and this is a cold constructor used only by the
+            // test fixture -- real segments are built by `initialize`.
+            pages: core::array::from_fn(|_| Page::new()),
         }
     }
 }

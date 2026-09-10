@@ -455,13 +455,20 @@ fn huge_mapping_suffix_uses_raw_mapping_base() {
 fn huge_mapping_suffix_is_address_space_safe() {
     let mut segment_storage = core::mem::MaybeUninit::<Segment>::uninit();
     let segment = segment_storage.as_mut_ptr();
-    let raw = (usize::MAX - 0x4000) as *mut u8;
+    // The case is about arithmetic at the top of the address space, so the two
+    // pointers are synthesized at their addresses rather than offset from one
+    // another: `add` on a pointer with no allocation behind it is UB in its own
+    // right, which is what Miri reported here, and it is not the property under
+    // test. `huge_mapping_suffix_from` only reads `.addr()`, so neither pointer
+    // is ever dereferenced.
+    let base = usize::MAX - 0x4000;
+    let raw = core::ptr::without_provenance_mut::<u8>(base);
     unsafe {
         Segment::initialize(segment, raw, 0);
         (*segment).pages[0].block_size = 0x4000;
     }
 
-    let user_ptr = unsafe { raw.add(0x1800) }.cast_const();
+    let user_ptr = core::ptr::without_provenance::<u8>(base + 0x1800);
     let suffix = unsafe { (*segment).huge_mapping_suffix_from(user_ptr) };
 
     assert_eq!(

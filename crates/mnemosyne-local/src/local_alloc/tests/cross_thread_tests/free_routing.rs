@@ -121,38 +121,21 @@ fn test_mixed_policy_free_and_realloc_preserve_segment_encoding() {
     unsafe {
         crate::thread_free::<StandardPolicy, DefaultBackend>(hardened_second);
     }
-    let second_value = hardened_second as usize;
-    let second_segment = second_value & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
-    let second_segment_ptr = second_segment as *mut Segment;
-    let second_page_index = (second_value >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-    let second_max_blocks = unsafe { (*second_segment_ptr).pages[second_page_index].max_blocks() };
-    let mut second_probes = std::vec::Vec::with_capacity(second_max_blocks);
-    let mut second_reclaimed = false;
-    for _ in 0..second_max_blocks {
-        let probe = unsafe { crate::thread_alloc::<HardenedPolicy, DefaultBackend>(32, 8) };
-        assert!(
-            !probe.is_null(),
-            "mixed-policy free did not preserve the hardened page chain"
-        );
-        second_probes.push(probe);
-        if probe == hardened_second {
-            second_reclaimed = true;
-            break;
-        }
-    }
+    // The block must be reachable in its owner page's chain -- which is the
+    // decodability claim -- not at any particular position in it. Probing by
+    // reallocation until the same address comes back asserts reuse identity
+    // instead, and the randomized head (ADR 0001, revised 2026-09-09) makes
+    // that a coin flip whose odds depend on the page geometry: the probe form
+    // passed on x86-64 and failed on aarch64.
     assert!(
-        second_reclaimed,
-        "hardened free-list head was not reclaimed after {} probe allocations",
-        second_max_blocks
+        hardened_chain_contains(hardened_second),
+        "a standard-policy free must leave the hardened block decodable in its owner chain"
     );
 
     // Reallocate another hardened block through the standard policy. This
     // exercises the fallback path's old-block free, which must apply the same
     // segment-keyed encoding before the hardened allocator pops it.
     let layout = Layout::from_size_align(32, 8).expect("test layout is valid");
-    let first_segment = (hardened_first as usize) & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
-    let first_page_index = ((hardened_first as usize) >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-    let first_page = unsafe { &raw mut (*(first_segment as *mut Segment)).pages[first_page_index] };
     let resized = unsafe {
         crate::thread_realloc::<StandardPolicy, DefaultBackend>(hardened_first, layout, 64)
     };
@@ -160,24 +143,17 @@ fn test_mixed_policy_free_and_realloc_preserve_segment_encoding() {
         !resized.is_null(),
         "mixed-policy realloc must produce a block"
     );
-    let first_head = unsafe { (*first_page).free };
+    // Same claim for the realloc path's old-block free: reachable in the
+    // chain, not necessarily at its head.
     assert!(
-        first_head.is_some(),
-        "realloc must return the hardened block to the page free list before the page is reused"
-    );
-    assert_eq!(
-        first_head,
-        Some(unsafe { NonNull::new_unchecked(hardened_first as *mut Block) }),
-        "the hardened block freed by standard-policy realloc must remain reachable in the owner page chain"
+        hardened_chain_contains(hardened_first),
+        "the block freed by a standard-policy realloc must stay decodable in the owner chain"
     );
 
     // SAFETY: every pointer is live and freed exactly once under a policy
     // whose free path now consults the owning segment's mode.
     unsafe {
         crate::thread_free::<HardenedPolicy, DefaultBackend>(hardened_third);
-        for probe in second_probes {
-            crate::thread_free::<HardenedPolicy, DefaultBackend>(probe);
-        }
         crate::thread_free::<StandardPolicy, DefaultBackend>(resized);
     }
 }
@@ -331,4 +307,38 @@ fn allocation_side_reclaim_counts_cross_thread_blocks_exactly() {
         crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(reclaimed_ptr);
     }
     owner.reclaim_owned_segments();
+}
+
+/// Whether `block` is reachable by decoding its owner page's free chains.
+///
+/// Both lists are walked under the page's own hardened cookie, bounded by the
+/// page's block count so a corrupted link ends the walk instead of spinning.
+/// A link encoded with the wrong cookie decodes to a wild address, which is
+/// exactly what fails to match.
+fn hardened_chain_contains(block: *mut u8) -> bool {
+    use mnemosyne_core::policy::HardenedPolicy;
+
+    let value = block as usize;
+    let segment = (value & !(mnemosyne_core::constants::SEGMENT_SIZE - 1)) as *mut Segment;
+    let page_index = (value >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+    // SAFETY: `block` is a live allocation, so its segment is mapped and
+    // `page_index` names one of its pages.
+    let page = unsafe { &raw mut (*segment).pages[page_index] };
+    let cookie = unsafe { Segment::cookie_for::<HardenedPolicy>(segment, page_index) };
+    let bound = unsafe { (*page).max_blocks() };
+    let target = block.cast::<Block>();
+
+    // SAFETY: each `current` is a block of this page, reached by decoding the
+    // previous link with the page's own cookie.
+    for head in unsafe { [(*page).free, (*page).secondary_free] } {
+        let mut current = head;
+        for _ in 0..bound {
+            let Some(node) = current else { break };
+            if node.as_ptr() == target {
+                return true;
+            }
+            current = unsafe { (*node.as_ptr()).get_next::<HardenedPolicy>(cookie) };
+        }
+    }
+    false
 }
