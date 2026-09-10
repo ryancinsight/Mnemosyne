@@ -11,7 +11,7 @@ use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::types::{Block, Page, Segment, locate_page, locate_segment};
 #[inline(always)]
 pub(super) unsafe fn thread_free_classified<
-    P: AllocPolicy,
+    P: AllocPolicy + crate::tls_slot::PolicySlotSelection<B>,
     B: HasSegmentPool + LocalAllocatorSelector<B>,
     const LAYOUT_PROVES_SMALL: bool,
 >(
@@ -45,20 +45,15 @@ pub(super) unsafe fn thread_free_classified<
         // from the metadata slot one pointer slot directly preceding the
         // user payload (`(ptr as *mut *mut Segment) - 1`); every huge
         // allocation writes this slot at `allocate_large_or_huge` time.
-        // The `pages[0].alloc_count` / `huge_mapping_suffix_from` reads,
-        // the `poison_freed_bytes` write, and the `deallocate_large_or_huge`
-        // call all stay inside the originating huge mapping.
+        // The `huge_mapping_suffix_from` read, the `poison_freed_bytes` write,
+        // and the `deallocate_large_or_huge` call all stay inside the
+        // originating huge mapping.
         let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
         if P::ENABLE_POISONING {
-            let size = unsafe { (*segment).pages[0].alloc_count };
-            let size = if size > 0 {
-                size
-            } else {
-                unsafe { (*segment).huge_mapping_suffix_from(ptr) }
-            };
-            // SAFETY: covered by the huge-allocation metadata argument above: `segment` is
-            // the originating mapping and `size` its extent from `ptr`, so the poison write
-            // and the release stay inside that mapping.
+            // SAFETY: covered by the huge-allocation metadata argument above: the
+            // segment's raw mapping length is the actual reservation for this
+            // pointer, and it includes any alignment or prefix slack.
+            let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
             unsafe { poison_freed_bytes::<P>(ptr, size) };
         }
         let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
@@ -71,7 +66,7 @@ pub(super) unsafe fn thread_free_classified<
     // `ptr`'s segment and index; `block_size` is written once at page
     // initialization and only read here.
     debug_assert_eq!(
-        (ptr_val & (PAGE_SIZE - 1)) % unsafe { (*page_ptr).block_size },
+        (ptr_val & (PAGE_SIZE - 1)) % unsafe { (*page_ptr).block_size as usize },
         0,
         "small free ptr must be aligned to the page's block stride"
     );
@@ -81,7 +76,7 @@ pub(super) unsafe fn thread_free_classified<
     // mean no memory-fence overhead on the hot path.
     {
         use mnemosyne_core::size_class::size_to_class_nonzero;
-        let block_size = unsafe { (*page_ptr).block_size };
+        let block_size = unsafe { (*page_ptr).block_size as usize };
         if let Some(class) = size_to_class_nonzero(block_size) {
             crate::bin_stats::record_dealloc(class);
         }
@@ -91,7 +86,7 @@ pub(super) unsafe fn thread_free_classified<
     // exclusively until the block re-enters a free list — so the poison write
     // stays inside the block.
     if P::ENABLE_POISONING {
-        unsafe { poison_freed_bytes::<P>(ptr, (*page_ptr).block_size) };
+        unsafe { poison_freed_bytes::<P>(ptr, (*page_ptr).block_size as usize) };
     }
 
     let block = ptr as *mut Block;
@@ -99,26 +94,30 @@ pub(super) unsafe fn thread_free_classified<
     // `owner` reads its ownership token, which is immutable while the segment
     // is mapped.
     let owner = unsafe { Segment::owner(segment) };
+    let encrypted = unsafe { Segment::free_list_encrypted(segment) };
+    let randomized =
+        (P::RANDOMIZE_ALLOCATION && encrypted) || unsafe { (*page_ptr).secondary_free.is_some() };
 
     #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
     let (is_owner, owner_allocator) = {
         let tid = mnemosyne_core::types::current_thread_id();
-        if owner.matches_thread_id(tid) {
-            // SAFETY: `segment` is live (above) and `owner` matched this thread's id, so
-            // the owner-allocator pointer names this thread's own allocator.
-            (true, unsafe { Segment::owner_allocator(segment) })
+        let owner_allocator_ptr = unsafe { Segment::owner_allocator(segment) };
+        let caller_allocator = B::get_allocator_ptr_raw_for_policy::<P>();
+        let same_thread_owner = !owner_allocator_ptr.is_null() && owner.matches_thread_id(tid);
+        let caller_owner = !caller_allocator.is_null() && owner.matches(caller_allocator);
+        if same_thread_owner {
+            (true, owner_allocator_ptr)
+        } else if caller_owner {
+            (true, caller_allocator)
         } else {
             (false, core::ptr::null_mut())
         }
     };
     #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
     let (is_owner, owner_allocator) = {
-        let standard_allocator = B::get_allocator_ptr_raw_for_encryption::<false>();
-        let encrypted_allocator = B::get_allocator_ptr_raw_for_encryption::<true>();
-        if owner.matches(standard_allocator) {
-            (true, standard_allocator)
-        } else if owner.matches(encrypted_allocator) {
-            (true, encrypted_allocator)
+        let caller_allocator = B::get_allocator_ptr_raw_for_policy::<P>();
+        if owner.matches(caller_allocator) {
+            (true, caller_allocator)
         } else {
             (false, core::ptr::null_mut())
         }
@@ -134,7 +133,11 @@ pub(super) unsafe fn thread_free_classified<
         // SAFETY: `block` is a user pointer previously returned by the
         // allocator; non-nullness is the allocator invariant. Equality
         // with `page.free` is the double-free guard.
-        if Some(unsafe { NonNull::new_unchecked(block) }) == unsafe { (*page_ptr).free } {
+        if Some(unsafe { NonNull::new_unchecked(block) }) == unsafe { (*page_ptr).free }
+            || (randomized
+                && Some(unsafe { NonNull::new_unchecked(block) })
+                    == unsafe { (*page_ptr).secondary_free })
+        {
             std::process::abort();
         }
         // `owner_allocator` is the owner token, which by the slot's offset-0
@@ -148,7 +151,6 @@ pub(super) unsafe fn thread_free_classified<
         let page_free = unsafe { (*page_ptr).free };
         // SAFETY: `segment`/`page_index` locate this page's parent header and its
         // key slot, satisfying `cookie_for`'s contract.
-        let encrypted = unsafe { Segment::free_list_encrypted(segment) };
         let cookie = unsafe { Segment::cookie_for_dynamic(segment, encrypted, page_index) };
 
         if unsafe { (*page_ptr).list_state } != 2 {
@@ -173,7 +175,8 @@ pub(super) unsafe fn thread_free_classified<
                         page_free,
                         cookie,
                         encrypted,
-                        page_alloc_count,
+                        page_alloc_count as usize,
+                        randomized,
                     )
                 };
                 #[cfg(feature = "dealloc-probe")]
@@ -256,7 +259,7 @@ unsafe fn record_free_profile(ptr: *mut u8, page: *const Page, page_index: usize
         // `huge_allocation_size`'s precondition.
         unsafe { crate::usable_size::huge_allocation_size(ptr) }
     } else {
-        block_size
+        block_size as usize
     };
     mnemosyne_prof::on_free(ptr, size);
 }

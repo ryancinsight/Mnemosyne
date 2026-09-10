@@ -150,8 +150,34 @@ Implementation is complete:
    cannot publish a link with the wrong cookie.
 4. `test_mixed_policy_free_and_realloc_preserve_segment_encoding` verifies
    standard-policy free and realloc of hardened allocations, followed by
-   hardened free-list reuse and pointer identity. It also verifies distinct
-   TLS slot identities for the two modes.
+   hardened free-list reuse. It also verifies distinct TLS slot identities for
+   the two modes.
+
+### Revision 2026-09-09: reuse identity is not part of this contract
+
+The verification above, and the two `policy_integration_tests` cases that
+implement it, asserted **pointer identity** on reuse -- free a block, allocate
+again, expect the same address -- as the executable proxy for "the link
+remains decodable".
+
+Free-list randomization removed the proxy without touching the property.
+`choose_free_head` forces randomized selection whenever `secondary_free` is
+non-empty, whatever the allocating policy asks for, so with both lists
+populated the allocator legitimately returns a different freed block. No block
+becomes unreachable to a policy that did not free it; only the address stops
+being predictable. Likewise a grow across size classes may relocate, so the
+owner-block realloc case cannot assert its address either.
+
+What this decision actually claims is that a mismatched freeing policy cannot
+publish a link with the wrong cookie -- a corruption claim about the chain, not
+an address claim about one block. The tests now assert that directly: a run of
+allocations off the affected chain must come back distinct, aligned, disjoint
+from every still-live block, and each must round-trip a payload written through
+it, since a mis-decoded link hands out a wild or overlapping block. The realloc
+case asserts payload survival across the move.
+
+The decision is unchanged. Only its verification is restated in terms of the
+property rather than an address coincidence that a later feature invalidated.
 
 The lower-level `ThreadAllocator<B>::alloc::<P>` methods remain unsafe and
 carry the existing caller obligation to use one encryption mode per allocator

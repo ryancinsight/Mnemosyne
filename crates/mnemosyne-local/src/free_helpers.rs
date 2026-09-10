@@ -54,16 +54,23 @@ pub(crate) unsafe fn is_sole_active_page(
 pub(crate) unsafe fn commit_in_place_free(
     block: *mut Block,
     page: *mut Page,
-    page_free: Option<NonNull<Block>>,
+    _page_free: Option<NonNull<Block>>,
     cookie: usize,
     encrypted: bool,
     page_alloc_count: usize,
+    randomized: bool,
 ) {
     // SAFETY: `block` is a live, non-null block owned by `page` per the caller's
     // contract; the free-list head mutation stays inside that page.
     unsafe {
-        (*block).set_next_dynamic(page_free, encrypted, cookie);
-        (*page).free = Some(NonNull::new_unchecked(block));
-        (*page).alloc_count = page_alloc_count - 1;
+        let (current_head, use_secondary) =
+            Page::choose_free_head(page, page_alloc_count, randomized);
+        (*block).set_next_dynamic(current_head, encrypted, cookie);
+        if use_secondary {
+            (*page).secondary_free = Some(NonNull::new_unchecked(block));
+        } else {
+            (*page).free = Some(NonNull::new_unchecked(block));
+        }
+        (*page).alloc_count = (page_alloc_count - 1) as u32;
     }
 }

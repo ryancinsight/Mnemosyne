@@ -1,10 +1,77 @@
 # Backlog
 
-<a id="mn-randomized-free-list-guard-regression"></a>
-## MN-RANDOMIZED-FREE-LIST-GUARD-REGRESSION — Uncommitted dual-free-list work disables the out-of-bounds abort [major] — blocked
+<a id="mn-test-lock-poisoning-hides-results"></a>
 
-- **Status:** blocked; **found by:** claude-opus-5, 2026-09-07; **re-open
-  trigger:** the working-tree change below is committed, corrected, or dropped.
+## MN-TEST-LOCK-POISONING-HIDES-RESULTS — One failing test blanks the rest of the run [patch] — todo
+
+- **Observed 2026-09-09** on PR #137's ThreadSanitizer job: one real failure
+  in `test_mixed_policy_free_and_realloc_preserve_segment_encoding` was
+  followed by twenty `PoisonError { .. }` failures. Every serialized test
+  opens with `TEST_LOCK.lock().expect("local allocator test lock was
+  poisoned")`, so the first panic while holding it converts every later test
+  into a failure that reports nothing about its own subject.
+- **Cost:** triage reads twenty red tests and cannot tell which of them the
+  change actually broke. Here the answer was one; the run said twenty-one.
+- **Fix:** recover the guard rather than propagate the poison --
+  `.unwrap_or_else(PoisonError::into_inner)` at each acquisition, behind one
+  helper so the choice is stated once. A poisoned lock means an earlier test
+  panicked, not that this test's fixture is unusable: each of these tests
+  drains the pools it needs on entry.
+- **Non-goals:** changing what the tests assert, or the serialization itself.
+- **Acceptance:** a deliberately panicking test leaves the following tests
+  reporting their own results, and the suite still runs serialized.
+
+<a id="mn-randomized-free-list-guard-regression"></a>
+## MN-RANDOMIZED-FREE-LIST-GUARD-REGRESSION — Uncommitted dual-free-list work disables the out-of-bounds abort [major] — review
+
+- **Status:** review; **integrator:** claude-opus-5; **found by:**
+  claude-opus-5, 2026-09-07. The re-open trigger fired 2026-09-09: the
+  working-tree change is committed and corrected on
+  `perf/mnemosyne-scratch-release` (PR #137).
+- **Re-measured 2026-09-09, and the original regression is cured.**
+  `test_free_list_corruption_out_of_bounds_aborts_process` now **passes**: the
+  guard aborts as it should. The working tree has meanwhile grown from 10 dirty
+  files to **48**, spanning `local_alloc`, `tls`, `page` types and arena
+  scratch, with no commit in 61 hours.
+- **A different integrity test is now red.** Full workspace run on that tree:
+  **380 passed, 1 failed** — `mnemosyne-local::policy_integration_tests`
+  `mixed_encryption_modes_round_trip_without_corruption`. So the work is still
+  not committable, for a different reason than when this was filed.
+- **Not taken over.** The newest edit was 41 minutes old at the time of
+  measurement, inside the stale-claim window, so this is a live peer's work
+  and the measurement is recorded rather than the tree claimed. Their files
+  were not touched; only this board entry is edited.
+- **This item closes when that work commits green**, not when the guard alone
+  passes — the original trigger wording ("committed, corrected, or dropped")
+  reads too narrowly now that a second failure has appeared under it.
+- **Root-caused 2026-09-09, and the cure is a decision rather than a test
+  edit.** The tree is now 61 dirty files, 96 minutes past its last edit (so
+  reclaimable) and **two** integration tests red:
+  `mixed_encryption_modes_round_trip_without_corruption` and
+  `test_secure_and_standard_policies_preserve_hardened_segment_encoding`, both
+  in `policy_integration_tests`.
+  - **Not stranding.** `Page::choose_free_head` (`types/page/mod.rs:228`)
+    already forces `randomized` true whenever `secondary_free` is non-empty,
+    regardless of the allocating policy's `RANDOMIZE_ALLOCATION`, so no block
+    becomes unreachable to a policy that did not free it. The earlier
+    entry-condition hole in `try_allocate_page_local` is likewise closed.
+  - **What actually fails.** With both lists non-empty, `prefer_secondary_free`
+    picks the head, so the allocator legitimately returns the *other* freed
+    block. Both tests free under a deliberately mismatched policy and then
+    assert **pointer identity** on reuse (`reused_std == ptr_std`) as the proxy
+    for "the free-list link remains decodable". Randomization breaks the proxy
+    without necessarily breaking the property it stands for.
+  - **Why this is not a test to edit.** Those assertions are the executable
+    form of [ADR 0001](docs/adr/0001-free-list-encryption-mode-binding.md)
+    (Accepted, [arch], "Binding free-list encryption mode to avoid mixed-policy
+    corruption"). Work contradicting an Accepted ADR conforms or explicitly
+    revises it. So the open question is whether ADR 0001's contract includes
+    reuse *identity* or only decodability — and the answer belongs in a dated
+    revision of that ADR, alongside a replacement assertion that checks the
+    property rather than the proxy (the returned pointer is one of the freed
+    blocks and its payload round-trips intact).
+  - Not taken further: making that call is the feature author's, and the
+    randomization carries no board item or ADR of its own to record it against.
 - **What is in the tree.** 251 uncommitted lines across `page/{init,mod,reclaim}.rs`,
   `local_alloc/page/allocation.rs`, `free.rs`, `free_helpers.rs`, `realloc.rs`
   and two test files add a second per-page free list — `Page::secondary_free`

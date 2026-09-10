@@ -12,7 +12,7 @@ use crate::LocalAllocatorSelector;
 /// (ADR 0001), so naming the wrong policy reports a different allocator's
 /// counters rather than failing (ADR 0008).
 pub fn memory_stats_generic<
-    P: crate::AllocPolicy,
+    P: crate::AllocPolicy + mnemosyne_local::tls_slot::PolicySlotSelection<B>,
     B: mnemosyne_arena::HasSegmentPool + LocalAllocatorSelector<B>,
 >() -> MemoryStats {
     let backend = mnemosyne_backend::backend_memory_stats();

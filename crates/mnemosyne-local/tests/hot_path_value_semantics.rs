@@ -258,7 +258,9 @@ fn segment_of(p: *mut u8) -> usize {
 ///
 /// Runs allocator entry points; the caller must not hold live blocks whose
 /// policy differs from `P`.
-unsafe fn drive_page_recycling<P: AllocPolicy>() {
+unsafe fn drive_page_recycling<
+    P: AllocPolicy + mnemosyne_local::tls_slot::PolicySlotSelection<Backend>,
+>() {
     /// Largest small class: `PAGE_SIZE / 16384` = 4 blocks per page.
     const BIG: usize = 16384;
     /// A different class, so the emptied page must be re-initialized to serve it.

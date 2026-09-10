@@ -1,5 +1,6 @@
 //! Segment metadata: the fixed-size mapping that owns a run of pages.
 
+use crate::abort::abort_on_corruption;
 use crate::constants::{PAGE_SIZE, PAGES_PER_SEGMENT};
 use crate::types::{Page, SegmentOwner};
 
@@ -174,10 +175,11 @@ pub unsafe fn locate_segment(ptr: *mut u8) -> (*mut Segment, usize) {
 #[inline(always)]
 pub unsafe fn locate_page(segment: *mut Segment, page_index: usize) -> *mut Page {
     debug_assert!(page_index < PAGES_PER_SEGMENT);
-    // SAFETY: the caller guarantees a live segment and an in-range index. A
-    // raw place projection retains the segment allocation's provenance and
-    // creates no reference to the enclosing metadata.
-    unsafe { &raw mut (*segment).pages[page_index] }
+    // SAFETY: the caller guarantees a live segment and an in-range index. Keep
+    // the page recovery on the canonical segment-derived path so every access
+    // through the segment metadata shares one provenance and no stale borrow can
+    // survive across the alloc/free or reclaim hops.
+    unsafe { Page::page_in_segment(segment, page_index) }
 }
 
 /// A segment's owner identity: who owns it, and which allocator cache its
@@ -251,6 +253,35 @@ impl SegmentOwnership {
     }
 }
 
+impl Default for Segment {
+    /// Fresh segments default to the standard unencrypted free-list mode.
+    ///
+    /// This matches the runtime guard used by `free_list_mode_matches`: until a
+    /// thread claims a segment for a hardened policy and keys it, the segment is
+    /// in the zero-cost default mode and must only be checked against `false`.
+    #[inline]
+    fn default() -> Self {
+        Self {
+            raw_alloc_ptr: core::ptr::null_mut(),
+            ownership: SegmentOwnership::unowned(),
+            is_current: false,
+            next_owned_segment: core::ptr::null_mut(),
+            prev_owned_segment: core::ptr::null_mut(),
+            next_free_segment: crate::loom_shim::AtomicPtr::new(core::ptr::null_mut()),
+            free_list_encrypted: false,
+            numa_node: 0,
+            page_occupied_mask: 0,
+            page_linked_mask: 0,
+            keys: [0; PAGES_PER_SEGMENT],
+            // `from_fn` rather than an inline const block: under `cfg(loom)`
+            // `Page::new` is not `const` (loom's atomics have no const
+            // constructor), and this is a cold constructor used only by the
+            // test fixture -- real segments are built by `initialize`.
+            pages: core::array::from_fn(|_| Page::new()),
+        }
+    }
+}
+
 impl Segment {
     /// Initializes a segment header at a given aligned address.
     ///
@@ -311,26 +342,32 @@ impl Segment {
     /// must lie within `[raw_alloc_ptr, raw_alloc_ptr + block_size)`.
     #[inline]
     pub unsafe fn huge_mapping_suffix_from(&self, user_ptr: *const u8) -> usize {
-        let huge_size = self.pages[0].block_size;
+        let huge_size = self.pages[0].block_size as usize;
         debug_assert!(
             huge_size > 0,
             "huge_mapping_suffix_from called on a segment whose pages[0].block_size is zero"
         );
         let raw_ptr_addr = self.raw_alloc_ptr as usize;
+        let mapping_end = raw_ptr_addr
+            .checked_add(huge_size)
+            .expect("raw_alloc_ptr + huge_size overflowed the address space");
+        let user_addr = user_ptr as usize;
         debug_assert!(
-            user_ptr as usize >= raw_ptr_addr,
+            user_addr >= raw_ptr_addr,
             "user_ptr {:p} precedes raw_alloc_ptr {:p}",
             user_ptr,
             self.raw_alloc_ptr
         );
         debug_assert!(
-            user_ptr as usize <= raw_ptr_addr + huge_size,
+            user_addr <= mapping_end,
             "user_ptr {:p} past mapping end (raw_alloc_ptr {:p}, size {})",
             user_ptr,
             self.raw_alloc_ptr,
             huge_size
         );
-        (raw_ptr_addr + huge_size) - user_ptr as usize
+        mapping_end
+            .checked_sub(user_addr)
+            .expect("user_ptr is outside the mapping interval")
     }
 
     /// Returns the free-list encryption cookie for page `page_index` under a
@@ -351,8 +388,26 @@ impl Segment {
         encrypted: bool,
         page_index: usize,
     ) -> usize {
+        if segment.is_null() {
+            abort_on_corruption("free-list cookie segment pointer is null");
+        }
+        if !segment
+            .addr()
+            .is_multiple_of(core::mem::align_of::<Segment>())
+        {
+            abort_on_corruption("free-list cookie segment pointer is misaligned");
+        }
+        if page_index >= PAGES_PER_SEGMENT {
+            abort_on_corruption("free-list cookie page index out of range");
+        }
+        // SAFETY: the null and alignment checks above discharge
+        // `free_list_mode_matches`'s precondition on `segment`.
+        if !unsafe { Self::free_list_mode_matches(segment, encrypted) } {
+            abort_on_corruption(
+                "free-list mode mismatch: raw/decode path does not match the segment",
+            );
+        }
         if encrypted {
-            debug_assert!(page_index < PAGES_PER_SEGMENT);
             // Projected rather than reached through `&self`: this runs on the
             // cross-thread free path, where the owning thread may concurrently
             // write other segment fields. A reference retags the *whole*
@@ -392,13 +447,38 @@ impl Segment {
     ) -> usize {
         // SAFETY: caller guarantees a valid header; reading one field by
         // projection avoids retagging the whole segment.
-        debug_assert_eq!(
-            unsafe { Self::free_list_encrypted(segment) },
-            P::ENABLE_FREE_LIST_ENCRYPTION,
-            "free-list mode mismatch: policy vs segment (ADR 0001)"
-        );
+        let recorded = unsafe { Self::free_list_encrypted(segment) };
+        if recorded != P::ENABLE_FREE_LIST_ENCRYPTION {
+            abort_on_corruption("free-list mode mismatch: policy vs segment (ADR 0001)");
+        }
         // SAFETY: forwarded unchanged from this method's `# Safety` contract.
         unsafe { Self::cookie_for_dynamic(segment, P::ENABLE_FREE_LIST_ENCRYPTION, page_index) }
+    }
+
+    /// Returns whether the segment's free-list links match the caller's mode.
+    ///
+    /// # Safety
+    /// `segment` must point at a live segment whose header has been
+    /// initialized and published. Null and misaligned pointers abort rather
+    /// than read, but a dangling pointer into freed mapping is undetectable
+    /// here. Raw-pointer form for the reason the sibling accessors give: a
+    /// `&Segment` would retag the whole header against the owner's concurrent
+    /// writes.
+    #[inline(always)]
+    pub unsafe fn free_list_mode_matches(segment: *const Segment, encrypted: bool) -> bool {
+        if segment.is_null() {
+            abort_on_corruption("free-list mode check segment pointer is null");
+        }
+        if !segment
+            .addr()
+            .is_multiple_of(core::mem::align_of::<Segment>())
+        {
+            abort_on_corruption("free-list mode check segment pointer is misaligned");
+        }
+        // SAFETY: the null and alignment aborts above leave a pointer that
+        // satisfies `free_list_encrypted`'s contract; the field it reads is
+        // written once before the segment is published.
+        unsafe { Self::free_list_encrypted(segment) == encrypted }
     }
 
     /// Reads the segment's free-list encryption mode.

@@ -120,6 +120,26 @@ fn aligned_vec_extend_from_iter_appends_mapped_values() {
 }
 
 #[test]
+fn scratch_bank_reports_slot_capacity_and_can_shrink_all_slots() {
+    let bank = ScratchBank::<f64, 3>::new();
+    bank.prewarm::<0>(256);
+    bank.prewarm::<1>(128);
+    bank.prewarm::<2>(64);
+
+    assert_eq!(bank.capacity::<0>(), 256);
+    assert_eq!(bank.slot_capacity::<1>(0), 128);
+    assert_eq!(
+        bank.total_capacity_bytes::<2>(),
+        64 * core::mem::size_of::<f64>()
+    );
+
+    bank.shrink_all_slots();
+    assert_eq!(bank.capacity::<0>(), 0);
+    assert_eq!(bank.capacity::<1>(), 0);
+    assert_eq!(bank.capacity::<2>(), 0);
+}
+
+#[test]
 fn scratch_pool_single_borrow() {
     let pool = ScratchPool::<f64>::new();
     pool.with_scratch(128, |scratch| {
@@ -235,6 +255,39 @@ fn with_slot_capacity_preallocates() {
         assert_eq!(scratch.len(), 256);
         assert_eq!(scratch.as_ptr() as usize % DEFAULT_SCRATCH_ALIGN, 0);
     });
+}
+
+#[test]
+fn with_slot_capacity_tracks_all_slot_mirrors() {
+    let pool = ScratchPool::<f64>::with_slot_capacity(128);
+    for idx in 0..MAX_POOL_SLOTS {
+        assert_eq!(
+            pool.slot_capacity(idx),
+            128,
+            "slot {idx} mirror must match backing capacity"
+        );
+    }
+    assert_eq!(
+        pool.total_capacity_bytes(),
+        MAX_POOL_SLOTS * 128 * core::mem::size_of::<f64>()
+    );
+}
+
+#[test]
+fn scratch_bank_preload_warms_every_pool_slot() {
+    let bank = ScratchBank::<f64, 2>::new();
+    bank.preload(&[64, 128, 256]);
+
+    assert!(
+        bank.capacity::<0>() >= 64,
+        "primary slot in pool 0 should be woken"
+    );
+    assert!(
+        bank.capacity::<1>() >= 64,
+        "primary slot in pool 1 should be woken"
+    );
+    assert!(bank.total_capacity_bytes::<0>() >= 64 * core::mem::size_of::<f64>());
+    assert!(bank.total_capacity_bytes::<1>() >= 64 * core::mem::size_of::<f64>());
 }
 
 #[test]

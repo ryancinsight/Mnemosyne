@@ -45,7 +45,10 @@ pub use mnemosyne_prof::{
     register_free_hook,
 };
 pub use options::{configure, get_options};
-pub use scratch::{AlignedBuf, AlignedVec, Drain, IntoIter, ScratchElement};
+pub use scratch::{
+    AlignedBuf, AlignedVec, DEFAULT_SCRATCH_ALIGN, Drain, IntoIter, MAX_POOL_SLOTS, ScratchBank,
+    ScratchElement, ScratchPool,
+};
 pub use stats::{
     BinStatsWindow, MemoryStats, decay, memory_stats, memory_stats_generic, memory_stats_json,
     policy_summary, purge, purge_generic, purge_lazy, purge_standard, reset, reset_generic,

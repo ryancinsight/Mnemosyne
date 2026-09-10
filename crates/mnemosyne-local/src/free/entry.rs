@@ -31,7 +31,10 @@ use mnemosyne_core::policy::AllocPolicy;
 /// }
 /// ```
 #[inline(always)]
-pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+pub unsafe fn thread_free<
+    P: AllocPolicy + crate::tls_slot::PolicySlotSelection<B>,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+>(
     ptr: *mut u8,
 ) {
     // SAFETY: forwarded under `thread_free`'s own contract — `ptr` came from this
@@ -68,7 +71,10 @@ pub unsafe fn thread_free<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSele
 /// }
 /// ```
 #[inline(always)]
-pub unsafe fn thread_free_layout<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+pub unsafe fn thread_free_layout<
+    P: AllocPolicy + crate::tls_slot::PolicySlotSelection<B>,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+>(
     ptr: *mut u8,
     size: usize,
     align: usize,

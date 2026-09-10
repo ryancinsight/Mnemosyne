@@ -16,6 +16,7 @@ mod workers;
 
 pub use cross_thread::{
     bench_cross_thread_free, bench_multithreaded_alloc, bench_saturated_multithreaded_alloc,
+    bench_thread_count_sweep,
 };
 pub use host::prepare_measurement_host;
 pub use measurement::default_criterion;

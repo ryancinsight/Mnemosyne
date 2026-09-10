@@ -49,7 +49,10 @@ use mnemosyne_core::validation::{is_valid_alloc_request, is_valid_layout_alloc_r
 /// }
 /// ```
 #[inline(always)]
-pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+pub unsafe fn thread_alloc<
+    P: AllocPolicy + crate::tls_slot::PolicySlotSelection<B>,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+>(
     size: usize,
     align: usize,
 ) -> *mut u8 {
@@ -103,7 +106,10 @@ pub unsafe fn thread_alloc<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSel
 /// }
 /// ```
 #[inline(always)]
-pub unsafe fn thread_alloc_layout<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+pub unsafe fn thread_alloc_layout<
+    P: AllocPolicy + crate::tls_slot::PolicySlotSelection<B>,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+>(
     size: usize,
     align: usize,
 ) -> *mut u8 {
@@ -156,7 +162,10 @@ pub(crate) fn small_path_class(size: usize, align: usize) -> Option<usize> {
 }
 
 #[inline(always)]
-unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+unsafe fn thread_alloc_checked<
+    P: AllocPolicy + crate::tls_slot::PolicySlotSelection<B>,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+>(
     size: usize,
     align: usize,
 ) -> *mut u8 {
@@ -243,7 +252,10 @@ unsafe fn thread_alloc_checked<P: AllocPolicy, B: HasSegmentPool + LocalAllocato
 
 #[cold]
 #[inline(never)]
-unsafe fn thread_alloc_cold<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>>(
+unsafe fn thread_alloc_cold<
+    P: AllocPolicy + crate::tls_slot::PolicySlotSelection<B>,
+    B: HasSegmentPool + LocalAllocatorSelector<B>,
+>(
     class: usize,
     adjusted_size: usize,
     align: usize,

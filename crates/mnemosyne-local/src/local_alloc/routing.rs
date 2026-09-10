@@ -137,7 +137,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             let block_opt =
                 unsafe { try_reclaim_and_allocate::<P>(page, &mut self.cross_thread_reclaimed) };
             if let Some(block) = block_opt {
-                if unsafe { (*page).alloc_count < (*page).max_blocks() } {
+                if unsafe { ((*page).alloc_count as usize) < (*page).max_blocks() } {
                     // Page is no longer full! Move it back to active list.
                     // SAFETY: `page_ptr` is a live `Page` owned by this
                     // allocator (just walked from `full_pages[class]`), and
@@ -180,7 +180,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         }
 
         // If it becomes full immediately, move to full list
-        if unsafe { (*page).alloc_count == (*page).max_blocks() } {
+        if unsafe { (*page).alloc_count as usize == (*page).max_blocks() } {
             // SAFETY: `new_page_ptr` is the non-null page from `get_new_page`,
             // so `NonNull::new_unchecked` is valid; `class` is the
             // caller-validated size class the page was installed under, keeping
@@ -212,7 +212,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 };
                 let page = page_ptr.as_ptr();
 
-                (*page).block_size = block_size;
+                (*page).block_size = block_size as _;
                 (*page).size_class = class as u8;
                 // Segment-addressed: free-list init reads the segment cookie, so
                 // no page reference may be live across it.
@@ -283,8 +283,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                     P::ENABLE_FREE_LIST_ENCRYPTION,
                                     "adopted an orphan whose free-list mode does not match the policy"
                                 );
-                                let reclaimed = Page::reclaim_thread_free_if_present_in_segment(
-                                    seg_ptr, i, encrypted,
+                                let reclaimed = Page::reclaim_thread_free_if_present_for_policy::<P>(
+                                    seg_ptr, i,
                                 );
                                 if reclaimed > 0 {
                                     self.record_cross_thread_reclaimed(reclaimed);
@@ -293,7 +293,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                 if (*page_ptr).alloc_count > 0 {
                                     let pg_class = (*page_ptr).size_class as usize;
                                     let ptr = NonNull::new_unchecked(page_ptr);
-                                    if (*page_ptr).alloc_count < (*page_ptr).max_blocks() {
+                                    if ((*page_ptr).alloc_count as usize) < (*page_ptr).max_blocks()
+                                    {
                                         self.push_active_page(ptr, pg_class);
                                     } else {
                                         self.push_full_page(ptr, pg_class);
@@ -320,7 +321,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                             0
                         };
                         unsafe {
-                            (*found_page).block_size = block_size;
+                            (*found_page).block_size = block_size as _;
                             (*found_page).size_class = class as u8;
                         }
                         // SAFETY: `found_page_index` was recorded with
@@ -373,7 +374,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         self.next_page_index += 1;
 
         unsafe {
-            (*page_ptr).block_size = block_size;
+            (*page_ptr).block_size = block_size as _;
             (*page_ptr).size_class = class as u8;
         }
         // SAFETY: `seg` is the current live segment and `page_index` was

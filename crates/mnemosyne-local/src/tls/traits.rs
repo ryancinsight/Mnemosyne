@@ -40,6 +40,13 @@ pub trait TlsProvider<B: HasSegmentPool>: 'static {
     /// Friendly identifier for diagnostics and benchmarking.
     const IDENTIFIER: &'static str;
 
+    /// Registers a manually created thread-affine allocator cache as the current
+    /// thread's active pointer for this backend mode, so raw `thread_free` /
+    /// `realloc` / `usable_size` lookups can recognize direct
+    /// `ThreadAllocator::new()` instances in the same way as the TLS-backed
+    /// public entry points.
+    fn register_current_allocator_ptr(ptr: *mut core::ffi::c_void);
+
     /// Runs `f` with a mutable reference to the thread-local allocator cache,
     /// arming the re-entrancy guard.
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R>;

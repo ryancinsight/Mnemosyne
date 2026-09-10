@@ -12,7 +12,7 @@
 
 extern crate mnemosyne;
 
-use mnemosyne::scratch::{MAX_POOL_SLOTS, ScratchPool};
+use mnemosyne::{MAX_POOL_SLOTS, ScratchBank, ScratchPool};
 
 fn dot_product(a: &[f64], b: &[f64]) -> f64 {
     assert_eq!(a.len(), b.len());
@@ -60,6 +60,15 @@ fn main() {
         let total: f32 = buf.iter().sum();
         println!("f32 scratch sum: {total}");
         assert_eq!(total, 64.0_f32);
+    });
+
+    // Banked scratch keeps multiple related roles in one const-generic group,
+    // which matches transform pipelines that need independent temporary views
+    // without falling back to the system allocator.
+    let bank: ScratchBank<f64, 2> = ScratchBank::new();
+    bank.with_scratch::<1, _>(32, |scratch| {
+        scratch.fill(3.5);
+        assert!(scratch.iter().all(|v| *v == 3.5));
     });
 
     // Bounded provisioning retains the working set while making geometric

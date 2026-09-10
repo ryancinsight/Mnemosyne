@@ -32,24 +32,27 @@ impl Page {
     /// been initialized. The page's `block_size`, `size_class`, `page_index`,
     /// and `initialized_blocks` fields must describe a valid page layout.
     #[inline(always)]
-    pub unsafe fn try_pop_bump_block(page: *mut Page) -> Option<NonNull<Block>> {
+    pub unsafe fn try_pop_bump_block<P: crate::policy::AllocPolicy>(
+        page: *mut Page,
+    ) -> Option<NonNull<Block>> {
         // SAFETY: the caller guarantees that `page` is a live initialized page
         // exclusively owned by this allocation path.
-        let (free, initialized, block_size, size_class, page_index) = unsafe {
+        let (free, secondary, initialized, block_size, size_class, page_index) = unsafe {
             (
                 (*page).free,
+                (*page).secondary_free,
                 (*page).initialized_blocks,
                 (*page).block_size,
                 (*page).size_class,
                 (*page).page_index as usize,
             )
         };
-        if free.is_some() {
+        if free.is_some() || secondary.is_some() {
             return None;
         }
 
         let max_blocks = crate::size_class::class_to_max_blocks(size_class as usize);
-        if initialized >= max_blocks {
+        if initialized as usize >= max_blocks {
             return None;
         }
 
@@ -64,7 +67,8 @@ impl Page {
         let page_start = unsafe { Self::page_start_in_segment(segment, page_index) };
         // SAFETY: the bump-range invariant established above bounds this block
         // offset within the page and preserves the block's required alignment.
-        let block_ptr = unsafe { page_start.add(initialized * block_size) } as *mut Block;
+        let block_ptr =
+            unsafe { page_start.add(initialized as usize * block_size as usize) } as *mut Block;
         // SAFETY: `page_start` is non-null and the in-bounds offset keeps the
         // returned block pointer non-null.
         Some(unsafe { NonNull::new_unchecked(block_ptr) })
@@ -81,10 +85,15 @@ impl Page {
     pub unsafe fn pop_block<P: crate::policy::AllocPolicy>(page: *mut Self) -> NonNull<Block> {
         // SAFETY: forwarded from `pop_block`'s contract — `page` is a live,
         // exclusively-owned page with free or uninitialized blocks remaining.
-        if let Some(block) = unsafe { Self::try_pop_bump_block(page) } {
+        if let Some(block) = unsafe { Self::try_pop_bump_block::<P>(page) } {
             block
-        // SAFETY: same contract — reading `free` from an exclusively-owned page.
-        } else if let Some(block) = unsafe { (*page).free } {
+        } else {
+            let (head, use_secondary) = unsafe {
+                Self::choose_free_head(page, (*page).alloc_count as usize, P::RANDOMIZE_ALLOCATION)
+            };
+            let Some(block) = head else {
+                abort_on_corruption("pop_block called on an exhausted page");
+            };
             let block_addr = block.as_ptr() as usize;
             let page_addr = page.addr();
             let segment_addr = page_addr & !(crate::constants::SEGMENT_SIZE - 1);
@@ -92,7 +101,7 @@ impl Page {
             let page_start = segment_addr
                 + (unsafe { (*page).page_index as usize } << crate::constants::PAGE_SHIFT);
             // SAFETY: `page` is exclusively owned; `block_size` is initialized.
-            let block_size = unsafe { (*page).block_size };
+            let block_size = unsafe { (*page).block_size } as usize;
             if block_addr < page_start
                 || block_addr + block_size > page_start + crate::constants::PAGE_SIZE
                 || (block_addr & (crate::constants::MIN_BLOCK_SIZE - 1)) != 0
@@ -106,25 +115,48 @@ impl Page {
             // SAFETY: `page` retains the parent mapping provenance and its
             // initialized index is in range, satisfying `cookie_for`.
             let cookie = unsafe { Segment::cookie_for::<P>(segment, page_index) };
-            // SAFETY: `block` came from `self.free`, the page-local free list
-            // whose nodes are validated above to lie within the page and be
+            // SAFETY: `block` came from one of the page-local free chains, whose
+            // nodes are validated above to lie within the page and be
             // `MIN_BLOCK_SIZE`-aligned, so `block.as_ptr()` is a valid, aligned
             // `Block` exclusively owned by this thread; reading its encoded
             // next-link with the matching `cookie` is sound.
-            unsafe { (*page).free = (*block.as_ptr()).get_next::<P>(cookie) };
+            let next = unsafe { (*block.as_ptr()).get_next::<P>(cookie) };
+            let next = match next {
+                Some(next) => {
+                    let next_addr = next.as_ptr() as usize;
+                    let page_start = segment_addr
+                        + (unsafe { (*page).page_index as usize } << crate::constants::PAGE_SHIFT);
+                    let page_end = page_start + crate::constants::PAGE_SIZE;
+                    let next_block_size = unsafe { (*page).block_size } as usize;
+                    if next_addr < page_start
+                        || next_addr + next_block_size > page_end
+                        || (next_addr & (crate::constants::MIN_BLOCK_SIZE - 1)) != 0
+                    {
+                        abort_on_corruption(
+                            "pop_block found a corrupted free-list next pointer outside its page",
+                        );
+                    }
+                    Some(next)
+                }
+                None => None,
+            };
+            // SAFETY: `page` is this thread's own live page header for the
+            // whole pop, and `next` was decoded from the same list under the
+            // same cookie, so the head it replaces stays decodable.
+            if use_secondary {
+                unsafe { (*page).secondary_free = next };
+            } else {
+                unsafe { (*page).free = next };
+            }
             // Clear the backward-edge canary on the block being handed out for
             // allocation so a future free does not false-positive on a stale
             // canary written during its previous free.
-            // Under StandardPolicy, ENABLE_FREE_LIST_ENCRYPTION = false and the
-            // compiler eliminates this as dead code.
             if P::ENABLE_FREE_LIST_ENCRYPTION {
                 // SAFETY: `block.as_ptr()` is valid, MIN_BLOCK_SIZE-aligned per
                 // the bounds check above; the canary slot fits within that minimum.
                 unsafe { Block::clear_free_canary(block.as_ptr()) };
             }
             block
-        } else {
-            abort_on_corruption("pop_block called on an exhausted page");
         }
     }
 
@@ -161,6 +193,7 @@ impl Page {
                 unsafe {
                     (*page).initialized_blocks = 0;
                     (*page).free = None;
+                    (*page).secondary_free = None;
                 }
                 return;
             }
@@ -186,8 +219,9 @@ impl Page {
             let cookie = unsafe { Segment::cookie_for::<P>(segment, page_index) };
 
             // SAFETY: `page` addresses initialized page metadata in `segment`.
-            let block_size = unsafe { (*page).block_size };
-            let mut prev_block: Option<NonNull<Block>> = None;
+            let block_size = unsafe { (*page).block_size } as usize;
+            let mut primary_prev: Option<NonNull<Block>> = None;
+            let mut secondary_prev: Option<NonNull<Block>> = None;
             let mut current_idx = start;
             for _ in 0..n {
                 // SAFETY: `current_idx < n = max_blocks()` (the loop runs `n`
@@ -199,37 +233,58 @@ impl Page {
                 // SAFETY: `page_start` is non-null and the in-bounds offset above
                 // keeps `block_ptr` non-null, upholding the `NonNull` invariant.
                 let block = unsafe { NonNull::new_unchecked(block_ptr) };
-                if let Some(prev) = prev_block {
-                    // SAFETY: `prev` is a `block` produced by a previous iteration
-                    // — an in-bounds, page-resident `Block` this thread owns
-                    // exclusively while initializing the fresh page — so writing
-                    // its next-link is sound.
-                    unsafe {
-                        (*prev.as_ptr()).set_next::<P>(Some(block), cookie);
+                if (current_idx ^ (random_value as usize >> 8)) & 1 == 0 {
+                    if let Some(prev) = primary_prev {
+                        unsafe {
+                            (*prev.as_ptr()).set_next::<P>(Some(block), cookie);
+                        }
+                    } else {
+                        unsafe {
+                            (*page).free = Some(block);
+                        }
                     }
+                    primary_prev = Some(block);
                 } else {
-                    // SAFETY: `page` addresses initialized page metadata.
-                    unsafe { (*page).free = Some(block) };
+                    if let Some(prev) = secondary_prev {
+                        // SAFETY: `prev` is a block of this page, carved from
+                        // the same freshly initialized run, and `cookie` is
+                        // the page's own key -- the link is written with the
+                        // key its reader will decode with.
+                        unsafe {
+                            (*prev.as_ptr()).set_next::<P>(Some(block), cookie);
+                        }
+                    } else {
+                        // SAFETY: `page` is the live header being initialized
+                        // here, exclusively owned for the whole build.
+                        unsafe {
+                            (*page).secondary_free = Some(block);
+                        }
+                    }
+                    secondary_prev = Some(block);
                 }
-                prev_block = Some(block);
                 current_idx = (current_idx + stride) % n;
             }
-            if let Some(prev) = prev_block {
-                // SAFETY: `prev` is the last `block` constructed above — an
-                // in-bounds, page-resident `Block` exclusively owned during
-                // initialization — so terminating its next-link with `None` is a
-                // valid write.
+            // SAFETY: both tails are blocks of this page carved above, and
+            // `cookie` is the page's own key; terminating each list is the
+            // last write of the exclusive initialization.
+            if let Some(prev) = primary_prev {
+                unsafe {
+                    (*prev.as_ptr()).set_next::<P>(None, cookie);
+                }
+            }
+            if let Some(prev) = secondary_prev {
                 unsafe {
                     (*prev.as_ptr()).set_next::<P>(None, cookie);
                 }
             }
             // SAFETY: `page` addresses initialized page metadata.
-            unsafe { (*page).initialized_blocks = n };
+            unsafe { (*page).initialized_blocks = n as u32 };
         } else {
             // SAFETY: as above.
             unsafe {
                 (*page).initialized_blocks = 0;
                 (*page).free = None;
+                (*page).secondary_free = None;
             }
         }
     }

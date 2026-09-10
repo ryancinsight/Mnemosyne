@@ -67,7 +67,7 @@ impl NodeHugeBucket {
     pub(super) unsafe fn push(&self, segment: *mut Segment, band: HugeBucketBand) {
         // SAFETY: the caller's contract guarantees that `segment` is valid and
         // initialized, so its page-0 size is readable before publication.
-        let block_size = unsafe { (*segment).pages[0].block_size };
+        let block_size = unsafe { (*segment).pages[0].block_size as usize };
         self.retained_bytes[band.index()]
             .value
             .fetch_add(block_size, core::sync::atomic::Ordering::Relaxed);
@@ -85,7 +85,7 @@ impl NodeHugeBucket {
         } else {
             // SAFETY: a non-null result is exclusively owned by this caller,
             // so its page-0 size remains readable while it leaves the bucket.
-            let block_size = unsafe { (*popped).pages[0].block_size };
+            let block_size = unsafe { (*popped).pages[0].block_size as usize };
             self.retained_bytes[band.index()]
                 .value
                 .fetch_sub(block_size, core::sync::atomic::Ordering::Relaxed);

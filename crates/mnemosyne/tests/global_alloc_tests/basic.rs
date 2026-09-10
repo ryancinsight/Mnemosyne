@@ -69,6 +69,79 @@ fn test_multithreaded_allocation() {
 }
 
 #[test]
+fn test_cross_thread_free_is_reclaimed_by_owner_page_drain() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("global allocator test lock was poisoned");
+
+    unsafe {
+        mnemosyne_arena::purge_segment_pool::<mnemosyne_backend::MemoryBackendWrapper>();
+    }
+
+    let layout = Layout::from_size_align(32, 8).expect("32-byte, 8-aligned layout is valid");
+    let ptr = unsafe { ALLOCATOR.alloc(layout) };
+    assert!(
+        !ptr.is_null(),
+        "owner allocation for cross-thread free test failed"
+    );
+
+    let ptr_addr = ptr as usize;
+    let handle = thread::spawn(move || {
+        // SAFETY: this pointer was allocated by the owning thread, and the
+        // non-owner thread is only enqueueing it for owner-side reclaim.
+        unsafe {
+            ALLOCATOR.dealloc(ptr_addr as *mut u8, layout);
+        }
+    });
+    handle.join().expect("cross-thread free worker panicked");
+
+    // The owning thread must reclaim the queued block only when it re-drains the
+    // page; the original pointer should reappear in the normal allocation stream
+    // after enough probe allocations to force the page drain.
+    let segment_addr = ptr as usize & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
+    let segment = segment_addr as *mut mnemosyne_local::internal::Segment;
+    let page_index = (ptr as usize >> mnemosyne_core::constants::PAGE_SHIFT)
+        & (mnemosyne_core::constants::PAGES_PER_SEGMENT - 1);
+    let max_blocks = unsafe { (*segment).pages[page_index].max_blocks() };
+
+    let mut probe_allocations = std::vec::Vec::with_capacity(max_blocks);
+    let mut reclaimed = false;
+    for probe_index in 0..max_blocks {
+        let probe = unsafe { ALLOCATOR.alloc(layout) };
+        assert!(
+            !probe.is_null(),
+            "owner page-drain probe allocation failed before reclaiming remote free"
+        );
+        probe_allocations.push(probe);
+
+        // A remote free can only be reclaimed by the owning thread when the page
+        // is drained; the non-owner thread must not recycle the block by itself.
+        if probe == ptr {
+            reclaimed = true;
+            break;
+        }
+
+        assert_ne!(
+            probe, ptr,
+            "remote free must stay pending until the owning thread drains the page; probe_index={} max_blocks={}",
+            probe_index, max_blocks
+        );
+    }
+
+    assert!(
+        reclaimed,
+        "cross-thread freed block was not reclaimed by the owner page drain after {} probes",
+        max_blocks
+    );
+
+    unsafe {
+        for probe in probe_allocations {
+            ALLOCATOR.dealloc(probe, layout);
+        }
+    }
+}
+
+#[test]
 fn test_overflow_protection() {
     let _guard = TEST_LOCK
         .lock()

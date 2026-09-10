@@ -33,7 +33,7 @@ fn usable_size_returns_block_size_for_small_allocations() {
         let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
         let page = unsafe { &(*segment).pages[page_index] };
         assert_eq!(
-            reported, page.block_size,
+            reported, page.block_size as usize,
             "usable_size disagrees with the page's recorded block_size"
         );
 
@@ -113,6 +113,13 @@ fn usable_size_returns_payload_remainder_for_huge_allocations() {
         );
 
         let recovered = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+        let actual_remaining = unsafe { (*recovered).raw_alloc_ptr } as usize
+            + unsafe { (*recovered).pages[0].block_size as usize }
+            - ptr as usize;
+        assert_eq!(
+            reported, actual_remaining,
+            "usable_size = {reported} should equal the actual remaining mapping suffix {actual_remaining} for huge align {align}"
+        );
         let _released = unsafe {
             mnemosyne_arena::deallocate_large_or_huge::<MemoryBackendWrapper>(ptr, recovered)
         };
@@ -145,7 +152,7 @@ fn usable_size_does_not_over_report_past_mapping_end_for_huge_allocations() {
         assert!(!ptr.is_null(), "huge allocation failed for align {align}");
 
         let recovered = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-        let huge_size = unsafe { (*recovered).pages[0].block_size };
+        let huge_size = unsafe { (*recovered).pages[0].block_size as usize };
         let raw_ptr = unsafe { (*recovered).raw_alloc_ptr } as usize;
         let mapping_end = raw_ptr + huge_size;
         let actual_remaining = mapping_end - ptr as usize;
@@ -207,7 +214,7 @@ fn usable_size_ignores_payload_bytes_at_a_segment_aligned_huge_pointer() {
     unsafe { core::ptr::write_bytes(ptr, 0xAB, request) };
 
     let recovered = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-    let huge_size = unsafe { (*recovered).pages[0].block_size };
+    let huge_size = unsafe { (*recovered).pages[0].block_size as usize };
     let mapping_end = unsafe { (*recovered).raw_alloc_ptr } as usize + huge_size;
     let actual_remaining = mapping_end - ptr as usize;
 

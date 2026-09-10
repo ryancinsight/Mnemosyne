@@ -1,5 +1,31 @@
 # Allocator Performance Comparison
 
+## Observed gaps and missing coverage
+
+The current table is useful for spotting outliers, but it still misses several workloads that matter for allocator quality against mimalloc/snmalloc and for the design goals claimed in the README.
+
+1. Huge-object teardown is the clearest outlier.
+   - Evidence: `allocator deallocation latency/huge_2m` is 4477.312 ns for Mnemosyne versus 103.799 ns for MiMalloc and 1885.542 ns for RpMalloc.
+   - Why it matters: the benchmark isolates the very worst-case free path, and a 43x gap on one-time large teardown is exactly where the metadata/segment release path shows up. It is not enough to be competitive on small-object allocation alone.
+   - Recommended coverage: add a large/huge `free storm` benchmark measuring p95 and p99 deallocation latency under mixed huge and large frees, with segment purge and page reset toggled on/off to separate pure metadata release from OS reclamation cost.
+
+2. Threaded allocator scaling was the explicit blind spot in the benchmark matrix.
+   - Evidence: the historical table only exposed a single fixed-thread row, so the throughput shape past a single core remained hidden even when `threaded small allocation cycles` and `threaded saturated small allocation cycles` were visible.
+   - Why it matters: the README emphasizes contention-free queues and fast-thread-local paths, so the relevant question is not only whether the allocator wins at 4 workers, but how its throughput changes across 1, 2, 4, 8, and 16 workers under the same object mix.
+   - Coverage added: a `Thread count scaling` Criterion group now sweeps worker counts `1, 2, 4, 8, 16` through the same `ThreadCycleWorkers` path and records a throughput curve alongside the fixed-thread rows; this keeps the scaling gap visible instead of hiding it behind a single fixed-thread row.
+
+3. The suite is missing mixed-size, churn-heavy fragmentation workloads.
+   - Evidence: the comparison rows mostly cover single-size classes, isolated allocation or deallocation, and short handoff tests; there is no sustained workload that mixes 32B, 1KiB, 8KiB, and 2MiB objects with repeated reallocations and retention.
+   - Why it matters: mimalloc/snmalloc win most often when the live set is realistic, not when each benchmark is single-size. Fragmentation, page reuse, and cold-cache misses matter in real allocation streams and will not be visible in the present rows.
+   - Recommended coverage: add a `mixed-size churn + retention` benchmark that measures throughput, peak RSS, and long-tail latency while periodically resizing a fixed live set across size classes and thread boundaries.
+
+4. SnMalloc coverage is still platform-gated and incomplete for the current top-end rows.
+   - Evidence: the file explicitly skips some `snmalloc` rows on Windows (`snmalloc_skips`), and the table shows `N/A` for most entries in the SnMalloc column.
+   - Why it matters: the README references snmalloc as a design inspiration, but the published comparison does not yet provide a complete apples-to-apples view of the same workload classes.
+   - Recommended coverage: keep the skip logic, but add at least one Linux-only benchmark report section that fills the missing SnMalloc rows for the same mix of large, medium, and threaded workloads.
+
+These gaps are not a criticism of the current benchmark harness; they are a call to make the performance story more honest. The repo already has the right building blocks (criterion groups, cross-thread handoff, threaded cycles, usable-size probes), so the highest-value improvement is to add one mixed-size retention benchmark plus a thread-scaling sweep and a documented large-object deallocation stress case without changing the existing baseline format.
+
 | Benchmark | Mnemosyne (ns) | System (ns) | MiMalloc (ns) | RpMalloc (ns) | SnMalloc (ns) | Jemalloc (ns) | Mnemosyne vs System | Mnemosyne vs MiMalloc | Mnemosyne vs RpMalloc | Mnemosyne vs SnMalloc | Mnemosyne vs Jemalloc |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | allocator allocation latency/huge_2m | 2745.463 | 2934.753 | 894.479 | 2266.911 | N/A | N/A | 0.94x | 3.07x | 1.21x | N/A | N/A |

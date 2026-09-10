@@ -103,10 +103,15 @@ impl<T: ScratchElement> ScratchPool<T> {
             borrow_depth: Cell::new(0),
             provisions: [const { Cell::new(0) }; MAX_POOL_SLOTS],
             // `mk()` gives every slot exactly `capacity` (a zero request yields
-            // the zero-capacity dangling sentinel), so slot 0 starts here.
+            // the zero-capacity dangling sentinel), so every slot's mirror must
+            // begin with the same warm capacity. This keeps the public
+            // `slot_capacity`/`total_capacity_bytes` figures in sync with the
+            // actual backing allocations across all prewarmed slots.
             slot_capacities: {
-                let mirrors = [const { Cell::new(0) }; MAX_POOL_SLOTS];
-                mirrors[0].set(capacity);
+                let mut mirrors = [const { Cell::new(0) }; MAX_POOL_SLOTS];
+                for cell in &mut mirrors {
+                    cell.set(capacity);
+                }
                 mirrors
             },
         }

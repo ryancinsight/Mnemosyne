@@ -141,7 +141,8 @@ pub unsafe fn do_local_free_internal_policy<
                 let max_blocks = mnemosyne_core::size_class::class_to_max_blocks(class);
                 // SAFETY: `page` is exclusively owned per this function's contract;
                 // `alloc_count` is a valid initialized field.
-                let freed_so_far = max_blocks.saturating_sub(unsafe { (*page).alloc_count });
+                let freed_so_far =
+                    max_blocks.saturating_sub(unsafe { (*page).alloc_count } as usize);
                 let wake_threshold = max_blocks / (P::WAKE_DENOMINATOR as usize).max(1);
                 if !P::DELAY_PAGE_WAKE || freed_so_far >= wake_threshold {
                     // SAFETY: `class < NUM_SIZE_CLASSES` — validated upstream;

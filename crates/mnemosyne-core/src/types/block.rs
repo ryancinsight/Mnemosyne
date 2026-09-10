@@ -1,5 +1,6 @@
 //! Free-block list node: the intrusive link written into a freed block.
 
+use crate::abort::abort_on_corruption;
 use core::ptr::NonNull;
 
 /// A node representing a free block.
@@ -43,17 +44,48 @@ impl Block {
         page_cookie: usize,
     ) -> Option<NonNull<Block>> {
         if encrypted {
-            self.next_encoded.map(|encoded| {
-                let cookie = page_cookie | 1;
-                let decoded_ptr = encoded.as_ptr().map_addr(|addr| addr ^ cookie);
-                // SAFETY: same argument as `get_next` — the odd `cookie` flips
-                // the low bit of the even, aligned original address, so the
-                // decoded pointer is necessarily non-null.
-                unsafe { NonNull::new_unchecked(decoded_ptr) }
-            })
+            // SAFETY: the caller passed the owning segment's recorded mode and
+            // its cookie together, which is exactly `get_next_raw_decoded`'s
+            // contract -- the cookie decodes what that mode encoded.
+            unsafe { self.get_next_raw_decoded(page_cookie) }
         } else {
-            self.next_encoded
+            // SAFETY: the caller must have already validated that the owning
+            // segment is in raw free-list mode; otherwise this silently reads an
+            // encoded next pointer and bypasses the cookie that protects the
+            // free-list metadata.
+            unsafe { self.get_next_raw() }
         }
+    }
+
+    /// Returns the raw, unencoded next pointer without doing the encrypted
+    /// branch or cookie work.
+    ///
+    /// This is intentionally unsafe: callers must have already proven the
+    /// owning segment is in the raw free-list mode, otherwise this bypasses the
+    /// XOR-encoded metadata protection used by the encrypted policy.
+    #[inline(always)]
+    pub(crate) unsafe fn get_next_raw(&self) -> Option<NonNull<Block>> {
+        self.next_encoded
+    }
+
+    /// Decodes the XOR-obfuscated next pointer under the segment cookie.
+    ///
+    /// # Safety
+    /// `page_cookie` must be the cookie the link was encoded with -- the
+    /// owning segment's `keys[page_index]` for the page this block belongs
+    /// to. Decoding under any other cookie yields a wild pointer that is
+    /// still non-null and still looks like a `Block`, so a wrong cookie is
+    /// not detectable here and corrupts the chain at its first use.
+    #[inline(always)]
+    pub unsafe fn get_next_raw_decoded(&self, page_cookie: usize) -> Option<NonNull<Block>> {
+        self.next_encoded.map(|encoded| {
+            let cookie = page_cookie | 1;
+            let decoded_ptr = encoded.as_ptr().map_addr(|addr| addr ^ cookie);
+            // SAFETY: same argument as `get_next` — the odd `cookie` flips
+            // the low bit of the even, aligned original address, so the
+            // decoded pointer is necessarily non-null.
+            unsafe { NonNull::new_unchecked(decoded_ptr) }
+        })
     }
 
     /// Sets the next block in the free list, encoding it if required.
@@ -88,17 +120,53 @@ impl Block {
         page_cookie: usize,
     ) {
         if encrypted {
-            self.next_encoded = next.map(|ptr| {
-                let cookie = page_cookie | 1;
-                let encoded_ptr = ptr.as_ptr().map_addr(|addr| addr ^ cookie);
-                // SAFETY: same argument as `set_next` — `ptr` is non-null and
-                // aligned, the odd `cookie` flips its low bit, so the encoded
-                // address is non-null.
-                unsafe { NonNull::new_unchecked(encoded_ptr) }
-            });
+            // SAFETY: same pairing as the decode above -- the mode and the
+            // cookie come from one segment header, so the link is encoded with
+            // the key its owner will decode it with.
+            unsafe {
+                self.set_next_raw_encoded(next, page_cookie);
+            }
         } else {
-            self.next_encoded = next;
+            // SAFETY: the caller must have already validated that the owning
+            // segment is in raw free-list mode; otherwise this writes an encoded
+            // free-list link as if it were raw and bypasses the envelope that
+            // keeps the encrypted metadata intact.
+            unsafe { self.set_next_raw(next) }
         }
+    }
+
+    /// Writes the raw, unencoded next pointer without the encrypted branch.
+    ///
+    /// This is intentionally unsafe: callers must have already proven the
+    /// owning segment is in the raw free-list mode, otherwise they can overwrite
+    /// the encrypted metadata with an unencoded link and violate the mode
+    /// invariant.
+    #[inline(always)]
+    pub(crate) unsafe fn set_next_raw(&mut self, next: Option<NonNull<Block>>) {
+        self.next_encoded = next;
+    }
+
+    /// XOR-encodes the next pointer with the segment cookie for hardened mode.
+    ///
+    /// # Safety
+    /// `page_cookie` must be the owning segment's `keys[page_index]` for this
+    /// block's page, and `next` must point into the same page's free list.
+    /// The link is only recoverable by a decode under that same cookie (ADR
+    /// 0001), so encoding under a foreign one publishes an undecodable link.
+    #[inline(always)]
+    pub unsafe fn set_next_raw_encoded(
+        &mut self,
+        next: Option<NonNull<Block>>,
+        page_cookie: usize,
+    ) {
+        self.next_encoded = next.map(|ptr| {
+            let cookie = page_cookie | 1;
+            let encoded_ptr = ptr.as_ptr().map_addr(|addr| addr ^ cookie);
+            // SAFETY: same argument as `set_next` — `ptr` is non-null and
+            // aligned, the odd `cookie` flips its low bit, so the encoded
+            // address is non-null.
+            unsafe { NonNull::new_unchecked(encoded_ptr) }
+        });
     }
 }
 
@@ -149,9 +217,26 @@ const _: () = assert!(
 );
 
 impl Block {
+    #[inline(always)]
+    fn validate_canary_slot(block: *const Block) {
+        if block.is_null() {
+            abort_on_corruption("free canary block pointer is null");
+        }
+        let addr = block.addr();
+        if addr < core::mem::align_of::<usize>() {
+            abort_on_corruption(
+                "free canary block pointer is stale or below the minimum alignment",
+            );
+        }
+        if !addr.is_multiple_of(core::mem::align_of::<usize>()) {
+            abort_on_corruption("free canary block pointer is misaligned");
+        }
+    }
+
     /// Computes the multiplicative backward-edge canary value for `block`.
     #[inline(always)]
     fn canary_value(block: *const Block, page_cookie: usize) -> usize {
+        Self::validate_canary_slot(block);
         let addr = block.addr();
         addr.wrapping_add(FREE_CANARY_MAGIC)
             .wrapping_mul(page_cookie ^ (addr >> 4))
@@ -167,6 +252,7 @@ impl Block {
     /// `2 * size_of::<Block>()` bytes; the canary slot must lie within it.
     #[inline(always)]
     pub unsafe fn write_free_canary(block: *mut Block, page_cookie: usize) {
+        Self::validate_canary_slot(block);
         // SAFETY: the canary slot is the second `usize` inside the block
         // (`block + 1` in pointer arithmetic). By the caller's contract the
         // block is at least 2 × size_of::<Block>() bytes, so the slot is
@@ -191,8 +277,16 @@ impl Block {
     /// written, so the caller must establish initialization itself.
     #[inline(always)]
     pub unsafe fn check_double_free(block: *const Block, page_cookie: usize) -> bool {
+        Self::validate_canary_slot(block);
         // SAFETY: the canary slot is within the block by the caller's contract.
         let observed = unsafe { block.cast::<usize>().add(1).read() };
+        // `0` is the canonical cleared-slot sentinel. Treating it as "no canary"
+        // avoids false positives from a stale, uninitialized, or otherwise
+        // unsealed slot while preserving the hardened check against a real
+        // cookie-bound canary.
+        if observed == 0 {
+            return false;
+        }
         observed == Self::canary_value(block, page_cookie)
     }
 
@@ -203,6 +297,7 @@ impl Block {
     /// Same requirements as [`write_free_canary`][Block::write_free_canary].
     #[inline(always)]
     pub unsafe fn clear_free_canary(block: *mut Block) {
+        Self::validate_canary_slot(block);
         // SAFETY: the canary slot is within the block by the caller's contract.
         unsafe { block.cast::<usize>().add(1).write(0) };
     }

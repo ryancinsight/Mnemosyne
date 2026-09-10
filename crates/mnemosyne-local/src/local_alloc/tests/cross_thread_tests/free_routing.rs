@@ -115,17 +115,21 @@ fn test_mixed_policy_free_and_realloc_preserve_segment_encoding() {
         "standard and hardened policies must not share a TLS allocator"
     );
     assert_eq!(hardened_slot, hardened_slot_after);
-
     // Free a hardened block through the standard policy. The free path must
     // identify the hardened owner and use the segment's encoded-chain mode,
     // rather than the freeing call's policy type.
     unsafe {
         crate::thread_free::<StandardPolicy, DefaultBackend>(hardened_second);
     }
-    let reused = unsafe { crate::thread_alloc::<HardenedPolicy, DefaultBackend>(32, 8) };
-    assert_eq!(
-        reused, hardened_second,
-        "hardened free-list head must remain decodable after a standard-policy free"
+    // The block must be reachable in its owner page's chain -- which is the
+    // decodability claim -- not at any particular position in it. Probing by
+    // reallocation until the same address comes back asserts reuse identity
+    // instead, and the randomized head (ADR 0001, revised 2026-09-09) makes
+    // that a coin flip whose odds depend on the page geometry: the probe form
+    // passed on x86-64 and failed on aarch64.
+    assert!(
+        hardened_chain_contains(hardened_second),
+        "a standard-policy free must leave the hardened block decodable in its owner chain"
     );
 
     // Reallocate another hardened block through the standard policy. This
@@ -139,18 +143,17 @@ fn test_mixed_policy_free_and_realloc_preserve_segment_encoding() {
         !resized.is_null(),
         "mixed-policy realloc must produce a block"
     );
-    let realloc_reused = unsafe { crate::thread_alloc::<HardenedPolicy, DefaultBackend>(32, 8) };
-    assert_eq!(
-        realloc_reused, hardened_first,
-        "hardened allocator must decode the block freed by standard-policy realloc"
+    // Same claim for the realloc path's old-block free: reachable in the
+    // chain, not necessarily at its head.
+    assert!(
+        hardened_chain_contains(hardened_first),
+        "the block freed by a standard-policy realloc must stay decodable in the owner chain"
     );
 
     // SAFETY: every pointer is live and freed exactly once under a policy
     // whose free path now consults the owning segment's mode.
     unsafe {
         crate::thread_free::<HardenedPolicy, DefaultBackend>(hardened_third);
-        crate::thread_free::<HardenedPolicy, DefaultBackend>(reused);
-        crate::thread_free::<HardenedPolicy, DefaultBackend>(realloc_reused);
         crate::thread_free::<StandardPolicy, DefaultBackend>(resized);
     }
 }
@@ -304,4 +307,53 @@ fn allocation_side_reclaim_counts_cross_thread_blocks_exactly() {
         crate::thread_free::<mnemosyne_core::StandardPolicy, DefaultBackend>(reclaimed_ptr);
     }
     owner.reclaim_owned_segments();
+}
+
+/// Whether `block` is reachable by decoding its owner page's free chains.
+///
+/// Both lists are walked under the page's own hardened cookie, bounded by the
+/// page's block count so a corrupted link ends the walk instead of spinning.
+/// A link encoded with the wrong cookie decodes to a wild address, which is
+/// exactly what fails to match.
+fn hardened_chain_contains(block: *mut u8) -> bool {
+    use mnemosyne_core::policy::HardenedPolicy;
+
+    let value = block as usize;
+    let segment = (value & !(mnemosyne_core::constants::SEGMENT_SIZE - 1)) as *mut Segment;
+    let page_index = (value >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
+    // SAFETY: `block` is a live allocation, so its segment is mapped and
+    // `page_index` names one of its pages.
+    let page = unsafe { &raw mut (*segment).pages[page_index] };
+    let cookie = unsafe { Segment::cookie_for::<HardenedPolicy>(segment, page_index) };
+    let bound = unsafe { (*page).max_blocks() };
+    let target = block.cast::<Block>();
+
+    // Which of the two destinations a free lands in is platform-dependent: the
+    // owner probe identifies the freeing thread by its TEB slot on Windows and
+    // by allocator-pointer identity elsewhere, so the same call reaches the
+    // page-local list on one host and the page's remote-free queue on another.
+    // Draining the queue first is what the allocator itself does before reuse,
+    // and it makes the reachability claim the same on every host.
+    // SAFETY: the test lock is held, so no other thread is touching this page,
+    // and `P` selects only the TLS slot -- the encoding mode is read from the
+    // segment.
+    unsafe {
+        mnemosyne_core::types::Page::reclaim_thread_free_if_present_for_policy::<HardenedPolicy>(
+            segment, page_index,
+        );
+    }
+
+    // SAFETY: each `current` is a block of this page, reached by decoding the
+    // previous link with the page's own cookie.
+    for head in unsafe { [(*page).free, (*page).secondary_free] } {
+        let mut current = head;
+        for _ in 0..bound {
+            let Some(node) = current else { break };
+            if node.as_ptr() == target {
+                return true;
+            }
+            current = unsafe { (*node.as_ptr()).get_next::<HardenedPolicy>(cookie) };
+        }
+    }
+    false
 }

@@ -34,12 +34,12 @@ fn small_alloc_returns_block_aligned_ptr_outside_metadata_page() {
             page.block_size > 0,
             "alloc({req_size}, {req_align}) targeted an uninitialized page"
         );
+        let block_stride = page.block_size as usize;
         let offset = ptr_val & (PAGE_SIZE - 1);
         assert_eq!(
-            offset % page.block_size,
+            offset % block_stride,
             0,
-            "alloc({req_size}, {req_align}) ptr is not aligned to block stride {} of its size class",
-            page.block_size,
+            "alloc({req_size}, {req_align}) ptr is not aligned to block stride {block_stride} of its size class",
         );
 
         unsafe { thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr) };

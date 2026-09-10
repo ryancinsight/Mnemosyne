@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 use mnemosyne_core::policy::AllocPolicy;
-use mnemosyne_core::types::{Block, Page};
+use mnemosyne_core::types::{Block, Page, Segment};
 
 /// Pops the head block from an initialized page-local free list.
 ///
@@ -40,12 +40,15 @@ pub(crate) unsafe fn try_allocate_page_local<P: AllocPolicy>(
 ) -> Option<NonNull<Block>> {
     // SAFETY: caller guarantees `page` identifies a live page it owns.
     unsafe {
-        if (*page).free.is_none() && (*page).initialized_blocks >= (*page).max_blocks() {
+        if (*page).free.is_none()
+            && (*page).secondary_free.is_none()
+            && (*page).initialized_blocks as usize >= (*page).max_blocks()
+        {
             return None;
         }
-        let block = if let Some(block) = Page::try_pop_bump_block(page) {
+        let block = if let Some(block) = Page::try_pop_bump_block::<P>(page) {
             block
-        } else if (*page).free.is_some() {
+        } else if (*page).free.is_some() || (*page).secondary_free.is_some() {
             Page::pop_block::<P>(page)
         } else {
             return None;
@@ -58,7 +61,7 @@ pub(crate) unsafe fn try_allocate_page_local<P: AllocPolicy>(
             let page_index = (*page).index_in_segment();
             Page::increment_alloc_count_in_segment(segment, page_index);
         } else {
-            (*page).alloc_count += 1;
+            (*page).alloc_count = ((*page).alloc_count as usize + 1) as u32;
         }
         Some(block)
     }
@@ -93,9 +96,10 @@ pub(crate) unsafe fn try_reclaim_and_allocate<P: AllocPolicy>(
 
     // SAFETY: `parent_segment`/`index_in_segment` name this page's parent
     // header and its own in-range index.
-    let reclaimed = unsafe {
-        Page::reclaim_thread_free_in_segment(segment, page_index, P::ENABLE_FREE_LIST_ENCRYPTION)
-    };
+    let encrypted = unsafe { Segment::free_list_encrypted(segment) };
+    let randomized = P::RANDOMIZE_ALLOCATION && encrypted;
+    let reclaimed =
+        unsafe { Page::reclaim_thread_free_in_segment(segment, page_index, encrypted, randomized) };
     if reclaimed == 0 {
         return None;
     }

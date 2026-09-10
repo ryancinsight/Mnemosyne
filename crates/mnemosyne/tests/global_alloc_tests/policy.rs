@@ -108,6 +108,7 @@ fn test_cuda_backends() {
 fn assert_cuda_backend_round_trip<B>(value: u8, name: &str)
 where
     B: mnemosyne_arena::HasSegmentPool + mnemosyne::LocalAllocatorSelector<B>,
+    StandardPolicy: mnemosyne_local::tls_slot::PolicySlotSelection<B>,
 {
     let allocator = MnemosyneAllocator::<StandardPolicy, B>::new();
     let layout = Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");

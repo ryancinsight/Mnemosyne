@@ -30,7 +30,8 @@ fn boxed_huge_segment(raw: usize, block_size: usize) -> *mut Segment {
     unsafe { Segment::initialize(segment, raw as *mut u8, 0) };
     // SAFETY: `segment` was just allocated and is exclusively owned here.
     unsafe {
-        (*segment).pages[0].block_size = block_size;
+        (*segment).pages[0].block_size = u32::try_from(block_size)
+            .expect("block_size must fit in the compact page metadata width");
     }
     segment
 }
@@ -80,7 +81,7 @@ fn huge_pool_concurrent_push_pop_conserves_every_segment() {
                 // until it is pushed back within the same iteration.
                 if let Some(seg) = unsafe { pool.pop(request, NODE) } {
                     // SAFETY: `seg` is the just-popped, exclusively-owned block.
-                    let block_size = unsafe { (*seg).pages[0].block_size };
+                    let block_size = unsafe { (*seg).pages[0].block_size as usize };
                     assert!(
                         block_size >= request,
                         "pop({request}) returned an undersized block ({block_size})"

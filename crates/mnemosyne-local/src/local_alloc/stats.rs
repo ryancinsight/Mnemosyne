@@ -151,9 +151,9 @@ unsafe fn accumulate_active_list(
             if page.alloc_count == 0 {
                 occupancy.empty_pages += 1;
             }
-            occupancy.live_allocations += page.alloc_count;
+            occupancy.live_allocations += page.alloc_count as usize;
             occupancy.total_slots += page.max_blocks();
-            snapshot.current_thread_live_allocations += page.alloc_count;
+            snapshot.current_thread_live_allocations += page.alloc_count as usize;
         }
         current = page.next_page;
     }

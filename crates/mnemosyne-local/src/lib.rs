@@ -43,7 +43,7 @@ mod free;
 mod free_helpers;
 mod options;
 mod realloc;
-mod tls_slot;
+pub mod tls_slot;
 mod usable_size;
 mod validation;
 

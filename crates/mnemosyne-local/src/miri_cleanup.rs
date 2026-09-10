@@ -21,8 +21,12 @@ pub unsafe fn miri_cleanup_pools<B: mnemosyne_arena::HasSegmentPool>() {
                 // SAFETY: the caller holds the serialized test lock, and the
                 // segment is detached from the orphan pool.
                 unsafe {
-                    mnemosyne_core::types::Page::reclaim_thread_free_if_present_in_segment(
-                        segment, page_index, encrypted,
+                    let randomized = (*segment).pages[page_index].secondary_free.is_some();
+                    mnemosyne_core::types::Page::reclaim_thread_free_if_present_in_segment_with_randomized(
+                        segment,
+                        page_index,
+                        encrypted,
+                        randomized,
                     );
                 }
             }

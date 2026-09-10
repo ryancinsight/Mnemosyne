@@ -12,9 +12,10 @@ pub const HUGE_REALLOC_SRC_LAYOUT: Layout =
     unsafe { Layout::from_size_align_unchecked(4 * 1024 * 1024, 4096) };
 pub const BATCH_ALLOCS: usize = 256;
 pub const THREADS: usize = 4;
+pub const THREAD_SWEEP: [usize; 5] = [1, 2, 4, 8, 16];
 pub const THREAD_ALLOCS: usize = 1_000;
 pub const SATURATED_THREAD_ALLOCS: usize = 16_000;
 pub const CROSS_THREAD_ALLOCS: usize = 512;
 pub const CROSS_THREAD_QUEUE_BOUND: usize = 2;
-pub const THREAD_WORK_QUEUE_BOUND: usize = THREADS;
+pub const THREAD_WORK_QUEUE_BOUND: usize = THREAD_SWEEP[4];
 pub const SEGMENT_EVICTION_ALLOCS: usize = mnemosyne_arena::MAX_RETAINED_SEGMENTS + 8;

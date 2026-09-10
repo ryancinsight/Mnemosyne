@@ -16,6 +16,11 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for StandardTls<B, S
     const IDENTIFIER: &'static str = "StandardTls";
 
     #[inline(always)]
+    fn register_current_allocator_ptr(ptr: *mut core::ffi::c_void) {
+        S::get_cached_cell(|cell| cell.set(ptr));
+    }
+
+    #[inline(always)]
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
         S::get_slot_standard(|slot| {
             S::arm_thread_exit(slot);
@@ -53,6 +58,11 @@ pub struct CachedCellTls<B, S>(core::marker::PhantomData<(B, S)>);
 
 impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for CachedCellTls<B, S> {
     const IDENTIFIER: &'static str = "CachedCellTls";
+
+    #[inline(always)]
+    fn register_current_allocator_ptr(ptr: *mut core::ffi::c_void) {
+        S::get_cached_cell(|cell| cell.set(ptr));
+    }
 
     #[inline(always)]
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {

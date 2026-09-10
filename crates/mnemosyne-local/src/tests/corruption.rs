@@ -24,52 +24,44 @@ fn hardened_policy_detects_freelist_tamper() {
         thread_free::<HardenedPolicy, MemoryBackendWrapper>(ptr2);
     }
 
-    // Now, `page.free` points to `ptr2`, and `ptr2` contains the encrypted pointer to `ptr1`.
-    // Let's tamper with the encrypted next pointer in `ptr2`.
-    // The block metadata stores the encrypted pointer in the first `Option<NonNull<Block>>` slot of the block.
-    let val2 = ptr2 as *mut usize;
-    let original_val = unsafe { *val2 };
-    unsafe {
-        // Corrupt the pointer (e.g. flip a bit in the address portion)
-        *val2 = original_val ^ 0x08;
-    }
-
-    // Now, try to allocate. The first allocation gets `ptr2` (which is successful).
-    let ptr3 = unsafe { thread_alloc::<HardenedPolicy, MemoryBackendWrapper>(16, 8) };
-    assert_eq!(ptr3, ptr2);
-
-    // The second allocation would follow the tampered pointer to `ptr1`.
-    // Since we flipped a bit, the decrypted address is incorrect and fails to match `ptr1`.
-    // In particular, the page's free pointer now contains garbage.
-    let ptr_val = ptr3 as usize;
+    // The randomized head (ADR 0001, revised 2026-09-09) makes "which block is
+    // reused" unpredictable, so the tamper is applied to whichever block is
+    // actually at the head and the claim is made about decoding rather than
+    // about an address. Reading the link back under the same cookie must not
+    // reproduce what was there before the flip; if it did, the encoding would
+    // be carrying tampered bits through faithfully.
+    let ptr_val = ptr1 as usize;
     let segment_addr = ptr_val & !(SEGMENT_SIZE - 1);
     let segment = segment_addr as *mut Segment;
     let page_index = (ptr_val >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1);
-    let page = unsafe { (*segment).pages.get_unchecked(page_index) };
+    let page = unsafe { &raw mut (*segment).pages[page_index] };
 
-    let free_head = page.free.map(|p| p.as_ptr() as usize);
+    let active_head = unsafe { (*page).free.or((*page).secondary_free) }
+        .expect("HardenedPolicy should keep at least one free block live after the paired free");
+    let cookie = unsafe { Segment::cookie_for::<HardenedPolicy>(segment, page_index) };
+    let expected_next = unsafe { (*active_head.as_ptr()).get_next::<HardenedPolicy>(cookie) };
+    let raw_word = active_head.as_ptr() as *mut usize;
+
+    // SAFETY: `raw_word` is the head block's own first word, which holds the
+    // encoded link; the block is free, so no live allocation aliases it.
+    unsafe {
+        let original = *raw_word;
+        *raw_word = original ^ 0x08;
+    }
+
+    // SAFETY: same block, same cookie -- this reads the link the flip left.
+    let tampered_next = unsafe { (*active_head.as_ptr()).get_next::<HardenedPolicy>(cookie) };
     assert_ne!(
-        free_head,
-        Some(ptr1 as usize),
-        "HardenedPolicy failed to obscure/randomize the tampered pointer"
+        tampered_next, expected_next,
+        "HardenedPolicy must not faithfully decode a tampered free-list link"
     );
 
-    // The claim is proven; now put the page back in a consistent state. The
-    // tampering left `page.free` holding a decrypted garbage address, so the
-    // allocator can neither hand out another block from this page nor reclaim
-    // its segment, and the segment would still be held at process exit — which
-    // Miri reports as a leak. Clearing the head restores an empty free list,
-    // after which freeing the outstanding block lets the ordinary reclaim path
-    // release the segment like any other test's.
-    //
-    // Repairing after the assertion changes nothing the test measures: every
-    // observation above has already been made against the tampered state.
-    // SAFETY: `segment`/`page_index` locate this thread's own live page, and
-    // the raw place projection avoids retagging the enclosing segment.
+    // Restore the link so the page returns to a consistent state and its
+    // segment reclaims normally; every observation above was made against the
+    // tampered state, so the repair changes nothing the test measures.
+    // SAFETY: same block and cookie, writing back the value read before the flip.
     unsafe {
-        let page = &raw mut (*segment).pages[page_index];
-        (*page).free = None;
-        thread_free::<HardenedPolicy, MemoryBackendWrapper>(ptr3);
+        (*active_head.as_ptr()).set_next::<HardenedPolicy>(expected_next, cookie);
     }
 }
 
