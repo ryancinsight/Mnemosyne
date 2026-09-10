@@ -70,6 +70,9 @@ impl AtomicFreeList {
             if current_ptr == block_ptr {
                 crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
             }
+            // SAFETY: `current_ptr` is the chain head this thread just won
+            // by CAS, so it is a live block of the same page; `encrypted` and
+            // `cookie` come from that page's own segment header.
             let next = unsafe {
                 if encrypted {
                     (*current_ptr).get_next_dynamic(encrypted, cookie)
@@ -119,7 +122,11 @@ impl AtomicFreeList {
     #[inline]
     pub fn push_dynamic(&self, block: NonNull<Block>, encrypted: bool) {
         let block_ptr = block.as_ptr();
+        // SAFETY: `block` is a live allocation of this allocator, so the
+        // segment it lies in is mapped; `locate_segment` only masks its
+        // address down to the segment base.
         let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
+        // SAFETY: `segment` is the live mapping just located.
         if !unsafe { Segment::free_list_mode_matches(segment.cast_const(), encrypted) } {
             crate::abort::abort_on_corruption(
                 "free-list mode mismatch: AtomicFreeList push path does not match the segment",
@@ -186,7 +193,11 @@ impl AtomicFreeList {
     #[inline]
     pub(crate) fn push_raw(&self, block: NonNull<Block>) {
         let block_ptr = block.as_ptr();
+        // SAFETY: `block` is a live allocation of this allocator, so the
+        // segment it lies in is mapped; `locate_segment` only masks its
+        // address down to the segment base.
         let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
+        // SAFETY: `segment` is the live mapping just located.
         if unsafe { Segment::free_list_encrypted(segment.cast_const()) } {
             crate::abort::abort_on_corruption(
                 "raw AtomicFreeList push used while segment free-list links are encrypted",
@@ -209,6 +220,9 @@ impl AtomicFreeList {
             }
             let next_count = ((current_value >> Self::PACKED_PTR_BITS) + 1) & Self::COUNT_WRAP_MASK;
 
+            // SAFETY: `block_ptr` is the caller's own block, not yet
+            // published to the list, so no other thread can observe it; the
+            // raw form matches the segment mode checked on entry.
             unsafe {
                 (*block_ptr).set_next_raw(NonNull::new(current_ptr));
             }
@@ -255,6 +269,8 @@ impl AtomicFreeList {
             if visited > crate::constants::PAGE_SIZE {
                 crate::abort::abort_on_corruption("Cycle detected in AtomicFreeList");
             }
+            // SAFETY: `node` came from the detached chain, so it is a live
+            // block; the mode and cookie are the ones its page recorded.
             current = unsafe { (*node.as_ptr()).get_next_dynamic(encrypted, cookie) };
         }
         if visited != count {
@@ -310,6 +326,9 @@ impl AtomicFreeList {
             if current == block_ptr {
                 crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
             }
+            // SAFETY: `current` is the chain head this thread just won by
+            // CAS, so it is a live block of the same page; `encrypted` and
+            // `cookie` come from that page's own segment header.
             let next = unsafe {
                 if encrypted {
                     (*current).get_next_dynamic(encrypted, cookie)
@@ -342,7 +361,11 @@ impl AtomicFreeList {
     #[inline]
     pub fn push_dynamic(&self, block: NonNull<Block>, encrypted: bool) {
         let block_ptr = block.as_ptr();
+        // SAFETY: `block` is a live allocation of this allocator, so the
+        // segment it lies in is mapped; `locate_segment` only masks its
+        // address down to the segment base.
         let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
+        // SAFETY: `segment` is the live mapping just located.
         if !unsafe { Segment::free_list_mode_matches(segment.cast_const(), encrypted) } {
             crate::abort::abort_on_corruption(
                 "free-list mode mismatch: AtomicFreeList push path does not match the segment",
@@ -394,7 +417,11 @@ impl AtomicFreeList {
     #[inline]
     pub(crate) fn push_raw(&self, block: NonNull<Block>) {
         let block_ptr = block.as_ptr();
+        // SAFETY: `block` is a live allocation of this allocator, so the
+        // segment it lies in is mapped; `locate_segment` only masks its
+        // address down to the segment base.
         let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
+        // SAFETY: `segment` is the live mapping just located.
         if unsafe { Segment::free_list_encrypted(segment.cast_const()) } {
             crate::abort::abort_on_corruption(
                 "raw AtomicFreeList push used while segment free-list links are encrypted",
@@ -406,6 +433,9 @@ impl AtomicFreeList {
             if block_ptr == current {
                 crate::abort::abort_on_corruption("Double free detected in AtomicFreeList");
             }
+            // SAFETY: `block_ptr` is the caller's own block, not yet
+            // published to the list, so no other thread can observe it; the
+            // raw form matches the segment mode checked on entry.
             unsafe {
                 (*block_ptr).set_next_raw(NonNull::new(current));
             }
@@ -444,6 +474,8 @@ impl AtomicFreeList {
                 // by `push` (a valid, aligned `Block`); the `swap` above gave this
                 // thread exclusive ownership of the detached chain, so reading the
                 // next-link is sound. The cycle guard above bounds the walk.
+                // SAFETY: `node` came from the detached chain, so it is a live
+                // block; the mode and cookie are the ones its page recorded.
                 current = unsafe { (*node.as_ptr()).get_next_dynamic(encrypted, cookie) };
             }
             (head, count)
@@ -466,6 +498,9 @@ impl AtomicFreeList {
                 if count > crate::constants::PAGE_SIZE {
                     crate::abort::abort_on_corruption("Cycle detected in AtomicFreeList");
                 }
+                // SAFETY: `node` came from the detached chain, so it is a
+                // live block, and the raw form matches the mode checked when
+                // the chain was taken.
                 current = unsafe { (*node.as_ptr()).get_next_raw() };
             }
             (head, count)

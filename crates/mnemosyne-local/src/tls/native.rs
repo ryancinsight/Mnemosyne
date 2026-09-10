@@ -140,6 +140,10 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
         let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
             return;
         };
+        // SAFETY: `key` came from `get_os_tls_key`, so it is a live
+        // `TlsAlloc`-allocated slot of this process, which is
+        // `set_teb_tls_slot`'s whole precondition. The write stores `ptr` as a
+        // value; nothing reads through it here.
         unsafe { set_teb_tls_slot(key, ptr) };
     }
 

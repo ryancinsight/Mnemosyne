@@ -396,6 +396,8 @@ impl Segment {
         if page_index >= PAGES_PER_SEGMENT {
             abort_on_corruption("free-list cookie page index out of range");
         }
+        // SAFETY: the null and alignment checks above discharge
+        // `free_list_mode_matches`'s precondition on `segment`.
         if !unsafe { Self::free_list_mode_matches(segment, encrypted) } {
             abort_on_corruption(
                 "free-list mode mismatch: raw/decode path does not match the segment",
@@ -469,6 +471,9 @@ impl Segment {
         {
             abort_on_corruption("free-list mode check segment pointer is misaligned");
         }
+        // SAFETY: the null and alignment aborts above leave a pointer that
+        // satisfies `free_list_encrypted`'s contract; the field it reads is
+        // written once before the segment is published.
         unsafe { Self::free_list_encrypted(segment) == encrypted }
     }
 

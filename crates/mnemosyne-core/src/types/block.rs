@@ -44,6 +44,9 @@ impl Block {
         page_cookie: usize,
     ) -> Option<NonNull<Block>> {
         if encrypted {
+            // SAFETY: the caller passed the owning segment's recorded mode and
+            // its cookie together, which is exactly `get_next_raw_decoded`'s
+            // contract -- the cookie decodes what that mode encoded.
             unsafe { self.get_next_raw_decoded(page_cookie) }
         } else {
             // SAFETY: the caller must have already validated that the owning
@@ -117,6 +120,9 @@ impl Block {
         page_cookie: usize,
     ) {
         if encrypted {
+            // SAFETY: same pairing as the decode above -- the mode and the
+            // cookie come from one segment header, so the link is encoded with
+            // the key its owner will decode it with.
             unsafe {
                 self.set_next_raw_encoded(next, page_cookie);
             }

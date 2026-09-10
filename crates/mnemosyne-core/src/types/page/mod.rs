@@ -203,6 +203,8 @@ impl Page {
     /// `block_size` directly from that page header.
     #[inline(always)]
     pub unsafe fn prefer_secondary_free(page: *mut Page, alloc_count: usize) -> bool {
+        // SAFETY: `page` is live initialized page metadata per this function's
+        // contract, and the reads below touch only its own header fields.
         if unsafe { (*page).secondary_free }.is_none() {
             return false;
         }
@@ -230,6 +232,9 @@ impl Page {
         alloc_count: usize,
         randomized: bool,
     ) -> (Option<NonNull<Block>>, bool) {
+        // SAFETY: every read below is of `page`'s own header, which this
+        // function's contract guarantees is live and initialized; the
+        // `prefer_secondary_free` call forwards that same contract unchanged.
         let has_secondary = unsafe { (*page).secondary_free }.is_some();
         let randomized = randomized || has_secondary;
         let use_secondary = randomized

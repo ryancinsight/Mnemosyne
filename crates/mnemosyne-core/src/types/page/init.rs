@@ -140,6 +140,9 @@ impl Page {
                 }
                 None => None,
             };
+            // SAFETY: `page` is this thread's own live page header for the
+            // whole pop, and `next` was decoded from the same list under the
+            // same cookie, so the head it replaces stays decodable.
             if use_secondary {
                 unsafe { (*page).secondary_free = next };
             } else {
@@ -243,10 +246,16 @@ impl Page {
                     primary_prev = Some(block);
                 } else {
                     if let Some(prev) = secondary_prev {
+                        // SAFETY: `prev` is a block of this page, carved from
+                        // the same freshly initialized run, and `cookie` is
+                        // the page's own key -- the link is written with the
+                        // key its reader will decode with.
                         unsafe {
                             (*prev.as_ptr()).set_next::<P>(Some(block), cookie);
                         }
                     } else {
+                        // SAFETY: `page` is the live header being initialized
+                        // here, exclusively owned for the whole build.
                         unsafe {
                             (*page).secondary_free = Some(block);
                         }
@@ -255,6 +264,9 @@ impl Page {
                 }
                 current_idx = (current_idx + stride) % n;
             }
+            // SAFETY: both tails are blocks of this page carved above, and
+            // `cookie` is the page's own key; terminating each list is the
+            // last write of the exclusive initialization.
             if let Some(prev) = primary_prev {
                 unsafe {
                     (*prev.as_ptr()).set_next::<P>(None, cookie);

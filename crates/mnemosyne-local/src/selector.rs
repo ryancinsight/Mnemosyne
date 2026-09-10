@@ -251,6 +251,10 @@ macro_rules! impl_local_allocator_selector {
                 unsafe fn with_allocator_unguarded<R>(
                     f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
                 ) -> Option<R> {
+                    // SAFETY: forwarded unchanged from this method's own
+                    // `unsafe` contract -- the caller guarantees `f` does not
+                    // re-enter this policy's slot, which is the obligation the
+                    // unarmed re-entrancy gate leaves to it.
                     unsafe { <SelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator_unguarded(f) }
                 }
 
@@ -280,6 +284,10 @@ macro_rules! impl_local_allocator_selector {
                 unsafe fn with_allocator_unguarded<R>(
                     f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
                 ) -> Option<R> {
+                    // SAFETY: forwarded unchanged from this method's own
+                    // `unsafe` contract -- the caller guarantees `f` does not
+                    // re-enter this policy's slot, which is the obligation the
+                    // unarmed re-entrancy gate leaves to it.
                     unsafe { <SelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator_unguarded(f) }
                 }
 
@@ -309,6 +317,10 @@ macro_rules! impl_local_allocator_selector {
                 unsafe fn with_allocator_unguarded<R>(
                     f: impl FnOnce(&mut $crate::ThreadAllocator<$backend>) -> R,
                 ) -> Option<R> {
+                    // SAFETY: forwarded unchanged from this method's own
+                    // `unsafe` contract -- the caller guarantees `f` does not
+                    // re-enter this policy's slot, which is the obligation the
+                    // unarmed re-entrancy gate leaves to it.
                     unsafe { <EncryptedSelectedTls as $crate::tls::TlsProvider<$backend>>::with_allocator_unguarded(f) }
                 }
 
