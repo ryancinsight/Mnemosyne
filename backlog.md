@@ -1,5 +1,33 @@
 # Backlog
 
+<a id="mn-stale-branch-inventory-2026-09-09"></a>
+
+## MN-STALE-BRANCH-INVENTORY-2026-09-09 — Two pushed branches hold unfiled work [patch] — todo
+
+- **Swept 2026-09-09.** Nine local branches, none mapped to an open item.
+  Four were fully merged and four were superseded; both classes are deleted.
+  The `fix/mnemosyne-pr126-*` trio was three attempts at one fix, and its
+  only content main does not already have is a Miri timeout raised from 60 s
+  to 180 s -- which the runtime-budget rule rejects on its own terms, since
+  the 60 s bound passes.
+- **Two remain, preserved on origin rather than locally.** Neither has an
+  open pull request, and both are six days old:
+  - `origin/refactor/mnemosyne-free-helpers-split` -- 13 commits, 40 files.
+    Its free canary, `reset_bin_stats` and sized-free validation all reached
+    main by other routes; what it still holds alone is **purge-and-retry on
+    the first OS allocation failure**, which appears nowhere on main. That is
+    an allocator recovery path and deserves its own item, not a silent port.
+  - `origin/feat/phase10-improvements` -- 21 commits, 43 files, including a
+    149-line addition to `mnemosyne/src/stats.rs`. Not assessed beyond its
+    shape; the same question applies to each commit.
+- **Why filed rather than ported.** Both predate the free-list randomization
+  that landed in #137 and touch the same allocator paths, so a rebase is a
+  re-derivation, not a merge. Each branch's unique commits are read and
+  either re-derived against current main or dropped with the reason recorded.
+- **Acceptance:** every commit on both branches is either re-derived onto
+  main or recorded here as superseded, and the branches are deleted from
+  origin.
+
 <a id="mn-test-lock-poisoning-hides-results"></a>
 
 ## MN-TEST-LOCK-POISONING-HIDES-RESULTS — One failing test blanks the rest of the run [patch] — todo
