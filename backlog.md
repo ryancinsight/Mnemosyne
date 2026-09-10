@@ -166,8 +166,8 @@
 
 <a id="MN-WASM-2026-09-06"></a>
 - [ ] [arch] [minor] **MN-WASM-2026-09-06 — provide a portable WebAssembly memory backend.**
-  status=review; integrator=atlas-session; branch=`fix/mnemosyne-wasm-backend`;
-  last-update=2026-09-06; lease=discharged.
+  status=review; integrator=root; branch=`codex/mnemosyne-wasm-pointer-width`;
+  last-update=2026-09-10.
   **Outcome:** the core segment key and allocator fallback constants compile on
   32-bit WebAssembly, and `mnemosyne-backend` selects a real page-aligned
   global-allocator backend instead of inheriting a host-only default.
@@ -179,7 +179,11 @@
   all-target Clippy runs, and `cargo nextest run --offline` (369/369).
   Pointer-width-safe synthetic fixtures cover wasm32. The shared main checkout
   retains unrelated peer WIP; the provider browser/DICOM consumer remains
-  external to this item.
+  external to this item. RITK's consumer build exposed one remaining
+  pointer-width hash literal in `Page::prefer_secondary_free`; this increment
+  derives the multiplier per target width. Native nextest (40/40), native
+  warning-denied Clippy, and WASM warning-denied Clippy/check pass on the
+  current branch.
 
 ## In progress
 
