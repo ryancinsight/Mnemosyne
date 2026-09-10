@@ -68,6 +68,9 @@ fn free_list_mode_matches_segment_state() {
 }
 
 #[test]
+// Re-executes the test binary to observe the abort; Miri cannot spawn a
+// subprocess, so the assertion is unobservable under it rather than failing.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
 fn reclaim_thread_free_if_present_rejects_mismatched_mode() {
     if std::env::var_os("MNEMOSYNE_RECLAIM_MODE_GUARD").is_some() {
         let layout = segment_layout();
@@ -678,6 +681,9 @@ fn atomic_free_list_encrypted_mode_keeps_lifo_order_and_exact_count() {
 }
 
 #[test]
+// Re-executes the test binary to observe the abort; Miri cannot spawn a
+// subprocess, so the assertion is unobservable under it rather than failing.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
 fn atomic_free_list_rejects_duplicate_push_in_standard_mode() {
     if std::env::var_os("MNEMOSYNE_ATOMIC_FREE_LIST_DUPLICATE_GUARD").is_some() {
         let layout = segment_layout();
@@ -726,6 +732,9 @@ fn atomic_free_list_rejects_duplicate_push_in_standard_mode() {
 }
 
 #[test]
+// Re-executes the test binary to observe the abort; Miri cannot spawn a
+// subprocess, so the assertion is unobservable under it rather than failing.
+#[cfg_attr(miri, ignore = "spawns a subprocess")]
 fn atomic_free_list_rejects_duplicate_push_in_encrypted_mode() {
     if std::env::var_os("MNEMOSYNE_ATOMIC_FREE_LIST_DUPLICATE_GUARD").is_some() {
         let layout = segment_layout();

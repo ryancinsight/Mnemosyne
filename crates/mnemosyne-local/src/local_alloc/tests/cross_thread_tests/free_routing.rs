@@ -328,6 +328,21 @@ fn hardened_chain_contains(block: *mut u8) -> bool {
     let bound = unsafe { (*page).max_blocks() };
     let target = block.cast::<Block>();
 
+    // Which of the two destinations a free lands in is platform-dependent: the
+    // owner probe identifies the freeing thread by its TEB slot on Windows and
+    // by allocator-pointer identity elsewhere, so the same call reaches the
+    // page-local list on one host and the page's remote-free queue on another.
+    // Draining the queue first is what the allocator itself does before reuse,
+    // and it makes the reachability claim the same on every host.
+    // SAFETY: the test lock is held, so no other thread is touching this page,
+    // and `P` selects only the TLS slot -- the encoding mode is read from the
+    // segment.
+    unsafe {
+        mnemosyne_core::types::Page::reclaim_thread_free_if_present_for_policy::<HardenedPolicy>(
+            segment, page_index,
+        );
+    }
+
     // SAFETY: each `current` is a block of this page, reached by decoding the
     // previous link with the page's own cookie.
     for head in unsafe { [(*page).free, (*page).secondary_free] } {
