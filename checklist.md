@@ -1,5 +1,13 @@
 # Checklist
 
+## MN-WASM-ENV-2026-09-11 (owner: codex)
+
+- [ ] Gate the environment reader away from host-only `getenv` on wasm32.
+- [ ] Run native and wasm32 strict checks for `mnemosyne-local`.
+- [ ] Rebuild RITK's `ritk-snap` cdylib for wasm32 and record the result.
+- [ ] Run the focused native allocator tests, then close the item with the
+      upstream and consumer commit references.
+
 ## MN-SCRATCH-RELEASE-2026-09-03 (owner: unclaimed)
 
 - [ ] Measure Apollo's long-lived worker scratch retention and confirm the

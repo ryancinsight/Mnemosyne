@@ -164,6 +164,17 @@
 
 ## Ready
 
+<a id="MN-WASM-ENV-2026-09-11"></a>
+- [ ] [patch] **MN-WASM-ENV-2026-09-11 — make allocator option discovery link-safe on WASM.**
+  status=in-progress; integrator=root; branch=`fix/mnemosyne-wasm-env-options-001`;
+  last-update=2026-09-11.
+  **Outcome:** `mnemosyne-local` does not reference host `getenv` when compiled
+  for `wasm32-unknown-unknown`; explicit `configure` remains the supported
+  runtime configuration path. **Acceptance:** native and WASM warning-denied
+  checks pass, the RITK `ritk-snap` cdylib links for WASM, and native allocator
+  tests retain their environment-backed behavior. **Dependency:**
+  [MN-WASM-2026-09-06](backlog.md#MN-WASM-2026-09-06).
+
 <a id="MN-WASM-2026-09-06"></a>
 - [ ] [arch] [minor] **MN-WASM-2026-09-06 — provide a portable WebAssembly memory backend.**
   status=review; integrator=root; branch=`codex/mnemosyne-wasm-pointer-width`;
