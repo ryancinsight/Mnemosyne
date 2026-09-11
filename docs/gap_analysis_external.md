@@ -115,7 +115,7 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | Feature | Mnemosyne current state | Reference | Implication | Priority |
 | --- | --- | --- | --- | --- |
 | Compile-time `AllocPolicy` selection | Implemented (`StandardPolicy`, `SecurePolicy`) | mimalloc compile flags | Parity for compile-time. | done |
-| **Runtime environment-variable knobs** (`MNEMOSYNE_*`) | Implemented (`ensure_options_initialized` reads at runtime) | mimalloc `mi_option_set`, jemalloc `MALLOC_CONF`, tcmalloc `TCMALLOC_*` | Enables production tuning without rebuild. | done |
+| **Runtime environment-variable knobs** (`MNEMOSYNE_*`) | Implemented on host targets (`ensure_options_initialized` reads at runtime); `wasm32` has no process environment and uses `configure` | mimalloc `mi_option_set`, jemalloc `MALLOC_CONF`, tcmalloc `TCMALLOC_*` | Enables host tuning without rebuild while keeping browser/WASM links free of host environment symbols. | done |
 | Per-deployment knobs: segment size, retention bound, purge cadence | Hardcoded constants | mimalloc all tunable, jemalloc all tunable | Trade-off: const = zero cost, env = flexibility. Compromise: `extern const`-style override block. | `[minor]` |
 | **Custom per-heap configuration at runtime** | Not implemented | mimalloc `mi_heap_new_in_arena`, jemalloc per-arena opts | Multi-tenant workloads. | `[arch]` |
 

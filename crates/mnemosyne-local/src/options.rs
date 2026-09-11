@@ -1,10 +1,11 @@
 static OPTIONS_INIT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-#[cfg(miri)]
+#[cfg(any(miri, target_arch = "wasm32"))]
 fn get_env_var_stack(_name: &str, _buf: &mut [u8]) -> Option<usize> {
-    // Miri cannot execute the platform environment-variable FFI used below.
-    // Treating configuration as absent preserves the allocator's documented
-    // defaults and lets Miri exercise the production allocation state machine.
+    // Miri cannot execute the platform environment-variable FFI used below,
+    // and wasm32 has no process environment. Treating configuration as absent
+    // preserves the allocator's documented defaults; callers on wasm32 use
+    // `mnemosyne::configure` for explicit runtime settings.
     None
 }
 
@@ -35,7 +36,7 @@ fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
     }
 }
 
-#[cfg(all(not(windows), not(miri)))]
+#[cfg(all(not(windows), not(target_arch = "wasm32"), not(miri)))]
 fn get_env_var_stack(name: &str, buf: &mut [u8]) -> Option<usize> {
     unsafe extern "C" {
         fn getenv(name: *const u8) -> *mut u8;

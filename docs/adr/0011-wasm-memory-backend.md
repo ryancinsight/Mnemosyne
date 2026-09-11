@@ -28,6 +28,14 @@ placeholder. Callers retain the `MemoryBackend` contract: allocation sizes are
 non-zero and page-aligned, and deallocation receives the original pointer and
 size.
 
+### Revision 2026-09-11
+
+The allocator's environment-option reader now excludes host `getenv` FFI on
+`wasm32`. Browser/WASM hosts have no process environment; callers use the
+explicit `configure` API for runtime settings. This keeps the complete
+allocator path linkable for `wasm32-unknown-unknown` without weakening native
+environment-backed tuning.
+
 ## Alternatives rejected
 
 * Reusing the Unix backend would import host mapping assumptions into WASM and
