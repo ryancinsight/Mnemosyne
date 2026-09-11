@@ -2,10 +2,10 @@
 
 ## MN-WASM-ENV-2026-09-11 (owner: codex)
 
-- [ ] Gate the environment reader away from host-only `getenv` on wasm32.
-- [ ] Run native and wasm32 strict checks for `mnemosyne-local`.
-- [ ] Rebuild RITK's `ritk-snap` cdylib for wasm32 and record the result.
-- [ ] Run the focused native allocator tests, then close the item with the
+- [x] Gate the environment reader away from host-only `getenv` on wasm32.
+- [x] Run native and wasm32 strict checks for `mnemosyne-local`.
+- [x] Rebuild RITK's `ritk-snap` cdylib for wasm32 and record the result.
+- [x] Run the focused native allocator tests, then close the item with the
       upstream and consumer commit references.
 
 ## MN-SCRATCH-RELEASE-2026-09-03 (owner: unclaimed)
