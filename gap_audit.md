@@ -1,5 +1,6 @@
 # Gap Audit
 
+<!-- Compacted 2026-09-21 under the 1,000-line board budget: a board is a queue, not a ledger, so closed sections and closed item bodies are gone -- their record is the PR that closed them and its `Item:` trailer. Open items, anchors and live-marked residuals are kept. Recover any removed narrative with `git log -p -- <this file>`. -->
 ## Finding 2026-08-20: mnemosyne scope-vs-delivery audit
 
 Static audit only — no build, test, clippy, or benchmark run (all Atlas repos
@@ -52,204 +53,47 @@ below are what it does **not** cover.
 
 ### Findings
 
-- **[correctness] `AllocationDiagnostics` is a public API with no writer.**
-  `mnemosyne-core/src/memory_diagnostics.rs` defines `record_allocation`,
-  `record_deallocation`, `record_cache_hit`, and `record_cache_miss`, and the
-  module doc claims it "tracks allocation size distribution, per-size-class
-  fragmentation, and fast-path cache hit/miss ratios". Grepping the whole
-  workspace for each of those four methods outside the defining file returns
-  **zero** call sites (the single `record_deallocation` hit is an unrelated
-  method on `mnemosyne-local/src/fast_path_cache.rs:196`). `fragmented_blocks`
-  and `page_utilization_percent` have zero writers anywhere and can only ever
-  read `0`, yet `MemoryEfficiencyReport::from_diagnostics` derives a
-  `fragmentation_overhead` percentage from them. The type is publicly
-  re-exported from the facade at `crates/mnemosyne/src/lib.rs:17-18`. Under
-  the mock-detection heuristic, replacing every `record_*` body with
-  `unimplemented!()` would not change any observable behavior of the
-  allocator. Either wire the recorders into the allocation paths or delete the
-  surface; do not ship a diagnostic whose output is input-insensitive.
+- **[correctness] `AllocationDiagnostics` is a public API with no writer.** `mnemosyne-core/src/memory_diagnostics.rs` defines `record_allocation`, `record_deallocation`, `record_cache_hit`, and `record_cache_miss`, and the module doc claims it "tracks allocation size distribution, per-size-class fragmentation, and fast-path cache hit/miss ratios". Grepping the whole workspace for each of those four methods outside the defining file returns **zero** call sites (the single `record_deallocation` hit is an unrelated method on `mnemosyne-local/src/fast_path_cache.rs:196`). `fragmented_blocks` and `page_utilization_percent` have zero writers anywhere and can only ever read `0`, yet `MemoryEfficiencyReport::from_diagnostics` derives a `fragmentation_overhead` percentage from them. The type is publicly re-exported from the facade at `crates/mnemosyne/src/lib.rs:17-18`. Under the mock-detection heuristic, replacing every `record_*` body with `unimplemented!()` would not change any observable behavior of the allocator. Either wire the recorders into the allocation paths or delete the surface; do not ship a diagnostic whose output is input-insensitive.
 
-- **[docs] `docs/book/size_classes.md` described an architecture that does not
-  exist** (fixed in this pass). The chapter carried a "Thread-Local Magazine
-  Protocol" section describing a "global depot", magazine swap, and "periodic
-  background steal", and a tier table reading "Small ≤ 256 bytes: Thread-local
-  slab allocator" / "Medium 256 B – 8 KB: per-thread magazine". `grep -rni
-  'magazine\|depot\|slab'` over `crates` returns **0** hits. The real
-  threshold is `MAX_SMALL_ALLOC_SIZE = 8 * 1024`
-  (`mnemosyne-core/src/constants.rs:22`) with `NUM_SIZE_CLASSES = 44`
-  (`constants.rs:37`), and the real mechanism is the per-page `free` +
-  `thread_free` pair. The chapter also claimed `KernelResourceBudget` limits
-  drive segment reclamation per size class; that type is a GPU launch-shape
-  limiter. Chapter rewritten against the constants and `size_class.rs`.
+- **[docs] `docs/book/size_classes.md` described an architecture that does not exist** (fixed in this pass). The chapter carried a "Thread-Local Magazine Protocol" section describing a "global depot", magazine swap, and "periodic background steal", and a tier table reading "Small ≤ 256 bytes: Thread-local slab allocator" / "Medium 256 B – 8 KB: per-thread magazine". `grep -rni 'magazine\|depot\|slab'` over `crates` returns **0** hits. The real threshold is `MAX_SMALL_ALLOC_SIZE = 8 * 1024` (`mnemosyne-core/src/constants.rs:22`) with `NUM_SIZE_CLASSES = 44` (`constants.rs:37`), and the real mechanism is the per-page `free` + `thread_free` pair. The chapter also claimed `KernelResourceBudget` limits drive segment reclamation per size class; that type is a GPU launch-shape limiter. Chapter rewritten against the constants and `size_class.rs`.
 
-- **[docs] `Page` has no `local_free` field** (README fixed in this pass).
-  `README.md:48` listed `page.local_free` among the fields the fast path
-  touches, and `docs/gap_analysis_external.md` §2 names the sharded lists as
-  "(`free`, `local_free`, `thread_free`)". `crates/mnemosyne-core/src/types/page/mod.rs:13-33`
-  declares `free`, `thread_free`, `block_size`, `alloc_count`,
-  `initialized_blocks`, `next_page`, `prev_page`, `size_class`, `list_state`,
-  `page_index` — no `local_free`. All 18 `local_free` matches in the tree are
-  the function `do_local_free_internal`. The gap-analysis row is still stale.
+- **[docs] `Page` has no `local_free` field** (README fixed in this pass). `README.md:48` listed `page.local_free` among the fields the fast path touches, and `docs/gap_analysis_external.md` §2 names the sharded lists as "(`free`, `local_free`, `thread_free`)". `crates/mnemosyne-core/src/types/page/mod.rs:13-33` declares `free`, `thread_free`, `block_size`, `alloc_count`, `initialized_blocks`, `next_page`, `prev_page`, `size_class`, `list_state`, `page_index` — no `local_free`. All 18 `local_free` matches in the tree are the function `do_local_free_internal`. The gap-analysis row is still stale.
 
-- **[docs] Two size constants in `docs/gap_analysis_external.md` are wrong.**
-  §3 states "Bounded retained-segment pool (`MAX_RETAINED_SEGMENTS =
-  PAGES_PER_SEGMENT = 32`)". The actual compile-time ceiling is
-  `MAX_RETAINED_SEGMENTS_LIMIT = 1024`
-  (`mnemosyne-core/src/constants.rs:40`); the effective bound is the runtime
-  `MnemosyneOptions::max_retained_segments`, defaulting to that ceiling and
-  clamped to it in `set_options` (`options.rs:61-66`). §4 states "Bounded
-  retention of huge mappings — Not implemented (every large alloc goes back to
-  backend)", but `mnemosyne-arena/src/segment/pool/huge_pool.rs` implements
-  per-NUMA-bucket retained chains under a byte budget with `retained_blocks`
-  and `retained_bytes` accessors.
+- **[docs] Two size constants in `docs/gap_analysis_external.md` are wrong.** §3 states "Bounded retained-segment pool (`MAX_RETAINED_SEGMENTS = PAGES_PER_SEGMENT = 32`)". The actual compile-time ceiling is `MAX_RETAINED_SEGMENTS_LIMIT = 1024` (`mnemosyne-core/src/constants.rs:40`); the effective bound is the runtime `MnemosyneOptions::max_retained_segments`, defaulting to that ceiling and clamped to it in `set_options` (`options.rs:61-66`). §4 states "Bounded retention of huge mappings — Not implemented (every large alloc goes back to backend)", but `mnemosyne-arena/src/segment/pool/huge_pool.rs` implements per-NUMA-bucket retained chains under a byte budget with `retained_blocks` and `retained_bytes` accessors.
 
-- **[docs] Four `docs/gap_analysis_external.md` rows claim "Not implemented"
-  for shipped capabilities.** §5 "NUMA-aware arena selection — Not
-  implemented `[major]`" is contradicted by
-  `mnemosyne-arena/src/segment/pool/numa_bucket.rs` (16 buckets, `steal_from`
-  remote fallback) and `segment_pool.rs:112-162` (local-first pop with a
-  rate-limited node refresh). §7 "Per-allocation profiling / heap snapshot —
-  Not implemented" and "Tracing / event hook callback — Not implemented" are
-  contradicted by `mnemosyne-prof` (`register_alloc_hook`,
-  `register_free_hook`, `on_alloc`, `on_free`, Poisson sampler, leak detector;
-  ADRs 0004/0005). §9 "`posix_memalign` / `aligned_alloc` — Indirectly via
-  `GlobalAlloc` Layout `[major]`" is contradicted by
-  `mnemosyne-c-shim/src/lib.rs:187,216`, which exports both directly. §11.2
-  still speaks of `page_reset`/`make_guard` in the future conditional ("a
-  method on the trait *would* let…") although §12 records both as delivered.
+- **[docs] Four `docs/gap_analysis_external.md` rows claim "Not implemented" for shipped capabilities.** §5 "NUMA-aware arena selection — Not implemented `[major]`" is contradicted by `mnemosyne-arena/src/segment/pool/numa_bucket.rs` (16 buckets, `steal_from` remote fallback) and `segment_pool.rs:112-162` (local-first pop with a rate-limited node refresh). §7 "Per-allocation profiling / heap snapshot — Not implemented" and "Tracing / event hook callback — Not implemented" are contradicted by `mnemosyne-prof` (`register_alloc_hook`, `register_free_hook`, `on_alloc`, `on_free`, Poisson sampler, leak detector; ADRs 0004/0005). §9 "`posix_memalign` / `aligned_alloc` — Indirectly via `GlobalAlloc` Layout `[major]`" is contradicted by `mnemosyne-c-shim/src/lib.rs:187,216`, which exports both directly. §11.2 still speaks of `page_reset`/`make_guard` in the future conditional ("a method on the trait *would* let…") although §12 records both as delivered.
 
-- **[docs] `docs/gap_analysis_external.md` §12 names two test guards that do
-  not exist.** `c_shim_round_trip_matches_global_alloc` and
-  `runtime_options_override_default_retention` return 0 hits. The nearest
-  actual guards are `malloc_free_round_trip_is_aligned_and_writable`
-  (`mnemosyne-c-shim/src/tests.rs:57`) and `test_memory_stats_retention_bound`
-  (`mnemosyne/tests/global_alloc_tests/stats.rs:30`). Ten of the twelve named
-  guards spot-checked in that document do resolve.
+- **[docs] `docs/gap_analysis_external.md` §12 names two test guards that do not exist.** `c_shim_round_trip_matches_global_alloc` and `runtime_options_override_default_retention` return 0 hits. The nearest actual guards are `malloc_free_round_trip_is_aligned_and_writable` (`mnemosyne-c-shim/src/tests.rs:57`) and `test_memory_stats_retention_bound` (`mnemosyne/tests/global_alloc_tests/stats.rs:30`). Ten of the twelve named guards spot-checked in that document do resolve.
 
-- **[docs] `docs/book/numa_placement.md` named APIs absent from the tree**
-  (fixed in this pass). It referenced `NumaBucketIndex<N>`, a const-generic
-  `BUCKETS` parameter, and an `ASSERT_NONZERO` const (0 hits each), and gave a
-  Moirai `runtime.spawn_fn_with` example although Moirai is not a dependency
-  of any member manifest. Rewritten against `numa_bucket.rs`,
-  `segment_pool.rs`, and `mnemosyne-heap/src/numa.rs`.
+- **[docs] `docs/book/numa_placement.md` named APIs absent from the tree** (fixed in this pass). It referenced `NumaBucketIndex<N>`, a const-generic `BUCKETS` parameter, and an `ASSERT_NONZERO` const (0 hits each), and gave a Moirai `runtime.spawn_fn_with` example although Moirai is not a dependency of any member manifest. Rewritten against `numa_bucket.rs`, `segment_pool.rs`, and `mnemosyne-heap/src/numa.rs`.
 
-- **[docs] `docs/adr/README.md` cites a generator that is not in the repo.**
-  Its header reads "Generated by scripts/adr-index.py — do not hand-edit.
-  Regenerate: python scripts/adr-index.py generate". There is no `scripts/`
-  directory; `find . -name 'adr-index.py' -not -path './target/*'` returns
-  nothing. The index therefore has no regenerate-and-diff freshness check, and
-  the instruction is unrunnable as written. Separately, ADR 0001's status line
-  reads "Accepted and implemented" rather than the canonical `Accepted`.
+- **[docs] `docs/adr/README.md` cites a generator that is not in the repo.** Its header reads "Generated by scripts/adr-index.py — do not hand-edit. Regenerate: python scripts/adr-index.py generate". There is no `scripts/` directory; `find . -name 'adr-index.py' -not -path './target/*'` returns nothing. The index therefore has no regenerate-and-diff freshness check, and the instruction is unrunnable as written. Separately, ADR 0001's status line reads "Accepted and implemented" rather than the canonical `Accepted`.
 
-- **[docs] `README.md` overstated the huge-page hint condition** (fixed in
-  this pass). It said the hint applies to mappings "at least one full
-  `SEGMENT_SIZE` (2 MiB) **and a multiple thereof**".
-  `mnemosyne-backend/src/backends/unix.rs:100` tests only `length >=
-  SEGMENT_SIZE`, and the test
-  `large_non_multiple_allocation_receives_hugepage_hint`
-  (`unix.rs:344`) exists specifically to pin that a 3 MiB mapping *does*
-  receive the hint. `docs/gap_analysis_external.md` §12 repeats the same wrong
-  condition and is not fixed here.
+- **[docs] `README.md` overstated the huge-page hint condition** (fixed in this pass). It said the hint applies to mappings "at least one full `SEGMENT_SIZE` (2 MiB) **and a multiple thereof**". `mnemosyne-backend/src/backends/unix.rs:100` tests only `length >= SEGMENT_SIZE`, and the test `large_non_multiple_allocation_receives_hugepage_hint` (`unix.rs:344`) exists specifically to pin that a 3 MiB mapping *does* receive the hint. `docs/gap_analysis_external.md` §12 repeats the same wrong condition and is not fixed here.
 
-- **[verification] The three huge-page-hint tests cannot observe the hint.**
-  `segment_sized_allocation_survives_hugepage_hint` (`unix.rs:289`),
-  `sub_segment_allocation_skips_hugepage_hint` (`unix.rs:324`), and
-  `large_non_multiple_allocation_receives_hugepage_hint` (`unix.rs:344`) all
-  assert only that the mapping allocates, round-trips boundary bytes, and
-  deallocates. Two of the three names assert a *hint decision*
-  ("skips", "receives") that no assertion checks. Replacing `hint_hugepage`'s
-  body with a no-op leaves all three green. Route the decision through an
-  observable counter (the backend already has a `recorders` telemetry module)
-  so the names are backed by assertions.
+- **[verification] The three huge-page-hint tests cannot observe the hint.** `segment_sized_allocation_survives_hugepage_hint` (`unix.rs:289`), `sub_segment_allocation_skips_hugepage_hint` (`unix.rs:324`), and `large_non_multiple_allocation_receives_hugepage_hint` (`unix.rs:344`) all assert only that the mapping allocates, round-trips boundary bytes, and deallocates. Two of the three names assert a *hint decision* ("skips", "receives") that no assertion checks. Replacing `hint_hugepage`'s body with a no-op leaves all three green. Route the decision through an observable counter (the backend already has a `recorders` telemetry module) so the names are backed by assertions.
 
-- **[verification] `mnemosyne-benchmarks` is excluded from every CI gate.**
-  `ci.yml` passes `--exclude mnemosyne-benchmarks` to clippy (line 63), to
-  `nextest` (line 76), to the doctest run (line 81), and to the aarch64 job
-  (line 336). That is 3,638 LOC and 29 files — including three `harness =
-  false` Criterion targets and three binaries (`benchmark_summary`,
-  `memory_report`, `check_cpu_cache`) — that are never linted, never compiled
-  in CI, and never smoke-run. No job runs `cargo test --benches` or Criterion
-  `--test`, so no benchmark carries the committed finite runtime budget the
-  test suite has. The exclusion is justified in a comment (the crate pulls
-  `snmalloc-rs` and other comparators), but the consequence is that the
-  regression-threshold tooling the README documents as the performance gate is
-  itself unverified.
+- **[verification] `mnemosyne-benchmarks` is excluded from every CI gate.** `ci.yml` passes `--exclude mnemosyne-benchmarks` to clippy (line 63), to `nextest` (line 76), to the doctest run (line 81), and to the aarch64 job (line 336). That is 3,638 LOC and 29 files — including three `harness = false` Criterion targets and three binaries (`benchmark_summary`, `memory_report`, `check_cpu_cache`) — that are never linted, never compiled in CI, and never smoke-run. No job runs `cargo test --benches` or Criterion `--test`, so no benchmark carries the committed finite runtime budget the test suite has. The exclusion is justified in a comment (the crate pulls `snmalloc-rs` and other comparators), but the consequence is that the regression-threshold tooling the README documents as the performance gate is itself unverified.
 
-- **[verification] The fuzz target is never executed.** `fuzz/` declares the
-  `c_shim_api` libFuzzer target over the C ABI surface — the crate's one
-  untrusted-input boundary — but `grep -rli fuzz .github/workflows` returns
-  nothing. A committed but unrun fuzz target is not fuzzing coverage.
+- **[verification] The fuzz target is never executed.** `fuzz/` declares the `c_shim_api` libFuzzer target over the C ABI surface — the crate's one untrusted-input boundary — but `grep -rli fuzz .github/workflows` returns nothing. A committed but unrun fuzz target is not fuzzing coverage.
 
-- **[security] No supply-chain job exists.** `grep -rli` over
-  `.github/workflows` finds no `cargo-deny`, `cargo-audit`,
-  `cargo-semver-checks`, `cargo-machete`, or `cargo-geiger` step, and there is
-  no `deny.toml` or `audit.toml` in the repo. Advisory, license, ban,
-  duplicate, unused-dependency, and yanked-crate checks are therefore absent
-  for a crate published to crates.io under eleven package identities. The
-  absence of `cargo-semver-checks` also means the pre-release semver gate the
-  backlog records as having been run manually has no standing enforcement.
+- **[security] No supply-chain job exists.** `grep -rli` over `.github/workflows` finds no `cargo-deny`, `cargo-audit`, `cargo-semver-checks`, `cargo-machete`, or `cargo-geiger` step, and there is no `deny.toml` or `audit.toml` in the repo. Advisory, license, ban, duplicate, unused-dependency, and yanked-crate checks are therefore absent for a crate published to crates.io under eleven package identities. The absence of `cargo-semver-checks` also means the pre-release semver gate the backlog records as having been run manually has no standing enforcement.
 
-- **[verification] Steady-state mapped memory under fragmentation is bounded
-  — resolved 2026-08-27.**
-  `alternating_size_classes_converge_with_pinned_survivors` runs 64 alternating
-  waves over 16-, 64-, 256-, and 1,024-byte classes while retaining one
-  value-checked survivor per class. Each wave adds 32 transient blocks per
-  class. Compile-time assertions prove that every class remains within one
-  64-KiB page and that all four pages fit beside the metadata page in one
-  segment. Every round therefore asserts exactly four live allocations, one
-  owned/fresh segment, and no more than one 4-MiB over-reserved mapping for
-  1,360 pinned bytes; completion must return `current_mapped_bytes` to its
-  pre-test value. The test uses direct allocator telemetry and no sleeps or
-  hot-path counters. Warning-denied package Clippy passes; focused Nextest
-  passes in 17 ms and the full `mnemosyne-decay` package passes 7/7 in 1.058 s.
-  Evidence limit: mapped virtual bytes are the repository's deterministic
-  cross-platform bound; this test does not claim an operating-system RSS
-  sample or allocator throughput measurement.
+- **[verification] Steady-state mapped memory under fragmentation is bounded — resolved 2026-08-27.** `alternating_size_classes_converge_with_pinned_survivors` runs 64 alternating waves over 16-, 64-, 256-, and 1,024-byte classes while retaining one value-checked survivor per class. Each wave adds 32 transient blocks per class. Compile-time assertions prove that every class remains within one 64-KiB page and that all four pages fit beside the metadata page in one segment. Every round therefore asserts exactly four live allocations, one owned/fresh segment, and no more than one 4-MiB over-reserved mapping for 1,360 pinned bytes; completion must return `current_mapped_bytes` to its pre-test value. The test uses direct allocator telemetry and no sleeps or hot-path counters. Warning-denied package Clippy passes; focused Nextest passes in 17 ms and the full `mnemosyne-decay` package passes 7/7 in 1.058 s. Evidence limit: mapped virtual bytes are the repository's deterministic cross-platform bound; this test does not claim an operating-system RSS sample or allocator throughput measurement.
 
-- **[arch] Two published foundation crates lack `#![deny(missing_docs)]`.**
-  `crates/mnemosyne-core/src/lib.rs` and `crates/mnemosyne-arena/src/lib.rs`
-  carry `#![no_std]` / `#![cfg_attr(...)]` but no `missing_docs` deny; the
-  other nine published crates do. These two carry the allocator's core layout
-  types and the segment/arena surface, so they are the crates where an
-  undocumented public item costs the most.
+- **[arch] Two published foundation crates lack `#![deny(missing_docs)]`.** `crates/mnemosyne-core/src/lib.rs` and `crates/mnemosyne-arena/src/lib.rs` carry `#![no_std]` / `#![cfg_attr(...)]` but no `missing_docs` deny; the other nine published crates do. These two carry the allocator's core layout types and the segment/arena surface, so they are the crates where an undocumented public item costs the most.
 
-- **[pm-hygiene] The board and checklist are past the point of being an
-  index.** `backlog.md` is 1,633 lines with 65 completed items retained as
-  full prose and only 5 unchecked; it carries four separate section headings
-  (`## Open` at lines 206 and 1571, `## Closed` at 140 and 189, `## Completed`
-  at 996, `## Next` at 1628), so there is no single place a cold-start agent
-  reads to find the ready work. `checklist.md` is 1,529 lines with the same
-  shape. Most retained items predate the current head and have no stable ID.
+- **[pm-hygiene] The board and checklist are past the point of being an index.** `backlog.md` is 1,633 lines with 65 completed items retained as full prose and only 5 unchecked; it carries four separate section headings (`## Open` at lines 206 and 1571, `## Closed` at 140 and 189, `## Completed` at 996, `## Next` at 1628), so there is no single place a cold-start agent reads to find the ready work. `checklist.md` is 1,529 lines with the same shape. Most retained items predate the current head and have no stable ID.
 
-- **[docs] `docs/complexity_audit.md` states "the current 11-crate workspace";
-  `Cargo.toml` lists 12 members.** Its workspace-map table omits
-  `mnemosyne-decay`, `mnemosyne-prof`, `mnemosyne-build-util`, and
-  `mnemosyne-benchmarks`.
+- **[docs] `docs/complexity_audit.md` states "the current 11-crate workspace"; `Cargo.toml` lists 12 members.** Its workspace-map table omits `mnemosyne-decay`, `mnemosyne-prof`, `mnemosyne-build-util`, and `mnemosyne-benchmarks`.
 
-- **[pm-hygiene] `Cargo.toml`'s lint-floor comment describes a mechanism the
-  tree does not use.** It states the 24 `unwrap` sites "are pinned per file by
-  `#![expect(..., reason = "MNEM-UNWRAP-1")]`, which self-expires the moment a
-  file's last unwrap goes". There are **0** `#[expect(` / `#![expect(`
-  attributes in the tree; both pinning sites
-  (`mnemosyne-core/src/kernel_budget.rs:12-18`,
-  `mnemosyne-local/src/tests.rs:1-7`) use
-  `#![cfg_attr(test, allow(clippy::unwrap_used, reason = "test scope: ..."))]`.
-  `allow` does not self-expire, so the stated ratchet property does not hold,
-  and the `MNEM-UNWRAP-1` id appears nowhere but in that comment.
-  `clippy::allow_attributes` is not in the workspace lint floor.
+- **[pm-hygiene] `Cargo.toml`'s lint-floor comment describes a mechanism the tree does not use.** It states the 24 `unwrap` sites "are pinned per file by `#![expect(..., reason = "MNEM-UNWRAP-1")]`, which self-expires the moment a file's last unwrap goes". There are **0** `#[expect(` / `#![expect(` attributes in the tree; both pinning sites (`mnemosyne-core/src/kernel_budget.rs:12-18`, `mnemosyne-local/src/tests.rs:1-7`) use `#![cfg_attr(test, allow(clippy::unwrap_used, reason = "test scope: ..."))]`. `allow` does not self-expire, so the stated ratchet property does not hold, and the `MNEM-UNWRAP-1` id appears nowhere but in that comment. `clippy::allow_attributes` is not in the workspace lint floor.
 
 ### Not findings (checked and clean)
 
-- `MnemosyneOptions::enable_hugepage_hint` **is** wired: `hint_hugepage`
-  reads `mnemosyne_core::options::ENABLE_HUGEPAGE_HINT`
-  (`unix.rs:100-102`). An earlier hypothesis that the knob was inert is
-  disproved.
-- All 16 numbered README architectural highlights resolve to real code, and
-  10 of 12 spot-checked named test guards exist under the documented names.
-- No stub markers, no `dyn` dispatch, no type-suffixed identifiers, no junk
-  drawers, no production `unwrap`, complete registry metadata, and per-crate
-  READMEs on every published crate.
-
+- `MnemosyneOptions::enable_hugepage_hint` **is** wired: `hint_hugepage` reads `mnemosyne_core::options::ENABLE_HUGEPAGE_HINT` (`unix.rs:100-102`). An earlier hypothesis that the knob was inert is disproved.
+- All 16 numbered README architectural highlights resolve to real code, and 10 of 12 spot-checked named test guards exist under the documented names.
+- No stub markers, no `dyn` dispatch, no type-suffixed identifiers, no junk drawers, no production `unwrap`, complete registry metadata, and per-crate READMEs on every published crate.
 
 ## WGPU 30 and Melinoe 0.9 closure (2026-08-12)
 
@@ -263,356 +107,48 @@ The remaining device-memory branded-buffer work is explicitly blocked on a
 provider-owned Hephaestus consumer contract and remains open; it is not part
 of these two completed items.
 
-## 2026-07-15 provider default-source convergence
-
-- [closed] Mnemosyne carried revision-qualified Eunomia and Melinoe
-  sources while direct consumers resolve provider defaults. The workspace
-  contract removes that quarantine and regenerates the lockfile under one
-  canonical identity. Eunomia's default source declares Rust 1.95, so ADR 0006
-  raises the published MSRV and pre-1.0 versions together. Acceptance requires
-  the focused allocator regression, warning-denied Clippy, formatting, rustdoc,
-  and downstream Moirai graph audit. Rust 1.94 rejects the declared packages;
-  Rust 1.95 compiles `mnemosyne-local`; the focused 68-case Nextest listing,
-  Clippy, formatter, doctest, rustdoc, and source-identity scan pass. Evidence
-  tier: compiler-enforced MSRV/source convergence plus value-semantic allocator
-  regression coverage.
-
-## 2026-07-13 concurrent pool reclamation correction
-
-- [closed] A symbolized RITK production crash reached
-  `TaggedSegmentStack::pop` while reading `current_ptr.next_free_segment`.
-  `mnemosyne-decay` concurrently calls `purge_segment_pool`, whose `take_all`
-  detached and released mappings without excluding a pop that had already
-  observed the old head. The high-bit mutation tag prevents stale CAS success;
-  it does not preserve pointer lifetime. All stack head/link operations now
-  share a cache-line-isolated lifetime lock, and the deterministic
-  `detach_waits_for_active_head_observer` regression pins that detach cannot
-  return while an observer is active. Evidence tier: symbolized native crash,
-  type-structured RAII synchronization, and value-semantic nextest coverage.
-
-- [closed] The concurrent reclamation backlog and checklist remained attached
-  to the closed `codex/mnemosyne-0.2-huge-reclamation` branch after the fix had
-  merged through PR #9 (`01e7de7`; implementation `09b2ef8`) into `origin/main`.
-  Reconciled the PM artifacts so `TaggedSegmentStack` remains the single
-  source of truth for segment and huge-pool head operations, with
-  `CacheAlignedSegmentLock` as the ownership seam for pointer lifetime. The
-  RITK consumer boundary is also closed: PR #33 reports green Rust, wheel,
-  Python, audit, and CodeRabbit checks. Evidence tier: merged GitHub history,
-  current-provider `cargo nextest` 43/43, focused warning-denied Clippy, and
-  consumer CI.
-
-- [closed] `mnemosyne-local` reserved the complete 720,896-byte
-  `PER_CPU_CACHE` table even though every production `MemoryBackend` keeps
-  `ENABLE_CPU_CACHE = false`. Replaced the inline static with a
-  `OnceLock<Box<PerCpuCache>>` handle: the static carries only initialization
-  state and the table is allocated on first explicit cache access. The
-  `PerCpuCacheHandle` layout is compile-time checked to remain smaller than
-  `PerCpuCache`, and a value-semantic unit test verifies the before/after
-  initialization states. Evidence tier: type-level layout enforcement,
-  release compilation, 62/62 local allocator nextest cases, and warning-denied
-  Clippy. No throughput improvement is claimed because production backends do
-  not enter the cache branch.
-
-- [closed] `mnemosyne-prof` no longer performs a process-global
-  `ACTIVE_SAMPLES_COUNT.fetch_add/sub` for every inserted/removed sample. Each
-  cache-line-aligned shard owns an `AtomicBool` occupancy flag updated while its
-  map mutex is held; `on_free` probes only the pointer's shard, and removal no
-  longer initializes an empty map. The matched four-thread Criterion A/B changed
-  the leak-detector row from `[2.2952, 2.3488, 2.4254] ms` to
-  `[2.2389, 2.2623, 2.2816] ms` (`-4.7386%`, `p = 0.00`) while the disabled row
-  showed no significant change (`p = 0.67`). Evidence tier: source audit,
-  cache-line-aligned type layout, 15/15 focused nextest, warning-denied Clippy,
-  and matched empirical measurement. The unchanged pointer-modulo routing is a
-  residual measurement candidate; the administrator-only Windows flamegraph
-  blocker remains recorded and is not used as performance evidence.
-
-- [closed] The PR #9 per-stack lifetime lock was audited against the pre-lock
-  parent `477f957` under the segment-eviction, threaded-small, and cross-thread
-  Criterion workloads. The first segment row was `239.94 us`
-  `[235.58, 246.31] us` post-lock versus `231.85 us` `[228.94, 235.72] us`
-  pre-lock; threaded-small and cross-thread rows were lower post-lock, with the
-  latter's comparison not significant (`p = 0.09`). A second segment run was
-  `303.30 us` `[293.29, 314.26] us`, demonstrating host noise while peer Cargo
-  checks were active. PR #9 changes 15 files beyond the lock implementation, so
-  the data cannot isolate lock cost. The lock remains because it protects the
-  head mapping lifetime through successor dereference and detach; no production
-  optimization is justified by this noisy provider-state comparison.
-
-- [arch/closed-increment] The profiler sampler's deterministic hasher and stack
-  interner were mixed into the sampler manifest with active-sample storage,
-  capture, and report output. Moved hashing to
-  `mnemosyne-prof/src/sampler/hasher.rs` and stack identity/lifecycle to
-  `mnemosyne-prof/src/sampler/stack_interner.rs`; colocated their value-semantic
-  tests and kept `StackId`, `Sample`, and report entry points unchanged. This
-  removes two responsibility overlaps from the manifest without adding a
-  wrapper, clone, or alternate implementation. Evidence tier: source topology,
-  warning-denied Clippy, and 15/15 focused nextest. Capture, store, sampling,
-  and report ownership were then completed in the subsequent ADR 0004
-  increments.
-
-- [arch/closed-increment] Bounded frame capture and sampling-interval generation
-  were mixed into the sampler manifest. Moved both to
-  `mnemosyne-prof/src/sampler/capture.rs` and retained the manifest's active
-  sample lifecycle boundary. The 32-frame cap, per-thread random state, and
-  exponential interval calculation are unchanged. Evidence tier: source
-  extraction, warning-denied Clippy, format verification, and 15/15 focused
-  nextest. Store, sampling orchestration, and report ownership remain open under
-  ADR 0004; no performance improvement is claimed.
-
-- [arch/closed-increment] Active-sample sharded storage, cache-line alignment,
-  count accounting, reset, insertion/removal, and detached snapshot
-  construction were mixed into the sampler manifest. Moved these responsibilities
-  to `mnemosyne-prof/src/sampler/store.rs`; the `Sample` contract and snapshot
-  values are unchanged. Evidence tier: source topology, warning-denied Clippy,
-  format verification, and 15/15 focused nextest. Sampling orchestration and
-  report output remain open under ADR 0004; no contention or throughput
-  improvement is claimed.
-
-- [arch/closed-increment] Profiler reset, allocation/free sampling, and
-  thread-local sampling-budget orchestration were mixed into the sampler
-  manifest. Moved these responsibilities to
-  `mnemosyne-prof/src/sampler/sampling.rs`; the crate-visible hook contracts and
-  `ThreadState` safety boundary are unchanged. Evidence tier: source topology,
-  warning-denied Clippy, format verification, 15/15 focused nextest, doctests,
-  and rustdoc. Report aggregation and output remain open under ADR 0004; no
-  performance or contention improvement is claimed.
-
-- [arch/closed] Report aggregation, symbol resolution, leak-report formatting,
-  and file output were mixed into the sampler manifest. Moved them to
-  `mnemosyne-prof/src/sampler/report.rs`, re-exported the unchanged public
-  `dump_profile`/`dump_leaks` contracts, and colocated the detached snapshot
-  regression with `store.rs`. Evidence tier: source topology,
-  warning-denied Clippy, format verification, 15/15 focused nextest, doctests,
-  rustdoc, and Criterion. The final focused Criterion row is
-  `[1.0638, 1.0669, 1.0723] us` with a `-1.0618%` point change within the noise
-  threshold; no performance gain is claimed. ADR 0004's sampler topology
-  extraction is complete. The separate profiler contention A/B remains open.
-
 ## Residual risk / open findings
 
-- [open] `realloc latency/mnemosyne/huge_shrink_4m_to_2m` does not reproduce
-  itself run to run, and the instrument has been eliminated as the cause.
-  Under MN-464's procedure (performance-core pinned, power-throttling opted
-  out, 50 samples over 2 s) eleven of twelve gated rows agree to within
-  0.3-4.8% across three identical runs; this one spreads 30.9% (51.6% over
-  four). In the *same* runs the same 4 MiB→2 MiB shrink measures MiMalloc to
-  2.5%, System to 3.8%, and RpMalloc to 10.5%, so the state dependence is in
-  Mnemosyne's huge-realloc path rather than in the host or the harness. It
-  blocks the threshold baseline refresh and is the one row a rerun could still
-  trip the gate on. Tracked as MN-466 / MN-467; evidence in
-  `benchmarks/allocator_baseline_metadata.md`, 2026-09-01 MN-464 section.
-  Evidence tier: empirical Criterion measurement with a cross-allocator control.
+- [open] `realloc latency/mnemosyne/huge_shrink_4m_to_2m` does not reproduce itself run to run, and the instrument has been eliminated as the cause. Under MN-464's procedure (performance-core pinned, power-throttling opted out, 50 samples over 2 s) eleven of twelve gated rows agree to within 0.3-4.8% across three identical runs; this one spreads 30.9% (51.6% over four). In the *same* runs the same 4 MiB→2 MiB shrink measures MiMalloc to 2.5%, System to 3.8%, and RpMalloc to 10.5%, so the state dependence is in Mnemosyne's huge-realloc path rather than in the host or the harness. It blocks the threshold baseline refresh and is the one row a rerun could still trip the gate on. Tracked as MN-466 / MN-467; evidence in `benchmarks/allocator_baseline_metadata.md`, 2026-09-01 MN-464 section. Evidence tier: empirical Criterion measurement with a cross-allocator control.
 
-- **Reusable audit pattern — an unpinned or throttled benchmark host measures
-  the scheduler, not the code.** Two host behaviours produced allocator-shaped
-  results on this machine: hybrid-core placement (24% between core classes on a
-  3 ns row) and `EcoQoS` power throttling (3-5x across a whole run). Both are
-  invisible in the numbers alone — the second is indistinguishable from a
-  catastrophic regression — and both are now handled in
-  `benches/allocator/host.rs`. Two traps worth carrying forward: the
-  performance cores are not the low logical indices (mask `0xc03c03` here, not
-  `0xff`), so a mask must come from `EfficiencyClass` and be validated by
-  measuring both classes; and a whole-run degradation shows up in wall-clock
-  elapsed time before it shows up in any row, which makes run duration a free
-  validity canary.
+- **Reusable audit pattern — an unpinned or throttled benchmark host measures the scheduler, not the code.** Two host behaviours produced allocator-shaped results on this machine: hybrid-core placement (24% between core classes on a 3 ns row) and `EcoQoS` power throttling (3-5x across a whole run). Both are invisible in the numbers alone — the second is indistinguishable from a catastrophic regression — and both are now handled in `benches/allocator/host.rs`. Two traps worth carrying forward: the performance cores are not the low logical indices (mask `0xc03c03` here, not `0xff`), so a mask must come from `EfficiencyClass` and be validated by measuring both classes; and a whole-run degradation shows up in wall-clock elapsed time before it shows up in any row, which makes run duration a free validity canary.
 
-- [closed] The remaining `allocator deallocation latency/large_8192` gap is
-  not a hidden large/huge unmapping path. `8192` equals
-  `MAX_SMALL_ALLOC_SIZE`; the opt-in branch probe and value-semantic regression
-  record the same-owner single-block free in `InPlaceSmall`, with zero
-  `HugeClassifier` and `FullToActive` commits. A matched default-feature
-  Criterion run measures Mnemosyne `36.960 ns` `[33.540, 38.661] ns` versus
-  RpMalloc `6.1139 ns` `[5.8441, 6.5791] ns` (`6.05x`). No safe production
-  optimization was identified: the page-list transition candidates are absent
-  from the measured row, and no source-level correctness or contention defect
-  remains to fix in this scope. Evidence tier: source audit, value-semantic
-  nextest, warning-denied Clippy, and empirical Criterion measurement.
+- WGPU raw-pointer staging has no Mnemosyne residual: the backend, callback registry, allocator selectors, pools, and facade exports are deleted. Full workspace Clippy, 287 value-semantic nextest cases, doctests, rustdoc, and pre-1.0 semver classification pass. Hephaestus provider integration remains tracked by Atlas WGPU-030 rather than this repository.
 
-- [closed] Segment-cache lock attribution now has a source-matched lock-only
-  harness. A zero-sized unlocked control measured `27.859 ps` uncontended and
-  `1.5305 us` through the same bounded worker harness; the actual lifetime lock
-  measured `4.5471 ns` and `201.73 us`. The derived deltas are approximately
-  `4.52 ns` and `50.0 ns` per acquisition, respectively, after subtracting the
-  shared worker baseline. The 64-spin/yield policy remains unchanged because
-  this measurement does not establish a safe alternative; the lock continues
-  to protect the observed head mapping through successor access and detach.
-
-- WGPU raw-pointer staging has no Mnemosyne residual: the backend, callback
-  registry, allocator selectors, pools, and facade exports are deleted. Full
-  workspace Clippy, 287 value-semantic nextest cases, doctests, rustdoc, and
-  pre-1.0 semver classification pass. Hephaestus provider integration remains
-  tracked by Atlas WGPU-030 rather than this repository.
-
-- Resolved provider drift: Eunomia and Melinoe Git requirements are exact and
-  workspace-owned; member manifests no longer select moving source heads.
+- Resolved provider drift: Eunomia and Melinoe Git requirements are exact and workspace-owned; member manifests no longer select moving source heads.
 
 2026-07-13 allocator audit and Miri closure:
-- Closed the stack-interner last-release lock extension: removal still mutates
-  one shard under its mutex, while final `Arc` destruction and allocator work
-  occur after the guard is dropped. Focused Criterion records current behavior
-  only; no comparative speedup claim is made.
-- Closed the page-metadata aliasing defect under both Miri borrow models. The
-  allocator retains segment mapping provenance through raw page projections
-  and restricts remote frees to the page-local atomic queue; no cross-thread
-  path forms `&mut Page`. ADR 0009 subsequently closes the strict-provenance
-  remainder for aligned segment/page recovery, free-list links, per-CPU caches,
-  and tagged atomic heads. Strict Miri passes the core suite and exact Leto
-  storage consumer path; native concurrency stress remains covered by TSan and
-  loom rather than the interpreter.
-- Exact PR Miri found that one legacy local-allocator test projected page
-  pointers through `&mut Segment::pages`, narrowing the borrow tag before the
-  page-list operation updated parent-segment occupancy. Production paths
-  already used raw mapping-derived projections. The test now uses the same
-  canonical `locate_page` boundary; the originally failing case passes strict
-  Miri under Stacked and Tree Borrows. The reusable audit rule is that unsafe
-  harnesses must satisfy the same provenance contract as production callers.
-- Closed `mnemosyne-arena::AlignedVec::into_vec`'s source-buffer leak. Zero-copy
-  transfer is not layout-compatible with `Vec`'s allocator contract, so the
-  retained design copies once and releases the distinct aligned allocation.
-  Miri nextest passes with leak checking enabled.
-- Closed the WGPU allocator contract defect by deleting the callback backend.
-  WGPU 30 mapped-write views are explicit write-only byte sinks and cannot
-  satisfy Mnemosyne's generally readable/writable raw-pointer contract.
-  Evidence tier: provider type-system enforcement and downstream compilation.
-- Memory finding: the dormant per-CPU cache reserves 720,896 bytes of static
-  storage although every production backend currently disables it. Remove or
-  compile it out; do not enable it without contention and retention evidence.
-- Contention findings requiring measurement before mutation: profiler active
-  sample accounting performs a global atomic RMW, pointer modulo sharding
-  collapses aligned medium/large allocations onto few shards, and the sampler
-  performs nested report locks. These are profiled candidates, not accepted
-  optimizations.
-- Contention finding requiring measurement: the reclamation fix serializes each
-  stack `push`, `push_chain`, `pop`, and `take_all` under one bounded spin/yield
-  lock. This is required for pointer lifetime safety, but no speedup or neutral
-  cost is claimed. The remaining Definition-of-Ready experiment is a matched
-  Criterion A/B comparison against the pre-lock parent for segment-cache,
-  threaded-allocation, and cross-thread-handoff workloads; a change is
-  admissible only if it preserves the existing adversarial concurrency tests.
-  Current-provider observations on this Windows host are `Segment cache
-  eviction/Mnemosyne` at 301.58 us median [297.86, 306.09] us and `Threaded
-  saturated small allocation cycles/Mnemosyne` at 83.038 us median [77.653,
-  90.547] us. These are empirical baseline samples, not comparative speedup
-  evidence.
-- Comparator gap audit: system malloc, jemalloc, mimalloc, rpmalloc, and
-  snmalloc remain benchmark/reference comparators only. Mnemosyne already owns
-  its fitting mechanisms—thread-local allocation, page-local remote-free
-  message passing, segment retention/decay, policy ZSTs, and typed backends.
-  Importing comparator-specific APIs or duplicate allocator paths would violate
-  the provider seam; only measured mechanism gaps enter implementation.
-- Performance evidence: a partial current Criterion run measured cycle medians
-  of 4.378 ns small, 4.354 ns medium, 4.364 ns large, and 36.741 ns huge. The
-  stored 3.3 ns-era baseline rejects these values, but a matched parent build
-  measured 4.368 ns large and 36.507 ns huge; small/medium parent samples were
-  scheduler-noisy. No speedup or performance-neutral proof is claimed. Refresh
-  the complete threshold baseline only from a controlled all-row run.
+- Exact PR Miri found that one legacy local-allocator test projected page pointers through `&mut Segment::pages`, narrowing the borrow tag before the page-list operation updated parent-segment occupancy. Production paths already used raw mapping-derived projections. The test now uses the same canonical `locate_page` boundary; the originally failing case passes strict Miri under Stacked and Tree Borrows. The reusable audit rule is that unsafe harnesses must satisfy the same provenance contract as production callers.
+- Memory finding: the dormant per-CPU cache reserves 720,896 bytes of static storage although every production backend currently disables it. Remove or compile it out; do not enable it without contention and retention evidence.
+- Contention findings requiring measurement before mutation: profiler active sample accounting performs a global atomic RMW, pointer modulo sharding collapses aligned medium/large allocations onto few shards, and the sampler performs nested report locks. These are profiled candidates, not accepted optimizations.
+- Contention finding requiring measurement: the reclamation fix serializes each stack `push`, `push_chain`, `pop`, and `take_all` under one bounded spin/yield lock. This is required for pointer lifetime safety, but no speedup or neutral cost is claimed. The remaining Definition-of-Ready experiment is a matched Criterion A/B comparison against the pre-lock parent for segment-cache, threaded-allocation, and cross-thread-handoff workloads; a change is admissible only if it preserves the existing adversarial concurrency tests. Current-provider observations on this Windows host are `Segment cache eviction/Mnemosyne` at 301.58 us median [297.86, 306.09] us and `Threaded saturated small allocation cycles/Mnemosyne` at 83.038 us median [77.653, 90.547] us. These are empirical baseline samples, not comparative speedup evidence.
+- Comparator gap audit: system malloc, jemalloc, mimalloc, rpmalloc, and snmalloc remain benchmark/reference comparators only. Mnemosyne already owns its fitting mechanisms—thread-local allocation, page-local remote-free message passing, segment retention/decay, policy ZSTs, and typed backends. Importing comparator-specific APIs or duplicate allocator paths would violate the provider seam; only measured mechanism gaps enter implementation.
+- Performance evidence: a partial current Criterion run measured cycle medians of 4.378 ns small, 4.354 ns medium, 4.364 ns large, and 36.741 ns huge. The stored 3.3 ns-era baseline rejects these values, but a matched parent build measured 4.368 ns large and 36.507 ns huge; small/medium parent samples were scheduler-noisy. No speedup or performance-neutral proof is claimed. Refresh the complete threshold baseline only from a controlled all-row run.
 
 2026-07-08 Miri: real aliasing violation in the alloc/free page-metadata path
 (CLOSED 2026-07-13; original evidence retained):
-- `cargo miri test` against `hermes-simd-core` (the first time this
-  allocator has run under Miri at all — mnemosyne has no CI of its own yet)
-  found Undefined Behavior in the `Mnemosyne` global allocator's
-  alloc/dealloc path, reached via `AlignedVec::with_capacity` ->
-  `mnemosyne_local::alloc::thread_alloc_checked` (`crates/mnemosyne-local/src/alloc.rs:130`,
-  `NonNull::<mnemosyne_core::types::page::Page>::as_mut`) and
-  `mnemosyne_local::free::thread_free_classified`
-  (`crates/mnemosyne-local/src/free.rs:151`, reading `page.list_state`).
-- Evidence: flagged under BOTH Stacked Borrows (Miri's default aliasing
-  model) and Tree Borrows (`-Zmiri-tree-borrows`, a less-strict alternative
-  model specifically built to permit self-referential header+payload
-  allocation patterns that commonly false-positive under Stacked Borrows).
-  Agreement across both models rules out a model-specific false positive —
-  this reads as a genuine violation, not a Miri quirk.
-- Tree Borrows' diagnostic is the more actionable one: a `Page`-metadata
-  pointer tag created during one `alloc()` call (`vec/mod.rs:96` in the
-  hermes-simd-core caller) is read again during a *later* `alloc()` call
-  after an intervening `dealloc()` call performed a write through an
-  aliasing pointer to the same backing memory (`vec/mod.rs:542`), which
-  disabled the earlier tag ("later transitioned to Disabled due to a
-  foreign write access"). Working hypothesis: a `Page`/segment metadata
-  pointer is held (cached) across an alloc/free boundary somewhere in the
-  `mnemosyne-local` routing/free-list path without being freshly
-  re-derived from the segment header on each access — needs a focused
-  audit of `thread_alloc_checked`/`thread_free_classified` and their
-  shared `Page`-pointer provenance, not a guess-fix.
-- Not yet root-caused or fixed here (out of scope for the triggering
-  change — a NUMA/topology delegation refactor in hermes with no relation
-  to this code path). Tracked as the top-priority next `mnemosyne-local`
-  item: reproduce with `cargo miri test -p hermes-simd-core --lib
-  vec::tests::test_aligned_vec_alignment_casting` (via the hermes repo,
-  `[patch]` pointed at this checkout) and `MIRIFLAGS=-Zmiri-backtrace=full`
-  for the complete pointer-provenance trace.
+- `cargo miri test` against `hermes-simd-core` (the first time this allocator has run under Miri at all — mnemosyne has no CI of its own yet) found Undefined Behavior in the `Mnemosyne` global allocator's alloc/dealloc path, reached via `AlignedVec::with_capacity` -> `mnemosyne_local::alloc::thread_alloc_checked` (`crates/mnemosyne-local/src/alloc.rs:130`, `NonNull::<mnemosyne_core::types::page::Page>::as_mut`) and `mnemosyne_local::free::thread_free_classified` (`crates/mnemosyne-local/src/free.rs:151`, reading `page.list_state`).
+- Evidence: flagged under BOTH Stacked Borrows (Miri's default aliasing model) and Tree Borrows (`-Zmiri-tree-borrows`, a less-strict alternative model specifically built to permit self-referential header+payload allocation patterns that commonly false-positive under Stacked Borrows). Agreement across both models rules out a model-specific false positive — this reads as a genuine violation, not a Miri quirk.
+- Tree Borrows' diagnostic is the more actionable one: a `Page`-metadata pointer tag created during one `alloc()` call (`vec/mod.rs:96` in the hermes-simd-core caller) is read again during a *later* `alloc()` call after an intervening `dealloc()` call performed a write through an aliasing pointer to the same backing memory (`vec/mod.rs:542`), which disabled the earlier tag ("later transitioned to Disabled due to a foreign write access"). Working hypothesis: a `Page`/segment metadata pointer is held (cached) across an alloc/free boundary somewhere in the `mnemosyne-local` routing/free-list path without being freshly re-derived from the segment header on each access — needs a focused audit of `thread_alloc_checked`/`thread_free_classified` and their shared `Page`-pointer provenance, not a guess-fix.
+- Not yet root-caused or fixed here (out of scope for the triggering change — a NUMA/topology delegation refactor in hermes with no relation to this code path). Tracked as the top-priority next `mnemosyne-local` item: reproduce with `cargo miri test -p hermes-simd-core --lib vec::tests::test_aligned_vec_alignment_casting` (via the hermes repo, `[patch]` pointed at this checkout) and `MIRIFLAGS=-Zmiri-backtrace=full` for the complete pointer-provenance trace.
 
 2026-07-07 Atlas provider graph refresh:
-- Closed a stale local dependency graph mismatch: `mnemosyne-local` still
-  required `melinoe ^0.7.0` while current sibling Atlas Themis resolves against
-  Melinoe `0.8.0`. The direct requirement now matches Melinoe `0.8.0`, and
-  `Cargo.lock` resolves Themis to `0.9.17` at
-  `a51b327accbd8c417d6b661c40ecefb6098ddb1a`. Residual risk: none found in the
-  focused provider gate; broader Mnemosyne all-target gates were not rerun in
-  this Kwavers-driven dependency repair.
 
 2026-07-05 Eunomia scratch dependency audit:
-- Decision log: remove the internal `num-complex` scratch feature rather than
-  keep a compatibility path. The only Mnemosyne-owned references were optional
-  feature wiring and sealed `ScratchElement` impls; the local Atlas consumer
-  scan found `mnemosyne::scratch::ScratchPool<eunomia::Complex64>` users and no
-  `mnemosyne/num-complex` feature user. Remaining blocker: none found locally;
-  any out-of-tree consumer still depending on `mnemosyne/num-complex` must
-  migrate to `mnemosyne/eunomia`. Current Atlas-checkout verification confirms
-  `mnemosyne/eunomia` resolves the sibling `D:\atlas\repos\eunomia` source and
-  forwards `mnemosyne-arena/eunomia`; the no-default-features tree keeps
-  Eunomia absent.
+- Decision log: remove the internal `num-complex` scratch feature rather than keep a compatibility path. The only Mnemosyne-owned references were optional feature wiring and sealed `ScratchElement` impls; the local Atlas consumer scan found `mnemosyne::scratch::ScratchPool<eunomia::Complex64>` users and no `mnemosyne/num-complex` feature user. Remaining blocker: none found locally; any out-of-tree consumer still depending on `mnemosyne/num-complex` must migrate to `mnemosyne/eunomia`. Current Atlas-checkout verification confirms `mnemosyne/eunomia` resolves the sibling `D:\atlas\repos\eunomia` source and forwards `mnemosyne-arena/eunomia`; the no-default-features tree keeps Eunomia absent.
 
 2026-07-06 AR-2 WGPU callback soundness follow-through (superseded by ADR 0003):
-- Closed the public WGPU callback static soundness hole. The selected design is
-  private raw storage plus typed unsafe registration, rather than public
-  `AtomicPtr<c_void>` slots or a safe registration function. The unsafe
-  boundary is required because the type signature proves callback ABI shape,
-  but the caller still owns the mapped-pointer lifetime, allocation/deallocation
-  pairing, and no-unwind contract. Residual risk: none found in the local Atlas
-  consumer surface; `hephaestus-wgpu` was migrated and verified against the new
-  API. Evidence tier: type-level function-pointer contract plus value-semantic
-  Mnemosyne tests and downstream Hephaestus WGPU tests.
 
 2026-07-02 consolidation cycle 3 — decision log and residual risk:
-- AR-1 step 1 shipped (debug tripwire at `Segment::cookie_for`). Residual risk:
-  the release build still permits mixed-encryption-policy corruption on one
-  backend; only debug/CI aborts. The tripwire is defense-in-depth, NOT the fix —
-  the type-level allocator-keying (ADR 0001 Option C) remains the closure and
-  awaits sign-off. Discovery aid: the tripwire will fire in any test that
-  interleaves encrypted + unencrypted policies on one backend.
-- The `nightly_tls` path was **untested in CI on this host** before this cycle:
-  rustup's nightly `rustc` is PATH-shadowed by the MSYS2 stable toolchain, so
-  the build probe reported "not nightly" and the cfg never activated — a latent
-  E0432 sat undetected. Fixed and verified by forcing `RUSTC`, but CI that
-  relies on `rustup run nightly` here is still vacuous for that gate; a real
-  nightly-channel CI job (or `RUSTC`-override) is needed to keep the
-  `#[thread_local]` path honest. Filed as a residual risk, not yet a backlog
-  item (needs a CI-config owner).
-- Edition 2024 MSRV is 1.87 (const `is_multiple_of`); consumers below that will
-  not build — recorded as the AR-7 breaking-change contract.
+- AR-1 step 1 shipped (debug tripwire at `Segment::cookie_for`). Residual risk: the release build still permits mixed-encryption-policy corruption on one backend; only debug/CI aborts. The tripwire is defense-in-depth, NOT the fix — the type-level allocator-keying (ADR 0001 Option C) remains the closure and awaits sign-off. Discovery aid: the tripwire will fire in any test that interleaves encrypted + unencrypted policies on one backend.
+- The `nightly_tls` path was **untested in CI on this host** before this cycle: rustup's nightly `rustc` is PATH-shadowed by the MSYS2 stable toolchain, so the build probe reported "not nightly" and the cfg never activated — a latent E0432 sat undetected. Fixed and verified by forcing `RUSTC`, but CI that relies on `rustup run nightly` here is still vacuous for that gate; a real nightly-channel CI job (or `RUSTC`-override) is needed to keep the `#[thread_local]` path honest. Filed as a residual risk, not yet a backlog item (needs a CI-config owner).
+- Edition 2024 MSRV is 1.87 (const `is_multiple_of`); consumers below that will not build — recorded as the AR-7 breaking-change contract.
 
 2026-07-02 consolidation cycle 2 — decision log and residual risk:
-- AR-1 (mixed free-list-encryption policy corruption) decision recorded in
-  [docs/adr/0001-free-list-encryption-mode-binding.md]: adopt Option C (key the
-  TLS allocator by encryption class — sound and zero-cost for the default
-  policy). Proposed, awaiting sign-off. Residual risk until implemented: the
-  single-thread same-page mixed-policy path remains latently unsound; contract
-  documented on `thread_*` (one encryption mode per backend); interim
-  debug-assert safeguard is implementation step 1.
-- AR-10 decision: FOLD `SecurePolicy`/`HardenedPolicy` into
-  `mnemosyne-core::policy` (SSOT with `StandardPolicy`; core is dependency-free,
-  zero new deps). `mnemosyne-hardened` kept as a thin real re-export because
-  external (gaia, kwavers) and internal Cargo manifests reference the crate
-  name — not a compatibility shim, the genuine new home's forwarding.
-- AR-3 acceptance is split: the "no global RMW on the reclaim path" clause is
-  met and regression-tested; the "cross-thread benchmark rows neutral-or-better"
-  clause depends on AR-4's quiet-machine re-baseline and is tracked there — not
-  an open regression, a pending measurement.
-- The 2026-07-02 batch is behavior-preserving consolidation (verified by the
-  unchanged test suite, 264/264); no new soundness claims beyond the recorded
-  decisions.
+- AR-1 (mixed free-list-encryption policy corruption) decision recorded in [docs/adr/0001-free-list-encryption-mode-binding.md]: adopt Option C (key the TLS allocator by encryption class — sound and zero-cost for the default policy). Proposed, awaiting sign-off. Residual risk until implemented: the single-thread same-page mixed-policy path remains latently unsound; contract documented on `thread_*` (one encryption mode per backend); interim debug-assert safeguard is implementation step 1.
+- AR-10 decision: FOLD `SecurePolicy`/`HardenedPolicy` into `mnemosyne-core::policy` (SSOT with `StandardPolicy`; core is dependency-free, zero new deps). `mnemosyne-hardened` kept as a thin real re-export because external (gaia, kwavers) and internal Cargo manifests reference the crate name — not a compatibility shim, the genuine new home's forwarding.
+- AR-3 acceptance is split: the "no global RMW on the reclaim path" clause is met and regression-tested; the "cross-thread benchmark rows neutral-or-better" clause depends on AR-4's quiet-machine re-baseline and is tracked there — not an open regression, a pending measurement.
+- The 2026-07-02 batch is behavior-preserving consolidation (verified by the unchanged test suite, 264/264); no new soundness claims beyond the recorded decisions.
 
 2026-07-01 four-agent audit cycle (perf, memory, contention, safety, plus the
 structural monomorphization/const-generic/GAT/Cow/DRY/SSOT lens across all 11
@@ -620,313 +156,58 @@ crates + workspace config). High-severity findings fixed same-cycle (checklist
 2026-07-01 block); deferred items AR-1..AR-12 in backlog.md `## Open`.
 Residual risk and verified-clean results:
 
-- 2026-07-02 Atlas consumer repair: `mnemosyne-local` allocator
-  reclaim/free/realloc test surfaces now build and pass after the
-  `cross_thread_reclaimed` sink, branded page-list mover, `BackendPools`
-  fixture, and core `locate_segment` routing updates. Evidence tier: compile-time
-  validation plus value-semantic allocator regression tests; package clippy
-  and nextest are clean. Residual: AR-3 remains open for the required
-  cross-thread benchmark comparison; no performance improvement is claimed.
-- CUDA runtime paths (init probe, VEH redirect, device alloc/free) are
-  verified at compile-time + registry-unit-test tier only — this machine has
-  no NVIDIA driver. The VEH Rip-redirect mechanism in particular needs one
-  run on a machine with a faulting/working driver before it is trusted at the
-  empirical tier.
-- Decision log — orphan adoption fix chose "never re-key + compatibility
-  gate" over "drain-and-re-encode with old keys": re-encoding cannot be done
-  safely while remote threads concurrently read keys in
-  `AtomicFreeList::push`; key writes are structurally confined to segments
-  with no live chains and no external visibility. A policy-incompatible orphan
-  costs one deferred pop/push per acquisition for mismatched-policy threads
-  (bounded, cold path; pathological only in sustained mixed-policy processes,
-  which AR-1 addresses at the root).
-- Branded-type variance is now audited: `BrandedCell` fixed (was covariant in
-  T while Copy+writable); `BrandedBlock`/`BrandedBox`/`BrandedVec`/
-  `TieredBlock` covariance verified sound (linear owned, Box/Vec model);
-  melinoe's own cells verified unaffected (payload inline in invariant
-  `UnsafeCell`). A `compile_fail` doctest pins the fix.
-- Verified clean this cycle (do not re-audit): tagged-stack orderings besides
-  the fixed pop-retry edge (push Release/Relaxed, take_all Acquire swap +
-  release-sequence argument); arena allocate/free error paths leak no
-  mappings; backend wrapper record-on-confirmed-outcome telemetry;
-  Unix/Windows madvise/VirtualAlloc constants; AlignedVec/ScratchPool layout
-  + borrow-depth + unwind soundness; per-CPU cache count-neutrality (no UAF);
-  prof shard design (backtrace outside lock, no lock-order cycle); interner
-  boundedness (refcount release + id recycling, capacity retained ≈ peak);
-  c-shim ABI monomorphized call path; benchmark instruments (black_box
-  placement, timed regions, bounded channels) except the AR-4 statistics
-  weakness; disabled-profiler fast path is one Relaxed load + branch.
-- The benchmarks crate's `snmalloc-sys` CMake build failed once mid-cycle in
-  one agent's environment (CXX probe) and succeeded in every other run —
-  environment-flaky, not tracked as a code defect.
-- The 2026-06-27 mixed-policy latent-unsoundness observation is superseded by
-  the structured AR-1 filing.
+- 2026-07-02 Atlas consumer repair: `mnemosyne-local` allocator reclaim/free/realloc test surfaces now build and pass after the `cross_thread_reclaimed` sink, branded page-list mover, `BackendPools` fixture, and core `locate_segment` routing updates. Evidence tier: compile-time validation plus value-semantic allocator regression tests; package clippy and nextest are clean. Residual: AR-3 remains open for the required cross-thread benchmark comparison; no performance improvement is claimed.
+- CUDA runtime paths (init probe, VEH redirect, device alloc/free) are verified at compile-time + registry-unit-test tier only — this machine has no NVIDIA driver. The VEH Rip-redirect mechanism in particular needs one run on a machine with a faulting/working driver before it is trusted at the empirical tier.
+- Decision log — orphan adoption fix chose "never re-key + compatibility gate" over "drain-and-re-encode with old keys": re-encoding cannot be done safely while remote threads concurrently read keys in `AtomicFreeList::push`; key writes are structurally confined to segments with no live chains and no external visibility. A policy-incompatible orphan costs one deferred pop/push per acquisition for mismatched-policy threads (bounded, cold path; pathological only in sustained mixed-policy processes, which AR-1 addresses at the root).
+- Branded-type variance is now audited: `BrandedCell` fixed (was covariant in T while Copy+writable); `BrandedBlock`/`BrandedBox`/`BrandedVec`/ `TieredBlock` covariance verified sound (linear owned, Box/Vec model); melinoe's own cells verified unaffected (payload inline in invariant `UnsafeCell`). A `compile_fail` doctest pins the fix.
+- Verified clean this cycle (do not re-audit): tagged-stack orderings besides the fixed pop-retry edge (push Release/Relaxed, take_all Acquire swap + release-sequence argument); arena allocate/free error paths leak no mappings; backend wrapper record-on-confirmed-outcome telemetry; Unix/Windows madvise/VirtualAlloc constants; AlignedVec/ScratchPool layout + borrow-depth + unwind soundness; per-CPU cache count-neutrality (no UAF); prof shard design (backtrace outside lock, no lock-order cycle); interner boundedness (refcount release + id recycling, capacity retained ≈ peak); c-shim ABI monomorphized call path; benchmark instruments (black_box placement, timed regions, bounded channels) except the AR-4 statistics weakness; disabled-profiler fast path is one Relaxed load + branch.
+- The benchmarks crate's `snmalloc-sys` CMake build failed once mid-cycle in one agent's environment (CXX probe) and succeeded in every other run — environment-flaky, not tracked as a code defect.
 
 2026-06-27 deep audit (safety, contention-free performance, memory efficiency),
 read-only fan-out across arena/local/core/heap/backend. Tracked items filed in
 backlog.md `## Open`. Verified-clean results recorded so they are not re-audited:
 
-- Safety: the `mnemosyne-local` + `mnemosyne-core` unsafe surface is now fully
-  `// SAFETY:`-documented (this sprint), matching the prior `mnemosyne-arena`
-  closure. The 7 `unsafe impl Send/Sync` (Segment, Page, SegmentOwner, Block,
-  ThreadAllocator) each ground cross-thread soundness in the ownership-token +
-  per-page `AtomicFreeList` protocol; the `gs:[0x48]` TEB read, the
-  `cookie | 1` non-null cookie encoding, and the `do_local_free_internal`
-  double-free guards are individually justified. No site was found unsound.
-- Contention: no spinlock remains on an allocation cache path after the
-  `NodeHugeBucket` conversion to a Treiber stack. Synchronization
-  (AtomicFreeList, per-CPU cache, NodeSegmentPool, NodeHugeBucket, orphan pool,
-  telemetry) is lock-free or cold with correctly weak orderings. No over-strong
-  `SeqCst` exists in production code (every occurrence is in tests).
-  Atomic-ordering review found one low-severity smell only: `options.rs`
-  `OPTIONS_INIT.swap(true, Acquire)` publish gate is weaker than `AcqRel`, but
-  each option store carries its own `Release` so per-option visibility holds —
-  not a data race.
-- Memory: no hot-path allocation, no removable load-bearing `PhantomData`
-  (`TieredHeap`'s redundant `_brand` was already dropped this sprint), and
-  tight integer sizing throughout. The prior `NodeHugeBucket` whole-struct
-  alignment finding is superseded: the huge bucket now pads only the contended
-  `head` and `count` atomics through the same `cache_aligned` SSOT used by
-  `NodeSegmentPool`, trading a bounded zero-RSS BSS increase for false-sharing
-  isolation between independent CAS head traffic and advisory count updates.
-- Tooling: `fuzz/c_shim_api` now exists, but local libFuzzer execution remains
-  environment-blocked on this Windows install: GNU lacks sanitizer coverage
-  support for the target, and the installed MSVC Build Tools lack Windows SDK
-  libraries (`kernel32.lib`). The harness logic is still compiled and smoke
-  tested through its no-libFuzzer library path.
+- Safety: the `mnemosyne-local` + `mnemosyne-core` unsafe surface is now fully `// SAFETY:`-documented (this sprint), matching the prior `mnemosyne-arena` closure. The 7 `unsafe impl Send/Sync` (Segment, Page, SegmentOwner, Block, ThreadAllocator) each ground cross-thread soundness in the ownership-token + per-page `AtomicFreeList` protocol; the `gs:[0x48]` TEB read, the `cookie | 1` non-null cookie encoding, and the `do_local_free_internal` double-free guards are individually justified. No site was found unsound.
+- Contention: no spinlock remains on an allocation cache path after the `NodeHugeBucket` conversion to a Treiber stack. Synchronization (AtomicFreeList, per-CPU cache, NodeSegmentPool, NodeHugeBucket, orphan pool, telemetry) is lock-free or cold with correctly weak orderings. No over-strong `SeqCst` exists in production code (every occurrence is in tests). Atomic-ordering review found one low-severity smell only: `options.rs` `OPTIONS_INIT.swap(true, Acquire)` publish gate is weaker than `AcqRel`, but each option store carries its own `Release` so per-option visibility holds — not a data race.
+- Memory: no hot-path allocation, no removable load-bearing `PhantomData` (`TieredHeap`'s redundant `_brand` was already dropped this sprint), and tight integer sizing throughout. The prior `NodeHugeBucket` whole-struct alignment finding is superseded: the huge bucket now pads only the contended `head` and `count` atomics through the same `cache_aligned` SSOT used by `NodeSegmentPool`, trading a bounded zero-RSS BSS increase for false-sharing isolation between independent CAS head traffic and advisory count updates.
+- Tooling: `fuzz/c_shim_api` now exists, but local libFuzzer execution remains environment-blocked on this Windows install: GNU lacks sanitizer coverage support for the target, and the installed MSVC Build Tools lack Windows SDK libraries (`kernel32.lib`). The harness logic is still compiled and smoke tested through its no-libFuzzer library path.
 
 ## Closed
 
-- [patch] `mnemosyne-arena` briefly exposed a constructor contract mismatch in
-  Atlas consumers: `TaggedSegmentStack` called `CacheAlignedAtomicPtr::new()`
-  as an empty tagged head while the local dirty tree had shifted the atomic
-  constructor shape. Restored the no-argument empty-head constructor and routed
-  huge-pool rejected-chain restoration through `TaggedSegmentStack::push_chain`
-  so the batch CAS path is production-live. Evidence tier: compile-time
-  validation plus downstream integration; arena fmt/check/clippy pass, and
-  Kwavers FWI nextest passes 59/59.
+- [patch] `mnemosyne-arena` briefly exposed a constructor contract mismatch in Atlas consumers: `TaggedSegmentStack` called `CacheAlignedAtomicPtr::new()` as an empty tagged head while the local dirty tree had shifted the atomic constructor shape. Restored the no-argument empty-head constructor and routed huge-pool rejected-chain restoration through `TaggedSegmentStack::push_chain` so the batch CAS path is production-live. Evidence tier: compile-time validation plus downstream integration; arena fmt/check/clippy pass, and Kwavers FWI nextest passes 59/59.
 
-- [patch] `mnemosyne-c-shim` had deterministic adversarial tests but no
-  continuous fuzz target for arbitrary hostile ABI inputs. Added excluded
-  cargo-fuzz package `fuzz/` with `c_shim_api`: the libFuzzer adapter forwards
-  bytes into a shared executor that decodes `(op, size, nmemb, alignment)`,
-  shapes resource-bounded hostile cases, calls the real exported C ABI
-  functions, and asserts null-or-valid allocation behavior, alignment,
-  usable-size lower bounds, calloc zero prefixes, and realloc initialized-byte
-  preservation. Evidence tier: source-level fuzz harness plus value-semantic
-  executor smoke tests and existing c-shim adversarial nextest coverage; full
-  libFuzzer execution is pending a host with sanitizer-capable toolchain.
-- [patch] `BrandedVec::shrink_to_fit` and `BrandedVec::into_boxed_slice`
-  carried duplicate shrink mechanics for the `len == 0` free path and
-  realloc-to-length path. Added one private `shrink_to_len` helper inside the
-  core `BrandedVec` impl, so both call sites share the allocation transition
-  while boxed-slice conversion still owns slice pointer construction and
-  `mem::forget` transfer. Evidence tier: compile-time trait resolution plus
-  existing value-semantic branded-vector tests and package gates.
-- [patch] `huge_pool.rs` and `segment_pool.rs` duplicated the same
-  Themis-backed 16-bucket NUMA wrap traversal and carried independent
-  `NUMA_BUCKETS` constants. Added `segment/pool/numa_bucket.rs` as the SSOT for
-  bucket conversion and `steal_from(start, pop_fn)`, so the traversal order and
-  early-stop contract are tested once while callers keep their pool-specific pop
-  logic. Evidence tier: value-semantic unit tests for wrap order and first-hit
-  behavior plus `mnemosyne-arena` fmt/check/clippy/nextest/doctest/rustdoc
-  gates. No benchmark speedup is claimed.
-- [patch] `mnemosyne-prof` retained one boxed stack per live sample and held
-  shard mutexes while resolving symbols/writing reports. Live samples now store
-  fixed-width `StackId` handles; `StackInterner` stores one refcounted
-  `Arc<[usize]>` per distinct live call stack, releases it on the last free, and
-  recycles id slots. Stack capture uses a fixed stack buffer, so repeat call
-  sites do not allocate a boxed frame array. `dump_profile` and `dump_leaks`
-  snapshot active samples under each shard mutex and perform
-  `backtrace::resolve` plus file I/O after releasing the lock. The sampled
-  allocation insert path is also a single `maybe_record_sample` helper shared by
-  the nightly and stable TLS cfgs, with `sample_shard` as the pointer-to-shard
-  SSOT. Evidence tier: value-semantic unit coverage for interner refcount/id
-  reuse and detached snapshots plus package clippy, nextest, doctest, rustdoc,
-  and stable/nightly-TLS compile checks.
-- [patch] `mnemosyne-prof/nightly_tls` had a hidden compile break: `lib.rs`
-  referenced `tls.rs`'s private `THREAD_STATE` directly in `on_alloc`.
-  `tls::should_skip_alloc_fast_path` now owns the reentrancy and sample-budget
-  fast path for both the nightly `#[thread_local]` backend and the stable TLS
-  backend, keeping raw TLS state private and preserving the caller's single
-  inline fast-path branch. The shared `sample_debit` helper saturates
-  `usize -> isize` conversion before subtracting from the signed sample budget,
-  preventing wraparound on oversized allocation requests. Evidence tier:
-  compile-time cfg verification (`rustup run nightly cargo check -p
-  mnemosyne-prof --features nightly_tls`) plus package clippy, nextest, and
-  rustdoc gates.
-- [patch] The huge-allocation cache was the last allocation-cache path using a
-  spinlock (`NodeHugeBucket` in
-  `crates/mnemosyne-arena/src/segment/pool/huge_pool.rs`). Replaced the bucket
-  state with a lock-free Treiber stack using cache-line-isolated `head` and
-  `count` atomics from a shared `segment/pool/cache_aligned.rs` module. Exact
-  bucket pops retain first-fitting behavior by temporarily popping undersized
-  heads into a private rejected chain and restoring them before returning; higher
-  buckets pop the head directly because their size class is guaranteed to fit.
-  The head is a tagged pointer on 64-bit targets, matching the existing
-  `AtomicFreeList` ABA defense: low bits hold the segment address and high bits
-  hold a wrapping mutation tag, so a stale CAS cannot publish an obsolete
-  `next_free_segment` link after another thread pops and re-pushes the same
-  segment. Evidence tier: source-level memory-ordering invariant plus
-  value-semantic `test_huge_pool_exact_bucket_restores_rejected_head`,
-  integration stress `huge_pool_concurrent_push_pop_conserves_every_segment`,
-  arena huge round-trip, full workspace nextest, and benchmark-summary threshold
-  non-regression.
+- [patch] `mnemosyne-c-shim` had deterministic adversarial tests but no continuous fuzz target for arbitrary hostile ABI inputs. Added excluded cargo-fuzz package `fuzz/` with `c_shim_api`: the libFuzzer adapter forwards bytes into a shared executor that decodes `(op, size, nmemb, alignment)`, shapes resource-bounded hostile cases, calls the real exported C ABI functions, and asserts null-or-valid allocation behavior, alignment, usable-size lower bounds, calloc zero prefixes, and realloc initialized-byte preservation. Evidence tier: source-level fuzz harness plus value-semantic executor smoke tests and existing c-shim adversarial nextest coverage; full libFuzzer execution is pending a host with sanitizer-capable toolchain.
+- [patch] `BrandedVec::shrink_to_fit` and `BrandedVec::into_boxed_slice` carried duplicate shrink mechanics for the `len == 0` free path and realloc-to-length path. Added one private `shrink_to_len` helper inside the core `BrandedVec` impl, so both call sites share the allocation transition while boxed-slice conversion still owns slice pointer construction and `mem::forget` transfer. Evidence tier: compile-time trait resolution plus existing value-semantic branded-vector tests and package gates.
+- [patch] `huge_pool.rs` and `segment_pool.rs` duplicated the same Themis-backed 16-bucket NUMA wrap traversal and carried independent `NUMA_BUCKETS` constants. Added `segment/pool/numa_bucket.rs` as the SSOT for bucket conversion and `steal_from(start, pop_fn)`, so the traversal order and early-stop contract are tested once while callers keep their pool-specific pop logic. Evidence tier: value-semantic unit tests for wrap order and first-hit behavior plus `mnemosyne-arena` fmt/check/clippy/nextest/doctest/rustdoc gates. No benchmark speedup is claimed.
+- [patch] `mnemosyne-prof` retained one boxed stack per live sample and held shard mutexes while resolving symbols/writing reports. Live samples now store fixed-width `StackId` handles; `StackInterner` stores one refcounted `Arc<[usize]>` per distinct live call stack, releases it on the last free, and recycles id slots. Stack capture uses a fixed stack buffer, so repeat call sites do not allocate a boxed frame array. `dump_profile` and `dump_leaks` snapshot active samples under each shard mutex and perform `backtrace::resolve` plus file I/O after releasing the lock. The sampled allocation insert path is also a single `maybe_record_sample` helper shared by the nightly and stable TLS cfgs, with `sample_shard` as the pointer-to-shard SSOT. Evidence tier: value-semantic unit coverage for interner refcount/id reuse and detached snapshots plus package clippy, nextest, doctest, rustdoc, and stable/nightly-TLS compile checks.
+- [patch] `mnemosyne-prof/nightly_tls` had a hidden compile break: `lib.rs` referenced `tls.rs`'s private `THREAD_STATE` directly in `on_alloc`. `tls::should_skip_alloc_fast_path` now owns the reentrancy and sample-budget fast path for both the nightly `#[thread_local]` backend and the stable TLS backend, keeping raw TLS state private and preserving the caller's single inline fast-path branch. The shared `sample_debit` helper saturates `usize -> isize` conversion before subtracting from the signed sample budget, preventing wraparound on oversized allocation requests. Evidence tier: compile-time cfg verification (`rustup run nightly cargo check -p mnemosyne-prof --features nightly_tls`) plus package clippy, nextest, and rustdoc gates.
+- [patch] The huge-allocation cache was the last allocation-cache path using a spinlock (`NodeHugeBucket` in `crates/mnemosyne-arena/src/segment/pool/huge_pool.rs`). Replaced the bucket state with a lock-free Treiber stack using cache-line-isolated `head` and `count` atomics from a shared `segment/pool/cache_aligned.rs` module. Exact bucket pops retain first-fitting behavior by temporarily popping undersized heads into a private rejected chain and restoring them before returning; higher buckets pop the head directly because their size class is guaranteed to fit. The head is a tagged pointer on 64-bit targets, matching the existing `AtomicFreeList` ABA defense: low bits hold the segment address and high bits hold a wrapping mutation tag, so a stale CAS cannot publish an obsolete `next_free_segment` link after another thread pops and re-pushes the same segment. Evidence tier: source-level memory-ordering invariant plus value-semantic `test_huge_pool_exact_bucket_restores_rejected_head`, integration stress `huge_pool_concurrent_push_pop_conserves_every_segment`, arena huge round-trip, full workspace nextest, and benchmark-summary threshold non-regression.
 - [arch] The `mnemosyne-backend` crate had grown into a mixed-concern backend module. Split the crate by concern into five sibling leaves: [`mapping`](crates/mnemosyne-backend/src/mapping.rs) owns the `MemoryBackendWrapper` shape and central `impl MemoryBackend` block; [`guard`](crates/mnemosyne-backend/src/guard.rs) owns `do_make_guard`; [`reset`](crates/mnemosyne-backend/src/reset.rs) owns `do_page_reset` and `do_decommit`; [`recorders`](crates/mnemosyne-backend/src/recorders.rs) owns telemetry counters and snapshots; [`backends`](crates/mnemosyne-backend/src/backends/mod.rs) owns the per-OS / per-platform implementations and `DefaultBackend` selector. Public re-exports keep the canonical `mnemosyne_backend::*` import paths unchanged. Evidence tier: source-level static dispatch, backend unit tests, and allocator benchmark threshold gate.
 - [patch] Added an opt-in `mnemosyne-local/dealloc-probe` feature to audit `thread_free` branch mix without changing default builds. Feature builds expose `dealloc_counters::{reset, record, snapshot, total}` and record one Relaxed atomic increment at each committed deallocation arm. The feature-gated integration test drives real `thread_alloc` / `thread_free_layout` calls and asserts layout-proven same-owner small frees all record as `InPlaceSmall`, with zero huge-classifier and cold-path hits. Evidence tier: value-semantic integration test plus feature-gated unit tests.
 - [patch] Expanded `benchmark_summary --enforce-thresholds` coverage from the original retained allocator rows to include the five realloc latency rows that track within-class, cross-class, 8k-to-16k, and huge-shrink behavior. Evidence tier: benchmark-summary config tests plus threshold-gate execution.
 - [patch] Continued unsafe-discipline closure in `mnemosyne-core` and `mnemosyne-local` by documenting the `Segment` `Send`/`Sync`, Windows TEB thread-id read, local-free unchecked pointer/cookie updates, and native/ASM TLS allocator-pointer dereference invariants. Evidence tier: source-level invariant documentation plus all-feature clippy/nextest/doctest/rustdoc gates.
-- [patch] Large/huge fallback allocation in `thread_alloc_checked` and
-  `thread_alloc_cold` repeated the same real allocation plus policy-selected
-  byte initialization in multiple branches. Added
-  `allocate_large_or_huge_initialized` so every large/huge fallback keeps one
-  initialization contract and one raw allocator call site in `alloc.rs`.
-  Evidence tier: value-semantic local allocation tests plus workspace gate.
-- [patch] Per-CPU cache allocation/free retry loops refreshed the cached CPU id
-  after failed CAS attempts but only marked the refresh as consumed when the CPU
-  id changed. Local commit `64df5fa` marks the refresh as consumed after the
-  OS probe itself, bounding refresh cost under contention. Evidence tier:
-  workspace gate.
-- [patch] Page-local small-allocation logic was open-coded in both the public
-  `thread_alloc` active-page path and `ThreadAllocator::alloc_class`/cold
-  active-page recovery: pop the page free list, or lazily bump the page, then
-  increment `alloc_count`. Added `try_allocate_page_local` as the SSOT for that
-  page operation while leaving poisoning/profiling and cold routing in their
-  existing callers. Evidence tier: value-semantic local allocation tests plus
-  workspace gate.
-- [patch] Orphan-segment adoption still called `Page::reclaim_thread_free`
-  directly for every occupied page while scanning the adopted segment, even
-  though it already knew the parent `Segment` pointer and page index. Routed
-  adoption through `Page::reclaim_thread_free_if_present_for_segment` so empty
-  page-local remote-free queues avoid an atomic drain and all segment-owned
-  reclaim paths share the guarded helper. Evidence tier: value-semantic orphan
-  reuse and cross-thread allocator tests plus workspace gate.
-- [patch] `try_reclaim_and_allocate` was the shared allocation-side remote-free
-  recovery helper, but the full-page scan still owned its own
-  `thread_free.is_empty()` branch while active-page callers paid the helper's
-  atomic drain on empty queues. Moved the empty-queue guard into the helper so
-  all allocation recovery paths share one fast path and one remote-free drain
-  contract. Evidence tier: value-semantic local allocator cross-thread,
-  allocation/recycling, and cold-refill tests plus workspace gate.
-- [patch] Empty-queue guarded remote-free reclamation was duplicated in
-  thread-exit and periodic allocator sweeps, while targeted segment reclaim
-  used a separate branch shape. Added
-  `Page::reclaim_thread_free_if_present_for_segment` as the SSOT for the
-  guarded, segment-aware drain path and routed all segment reclaim sweeps
-  through it. Evidence tier: value-semantic core/local allocator reclaim tests
-  plus workspace gate.
-- [patch] `ThreadAllocator::reclaim_owned_segments` scanned every page during
-  thread-exit reclamation and atomically drained each page even when the
-  `thread_free` queue was empty. Added the same empty-queue guard used by
-  periodic and targeted reclaim paths while preserving the full `alloc_count`
-  scan that decides whether a segment is released or orphaned. Evidence tier:
-  value-semantic local allocator thread-exit and cross-thread tests plus
-  workspace gate.
-- [patch] `ThreadAllocator::periodic_defragmentation_sweep` atomically drained
-  every occupied page even when `thread_free` was empty. Targeted segment
-  reclaim already used the cheaper `is_empty` guard. Added the same guard to
-  periodic sweeps so pages with no remote frees retain only the `alloc_count`
-  accounting read. Evidence tier: value-semantic local allocator reclaim and
-  defragmentation tests plus workspace gate.
-- [patch] Segment-owned allocator reclaim paths (`reclaim_owned_segments`,
-  `try_reclaim_segment`, and `periodic_defragmentation_sweep`) knew the parent
-  `Segment` pointer and page index but still called `Page` reclamation through
-  an address-derived wrapper. Added
-  `Page::reclaim_thread_free_dynamic_for_segment` so those sweeps reuse known
-  metadata and update occupancy via the segment-aware counter path. Evidence
-  tier: value-semantic core/local allocator reclaim tests plus workspace gate.
-- [patch] `benchmark_summary` still parsed each summary CSV line by collecting
-  every field into a `Vec<Cow<_>>` and cloning the benchmark field before
-  parsing numeric columns. Replaced that with a lending `CsvFields` iterator
-  consumed directly by `parse_summary_line`; unescaped fields remain borrowed
-  and escaped quoted fields allocate only for unescaping. Evidence tier:
-  value-semantic parser tests plus workspace gate.
-- [patch] `benchmark_summary` still collected missing selected baseline names
-  into a `Vec<&'static str>` solely to join them for the threshold-enforcement
-  error. Replaced that with direct iterator-to-message construction, so the
-  common complete-data path returns `None` without allocating. Evidence tier:
-  value-semantic missing-row diagnostic test plus full workspace gate and
-  benchmark-summary threshold execution.
-- [patch] `benchmark_summary` still materialized baseline comparison rows into
-  a `Vec<ComparisonRow>` and cloned each benchmark `Cow` before writing the CSV
-  and checking thresholds. Replaced it with a lending `comparison_rows`
-  iterator over baseline/current slices; `write_comparison` streams rows and
-  returns the count used in status output. Evidence tier: value-semantic
-  comparison iterator test plus full workspace gate and benchmark-summary
-  threshold execution.
-- [patch] `benchmark_summary` still collected the selected baseline excerpt
-  rows into a `Vec` solely to write `allocator_current_excerpt.csv`, refresh
-  the baseline, and print a count. Added `write_summary_iter` so selected rows
-  stream directly from the sorted summary rows to the writer; the function
-  returns the count for status output. Evidence tier: value-semantic iterator
-  writer test plus full workspace gate and benchmark-summary threshold
-  execution.
-- [patch] `mnemosyne-prof/src/lib.rs` still mixed public profiler controls,
-  hook hot paths, and platform TLS provider selection in one 511-line module.
-  Moved TLS state, native OS TLS key handling, TEB slot accessors, and hook
-  reentrancy helpers into `src/tls.rs`, with cfg-gated exports for
-  nightly-only sample counters. Evidence tier: profiler-focused tests plus full
-  workspace clippy, nextest, doctest, rustdoc, and benchmark-summary gates.
-- [patch] `crates/mnemosyne/tests/global_alloc_tests.rs` remained a 794-line
-  integration-test crate mixing basic allocation, telemetry/cache, realloc,
-  policy/backend, and leak-detector coverage. Split those bounded contexts into
-  leaf modules under `tests/global_alloc_tests/`, leaving a 24-line root for
-  global allocator ownership and shared imports. Largest leaf is 312 lines.
-  Evidence tier: value-semantic integration tests plus full workspace gate.
-- [patch] `mnemosyne-local::get_tls_seed` duplicated one-shot thread-local
-  initialization logic with separate nightly/stable branches. Replaced the
-  local cache with `melinoe::thread_cached!`, retaining the same randomized
-  nonzero seed computation while removing allocator-owned TLS cache machinery.
-  Evidence tier: workspace compile/test/doc gates plus benchmark-summary
-  threshold execution; no speedup claim is made without a dedicated profile.
-- [patch] `mnemosyne-heap/src/tests.rs` had grown to 911 lines and mixed heap,
-  boxed, cell, vector, and trait-operation test concerns. Split it into
-  bounded-context leaf modules under `src/tests/`, leaving shared fixtures in a
-  40-line root module. The largest leaf is 255 lines. Evidence tier:
-  value-semantic heap unit tests plus full workspace gate.
-- [patch] `benchmark_summary` still allocated a `Vec<String>` for command-line
-  arguments solely to test two flags. Replaced it with a single-pass
-  `SummaryFlags` fold over the argument iterator, preserving unknown-flag
-  tolerance and order independence without allocation. Evidence tier:
-  value-semantic parser tests plus full workspace gate and benchmark-summary
-  threshold execution.
-- [patch] Refreshed allocator comparison data under the `system-jemalloc`
-  benchmark matrix. The first threshold pass flagged
-  `segment cache eviction/mnemosyne` at `278577.994 ns` (`1.201x` baseline)
-  with CI relative width `0.177`, above the variance stability bound. The row's
-  benchmark includes 8 backend segment releases per iteration after filling the
-  retained pool, so OS mapping-release variance is part of the measured
-  workload. Focused rerun stabilized the row at `249453.566 ns`, CI relative
-  width `0.048`, ratio `1.076x`; the selected-row threshold gate then passed.
-  Evidence tier: empirical Criterion validation; no allocator code change was
-  justified.
-- [patch] `mnemosyne-benchmarks/src/bin/benchmark_summary.rs` had grown into a
-  mixed-concern 747-line binary containing command orchestration, CSV parsing,
-  Criterion traversal, allocator markdown rendering, metadata generation, and
-  threshold policy. Split those concerns into a deep leaf-module hierarchy under
-  `src/bin/benchmark_summary/`, leaving the bin entrypoint as orchestration.
-  The largest new leaf is 195 lines. While exercising the command, an existing
-  path robustness defect surfaced: report writers created files under
-  `target/criterion` without creating the directory. The write boundary now
-  creates parent directories and is pinned by
-  `summary_writer_creates_missing_parent_directories`. Removed tracked,
-  unreferenced `scratch/test.cxx` and `scratch/test.exe`. Evidence tier:
-  value-semantic writer test plus full workspace clippy, nextest, doctest, and
-  rustdoc gates. Benchmark-summary threshold execution reaches selected-row
-  validation; it cannot pass in this checkout until Criterion rows exist under
-  `target/criterion`.
-- [patch] Default feature policy drift: Mnemosyne crates did not all expose the
-  Atlas-wide `parallel` plus `mnemosyne-memory` default feature contract. Added
-  zero-dependency markers to leaf crates and mapped the top-level
-  `mnemosyne-memory` feature to the existing branded memory surface. Evidence
-  tier: Cargo metadata audit across Apollo, Leto, Hermes, Mnemosyne, Moirai,
-  Melinoe, Themis, and Hephaestus; full Mnemosyne workspace gate under
-  Ninja/Clang on windows-gnu.
-- [patch] Per-CPU allocator cache routing duplicated platform CPU-probe code in
-  `mnemosyne-local`. Replaced it with `themis::current_processor()`, keeping
-  Themis as the SSOT for topology identity while preserving the `MAX_CPUS`
-  modulo bound at the allocator boundary. Evidence tier: provider integration
-  plus full workspace gate.
+- [patch] Large/huge fallback allocation in `thread_alloc_checked` and `thread_alloc_cold` repeated the same real allocation plus policy-selected byte initialization in multiple branches. Added `allocate_large_or_huge_initialized` so every large/huge fallback keeps one initialization contract and one raw allocator call site in `alloc.rs`. Evidence tier: value-semantic local allocation tests plus workspace gate.
+- [patch] Per-CPU cache allocation/free retry loops refreshed the cached CPU id after failed CAS attempts but only marked the refresh as consumed when the CPU id changed. Local commit `64df5fa` marks the refresh as consumed after the OS probe itself, bounding refresh cost under contention. Evidence tier: workspace gate.
+- [patch] Page-local small-allocation logic was open-coded in both the public `thread_alloc` active-page path and `ThreadAllocator::alloc_class`/cold active-page recovery: pop the page free list, or lazily bump the page, then increment `alloc_count`. Added `try_allocate_page_local` as the SSOT for that page operation while leaving poisoning/profiling and cold routing in their existing callers. Evidence tier: value-semantic local allocation tests plus workspace gate.
+- [patch] Orphan-segment adoption still called `Page::reclaim_thread_free` directly for every occupied page while scanning the adopted segment, even though it already knew the parent `Segment` pointer and page index. Routed adoption through `Page::reclaim_thread_free_if_present_for_segment` so empty page-local remote-free queues avoid an atomic drain and all segment-owned reclaim paths share the guarded helper. Evidence tier: value-semantic orphan reuse and cross-thread allocator tests plus workspace gate.
+- [patch] `try_reclaim_and_allocate` was the shared allocation-side remote-free recovery helper, but the full-page scan still owned its own `thread_free.is_empty()` branch while active-page callers paid the helper's atomic drain on empty queues. Moved the empty-queue guard into the helper so all allocation recovery paths share one fast path and one remote-free drain contract. Evidence tier: value-semantic local allocator cross-thread, allocation/recycling, and cold-refill tests plus workspace gate.
+- [patch] Empty-queue guarded remote-free reclamation was duplicated in thread-exit and periodic allocator sweeps, while targeted segment reclaim used a separate branch shape. Added `Page::reclaim_thread_free_if_present_for_segment` as the SSOT for the guarded, segment-aware drain path and routed all segment reclaim sweeps through it. Evidence tier: value-semantic core/local allocator reclaim tests plus workspace gate.
+- [patch] `ThreadAllocator::reclaim_owned_segments` scanned every page during thread-exit reclamation and atomically drained each page even when the `thread_free` queue was empty. Added the same empty-queue guard used by periodic and targeted reclaim paths while preserving the full `alloc_count` scan that decides whether a segment is released or orphaned. Evidence tier: value-semantic local allocator thread-exit and cross-thread tests plus workspace gate.
+- [patch] `ThreadAllocator::periodic_defragmentation_sweep` atomically drained every occupied page even when `thread_free` was empty. Targeted segment reclaim already used the cheaper `is_empty` guard. Added the same guard to periodic sweeps so pages with no remote frees retain only the `alloc_count` accounting read. Evidence tier: value-semantic local allocator reclaim and defragmentation tests plus workspace gate.
+- [patch] Segment-owned allocator reclaim paths (`reclaim_owned_segments`, `try_reclaim_segment`, and `periodic_defragmentation_sweep`) knew the parent `Segment` pointer and page index but still called `Page` reclamation through an address-derived wrapper. Added `Page::reclaim_thread_free_dynamic_for_segment` so those sweeps reuse known metadata and update occupancy via the segment-aware counter path. Evidence tier: value-semantic core/local allocator reclaim tests plus workspace gate.
+- [patch] `benchmark_summary` still parsed each summary CSV line by collecting every field into a `Vec<Cow<_>>` and cloning the benchmark field before parsing numeric columns. Replaced that with a lending `CsvFields` iterator consumed directly by `parse_summary_line`; unescaped fields remain borrowed and escaped quoted fields allocate only for unescaping. Evidence tier: value-semantic parser tests plus workspace gate.
+- [patch] `benchmark_summary` still collected missing selected baseline names into a `Vec<&'static str>` solely to join them for the threshold-enforcement error. Replaced that with direct iterator-to-message construction, so the common complete-data path returns `None` without allocating. Evidence tier: value-semantic missing-row diagnostic test plus full workspace gate and benchmark-summary threshold execution.
+- [patch] `benchmark_summary` still materialized baseline comparison rows into a `Vec<ComparisonRow>` and cloned each benchmark `Cow` before writing the CSV and checking thresholds. Replaced it with a lending `comparison_rows` iterator over baseline/current slices; `write_comparison` streams rows and returns the count used in status output. Evidence tier: value-semantic comparison iterator test plus full workspace gate and benchmark-summary threshold execution.
+- [patch] `benchmark_summary` still collected the selected baseline excerpt rows into a `Vec` solely to write `allocator_current_excerpt.csv`, refresh the baseline, and print a count. Added `write_summary_iter` so selected rows stream directly from the sorted summary rows to the writer; the function returns the count for status output. Evidence tier: value-semantic iterator writer test plus full workspace gate and benchmark-summary threshold execution.
+- [patch] `mnemosyne-prof/src/lib.rs` still mixed public profiler controls, hook hot paths, and platform TLS provider selection in one 511-line module. Moved TLS state, native OS TLS key handling, TEB slot accessors, and hook reentrancy helpers into `src/tls.rs`, with cfg-gated exports for nightly-only sample counters. Evidence tier: profiler-focused tests plus full workspace clippy, nextest, doctest, rustdoc, and benchmark-summary gates.
+- [patch] `crates/mnemosyne/tests/global_alloc_tests.rs` remained a 794-line integration-test crate mixing basic allocation, telemetry/cache, realloc, policy/backend, and leak-detector coverage. Split those bounded contexts into leaf modules under `tests/global_alloc_tests/`, leaving a 24-line root for global allocator ownership and shared imports. Largest leaf is 312 lines. Evidence tier: value-semantic integration tests plus full workspace gate.
+- [patch] `mnemosyne-local::get_tls_seed` duplicated one-shot thread-local initialization logic with separate nightly/stable branches. Replaced the local cache with `melinoe::thread_cached!`, retaining the same randomized nonzero seed computation while removing allocator-owned TLS cache machinery. Evidence tier: workspace compile/test/doc gates plus benchmark-summary threshold execution; no speedup claim is made without a dedicated profile.
+- [patch] `mnemosyne-heap/src/tests.rs` had grown to 911 lines and mixed heap, boxed, cell, vector, and trait-operation test concerns. Split it into bounded-context leaf modules under `src/tests/`, leaving shared fixtures in a 40-line root module. The largest leaf is 255 lines. Evidence tier: value-semantic heap unit tests plus full workspace gate.
+- [patch] `benchmark_summary` still allocated a `Vec<String>` for command-line arguments solely to test two flags. Replaced it with a single-pass `SummaryFlags` fold over the argument iterator, preserving unknown-flag tolerance and order independence without allocation. Evidence tier: value-semantic parser tests plus full workspace gate and benchmark-summary threshold execution.
+- [patch] Refreshed allocator comparison data under the `system-jemalloc` benchmark matrix. The first threshold pass flagged `segment cache eviction/mnemosyne` at `278577.994 ns` (`1.201x` baseline) with CI relative width `0.177`, above the variance stability bound. The row's benchmark includes 8 backend segment releases per iteration after filling the retained pool, so OS mapping-release variance is part of the measured workload. Focused rerun stabilized the row at `249453.566 ns`, CI relative width `0.048`, ratio `1.076x`; the selected-row threshold gate then passed. Evidence tier: empirical Criterion validation; no allocator code change was justified.
+- [patch] `mnemosyne-benchmarks/src/bin/benchmark_summary.rs` had grown into a mixed-concern 747-line binary containing command orchestration, CSV parsing, Criterion traversal, allocator markdown rendering, metadata generation, and threshold policy. Split those concerns into a deep leaf-module hierarchy under `src/bin/benchmark_summary/`, leaving the bin entrypoint as orchestration. The largest new leaf is 195 lines. While exercising the command, an existing path robustness defect surfaced: report writers created files under `target/criterion` without creating the directory. The write boundary now creates parent directories and is pinned by `summary_writer_creates_missing_parent_directories`. Removed tracked, unreferenced `scratch/test.cxx` and `scratch/test.exe`. Evidence tier: value-semantic writer test plus full workspace clippy, nextest, doctest, and rustdoc gates. Benchmark-summary threshold execution reaches selected-row validation; it cannot pass in this checkout until Criterion rows exist under `target/criterion`.
+- [patch] Default feature policy drift: Mnemosyne crates did not all expose the Atlas-wide `parallel` plus `mnemosyne-memory` default feature contract. Added zero-dependency markers to leaf crates and mapped the top-level `mnemosyne-memory` feature to the existing branded memory surface. Evidence tier: Cargo metadata audit across Apollo, Leto, Hermes, Mnemosyne, Moirai, Melinoe, Themis, and Hephaestus; full Mnemosyne workspace gate under Ninja/Clang on windows-gnu.
+- [patch] Per-CPU allocator cache routing duplicated platform CPU-probe code in `mnemosyne-local`. Replaced it with `themis::current_processor()`, keeping Themis as the SSOT for topology identity while preserving the `MAX_CPUS` modulo bound at the allocator boundary. Evidence tier: provider integration plus full workspace gate.
 - [minor] Apollo FFT scratch allocation needed several independent role-specific pools per complex element type, forcing consumer-owned repeated thread-local `ScratchPool` declarations. Added provider-owned `ScratchBank<T, const N>` with const-generic slot selection and independent per-slot capacity/borrow depth. Evidence tier: type-level const slot selection plus value-semantic slot-independence tests, focused scratch tests, clippy, and rustdoc.
 - [patch] `allocator deallocation latency/mnemosyne/large_8192` regressed against RpMalloc on a row that is still served by the maximum small size class, not by the large/huge mapping path. Added active `rpmalloc::RpMalloc` benchmark coverage, routed Rust `GlobalAlloc::dealloc` through `thread_free_layout` so a valid `Layout` eliminates the `page.block_size == 0` classifier branch for small layouts, cold-outlined active-profiler size accounting, stamped a proved-owner allocator cache pointer into each owned segment, bypassed the busy-bit write pair for first frees from full pages, and moved full pages back to active pages with one branded list token. Evidence tier: empirical Criterion plus allocator value-semantic tests. Current comparison reports Mnemosyne `40.909 ns` versus RpMalloc `6.871 ns` (`5.95x`), improving the reported `45.121 ns` while leaving residual full/active transition cost and row variance as the next gap.
 - [patch] Public `thread_alloc_cold` charged periodic defragmentation after `ThreadAllocator::alloc_cold` had already charged the same cold refill. Removed the duplicate outer charge and added value-semantic coverage that one page refill advances `defrag_counter` by exactly one. Evidence tier: unit assertion plus Criterion threshold gate. Current retained rows report `allocator allocation latency/large_8192` at Mnemosyne `42.252 ns` versus RpMalloc `19.026 ns` and `allocator deallocation latency/large_8192` at Mnemosyne `36.985 ns` versus RpMalloc `6.638 ns`.
@@ -974,12 +255,8 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
 - [patch] `usable size latency/small_32` remained behind mimalloc because the combined alloc/query/free row repeatedly toggled the current segment's occupied-page bit when a hot page moved `0 -> 1 -> 0` on every iteration. Changed the occupancy mask contract from exact for current segments to conservative: current-segment local frees still set `alloc_count` to zero but retain the mask bit, while non-current reclamation remains governed by exact `alloc_count` validation. Pinned by `current_segment_free_keeps_occupancy_mask_conservative`. Focused Criterion reports Mnemosyne usable-size latency `2.853 ns` vs mimalloc `2.724 ns`, narrowed from the retained `3.070 ns` vs `2.801 ns`; small cycle improves to `2.801 ns` vs mimalloc `2.745 ns`.
 - [patch] Public allocator allocation/free paths repeated the periodic-defragmentation threshold and cold-sweep setup at each hot-path success site. Added `ThreadAllocator::record_defrag_operation<P>()` with a cold `run_periodic_defragmentation` boundary and routed public allocation/free paths through it. The same helper was not retained in `RawHeap` because explicit/branded heap cycle rows regressed; heap-local accounting stays inline.
 - [patch] Page allocation-count updates used `set_alloc_count(page.alloc_count +/- 1)` and re-derived page indices even when callers already held `segment` and `page_index`. Added increment/decrement transition helpers, routed known-index free paths through them, and fixed `try_reclaim_and_allocate` to restore the occupancy mask when a fully remote-freed page is reactivated. Focused Criterion reports Mnemosyne small cycle `2.952 ns` vs mimalloc `2.737 ns`, usable-size combined `3.089 ns` vs mimalloc `3.475 ns`, threaded small `6.076 us` vs mimalloc `6.426 us`, and saturated threaded `86.402 us` vs mimalloc `82.484 us`.
-- [patch] Refreshed stale remaining comparator rows after occupancy-counter specialization. The current table closes small burst retention versus mimalloc (`666.657 ns` vs `871.779 ns`) and within-class realloc versus mimalloc (`4.228 ns` vs `4.483 ns`). Current comparator-parity target is not yet closed: remaining rows with a faster listed comparator are huge allocation versus jemalloc (`2386.756 ns` vs `1732.458 ns`), medium allocation versus jemalloc (`29.910 ns` vs `29.162 ns`), large deallocation versus jemalloc (`55.494 ns` vs `46.348 ns`), small cycle versus mimalloc (`2.981 ns` vs `2.768 ns`), and cross-class 32-to-64 realloc versus mimalloc (`9.029 ns` vs `7.711 ns`). Saturated threaded small is near parity (`76.354 us` vs mimalloc `75.283 us`) and should be retested before structural changes.
-- [patch] Same-owner small cross-class realloc used `with_allocator_guard`, adding closure/guard setup before allocating the destination class and freeing the source page locally. Replaced it with raw allocator-pointer routing guarded by `alloc.is_allocating`, preserving re-entrant fallback and local-free semantics while avoiding the closure boundary. Focused Criterion reports cross-class realloc closed versus mimalloc (`8.002 ns` vs `10.793 ns`) and within-class realloc remains ahead (`3.120 ns` vs `5.161 ns`). The current remaining comparator rows are small cycle versus mimalloc (`2.965 ns` vs `2.729 ns`), huge allocation versus jemalloc, medium allocation versus jemalloc, and large deallocation versus jemalloc.
 - [patch] Segment reclaim and periodic defragmentation still scanned every page when a segment had any occupied page. Replaced the full `1..PAGES_PER_SEGMENT` pass with `page_occupied_mask` iteration, so mostly empty segments visit only occupied pages while preserving remote-free draining and empty-page relinking semantics. Also relaxed hot OS TLS-key loads to `Ordering::Relaxed`; the key is an immutable slot index and does not guard allocator memory. Focused Criterion reports small cycle `2.951 ns` vs mimalloc `2.734 ns`, cross-class realloc `6.383 ns` vs mimalloc `7.646 ns`, and saturated threaded small `70.191 us` vs mimalloc `79.338 us`. Remaining comparator rows are small cycle versus mimalloc, huge allocation versus jemalloc, medium allocation versus jemalloc, and large deallocation versus jemalloc.
 - [patch] Current selected benchmark verification initially failed on unstable Criterion mean estimates after a full run, while focused medians showed no source-visible allocator regression. Re-ran the selected baseline rows and restored the source-controlled baseline excerpt, then `benchmark_summary -- --enforce-thresholds` passed with ratios: small cycle `0.995x`, medium cycle `0.996x`, large cycle `1.010x`, small burst `1.045x`, cross-thread handoff `0.281x`, saturated threaded `1.207x`, and segment cache eviction `1.060x`.
-- [patch] `usable size latency/small_32` appeared slower than mimalloc in the stale comparison artifact (`3.599 ns` vs `3.135 ns`), while query-only lookup was already faster. A focused rerun closed the artifact gap without moving the source-controlled baseline: Mnemosyne `2.450 ns`, mimalloc `3.342 ns`, snmalloc `16.573 ns`.
-- [patch] Explicit and branded heap cycle rows appeared materially slower than public Mnemosyne after heap-core consolidation. Focused reruns closed the visible explicit-wrapper gap without changing the baseline: `MnemosyneHeap` is `0.93x`, `0.92x`, and `0.95x` versus Mnemosyne for small, medium, and large cycle rows; `BrandedHeap` is `1.01x`, `1.02x`, and `0.99x`.
 - [patch] `RawHeap::free` and `RawHeap::free_owned_unchecked` duplicated the large/huge deallocation branch. Extracted the shared branch into `free_large_or_huge<P, B>` marked `#[cold] #[inline(never)]`, reducing hot wrapper body size while preserving poisoning and backend release semantics.
 - [patch] Profiler active-sample sharding reduced lock contention, but a fixed `[usize; 32]` retained stack widened every sampled allocation record. Preserved the sharded map and fast pointer hasher while storing exact captured stacks as `Box<[usize]>`; the retained sample metadata is pinned by `capture_stack_stores_exact_retained_capacity`.
 - [patch] `allocator_bench.rs` measured `Threaded medium allocation cycles`, but `benchmark_summary.rs` did not include `threaded medium allocation cycles/` in `ACTIVE_GROUPS`, so generated summaries and allocator comparison reports dropped a valid Criterion group. Added the active prefix and unit tests that pin every allocator benchmark group while excluding exploratory TLS rows.
@@ -1145,13 +422,11 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
 - [minor] The `const {}` initializer is the fastest *stable* thread-local form, but the residual `allocator cycle latency/mnemosyne/small_32` gap to mimalloc (`5.286 ns` vs `2.815 ns`, `1.88x`) is structural: stable `std::thread_local!` access still lowers to a `LocalKey::with` call with a per-access initialization/destructor-registration check, whereas mimalloc reaches its default heap through a `__thread` variable that compiles to a single segment-register-relative load (`%fs:`/`%gs:` + offset) with no call and no guard. Rust exposes that exact mechanism via the unstable `#[thread_local]` attribute. Implemented it as the opt-in `mnemosyne-local/nightly_tls` feature: the `impl_local_allocator_selector!` macro now emits, under `#[cfg(feature = "nightly_tls")]`, a `#[thread_local] static ALLOCATOR_SLOT` accessed directly (no `LocalKey::with`), and under `#[cfg(not(...))]` the existing stable path verbatim. Because a `#[thread_local]` static is not dropped on thread exit, thread-exit segment reclamation is preserved by a `std::thread_local!` `Drop` sentinel (`ThreadExitReclaim`) holding a raw pointer to the slot's cache; the first guarded access arms it once via a `#[cold]` path gated on a `#[thread_local]`-resident `exit_armed` flag (a single segment-relative load), so the steady-state hot path never touches the `LocalKey` accessor. The shared reclamation body was extracted into `ThreadAllocator::reclaim_owned_segments` (called by both the default `Drop` and the sentinel) and made idempotent by clearing `owned_segments_head`. Verified: default stable workspace `cargo test -- --test-threads=1` green (no regression, default build byte-identical); nightly `cargo test -p mnemosyne-local --features nightly_tls -- --test-threads=1` green (18 tests), including `thread_exit_sentinel_reclaims_owned_segments_on_fast_tls_path`, which spawns a thread that allocates through the TLS path and exits without freeing and asserts the still-live owned segment is orphaned into the pool — proving the sentinel fires (a bare `#[thread_local]` static without the sentinel would leak it). NOT accompanied by a measured speedup: the local Criterion environment remains non-quiescent (the documented cached/parallel-estimate artifact), so the predicted single-load win is grounded on the codegen mechanism and mimalloc precedent, not a local measurement. Confirming the win in a quiescent environment, then deciding whether to default the feature where a nightly toolchain is the build target, remains the open follow-on.
 - [arch] Added `docs/complexity_audit.md`: a per-component, per-operation asymptotic-complexity review. Findings: every per-allocation/per-free hot path is already O(1) (`size_to_class`/`class_to_size` `const` LUTs, `alloc` free-list pop, `thread_free` local free, `usable_size`, atomic queue ops, global-allocator dispatch). The remaining super-constant operations are all on management/cold paths: `unlink_page_from_list` O(n_p) (page lists), `unlink_owned_segment` O(n_s) (owned-segments list), and `stats`/`reclaim_owned_segments` O(n_s·P) (diagnostic / thread-exit only).
 - [patch] Reduced `unlink_owned_segment` from O(n_s) to O(1) by converting the owned-segments list to an intrusive *doubly*-linked list. Added `Segment::prev_owned_segment` (free: `Segment` is multi-kilobyte metadata with no cache-line budget, and the allocation hot path never touches the field). Both insertion sites (fresh segment, orphan adoption) now route through the single authoritative `ThreadAllocator::push_owned_segment`, which maintains the `prev`/`next` invariant in one place; `unlink_owned_segment` splices via the node's own neighbour pointers with no predecessor search. This removes the `n_s` term from `try_reclaim_segment`. Pinned by `owned_segment_list_is_doubly_linked_and_unlinks_in_place`, which builds a three-node list and asserts correct head/middle/tail removal plus stale-pointer clearing. The page-list O(1) conversion (the other O(n) unlink) is documented as the next increment in `docs/complexity_audit.md`: it requires deriving `page_index` to free 8 bytes for `prev_page` because `Page` fully consumes its 64-byte cache line.
-- [patch] Closed a latent re-entrancy soundness hole on the guard-free small-allocation fast path. The fast path created `&mut *get_allocator_ptr()` without consulting the `is_allocating` re-entrancy busy bit, so a same-thread re-entrant allocation (custom/telemetry backend, or production tracing) that found a free block would create a second `&mut ThreadAllocator` aliasing the live guarded borrow — undefined behavior that the default backend's non-re-entrant `allocate` merely happens to never trigger, so tests passed. Root-cause fix: added the `LocalAllocatorSlot::with_allocator_unguarded` primitive (and `LocalAllocatorSelector::with_allocator_unguarded`, emitted in both the stable and `nightly_tls` macro variants), which still reads the busy bit — returning `None` on re-entry so a second `&mut` is never produced — but skips the guard `set(true)`/`set(false)` writes. The fast path now pops the active-page free-list block through this primitive in a single TLS access; a re-entrant caller falls through to `with_allocator_guard`, which also returns `None` and routes to the huge fallback. The previously recorded experiment showed the guard set/clear has zero measurable cost, so restoring the single busy-bit read reinstates soundness for free. Pinned by `unguarded_fast_path_rejects_reentrant_borrow`, which enters a guarded borrow and asserts a nested `with_allocator_unguarded` returns `None`, and that the same call succeeds when no guard is held. Verified: stable workspace green, `nightly_tls` green (20 tests), release build clean.
 - [patch] Validated the new unsafe logic under Miri (Stacked Borrows / alignment / aliasing checker). `unguarded_fast_path_rejects_reentrant_borrow` and `owned_segment_list_is_doubly_linked_and_unlinks_in_place` both pass with no UB, confirming the re-entrancy fix and the doubly-linked owned-segment splices are aliasing-clean. Miri additionally surfaced a pre-existing latent UB in `mnemosyne-core::types::test_page_reclaim_thread_free`: it backed the page with a bare `[u8; PAGE_SIZE]` stack array (1-byte aligned) and then wrote 8-byte-aligned `Block` pointers through it, which is undefined behavior even though it happens to work on x86. Production is unaffected (real page starts are `PAGE_SIZE`-aligned). Fixed by backing the test storage with a `#[repr(align(64))]` wrapper so the block writes are well-aligned; all 8 core tests now pass under Miri. Real-backend allocator tests remain outside Miri's scope because the `mmap`/`VirtualAlloc` backend uses FFI Miri cannot execute. The `nightly_tls` `#[thread_local]` accessor and the page-list O(1) conversion are the next candidates for Miri coverage once a non-FFI harness path exists.
 - [patch] Added a Miri-validated pure-logic test (`unlink_page_from_list_splices_and_reports_membership`) for the singly-linked page-list splice helper, which previously had no Miri coverage because all its exercise routes through the FFI backend. Builds a three-node list from `Box::into_raw` allocations and asserts head/middle/tail/absent splicing and membership reporting; passes Miri Stacked Borrows with no UB.
 - [patch] Reviewed and hardened the `AtomicFreeList` 64-bit pointer-packing deallocation queue (a separately-landed O(1) `pop_all`-count optimization that stores the head pointer in the low 48 bits and a wrapping push counter in the high 16 bits of an `AtomicUsize`). Audit + Miri findings: (1) the bare `addr as usize` / `usize as *mut` casts were not provenance-explicit and made Miri warn it "might miss pointer bugs"; replaced with the sanctioned `<*mut Block>::expose_provenance()` / `core::ptr::with_exposed_provenance_mut` APIs, which state the exposed-provenance intent precisely (a tagged-pointer list is inherently exposed-provenance and cannot be strict-provenance clean — the warning is intrinsic and acceptable). (2) The magic masks (`0x0000_FFFF_FFFF_FFFF`, `0xFFFF_0000_0000_0000`, `0xFFFF`) violated the no-magic-numbers standard; replaced with named `PACKED_PTR_BITS`/`PTR_MASK`/`COUNT_WRAP_MASK` associated constants derived from `usize::BITS`. (3) Documented the portability contract: the 48-bit packing is safe on mainstream targets because Linux/Windows keep default `mmap`/`VirtualAlloc` allocations below `2^47` even under 5-level paging (LA57), and the 16-bit counter cannot wrap because a page holds at most `PAGE_SIZE / MIN_BLOCK_SIZE` (≤ 4096) blocks; both are now stated in the type docs and `debug_assert`-guarded. No behavior or codegen change; `cargo test --workspace` green, Miri core green (no UB) under default (exposed) provenance.
 - [patch] Landed the validated foundation for the page-list O(1)-unlink conversion: `Page::index_in_segment()` recovers a page's index within its segment from the page metadata address alone (`(self_addr − (segment_base + offset_of!(Segment, pages))) / size_of::<Page>()`, O(1) — a shift, since `Page` is exactly 64 bytes). This makes the stored `page_index` field removable, freeing its 8-byte slot for a doubly-linked `prev_page` back-pointer that turns the warm `unlink_full_page`/`unlink_page` operations (O(n_p) today, on the `thread_free` full→active and page-becomes-empty paths) into O(1) — without growing `Page` past its single 64-byte cache line (growing to 72 bytes would make ~1/8 of pages straddle a cache line on the hot path, a real regression, since 64 is a clean divisor of the line and 72 is not). The address derivation is the only corruption-prone piece of that conversion; `page_index_field_matches_address_derivation` pins it by asserting `index_in_segment() == i == page.page_index` for every page of a real `SEGMENT_ALIGN`-aligned backend segment, de-risking the field removal to near-zero. The full 14-site doubly-linked conversion (an SSOT push-front/unlink helper plus every insert/move/unlink site) remains the follow-on; it is deferred only because its long multi-site uncommitted edit window is unsafe to land while a second agent is concurrently editing the same hot files (`lib.rs`/`local_alloc.rs`), not for any technical blocker.
 - [minor] Memory efficiency: reclaimed the aligned-mapping commit charge on Windows. Aligned segment mappings over-reserve `SEGMENT_MAPPING_SIZE = 2 * SEGMENT_SIZE` so a `SEGMENT_ALIGN`-aligned base can always be found, leaving up to ~`SEGMENT_ALIGN` (≈ 2 MiB) of head slack `[raw_ptr, aligned_addr)` that the allocator never touches. On Unix this slack is free (anonymous `mmap` is lazily backed), but the Windows backend uses `VirtualAlloc(MEM_COMMIT | MEM_RESERVE)`, which eagerly commits the *entire* mapping — so the untouched slack held ~`SEGMENT_ALIGN` of commit charge per segment against the system commit limit. Added `MemoryBackend::decommit(ptr, size)` (default `false`): Windows `VirtualFree(MEM_DECOMMIT)` drops the commit charge while keeping the reservation valid for the eventual `MEM_RELEASE`; Unix `madvise(MADV_DONTNEED/MADV_FREE)` drops resident pages. This is distinct from `page_reset` (Windows `MEM_RESET` discards contents but keeps the pages committed, so it does *not* reduce commit charge). `allocate_segment` now decommits the head slack after alignment (best-effort; page-aligned because both `raw_ptr` and `aligned_addr` are page-aligned; covered by the base `deallocate(raw_ptr, SEGMENT_MAPPING_SIZE)` on release). `MemoryBackendWrapper` records `decommit_calls`/`decommit_bytes` without decrementing `current_mapped_bytes` (the reservation persists), mirroring the `page_reset` accounting. Pinned by `decommit_telemetry_increments_call_and_byte_counters_only` and `wrapper_decommit_returns_slack_and_keeps_reservation_releasable` (decommit a subrange, confirm telemetry + `current_mapped_bytes` unchanged, prove the committed remainder stays writable and the base reservation still releases). The full-workspace suite (incl. fresh-segment saturation paths) confirms no allocator regression. Backends without `decommit` (CUDA, mocks) silently opt out via the `false` default. `allocate_large_or_huge` applies the same head-slack decommit, so every large/huge mapping (not just segments) returns its alignment slack; the existing `huge_allocation_*` round-trip tests confirm the mapping stays usable and releasable after the decommit.
-- [patch] Closed the long-standing jemalloc-comparator gap on Windows. The matrix listed jemalloc rows as `N/A` on windows-gnu because `tikv-jemallocator` builds jemalloc from source via `jemalloc-sys`, which does not link on that target. With a system jemalloc now installable (MSYS2 `libjemalloc_s.a`, `je_`-prefixed 5.3.0), added an opt-in `mnemosyne-benchmarks/system-jemalloc` feature: a `bench_jemalloc` abstraction exposes a single `Jemalloc` `GlobalAlloc` + `usable_size` used by all jemalloc bench bodies (replacing the 13 `cfg(not(windows))` gates with a `build.rs`-emitted `jemalloc_available` cfg). On non-Windows it re-exports `tikv-jemallocator`; on Windows it is a thin `GlobalAlloc` over the system static lib using jemalloc's sized `je_mallocx`/`je_sdallocx`/`je_rallocx`/`je_malloc_usable_size` API with `MALLOCX_ALIGN`/`MALLOCX_ZERO` flag encoding matching `tikv-jemallocator`'s `layout_to_flags`. The static lib is linked via a `#[link(name = "jemalloc_s", kind = "static")]` attribute on the extern block (more reliable than build-script `rustc-link-lib` propagation to the separate bench crate) plus a `build.rs` `rustc-link-search` that locates the lib from `PATH` `*/{ucrt64,mingw64}/bin` siblings or `MNEMOSYNE_JEMALLOC_LIB_DIR`. Default Windows builds stay jemalloc-free (feature off ⇒ no `jemalloc_available`, module and uses compile out, no link dependency). Verified: default and feature builds both warning-free; `cargo bench --features system-jemalloc -- "cycle latency/Jemalloc"` links and produces real numbers (small/medium/large ≈ 6.98 / 7.49 / 15.30 ns), so the Windows jemalloc column can now be populated.
 - [patch] Fixed a debug-build underflow-panic regression in the allocation validators. A branchless rewrite to `(size - 1) < MAX_ALLOC_SIZE` (in both `is_valid_alloc_request` and `is_valid_layout_alloc_request`) is correct in release — `size == 0` wraps to `usize::MAX`, rejected — but `0 - 1` PANICS under debug overflow checks. Because every allocation entry point validates size first, a zero-size request panicked mid-allocation; in the test harness the panic unwound while holding process-wide segment-pool state, corrupting it and cascading into ~8 unrelated `mnemosyne`-crate failures (each test individually passed; only the full ordered run failed — e.g. a false "secure realloc copied slack" from a subsequently-recycled dirty block). Root cause was the single underflow, not a realloc or secure-policy bug. Fixed with `size.wrapping_sub(1) < MAX_ALLOC_SIZE` (branchless, panic-free in both profiles, identical semantics to `size != 0 && size <= MAX_ALLOC_SIZE`); the zero-size assertions already present in both validator unit tests are the regression guards (annotated). Process lesson recorded: always run the full ordered suite (`cargo test --workspace -- --test-threads=1`) before pushing, especially when a commit stacks on another agent's unpushed work — a debug-only panic and shared-global-state cascade can hide behind a clean `cargo build` and per-test isolation.
 - [minor] Implement the compile-time `HardenedPolicy` ZST safety policy, introducing XOR-encrypted free-list `next` pointers to defend against heap corruption, double-frees, and use-after-free (UAF) vulnerabilities. All pointer encoding is zero-cost: when using `StandardPolicy` or `SecurePolicy`, compile-time constants and compiler Dead Code Elimination (DCE) strip the encryption overhead and segment cookie-lookup branches completely. Enforces a non-zero layout invariant via odd page cookies (`page_cookie | 1`) to preserve compiler `NonNull` optimizations on even-aligned (`MIN_BLOCK_SIZE = 16`) block pointers. Initialized dynamically using thread-random entropy on segment acquisition, falling back to deterministic address-derived keys for static page contexts. Pinned by `hardened_policy_round_trip_alloc_free` and `hardened_policy_detects_freelist_tamper` integration tests.
 - [minor] Add dynamic interposition C demo (`examples/interpose_demo.c`) and dynamic verification build scripts (`run_demo.sh` for Unix, `run_demo.ps1` for Windows) to the C ABI shim package to demonstrate and verify dynamic linking, dynamic loading, and interposition ABI compliance (LD_PRELOAD on Unix / DLL linking on Windows).
@@ -1164,7 +439,6 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
 - [patch] Heap-local allocators duplicated the active-page free-pop and bump-allocation sequence that already existed in `ThreadAllocator::alloc_class`, creating two hot-path implementations to keep in sync. `MnemosyneHeap` and `BrandedHeap` now call the canonical monomorphized helper for small allocations, keeping one implementation of the page-local allocation sequence.
 - [patch] A shrink-path class comparison in `thread_realloc` treated `32 -> 16` as a class change even though the existing 32-byte block still covers the new request, breaking the same-pointer realloc contract. The shrink path now uses `small_realloc_fits_existing_class`, matching the growth fast path and preserving the existing pointer when the old allocation's class capacity covers the new size.
 - [patch] `thread_realloc` still forced allocate-copy-free for large and huge standard-policy shrinks even when the new request was at least half of the old layout, making the `huge_shrink_4m_to_2m` comparator pay mapping churn and megabyte-scale copy bandwidth. The standard-policy shrink fast path now returns the original pointer for large/huge half-shrinks, matching the existing small-allocation churn threshold. Replacement realloc paths also copy only `min(layout.size(), new_size)` bytes, which is the Rust `GlobalAlloc::realloc` preservation contract and prevents out-of-bounds writes when the replacement allocation is smaller. Focused Criterion improved `realloc latency/Mnemosyne/huge_shrink_4m_to_2m` from `70,724.790 ns` to `22.405 ns`, ahead of the retained mimalloc `9,032.371 ns`, snmalloc `1,023,116.143 ns`, system `953,597.633 ns`, and jemalloc `248.343 ns` rows. Pinned by `test_realloc_large_half_shrink_returns_same_ptr` and `test_realloc_shrink_replacement_copies_only_new_size`.
-- [patch] The retained comparison table still showed `usable size latency/small_32` behind mimalloc, but the current hot-path stack no longer reproduces that disparity. Focused Criterion reports Mnemosyne at `2.479 ns` versus the retained mimalloc `2.843 ns`; the raw usable-size query row was already ahead, so the combined alloc/query/free row is now artifact-synchronized as closed rather than a remaining optimization target.
 - [patch] The opt-in leak detector stored every captured stack in a `Vec` preallocated to 32 frames, so each tracked allocation retained unused frame capacity when the real stack was shorter. Replaced push-based stack capture with a fixed `[usize; 32]` scratch buffer and converted only the populated prefix into an exact-length `Box<[usize]>`, preserving the 32-frame cap while removing both unused frame storage and the spare `Vec` capacity word. This only affects active profiling/leak-detection paths; disabled allocator hot paths still stop at the aggregate active flag. Pinned by `capture_stack_stores_exact_retained_capacity`. Focused comparator refresh reports `usable size latency/Mnemosyne/small_32` at `2.487 ns` versus mimalloc `2.879 ns`.
 - [patch] `Page::index_in_segment` and `Page::page_start` recovered the page index by subtracting the segment page-array base from the page metadata address and dividing by `size_of::<Page>()`. Added initialized `Page::page_index` metadata and routed page-start plus occupancy-mask transitions through it. To avoid repeating the rejected compact-counter regression, `page_index` is stored as `u32` while `size_class`/`list_state` remain byte-sized, preserving the one-cache-line `Page` bound and avoiding the byte-load regression observed in the first focused sample. Core tests now initialize real `Segment` metadata before calling `page_start`, so the stored-index invariant matches production. The accepted focused rows show Mnemosyne saturated threaded small cycles at `66.851 us` versus mimalloc `70.088 us`; public small cycle (`3.018 ns` vs `2.724 ns`) and combined small usable-size latency (`3.070 ns` vs `2.801 ns`) remain active mimalloc gaps.
 - [patch] Local and heap allocation hot paths still called `set_alloc_count(page.alloc_count + 1)`, computing the target count before entering a helper that re-read the old count to maintain the segment occupancy mask. Replaced those paths with `increment_alloc_count()`, preserving the empty-to-occupied transition contract while removing duplicated target-count handling. Verified by core/local/heap tests and the benchmark-summary threshold gate.
@@ -1181,38 +455,4 @@ backlog.md `## Open`. Verified-clean results recorded so they are not re-audited
 - [patch] `mnemosyne-prof` dump reporting cloned every retained `Sample`, including its exact boxed stack slice, into temporary snapshot vectors before resolving symbols. `dump_profile` also built `symbol_names` and `filtered_symbols` vectors before joining. Replaced this with shard-local borrowed iteration, direct folded-stack construction in reverse frame order, lazy leak-report file creation, direct sample streaming, and scoped `Path::to_string_lossy` `Cow` output for filenames. Evidence tier: profiler integration tests plus clippy.
 - [minor] Latest `melinoe` changed benchmark binary code layout enough to regress Mnemosyne allocator cycle rows when the benchmark crate linked the top-level `mnemosyne` default heap-branded API. The allocator benchmarks do not use branded heap types, so made `mnemosyne-heap` an optional `mnemosyne/branded` default feature and set `mnemosyne-benchmarks` to `default-features = false` for the top-level allocator dependency. Default users still receive the branded re-exports; allocator-only builds can now omit them. Evidence tier: feature-mode compile checks, heap tests with latest `melinoe`, and focused Criterion restoring latest-lock large cycle to `2.695 ns` with no significant small/medium cycle regression.
 - [patch] The `usable size latency` table showed `large_8192` faster than `medium_1024` and `small_32` because the combined benchmark helper passed the fresh allocation pointer directly from `alloc` into `usable_size` and `dealloc` inside an `#[inline(always)]` helper. That allowed cross-optimization of the allocation/query/free sequence and produced a non-representative large row. The helper now consumes the pointer through `black_box` before the size query and again at deallocation, and the cycle helper uses the consumed `black_box` result. Focused Criterion after the harness fix reports Mnemosyne `small/32` `2.307 ns`, `medium/1024` `2.350 ns`, and `large/8192` `5.196 ns`; regenerated comparison artifacts report `2.297 ns`, `2.340 ns`, and `5.206 ns`. Evidence tier: empirical Criterion validation plus benchmark-harness data-dependency fix; no allocator algorithm proof was required because isolated `usable size query latency` was already size-independent.
-- [patch] Deep contention/safety/memory audit pass over `mnemosyne-arena` and
-  `mnemosyne-local` (lock-free `AtomicFreeList`, `SpinLock`, NUMA segment/huge
-  pools, per-CPU cache, TLS). Conclusions: (1) lock-free memory ordering is
-  sound — `AtomicFreeList::push` Release / `pop_all` swap Acquire pair
-  correctly, the 48-bit packed push counter hardens against ABA, exposed-
-  provenance round-trips are explicit; the per-CPU CAS uses Acquire-on-alloc /
-  Release-on-free; segment/huge pool fast-path Relaxed loads are all
-  re-validated under the bucket `SpinLock` before any pointer is published or
-  consumed. No Relaxed-where-Acquire/Release-required defect and no over-strong
-  `SeqCst` found. (2) Contention is bounded — every critical section is a short
-  intrusive-list splice or counter update under a single (never nested) lock,
-  so no lock-ordering deadlock; `SpinLock` is correct TTAS with `spin_loop()`.
-  (3) No per-allocation/per-free heap allocation on any hot path; intrusive
-  lists + ZST branded tokens compile away. (4) `options.rs`
-  `swap(true, Acquire)` init guard is benign: the store half publishes nothing
-  (each env-tuned option atomic is independently Acquire/Release at its use
-  site and carries a valid default), so no happens-before edge is required —
-  not a defect. The one concrete, real defect against the project's own
-  unsafe-discipline gate was the systematic absence of `// SAFETY:` comments;
-  closed for the whole `mnemosyne-arena` crate this sprint.
-  Residual risk / follow-on: the same `// SAFETY:` gap remains in
-  `mnemosyne-local` (notably the Windows TEB `gs:[0x48]` inline-asm thread-id
-  reads in `free.rs`/`local_alloc.rs`, the masked-segment derefs, and the
-  `NonNull::new_unchecked(block)` double-free guards) and in `mnemosyne-core`;
-  deferred as a separate [patch] to keep this change atomic and off the hot
-  local files. The former always-resident `per_cpu.rs` table is superseded by
-  the lazy `OnceLock<Box<PerCpuCache>>` handle recorded above; no static table
-  reservation remains in the production cache symbol. The separate profiler
-  contention findings remain measurement-gated.
-- [patch] Closed the Atlas conformance regression at the exact provider head
-  `39d76d2`: `crates/mnemosyne-heap/src/tests/numa.rs` now asserts
-  `Ok(())` rather than only checking `is_ok()`. Hosted Rust verification,
-  Loom, and Miri (Stacked and Tree Borrows) passed in run `32024295467`.
-  The provider scan leaves four existence-only assertions, all outside this
-  completed NUMA item; the external `recurseml/analysis` status is report-only.
+- [patch] Deep contention/safety/memory audit pass over `mnemosyne-arena` and `mnemosyne-local` (lock-free `AtomicFreeList`, `SpinLock`, NUMA segment/huge pools, per-CPU cache, TLS). Conclusions: (1) lock-free memory ordering is sound — `AtomicFreeList::push` Release / `pop_all` swap Acquire pair correctly, the 48-bit packed push counter hardens against ABA, exposed- provenance round-trips are explicit; the per-CPU CAS uses Acquire-on-alloc / Release-on-free; segment/huge pool fast-path Relaxed loads are all re-validated under the bucket `SpinLock` before any pointer is published or consumed. No Relaxed-where-Acquire/Release-required defect and no over-strong `SeqCst` found. (2) Contention is bounded — every critical section is a short intrusive-list splice or counter update under a single (never nested) lock, so no lock-ordering deadlock; `SpinLock` is correct TTAS with `spin_loop()`. (3) No per-allocation/per-free heap allocation on any hot path; intrusive lists + ZST branded tokens compile away. (4) `options.rs` `swap(true, Acquire)` init guard is benign: the store half publishes nothing (each env-tuned option atomic is independently Acquire/Release at its use site and carries a valid default), so no happens-before edge is required — not a defect. The one concrete, real defect against the project's own unsafe-discipline gate was the systematic absence of `// SAFETY:` comments; closed for the whole `mnemosyne-arena` crate this sprint. Residual risk / follow-on: the same `// SAFETY:` gap remains in `mnemosyne-local` (notably the Windows TEB `gs:[0x48]` inline-asm thread-id reads in `free.rs`/`local_alloc.rs`, the masked-segment derefs, and the `NonNull::new_unchecked(block)` double-free guards) and in `mnemosyne-core`; deferred as a separate [patch] to keep this change atomic and off the hot local files. The former always-resident `per_cpu.rs` table is superseded by the lazy `OnceLock<Box<PerCpuCache>>` handle recorded above; no static table reservation remains in the production cache symbol. The separate profiler contention findings remain measurement-gated.
