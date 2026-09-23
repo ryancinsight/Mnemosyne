@@ -71,17 +71,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     // so a `&mut` here would assert an exclusivity the design
                     // does not have — Miri reports the retag as a data race
                     // against those reads.
-                    let page = Page::page_in_segment(curr, i);
-                    let randomized = (*page).secondary_free.is_some();
-                    let reclaimed = Page::reclaim_thread_free_if_present_in_segment_with_randomized(
+                    // SAFETY: `curr` is live/exclusive; `i` is a valid occupied-page index.
+                    let page = reclaim_and_record(
                         curr,
                         i,
                         dynamic_encrypted,
-                        randomized,
+                        &mut self.cross_thread_reclaimed,
                     );
-                    if reclaimed > 0 {
-                        self.record_cross_thread_reclaimed(reclaimed);
-                    }
                     total_allocations += (*page).alloc_count;
                 }
 
@@ -153,16 +149,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 }
                 let pg = Page::page_in_segment(segment, i);
                 if (*pg).alloc_count > 0 {
-                    let randomized = (*pg).secondary_free.is_some();
-                    let reclaimed = Page::reclaim_thread_free_if_present_in_segment_with_randomized(
+                    // SAFETY: live segment, valid occupied-page index, pre-read encrypted mode.
+                    let pg = reclaim_and_record(
                         segment,
                         i,
                         dynamic_encrypted,
-                        randomized,
+                        &mut self.cross_thread_reclaimed,
                     );
-                    if reclaimed > 0 {
-                        self.record_cross_thread_reclaimed(reclaimed);
-                    }
                     if (*pg).alloc_count > 0 {
                         return false;
                     }
@@ -235,18 +228,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                             if i == 0 {
                                 continue;
                             }
-                            let pg = &raw mut (*segment).pages[i];
-                            let randomized = (*pg).secondary_free.is_some();
-                            let reclaimed =
-                                Page::reclaim_thread_free_if_present_in_segment_with_randomized(
-                                    segment,
-                                    i,
-                                    dynamic_encrypted,
-                                    randomized,
-                                );
-                            if reclaimed > 0 {
-                                self.record_cross_thread_reclaimed(reclaimed);
-                            }
+                            let pg = &raw mut (*segment).pages[i]; // keep for page-list ops below
+                            // SAFETY: live segment, valid occupied-page index, pre-read encrypted.
+                            reclaim_and_record(
+                                segment,
+                                i,
+                                dynamic_encrypted,
+                                &mut self.cross_thread_reclaimed,
+                            );
                             total_allocations += (*pg).alloc_count;
 
                             if (*pg).alloc_count == 0
@@ -371,4 +360,44 @@ unsafe fn detach_and_release_segment<B: HasSegmentPool>(segment: *mut Segment) {
         Segment::set_owner(segment, SegmentOwner::NONE);
         deallocate_segment::<B>(segment);
     }
+}
+
+/// Drains remote frees from page `page_index` of `segment` and accumulates the
+/// reclaimed count into `cross_thread_sink`.
+///
+/// This is the **SSOT** for the 6-line reclaim core repeated in
+/// `reclaim_owned_segments`, `try_reclaim_segment`, and
+/// `periodic_defragmentation_sweep`. Non-generic and non-method so it
+/// compiles once regardless of the backend `B`.
+///
+/// # Safety
+///
+/// `segment` must be a live segment exclusively owned by the calling
+/// allocator; `page_index` must be a non-zero set bit of
+/// `segment.page_occupied_mask`; `encrypted` must equal
+/// `segment.free_list_encrypted`.
+///
+/// Returns the raw page pointer so callers can read `alloc_count` or perform
+/// list-management afterward.
+#[inline(always)]
+unsafe fn reclaim_and_record(
+    segment: *mut Segment,
+    page_index: usize,
+    encrypted: bool,
+    cross_thread_sink: &mut usize,
+) -> *mut Page {
+    // SAFETY: live segment + in-range index per contract.
+    let page = unsafe { Page::page_in_segment(segment, page_index) };
+    // SAFETY: `page` is the initialized metadata projected above.
+    let randomized = unsafe { (*page).secondary_free.is_some() };
+    // SAFETY: valid segment/index/encrypted triple per contract.
+    let reclaimed = unsafe {
+        Page::reclaim_thread_free_if_present_in_segment_with_randomized(
+            segment, page_index, encrypted, randomized,
+        )
+    };
+    if reclaimed > 0 {
+        *cross_thread_sink += reclaimed;
+    }
+    page
 }
