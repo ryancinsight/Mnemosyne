@@ -1,6 +1,8 @@
 //! Page metadata: a size-classed run of blocks inside a segment, with its
 //! local and cross-thread free lists.
 
+use crate::abort::abort_on_corruption;
+use crate::constants::MIN_BLOCK_SIZE;
 use crate::sync::AtomicFreeList;
 use crate::types::Block;
 use crate::types::Segment;
@@ -262,3 +264,33 @@ impl Page {
 mod init;
 mod occupancy;
 mod reclaim;
+
+/// Asserts that `addr` is a properly-aligned block address within the given
+/// page bounds, aborting on any violation.
+///
+/// This is the **SSOT** for the block-in-page safety check shared by:
+/// - [`super::init`]: validating free-list head and next pointers in `pop_block`
+/// - [`super::reclaim`]: validating reclaimed cross-thread free chain nodes
+///
+/// Non-generic — takes only `usize` values — so the check compiles once and
+/// is shared across every generic context that calls the init/reclaim paths.
+///
+/// # Arguments
+///
+/// * `addr` — address of the block being validated
+/// * `block_size` — stride of blocks in this page
+/// * `page_start` — inclusive start address of the page
+/// * `page_end` — exclusive end address of the page (`page_start + PAGE_SIZE`)
+/// * `error` — abort message emitted on any violation
+#[inline(always)]
+pub(super) fn assert_block_in_page(
+    addr: usize,
+    block_size: usize,
+    page_start: usize,
+    page_end: usize,
+    error: &'static str,
+) {
+    if addr < page_start || addr + block_size > page_end || (addr & (MIN_BLOCK_SIZE - 1)) != 0 {
+        abort_on_corruption(error);
+    }
+}

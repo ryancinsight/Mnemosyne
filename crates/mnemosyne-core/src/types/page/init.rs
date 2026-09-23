@@ -6,6 +6,8 @@
 //! type definition by Separation of Concerns.
 
 use crate::abort::abort_on_corruption;
+use crate::constants::PAGE_SIZE;
+use crate::types::page::assert_block_in_page;
 use crate::types::{Block, Page, Segment};
 use core::ptr::NonNull;
 
@@ -102,14 +104,13 @@ impl Page {
                 + (unsafe { (*page).page_index as usize } << crate::constants::PAGE_SHIFT);
             // SAFETY: `page` is exclusively owned; `block_size` is initialized.
             let block_size = unsafe { (*page).block_size } as usize;
-            if block_addr < page_start
-                || block_addr + block_size > page_start + crate::constants::PAGE_SIZE
-                || (block_addr & (crate::constants::MIN_BLOCK_SIZE - 1)) != 0
-            {
-                abort_on_corruption(
-                    "pop_block found a free-list node outside its page or misaligned",
-                );
-            }
+            assert_block_in_page(
+                block_addr,
+                block_size,
+                page_start,
+                page_start + PAGE_SIZE,
+                "pop_block found a free-list node outside its page or misaligned",
+            );
             let segment = page.map_addr(|_| segment_addr).cast::<Segment>();
             let page_index = unsafe { (*page).page_index as usize };
             // SAFETY: `page` retains the parent mapping provenance and its
@@ -128,14 +129,13 @@ impl Page {
                         + (unsafe { (*page).page_index as usize } << crate::constants::PAGE_SHIFT);
                     let page_end = page_start + crate::constants::PAGE_SIZE;
                     let next_block_size = unsafe { (*page).block_size } as usize;
-                    if next_addr < page_start
-                        || next_addr + next_block_size > page_end
-                        || (next_addr & (crate::constants::MIN_BLOCK_SIZE - 1)) != 0
-                    {
-                        abort_on_corruption(
-                            "pop_block found a corrupted free-list next pointer outside its page",
-                        );
-                    }
+                    assert_block_in_page(
+                        next_addr,
+                        next_block_size,
+                        page_start,
+                        page_end,
+                        "pop_block found a corrupted free-list next pointer outside its page",
+                    );
                     Some(next)
                 }
                 None => None,

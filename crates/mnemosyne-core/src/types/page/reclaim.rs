@@ -23,6 +23,7 @@
 //! provenances diverge in the first place.
 
 use crate::abort::abort_on_corruption;
+use crate::types::page::assert_block_in_page;
 use crate::types::{Page, Segment};
 
 impl Page {
@@ -128,14 +129,13 @@ impl Page {
 
         let mut last = block;
         let first_addr = last.as_ptr() as usize;
-        if first_addr < page_start
-            || first_addr + block_size > page_end
-            || (first_addr & (crate::constants::MIN_BLOCK_SIZE - 1)) != 0
-        {
-            abort_on_corruption(
-                "reclaimed cross-thread free chain head is outside its page or misaligned",
-            );
-        }
+        assert_block_in_page(
+            first_addr,
+            block_size,
+            page_start,
+            page_end,
+            "reclaimed cross-thread free chain head is outside its page or misaligned",
+        );
 
         let mut visited = 1;
         // SAFETY: `last` starts at the validated `block` head and each loop
@@ -158,14 +158,13 @@ impl Page {
                 );
             }
             let node_addr = node.as_ptr() as usize;
-            if node_addr < page_start
-                || node_addr + block_size > page_end
-                || (node_addr & (crate::constants::MIN_BLOCK_SIZE - 1)) != 0
-            {
-                abort_on_corruption(
-                    "reclaimed cross-thread free node is outside its page or misaligned",
-                );
-            }
+            assert_block_in_page(
+                node_addr,
+                block_size,
+                page_start,
+                page_end,
+                "reclaimed cross-thread free node is outside its page or misaligned",
+            );
             last = node;
         }
         if visited != count {
