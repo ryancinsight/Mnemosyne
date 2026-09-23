@@ -162,10 +162,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// The caller must hold exclusive access to this thread allocator.
     #[inline(always)]
-    pub unsafe fn record_defrag_operation(
-        &mut self,
-        is_allocating: bool,
-    ) {
+    pub unsafe fn record_defrag_operation(&mut self, is_allocating: bool) {
         self.defrag_counter += 1;
         if self.defrag_counter >= 64 {
             // SAFETY: the caller holds exclusive access to this allocator per the
@@ -176,10 +173,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
     #[cold]
     #[inline(never)]
-    unsafe fn run_periodic_defragmentation(
-        &mut self,
-        is_allocating: bool,
-    ) {
+    unsafe fn run_periodic_defragmentation(&mut self, is_allocating: bool) {
         self.defrag_counter = 0;
         if is_allocating {
             // SAFETY: `&mut self` is the exclusive borrow of this thread-affine
