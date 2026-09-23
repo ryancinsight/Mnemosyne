@@ -422,6 +422,12 @@ unsafe fn acquire_policy_compatible_segment<P: AllocPolicy, B: HasSegmentPool>()
 -> Option<AcquiredSegment> {
     let mut deferred: *mut Segment = core::ptr::null_mut();
     let chosen = loop {
+        // SAFETY: this function's contract passes on `acquire_segment`'s: the
+        // pools hold valid, initialized segments. Of the caller duty it adds,
+        // this loop keeps its half — an orphan is either returned for the
+        // caller to adopt with its live pages intact, or threaded onto
+        // `deferred` and pushed back to the orphan pool below — and never
+        // reaches `deallocate_segment` or the OS.
         let Some(acquired) = (unsafe { acquire_segment::<B>() }) else {
             break None;
         };
