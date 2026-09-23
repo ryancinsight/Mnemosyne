@@ -165,9 +165,23 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
     // 3. Fall back to OS allocation
     // We allocate twice the segment size to ensure we can find an aligned boundary.
     // SAFETY: SEGMENT_MAPPING_SIZE is non-zero and aligned. We call B::allocate.
-    let raw_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
+    let mut raw_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
     if raw_ptr.is_null() {
-        return None;
+        // First OS allocation failed: release all retained free segments back to
+        // the OS to reclaim virtual address space / commit charge, then retry
+        // once. This is the OOM recovery path — segments in the pool are
+        // exclusively owned by the pool (no live thread pointer to them), so
+        // `purge_segment_pool` is safe to call here.
+        //
+        // SAFETY: retained segments in the global pool are exclusively owned by
+        // the pool at this point: they are not referenced by any thread-local
+        // allocator (that would make them active, not retained), so releasing
+        // them does not invalidate any live pointer.
+        unsafe { super::release::purge_segment_pool::<B>() };
+        raw_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
+        if raw_ptr.is_null() {
+            return None;
+        }
     }
 
     let numa_node = current_numa_node();

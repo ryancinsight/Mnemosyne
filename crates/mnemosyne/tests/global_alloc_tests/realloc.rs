@@ -2,9 +2,7 @@ use super::*;
 
 #[test]
 fn realloc_within_usable_size_returns_same_pointer_and_preserves_bytes() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     let old_layout =
         Layout::from_size_align(24, 8).expect("24-byte 8-byte aligned Layout is valid");
     let ptr = unsafe { ALLOCATOR.alloc(old_layout) };
@@ -35,9 +33,7 @@ fn realloc_within_usable_size_returns_same_pointer_and_preserves_bytes() {
 
 #[test]
 fn secure_realloc_within_usable_size_uses_replacement_allocation() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     let allocator = MnemosyneAllocator::<SecurePolicy>::new();
     let old_layout =
         Layout::from_size_align(24, 8).expect("24-byte 8-byte aligned Layout is valid");
@@ -75,9 +71,7 @@ fn secure_realloc_within_usable_size_uses_replacement_allocation() {
 
 #[test]
 fn realloc_zero_size_returns_null_without_allocating() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     let layout = Layout::from_size_align(24, 8).expect("24-byte 8-byte aligned Layout is valid");
     let ptr = unsafe { ALLOCATOR.alloc(layout) };
     assert!(!ptr.is_null(), "zero-size realloc setup allocation failed");
@@ -96,9 +90,7 @@ fn realloc_zero_size_returns_null_without_allocating() {
 
 #[test]
 fn test_realloc_within_class_returns_same_ptr() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     // 32 B request lands in size class 1 (block_size = 32 B); shrinking
     // and growing-within-class must both return the same pointer with
     // no copy-and-free.
@@ -132,9 +124,7 @@ fn test_realloc_within_class_returns_same_ptr() {
 
 #[test]
 fn test_realloc_large_half_shrink_returns_same_ptr() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     let old_layout = Layout::from_size_align(4 * 1024 * 1024, 8).expect("valid layout");
     let new_size = 2 * 1024 * 1024;
     let ptr = unsafe { ALLOCATOR.alloc(old_layout) };
@@ -159,9 +149,7 @@ fn test_realloc_large_half_shrink_returns_same_ptr() {
 
 #[test]
 fn test_realloc_across_class_copies_and_returns_new_ptr() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     // 16 B request → class 0 (block_size 16). Growing to 64 B requires
     // a different size class; the realloc must allocate, copy, and
     // free. The original sentinel bytes must appear in the new
@@ -195,9 +183,7 @@ fn test_realloc_across_class_copies_and_returns_new_ptr() {
 
 #[test]
 fn test_realloc_does_not_copy_past_layout_size() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     // Pins the slow-path copy-length contract: even when the caller's
     // allocation has size-class slack (usable_size > layout.size), the
     // slow path must copy *only* layout.size bytes. If it instead
@@ -256,9 +242,7 @@ fn test_realloc_does_not_copy_past_layout_size() {
 
 #[test]
 fn test_realloc_shrink_replacement_copies_only_new_size() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     let allocator = MnemosyneAllocator::<SecurePolicy>::new();
     let old_layout = Layout::from_size_align(16 * 1024, 8).expect("valid layout");
     let new_size = 4 * 1024;
@@ -288,9 +272,7 @@ fn test_realloc_shrink_replacement_copies_only_new_size() {
 
 #[test]
 fn test_realloc_null_ptr_acts_as_alloc() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     let layout = Layout::from_size_align(0, 8).expect("valid layout");
     let ptr = unsafe { ALLOCATOR.realloc(core::ptr::null_mut(), layout, 128) };
     assert!(!ptr.is_null(), "realloc(null, 128) must allocate");
@@ -300,9 +282,7 @@ fn test_realloc_null_ptr_acts_as_alloc() {
 
 #[test]
 fn test_realloc_to_zero_size_frees() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     let layout = Layout::from_size_align(32, 8).expect("valid layout");
     let ptr = unsafe { ALLOCATOR.alloc(layout) };
     assert!(!ptr.is_null());
@@ -313,9 +293,7 @@ fn test_realloc_to_zero_size_frees() {
 
 #[test]
 fn test_realloc_preserves_alignment_for_aligned_small() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     // A 64-byte-aligned small block grown to a size whose natural size class
     // stride is NOT a multiple of 64 (200 -> class 224). The realloc result must
     // still be 64-aligned and preserve the original bytes.

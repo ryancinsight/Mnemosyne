@@ -48,9 +48,7 @@ impl Drop for GlobalAllocationGuard {
 
 #[test]
 fn test_leak_detector_integration() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
 
     thread::spawn(|| {
         let _profiler_guard = ProfilerIntegrationGuard::new();

@@ -2,9 +2,7 @@ use super::*;
 
 #[test]
 fn test_large_alignment() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     let alignments = [32 * 1024, 64 * 1024, 128 * 1024, 2 * 1024 * 1024];
     for align in alignments {
         let layout = Layout::from_size_align(4096, align)
@@ -31,9 +29,7 @@ fn test_large_alignment() {
 
 #[test]
 fn test_secure_policy() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     let allocator = MnemosyneAllocator::<SecurePolicy>::new();
     let layout = Layout::from_size_align(128, 8).expect("128-byte 8-aligned Layout is valid");
 
@@ -73,9 +69,7 @@ fn test_secure_policy() {
 
 #[test]
 fn test_cuda_backends() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     #[cfg(windows)]
     {
         // Skip on Windows: the WDDM driver does not support concurrent CPU access
@@ -129,9 +123,7 @@ where
 }
 #[test]
 fn test_hardened_policy_features() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
 
     use mnemosyne::{AllocPolicy, HardenedPolicy, mitigations};
 
