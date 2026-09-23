@@ -1123,76 +1123,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[patch.unused]]
-name = "athena-core"
-version = "0.1.1"
+name = "apollo-dctdst-core"
+version = "0.16.0"
 
 [[patch.unused]]
-name = "athena-leto"
-version = "0.1.1"
+name = "apollo-fft"
+version = "0.27.0"
 
 [[patch.unused]]
-name = "iris-viz"
-version = "0.1.0"
+name = "apollo-nufft"
+version = "0.7.0"
 
 [[patch.unused]]
-name = "hephaestus-core"
-version = "0.19.0"
-
-[[patch.unused]]
-name = "hephaestus-cuda"
-version = "0.19.0"
-
-[[patch.unused]]
-name = "hephaestus-host"
-version = "0.19.0"
-
-[[patch.unused]]
-name = "hephaestus-metal"
-version = "0.19.0"
-
-[[patch.unused]]
-name = "hephaestus-rocm"
-version = "0.19.0"
-
-[[patch.unused]]
-name = "hephaestus-wgpu"
-version = "0.19.0"
-
-[[patch.unused]]
-name = "coeus-autograd"
-version = "0.10.0"
-
-[[patch.unused]]
-name = "coeus-core"
-version = "0.10.0"
-
-[[patch.unused]]
-name = "coeus-leto"
-version = "0.10.0"
-
-[[patch.unused]]
-name = "coeus-nn"
-version = "0.10.0"
-
-[[patch.unused]]
-name = "coeus-ops"
-version = "0.10.0"
-
-[[patch.unused]]
-name = "coeus-optim"
-version = "0.10.0"
-
-[[patch.unused]]
-name = "coeus-tensor"
-version = "0.10.0"
+name = "apollo-sht"
+version = "0.7.0"
 
 [[patch.unused]]
 name = "gaia-mesh"
 version = "0.5.0"
-
-[[patch.unused]]
-name = "hyperion"
-version = "0.1.0"
 
 [[patch.unused]]
 name = "aequitas"
@@ -1200,66 +1148,6 @@ version = "0.2.0"
 
 [[patch.unused]]
 name = "aequitas-python"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "harmonia"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "ritk-block-matching"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "ritk-core"
-version = "0.10.0"
-
-[[patch.unused]]
-name = "ritk-dicom"
-version = "0.2.0"
-
-[[patch.unused]]
-name = "ritk-image"
-version = "0.4.0"
-
-[[patch.unused]]
-name = "ritk-io"
-version = "0.3.0"
-
-[[patch.unused]]
-name = "ritk-registration"
-version = "0.54.0"
-
-[[patch.unused]]
-name = "ritk-spatial"
-version = "0.2.0"
-
-[[patch.unused]]
-name = "ritk-vtk"
-version = "0.2.0"
-
-[[patch.unused]]
-name = "hermes-simd"
-version = "0.7.0"
-
-[[patch.unused]]
-name = "asclepius"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "asclepius-coeus"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "metis-platform"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "metis-ui-lang"
-version = "0.1.0"
-
-[[patch.unused]]
-name = "metis-web"
 version = "0.1.0"
 
 [[patch.unused]]
@@ -1303,6 +1191,38 @@ name = "moirai-transport"
 version = "0.6.0"
 
 [[patch.unused]]
+name = "hyperion"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "coeus-autograd"
+version = "0.10.0"
+
+[[patch.unused]]
+name = "coeus-core"
+version = "0.10.0"
+
+[[patch.unused]]
+name = "coeus-leto"
+version = "0.10.0"
+
+[[patch.unused]]
+name = "coeus-nn"
+version = "0.10.0"
+
+[[patch.unused]]
+name = "coeus-ops"
+version = "0.10.0"
+
+[[patch.unused]]
+name = "coeus-optim"
+version = "0.10.0"
+
+[[patch.unused]]
+name = "coeus-tensor"
+version = "0.10.0"
+
+[[patch.unused]]
 name = "consus-compression"
 version = "0.1.0"
 
@@ -1335,31 +1255,111 @@ name = "consus-zarr"
 version = "0.1.0"
 
 [[patch.unused]]
-name = "proteus-mat"
+name = "hermes-simd"
+version = "0.7.0"
+
+[[patch.unused]]
+name = "hephaestus-core"
+version = "0.19.0"
+
+[[patch.unused]]
+name = "hephaestus-cuda"
+version = "0.19.0"
+
+[[patch.unused]]
+name = "hephaestus-host"
+version = "0.19.0"
+
+[[patch.unused]]
+name = "hephaestus-metal"
+version = "0.19.0"
+
+[[patch.unused]]
+name = "hephaestus-rocm"
+version = "0.19.0"
+
+[[patch.unused]]
+name = "hephaestus-wgpu"
+version = "0.19.0"
+
+[[patch.unused]]
+name = "horae"
 version = "0.1.0"
 
 [[patch.unused]]
-name = "apollo-dctdst-core"
-version = "0.16.0"
-
-[[patch.unused]]
-name = "apollo-fft"
-version = "0.27.0"
-
-[[patch.unused]]
-name = "apollo-nufft"
-version = "0.7.0"
-
-[[patch.unused]]
-name = "apollo-sht"
-version = "0.7.0"
+name = "proteus-mat"
+version = "0.1.0"
 
 [[patch.unused]]
 name = "tyche-core"
 version = "0.2.0"
 
 [[patch.unused]]
-name = "horae"
+name = "ritk-block-matching"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "ritk-core"
+version = "0.10.0"
+
+[[patch.unused]]
+name = "ritk-dicom"
+version = "0.2.0"
+
+[[patch.unused]]
+name = "ritk-image"
+version = "0.4.0"
+
+[[patch.unused]]
+name = "ritk-io"
+version = "0.3.0"
+
+[[patch.unused]]
+name = "ritk-registration"
+version = "0.54.0"
+
+[[patch.unused]]
+name = "ritk-spatial"
+version = "0.2.0"
+
+[[patch.unused]]
+name = "ritk-vtk"
+version = "0.2.0"
+
+[[patch.unused]]
+name = "harmonia"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "athena-core"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "athena-leto"
+version = "0.1.1"
+
+[[patch.unused]]
+name = "metis-platform"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "metis-ui-lang"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "metis-web"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "iris-viz"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "asclepius"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "asclepius-coeus"
 version = "0.1.0"
 
 [[patch.unused]]
