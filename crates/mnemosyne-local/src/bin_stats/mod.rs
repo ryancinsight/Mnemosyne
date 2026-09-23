@@ -26,7 +26,7 @@
 //! alloc_bytes`. Internal fragmentation per class: `(alloc_bytes -
 //! requested_bytes) / alloc_bytes`.
 
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU64, Ordering};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::size_class::class_to_size;
 
@@ -35,6 +35,18 @@ mod snapshot;
 
 pub(crate) use batch::{record_alloc_with_size, record_dealloc};
 pub use snapshot::BinSnapshot;
+
+/// Flushes the TLS batch then sums every entry of a global counter array.
+///
+/// Both [`total_alloc_count`] and [`total_requested_bytes`] share this body —
+/// the only difference between them is which array is summed.
+#[inline]
+fn sum_counter(arr: &[AtomicU64; NUM_SIZE_CLASSES]) -> u64 {
+    batch::flush_current_thread();
+    arr.iter()
+        .map(|c| c.load(Ordering::Relaxed))
+        .fold(0u64, u64::saturating_add)
+}
 
 /// Returns a snapshot for size class `class`, or `None` if out of range.
 #[must_use]
@@ -100,11 +112,7 @@ pub fn total_live_bytes() -> u64 {
 /// Process-wide total allocation count across all small size classes.
 #[must_use]
 pub fn total_alloc_count() -> u64 {
-    batch::flush_current_thread();
-    batch::ALLOC_COUNT
-        .iter()
-        .map(|c| c.load(Ordering::Relaxed))
-        .fold(0u64, u64::saturating_add)
+    sum_counter(&batch::ALLOC_COUNT)
 }
 
 /// Resets all per-class counters to zero.
@@ -164,11 +172,7 @@ pub fn summary_line() -> std::string::String {
 /// Zero until `record_alloc_with_size` call sites are wired (done in Phase 19).
 #[must_use]
 pub fn total_requested_bytes() -> u64 {
-    batch::flush_current_thread();
-    batch::REQUESTED_BYTES
-        .iter()
-        .map(|c| c.load(Ordering::Relaxed))
-        .fold(0u64, u64::saturating_add)
+    sum_counter(&batch::REQUESTED_BYTES)
 }
 
 /// Process-wide internal fragmentation ratio:
