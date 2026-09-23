@@ -28,7 +28,13 @@ pub struct HugePoolStats {
 ///
 /// All fields are individually monotone-non-decreasing relaxed reads;
 /// they are not jointly consistent (no single atomic snapshot).
+///
+/// `#[non_exhaustive]`: this snapshot has gained fields three times
+/// (`reset_segments`/`reset_calls`, `oom_retries`/`oom_retry_successes`) as
+/// telemetry grew, and will again — a growing counter set is exactly the
+/// forward-compatibility case the attribute exists for.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct SegmentPoolStats {
     /// Segments currently held in the warm cache.
     pub retained: usize,

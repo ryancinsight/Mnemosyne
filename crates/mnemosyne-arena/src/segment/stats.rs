@@ -4,7 +4,13 @@ use super::alloc::SEGMENT_MAPPING_SIZE;
 use super::pool::HasSegmentPool;
 
 /// Snapshot of arena-level segment cache state.
+///
+/// `#[non_exhaustive]`: this snapshot has gained fields repeatedly as
+/// telemetry grew (huge-pool accounting, reset counters, and now
+/// `oom_retries`/`oom_retry_successes`) — a growing counter set is exactly
+/// the forward-compatibility case the attribute exists for.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ArenaMemoryStats {
     /// Free segments the pool currently holds for reuse.
     pub retained_free_segments: usize,
