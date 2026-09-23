@@ -152,9 +152,17 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// # Safety
     ///
+    /// Increments the defragmentation counter and triggers a periodic sweep
+    /// when it overflows 64 operations.
+    ///
+    /// Non-generic: the sweep itself reads no policy const, so removing `<P>`
+    /// compiles this gate once per `B` instead of once per `(P, B)` pair.
+    ///
+    /// # Safety
+    ///
     /// The caller must hold exclusive access to this thread allocator.
     #[inline(always)]
-    pub unsafe fn record_defrag_operation<P: mnemosyne_core::AllocPolicy>(
+    pub unsafe fn record_defrag_operation(
         &mut self,
         is_allocating: bool,
     ) {
@@ -162,13 +170,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         if self.defrag_counter >= 64 {
             // SAFETY: the caller holds exclusive access to this allocator per the
             // `# Safety` contract, which is the precondition the cold sweep needs.
-            unsafe { self.run_periodic_defragmentation::<P>(is_allocating) };
+            unsafe { self.run_periodic_defragmentation(is_allocating) };
         }
     }
 
     #[cold]
     #[inline(never)]
-    unsafe fn run_periodic_defragmentation<P: mnemosyne_core::AllocPolicy>(
+    unsafe fn run_periodic_defragmentation(
         &mut self,
         is_allocating: bool,
     ) {
@@ -178,7 +186,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // allocator; the sweep walks only this allocator's own page/segment
             // lists. The early return preserves the in-progress `is_allocating`
             // flag so the re-entrant caller restores it.
-            unsafe { self.periodic_defragmentation_sweep::<P>() };
+            unsafe { self.periodic_defragmentation_sweep() };
             return;
         }
 
@@ -189,7 +197,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         //
         // SAFETY: as above, `&mut self` grants exclusive access to this
         // allocator's lists.
-        unsafe { self.periodic_defragmentation_sweep::<P>() };
+        unsafe { self.periodic_defragmentation_sweep() };
     }
 
     /// Updates the active slicing segment marker.

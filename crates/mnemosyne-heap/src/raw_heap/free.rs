@@ -143,7 +143,7 @@ impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> RawHeap<P, B
         if became_empty {
             // SAFETY: `alloc` is the exclusively-borrowed allocator; recording
             // a defrag operation only mutates its own bookkeeping.
-            unsafe { alloc.record_defrag_operation::<P>(true) };
+            unsafe { alloc.record_defrag_operation(true) };
         }
 
         self.is_allocating.set(false);

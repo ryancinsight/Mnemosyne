@@ -194,7 +194,7 @@ pub(super) unsafe fn thread_free_classified<
                 };
                 // SAFETY: `alloc` is the exclusively-borrowed owning allocator
                 // with `is_allocating` raised, the precondition of the cold sweep.
-                unsafe { alloc.record_defrag_operation::<P>(true) };
+                unsafe { alloc.record_defrag_operation(true) };
                 unsafe {
                     crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(owner_allocator, false)
                 };

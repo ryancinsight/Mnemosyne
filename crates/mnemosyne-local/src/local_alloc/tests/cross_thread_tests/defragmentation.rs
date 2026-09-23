@@ -161,7 +161,7 @@ fn test_periodic_defragmentation_segment_reclaim() {
 
         // Run sweep
         unsafe {
-            alloc.periodic_defragmentation_sweep::<StandardPolicy>();
+            alloc.periodic_defragmentation_sweep();
         }
 
         // Verify we still have 3 segments (none reclaimed because count < 4)
@@ -195,7 +195,7 @@ fn test_periodic_defragmentation_segment_reclaim() {
 
         // Run sweep
         unsafe {
-            alloc.periodic_defragmentation_sweep::<StandardPolicy>();
+            alloc.periodic_defragmentation_sweep();
         }
 
         // Verify that one segment (seg4, which is head of list, or one of the empty ones)

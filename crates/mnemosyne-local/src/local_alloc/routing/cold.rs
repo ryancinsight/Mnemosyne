@@ -34,7 +34,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // its guarded branch.
         // SAFETY: this is an `unsafe fn`; the caller upholds the allocator
         // invariants, and `record_defrag_operation` only modifies bookkeeping.
-        unsafe { self.record_defrag_operation::<P>(true) };
+        unsafe { self.record_defrag_operation(true) };
         // 1. Move the current active page to full_pages if it is indeed full.
         // SAFETY: `class` is a caller-validated size-class index
         // (< `NUM_SIZE_CLASSES`), so it is a valid index into `active_pages`.

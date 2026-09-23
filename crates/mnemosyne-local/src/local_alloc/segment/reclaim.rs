@@ -3,7 +3,6 @@ use crate::local_alloc::page::{push_page_front, unlink_page_from_list, with_page
 use core::ptr::NonNull;
 use mnemosyne_arena::{HasSegmentPool, deallocate_segment, try_deallocate_segment};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
-use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::types::{Page, Segment, SegmentOwner};
 
 const MIN_RETAINED_OWNED_SEGMENTS: usize = 3;
@@ -192,9 +191,16 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// consolidating cross-thread frees, identifying empty pages, and reclaiming empty segments.
     ///
     /// # Safety
+    /// Sweeps all owned segments, reclaims empty ones, and moves zero-alloc
+    /// pages to the empty list.
+    ///
+    /// Non-generic: no `P::` const is read anywhere in this function or its
+    /// callees (`unlink_segment_pages`, `detach_and_release_segment`). The
+    /// `<P: AllocPolicy>` parameter was vestigial — its removal compiles this
+    /// 140-line sweep once per `B` rather than once per `(P, B)`.
     ///
     /// The caller must ensure that the allocator is in a safe, non-reentrant state.
-    pub unsafe fn periodic_defragmentation_sweep<P: AllocPolicy>(&mut self) {
+    pub unsafe fn periodic_defragmentation_sweep(&mut self) {
         let mut curr = self.owned_segments_head;
         while !curr.is_null() {
             let segment = curr;
