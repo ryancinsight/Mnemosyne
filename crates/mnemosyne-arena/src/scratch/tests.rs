@@ -1190,4 +1190,3 @@ fn scratch_pool_unbounded_path_allows_geometric_overshoot() {
         );
     }
 }
-
