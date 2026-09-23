@@ -187,7 +187,18 @@ impl<T: ScratchElement> ScratchPool<T> {
             // Each nesting level gets its own slot index.
             let vec = unsafe { &mut *self.slots[idx].get() };
             if n > vec.len() {
-                vec.ensure_len(n);
+                // The bounded path uses exact growth so the slot's capacity
+                // tracks the provision precisely: `grow_geometric` would
+                // overshoot (e.g. a prior capacity of 8704 doubles to 17 408
+                // for a 16 384 request), making a subsequent `release`
+                // `shrink_to(provision)` a real reallocation instead of a
+                // no-op. The unbounded path keeps geometric growth for
+                // amortized reuse.
+                if PROVISION {
+                    vec.ensure_len_exact(n);
+                } else {
+                    vec.ensure_len(n);
+                }
                 // Republish this slot's capacity to its mirror. Reading it
                 // back through the live exclusive `vec` is the reborrow the
                 // accessors themselves must not perform, so every slot keeps a

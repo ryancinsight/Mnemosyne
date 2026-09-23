@@ -25,6 +25,11 @@ impl<T: ScratchElement> AlignedVec<T> {
 
     /// Ensures capacity for at least `min_len` elements. Only grows; never
     /// shrinks. Only zeroes **newly** allocated elements, not existing ones.
+    ///
+    /// Uses geometric (doubling) growth so repeated calls are amortized.
+    /// When exact capacity is required (e.g., the bounded scratch path where
+    /// a provision bounds the retained size), use
+    /// [`ensure_len_exact`][Self::ensure_len_exact] instead.
     #[inline]
     pub fn ensure_len(&mut self, min_len: usize) {
         if min_len <= self.len {
@@ -39,6 +44,36 @@ impl<T: ScratchElement> AlignedVec<T> {
         // valid bit pattern for every `ScratchElement` type (`f32`/`f64`/`u8`/
         // `eunomia::Complex`), so zeroing produces valid initialized `T`
         // values.
+        unsafe {
+            let dst = self.ptr.add(self.len);
+            core::ptr::write_bytes(dst, 0, min_len - self.len);
+        }
+        self.len = min_len;
+    }
+
+    /// Like [`ensure_len`][Self::ensure_len] but grows to exactly `min_len`,
+    /// never more.
+    ///
+    /// Where `ensure_len` calls `grow_geometric` (which may overshoot by up
+    /// to `capacity`) to amortize reallocation, `ensure_len_exact` calls
+    /// `grow_to` so the allocation is sized to the request with no headroom.
+    /// Use this on paths where a caller-stated provision bounds the retained
+    /// capacity (e.g. `borrow_slot::<PROVISION=true>` in
+    /// `ScratchPool`), so that a subsequent `shrink_to(provision)` is an
+    /// inexpensive no-op rather than a real deallocation.
+    ///
+    /// Callers that rely on amortized growth should use `ensure_len`.
+    #[inline]
+    pub(crate) fn ensure_len_exact(&mut self, min_len: usize) {
+        if min_len <= self.len {
+            return;
+        }
+        if min_len > self.capacity {
+            self.grow_to(min_len);
+        }
+        // SAFETY: capacity was grown to exactly `min_len` above, so the range
+        // `[self.len, min_len)` lies fully inside the allocation. All-zero is a
+        // valid bit pattern for every `ScratchElement` type.
         unsafe {
             let dst = self.ptr.add(self.len);
             core::ptr::write_bytes(dst, 0, min_len - self.len);

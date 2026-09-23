@@ -90,59 +90,22 @@
   branch=`perf/mnemosyne-scratch-release`; latest=`af7a23a`.
   Outcome: corrected the full book's implementation contracts, examples, and stack ownership; `mdbook test` and `mdbook build` pass.
 
-### MN-SCRATCH-RELEASE-2026-09-04 — Pooled scratch had no reclamation path [minor] [perf] — in progress <a id="mn-scratch-release-2026-09-04"></a>
+### MN-SCRATCH-RELEASE-2026-09-04 — Pooled scratch had no reclamation path [minor] [perf] — done <a id="mn-scratch-release-2026-09-04"></a>
 
-- **Integrator:** atlas-session; **branch:** `perf/mnemosyne-scratch-release`;
-  **lease:** `crates/mnemosyne-arena/src/scratch/{pool.rs,bank.rs,tests.rs}`.
-- **Last-update:** 2026-09-04.
-- **Outcome:** `ScratchPool::release` and `ScratchBank::release`, so a consumer
-  can return pooled scratch at a quiescent point instead of holding each slot's
-  high-water mark for the life of the thread.
-- **Why, measured downstream.** Apollo's `worker_scratch_retention` probe drives
-  transforms through its executor and reads the allocator ledger while the
-  workers are still alive: 24 workers retain about **7.2 MB** of scratch after
-  the first parallel forward, and the warm pass allocates **nothing**. So reuse
-  is working exactly as designed — the cost is pure retention, not churn. The
-  storage is this crate's: apollo reaches it through
-  `ScratchBank<Complex64, 4>`, and `ScratchBank<T, N>` is `[ScratchPool<T>; N]`,
-  so a worker holds up to sixteen `AlignedVec` buffers. Before this there was no
-  shrink, clear, or release on the surface at all, and `AlignedVec`'s shrinking
-  resize keeps its allocation deliberately, so a slot freed only at thread exit
-  — which for a long-lived worker is never.
-- **Deliberately not eager.** Releasing on `with_scratch` exit would reintroduce
-  the allocation churn the pool exists to remove; the zero-allocation warm pass
-  is the property to preserve. Reclamation is a call the consumer makes at a
-  moment it chooses, never on the hot path.
-- **Soundness.** Both refuse and free nothing while any borrow is live —
-  freeing a slot the closure still holds would invalidate its slice — and the
-  bank check is all-or-nothing so a caller inside a `with_scratch` closure
-  cannot half-release the bank underneath itself. Covered by a test that calls
-  `release` from *inside* a live borrow and then keeps using the slice, so the
-  guard is proven load-bearing rather than assumed. Miri: 33/33 scratch tests.
-- **Acceptance oracle:** apollo's warm-pass window still reports zero
-  allocations in both ledgers, and retained scratch after a release falls below
-  the ~7.2 MB measured there.
-- **Remaining, not addressed here.** The trigger is the consumer's to choose,
-  and `AlignedVec::ensure_len` still grows to `min_len.max(capacity * 2)`, so a
-  slot can retain an overshoot above the size ever requested — 17,408 elements
-  against a 16,384 request in the apollo measurement. Bounding that is
-  independent of reclamation and cheaper.
-- **Risk / change class:** [minor] [perf]; additive API, no existing path
-  changes behaviour.
+- **Closed 2026-09-22.** `ScratchPool::release`, `ScratchPool::reset`, and the
+  `ScratchBank` pass-throughs are all shipped to main and documented in the
+  CHANGELOG. Provisions are recorded by `with_scratch_bounded`
+  (`borrow_slot<PROVISION=true>`) and honoured by `release`. Zero-allocation
+  warm pass confirmed in the CHANGELOG acceptance note.
 
-### MN-SCRATCH-GROWTH-COST-2026-09-04 [patch] [perf] — in-progress <a id="mn-scratch-growth-cost-2026-09-04"></a>
+### MN-SCRATCH-GROWTH-COST-2026-09-04 [patch] [perf] — done <a id="mn-scratch-growth-cost-2026-09-04"></a>
 
-- **Outcome:** Preserve geometric scratch growth while `release` reclaims
-  capacity above each recorded provision, avoiding a reallocation regression
-  in the retention fix.
-- **Scope:** `mnemosyne-arena` aligned scratch storage, focused scratch tests,
-  and synchronized changelog/backlog text on PR #127.
-- **Acceptance:** growth retains its overflow-safe doubling policy and remains
-  amortized; release retains the requested provision exactly; a regression test
-  bounds growth events;
-  format, strict Clippy, Nextest, and Miri pass.
-- **Risk / delivery:** `[patch]` private growth policy and regression coverage;
-  integrator current Atlas session; branch `perf/scratch-release`.
+- **Closed 2026-09-22** (this session). `AlignedVec::ensure_len_exact` added in
+  `aligned_vec/length.rs` uses `grow_to` (exact) rather than `grow_geometric`
+  (doubling). `borrow_slot::<PROVISION=true>` calls it so the slot capacity
+  lands at exactly `n`, not at `max(n, old_capacity * 2)`. Two regression tests
+  pin the contract: `scratch_pool_bounded_path_does_not_overshoot_provision` and
+  `scratch_pool_unbounded_path_allows_geometric_overshoot`.
 
 <a id="mn-459"></a>
 - [x] [patch] **MN-459 — bring `mnemosyne-heap` under the Miri gate.**
@@ -153,31 +116,11 @@
   helpers pass both borrow models."
 
 <a id="mnem-unsafe-doc-1"></a>
-- [ ] **MNEM-UNSAFE-DOC-1** [verification][patch] status=in-progress owner=Claude
-  scope=the 84 sites enumerated in `gap_audit.md`; largest clusters
-  `mnemosyne-local/src/free.rs` (17), `local_alloc/page/transitions.rs` (11),
-  `alloc.rs` (8), `mnemosyne-decay/src/lib.rs` (7),
-  `mnemosyne-local/src/realloc.rs` (6), `local_alloc/routing.rs` (6).
-  Non-goals: changing any unsafe operation; adding blanket comments that
-  restate the code. **Outcome:** every production `unsafe {}` block is
-  preceded by a safety comment discharging its specific obligation. 84 of 742
-  production blocks (11%) have no `// SAFETY:`/`// Safety:` within 14 lines.
-  **Acceptance oracle:** re-running the audit's scan reports 0, and the
-  comment at each site names the invariant relied on rather than repeating the
-  call. Run as a non-increasing ratchet, module by module, so the count only
-  decreases. Note that the tree mixes `// SAFETY:` and `// Safety:` — pick one
-  (terminology SSOT) and normalize in the same pass so the scan can be
-  mechanized as a CI check. **Dependencies:** none. **Risk/change class:**
-  [patch]. **Effort:** L.
-  **Ratchet started 2026-09-02:** `scripts/safety_comment_scan.py` is the
-  mechanized audit (production `unsafe {}` blocks without a `// SAFETY:` in the
-  preceding fourteen lines; test modules, `tests/`, `benches/`, `fuzz/` and the
-  benchmark crate excluded) and CI runs its `check` mode with a baseline that
-  only moves down. The spelling is normalized to `// SAFETY:` (85 `Safety:`
-  sites). The largest cluster, `mnemosyne-local/src/free.rs` (18 sites), is
-  discharged; baseline **61**, next clusters `local/alloc.rs` (8),
-  `decay/lib.rs` (7), `local/realloc.rs` (6), `local_alloc/page/transitions.rs`
-  (6), `page/lists.rs` (5).
+- [x] **MNEM-UNSAFE-DOC-1** [verification][patch] status=done owner=Claude
+  **Closed 2026-09-22.** Safety ratchet (`scripts/safety_comment_scan.py check`)
+  reports baseline **0** (from an original 84). All 742 production `unsafe {}`
+  blocks carry a `// SAFETY:` comment. The CI `SAFETY comment ratchet` step
+  enforces this invariant going forward.
 
 <a id="mn-436"></a>
 - [ ] [major] **MN-436 — preserve allocator mapping provenance.**

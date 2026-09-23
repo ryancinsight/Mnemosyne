@@ -4,6 +4,21 @@
 
 ### Added
 
+- `AlignedVec::ensure_len_exact` grows to exactly the requested capacity
+  (using `grow_to`) rather than applying the geometric doubling policy of
+  `ensure_len`. The bounded scratch path (`ScratchPool::with_scratch_bounded`,
+  `borrow_slot::<PROVISION=true>`) now calls `ensure_len_exact` so a slot's
+  capacity lands precisely at the provision and a subsequent `release` is a
+  no-op instead of a real deallocation. Two regression tests pin the contract:
+  `scratch_pool_bounded_path_does_not_overshoot_provision` and
+  `scratch_pool_unbounded_path_allows_geometric_overshoot`.
+  (MN-SCRATCH-GROWTH-COST-2026-09-04)
+
+- `mnemosyne-decay` decomposed into a deep vertical module hierarchy (SRP):
+  `engine.rs` — adaptive thread loop; `events.rs` — Condvar-based step/wake
+  signals; `orphan.rs` — per-backend orphan-pool draining. `lib.rs` is now a
+  164-line public-API façade. No public API change.
+
 - `allocate_segment` retries after a purge on the first OS allocation failure.
   When `B::allocate(SEGMENT_MAPPING_SIZE)` returns null, the allocator now
   calls `purge_segment_pool::<B>()` to release all retained free segments back
@@ -16,7 +31,7 @@
   into a new `aligned_vec/query.rs` module (SRP). `aligned_vec/length.rs`
   is now focused on operations that change the buffer's length or content;
   `query.rs` holds all delegating read-only, sort, reorder, and chunked-
-  iteration methods. No public API change; all 409 tests pass.
+  iteration methods. No public API change.
 
 ### Changed
 
