@@ -14,19 +14,33 @@
   open pull request, and both are six days old:
   - `origin/refactor/mnemosyne-free-helpers-split` -- 13 commits, 40 files.
     Its free canary, `reset_bin_stats` and sized-free validation all reached
-    main by other routes; what it still holds alone is **purge-and-retry on
-    the first OS allocation failure**, which appears nowhere on main. That is
-    an allocator recovery path and deserves its own item, not a silent port.
+    main by other routes; what it still held alone was **purge-and-retry on
+    the first OS allocation failure**. **Landed 2026-09-23**, re-derived
+    natively against current main in `crates/mnemosyne-arena/src/segment/alloc/allocate.rs`
+    rather than ported from the stale branch: bounded to one purge and one
+    retry, with the attempt and its outcome surfaced through two new
+    counters (`ArenaMemoryStats::oom_retries` / `oom_retry_successes`,
+    matching `SegmentPoolStats`) and a test
+    (`segment::tests::first_os_allocation_failure_purges_and_retries`) that
+    forces the first `B::allocate` call to fail and asserts the retry
+    succeeds and both counters move. This branch's content is now fully
+    accounted for.
   - `origin/feat/phase10-improvements` -- 21 commits, 43 files, including a
     149-line addition to `mnemosyne/src/stats.rs`. Not assessed beyond its
-    shape; the same question applies to each commit.
+    shape; the same question applies to each commit. Still open.
+- **Integrator: claude-opus-5.5 (takeover 2026-09-23).** The item carried no
+  integrator and no recorded activity; taken over to land the
+  free-helpers-split branch's sole remaining content.
 - **Why filed rather than ported.** Both predate the free-list randomization
   that landed in #137 and touch the same allocator paths, so a rebase is a
   re-derivation, not a merge. Each branch's unique commits are read and
   either re-derived against current main or dropped with the reason recorded.
 - **Acceptance:** every commit on both branches is either re-derived onto
   main or recorded here as superseded, and the branches are deleted from
-  origin.
+  origin. `refactor/mnemosyne-free-helpers-split` meets this now; deletion
+  from origin is deferred to whoever closes `feat/phase10-improvements`, so
+  both branches are swept in one pass rather than half now, half later.
+  `feat/phase10-improvements` remains open.
 
 <a id="mn-test-lock-poisoning-hides-results"></a>
 

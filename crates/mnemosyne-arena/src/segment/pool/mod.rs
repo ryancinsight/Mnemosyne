@@ -40,6 +40,12 @@ pub struct SegmentPoolStats {
     pub reset_segments: usize,
     /// Cumulative reset-pass invocations.
     pub reset_calls: usize,
+    /// Cumulative purge-and-retry attempts after a first OS allocation
+    /// failure (`allocate_segment`'s OOM recovery path).
+    pub oom_retries: usize,
+    /// Cumulative purge-and-retry attempts whose retried allocation
+    /// succeeded, a subset of `oom_retries`.
+    pub oom_retry_successes: usize,
 }
 
 /// Sealed trait module to protect architectural invariants.

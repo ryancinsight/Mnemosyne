@@ -35,6 +35,12 @@ pub struct ArenaMemoryStats {
     /// cache across all NUMA nodes — typically the dominant share of retained
     /// RSS.
     pub retained_huge_bytes: usize,
+    /// Cumulative purge-and-retry attempts `allocate_segment` made after a
+    /// first OS allocation failure (its OOM recovery path).
+    pub oom_retries: usize,
+    /// Cumulative purge-and-retry attempts whose retried allocation
+    /// succeeded, a subset of `oom_retries`.
+    pub oom_retry_successes: usize,
 }
 
 /// Outcome of attempting to release a segment mapping.
@@ -66,5 +72,7 @@ pub fn arena_memory_stats<B: HasSegmentPool>() -> ArenaMemoryStats {
         reset_calls: pool.reset_call_count(),
         retained_huge_blocks: huge_pool.retained_blocks(),
         retained_huge_bytes: huge_pool.retained_bytes(),
+        oom_retries: pool.oom_retry_count(),
+        oom_retry_successes: pool.oom_retry_success_count(),
     }
 }

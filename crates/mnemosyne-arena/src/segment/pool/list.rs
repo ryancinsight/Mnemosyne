@@ -23,6 +23,8 @@ pub struct NodeSegmentPool {
     purge_calls: AtomicUsize,
     reset_segments: AtomicUsize,
     reset_calls: AtomicUsize,
+    oom_retries: AtomicUsize,
+    oom_retry_successes: AtomicUsize,
 }
 
 impl Default for NodeSegmentPool {
@@ -41,6 +43,8 @@ impl NodeSegmentPool {
             purge_calls: AtomicUsize::new(0),
             reset_segments: AtomicUsize::new(0),
             reset_calls: AtomicUsize::new(0),
+            oom_retries: AtomicUsize::new(0),
+            oom_retry_successes: AtomicUsize::new(0),
         }
     }
 
@@ -209,5 +213,27 @@ impl NodeSegmentPool {
     pub(crate) fn record_reset(&self, count: usize) {
         self.reset_calls.fetch_add(1, Ordering::Relaxed);
         self.reset_segments.fetch_add(count, Ordering::Relaxed);
+    }
+
+    /// Cumulative purge-and-retry attempts recorded against this pool after
+    /// a first OS allocation failure (`allocate_segment`'s OOM recovery path).
+    #[inline]
+    pub fn oom_retry_count(&self) -> usize {
+        self.oom_retries.load(Ordering::Relaxed)
+    }
+
+    /// Cumulative purge-and-retry attempts whose retried `B::allocate` call
+    /// succeeded, a subset of [`Self::oom_retry_count`].
+    #[inline]
+    pub fn oom_retry_success_count(&self) -> usize {
+        self.oom_retry_successes.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub(crate) fn record_oom_retry(&self, succeeded: bool) {
+        self.oom_retries.fetch_add(1, Ordering::Relaxed);
+        if succeeded {
+            self.oom_retry_successes.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }

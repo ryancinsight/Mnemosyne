@@ -4,6 +4,17 @@
 
 ### Added
 
+- `allocate_segment` now recovers from a first OS allocation failure by
+  purging every retained free segment back to the OS and retrying the
+  mapping once, bounded to one purge and one retry. This covers the
+  working-set-spike scenario where the retained pool holds address space
+  the OS temporarily needs elsewhere. The attempt and its outcome are
+  observable through two new counters, `ArenaMemoryStats::oom_retries` and
+  `oom_retry_successes` (and the matching `SegmentPoolStats` fields),
+  following the crate's existing counter-based telemetry convention rather
+  than adding a tracing dependency to a `no_std`-capable crate
+  (MN-STALE-BRANCH-INVENTORY-2026-09-09).
+
 - `ScratchPool::with_scratch_bounded` and `ScratchBank::with_scratch_bounded`
   record each depth's high-water request (the slot's *provision*), and
   `ScratchPool::release` / `ScratchPool::reset` (plus `ScratchBank`

@@ -165,9 +165,29 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
     // 3. Fall back to OS allocation
     // We allocate twice the segment size to ensure we can find an aligned boundary.
     // SAFETY: SEGMENT_MAPPING_SIZE is non-zero and aligned. We call B::allocate.
-    let raw_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
+    let mut raw_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
     if raw_ptr.is_null() {
-        return None;
+        // First OS allocation failed: release every retained free segment
+        // back to the OS to reclaim the address space / commit charge a
+        // transient working-set spike may be holding, then retry exactly
+        // once. Bounded to one purge and one retry: a still-exhausted OS
+        // fails fast on the second call rather than looping.
+        //
+        // SAFETY: segments retained in the pool at this point are
+        // exclusively pool-owned — a segment a thread-local allocator still
+        // references is "active", not "retained" — so releasing them
+        // invalidates no live pointer, and the retried `B::allocate` call
+        // follows the same contract as the first.
+        unsafe { super::release::purge_segment_pool::<B>() };
+        raw_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
+        // Surfaces the recovery attempt and its outcome as a stats counter
+        // (`ArenaMemoryStats::oom_retries` / `oom_retry_successes`) — the
+        // crate has no tracing dependency, so telemetry follows the
+        // existing `purge_calls`/`reset_calls` counter convention.
+        B::global_segment_pool().record_oom_retry(!raw_ptr.is_null());
+        if raw_ptr.is_null() {
+            return None;
+        }
     }
 
     let numa_node = current_numa_node();
