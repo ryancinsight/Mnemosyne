@@ -2,14 +2,34 @@
 //! `borrow_slot` dispatch, the safe `with_scratch`/`with_scratch_bounded`
 //! wrappers, and the unsafe `with_scratch_uninit` raw-pointer variant.
 //!
-//! All three forms share the same RAII `BorrowGuard` to restore `borrow_depth`
-//! on unwind, and diverge only in the PROVISION const-param that controls
-//! whether the high-water mark is updated.
+//! All three forms share the RAII `BorrowGuard` defined at module level
+//! (SSOT) to restore `borrow_depth` on unwind. The divergence point is the
+//! `PROVISION` const-param that controls whether the high-water mark is
+//! updated.
 
 use super::super::aligned_vec::AlignedVec;
 use super::super::element::ScratchElement;
 use super::{MAX_POOL_SLOTS, ScratchPool};
 use core::cell::Cell;
+
+/// RAII guard that restores `borrow_depth` to its pre-borrow value on drop.
+///
+/// Using a named type rather than a closure (a) documents the invariant at the
+/// definition site, (b) is the SSOT for the restore logic shared by
+/// `borrow_slot` and `with_scratch_uninit`, and (c) unwind-safe: `drop` runs
+/// whether the closure returns normally or panics, matching the expected
+/// "depth is always restored" guarantee.
+struct BorrowGuard<'a> {
+    depth: &'a Cell<u8>,
+    original: u8,
+}
+
+impl Drop for BorrowGuard<'_> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        self.depth.set(self.original);
+    }
+}
 
 impl<T: ScratchElement> ScratchPool<T> {
     /// Provides a mutable aligned scratch slice of **exactly** `n` elements
@@ -56,18 +76,6 @@ impl<T: ScratchElement> ScratchPool<T> {
         n: usize,
         f: impl FnOnce(&mut [T]) -> R,
     ) -> R {
-        struct BorrowGuard<'a> {
-            depth: &'a Cell<u8>,
-            original: u8,
-        }
-
-        impl Drop for BorrowGuard<'_> {
-            #[inline(always)]
-            fn drop(&mut self) {
-                self.depth.set(self.original);
-            }
-        }
-
         let depth = self.borrow_depth.get();
         if depth < MAX_POOL_SLOTS as u8 {
             self.borrow_depth.set(depth + 1);
@@ -133,16 +141,6 @@ impl<T: ScratchElement> ScratchPool<T> {
     /// Every element of the returned slice must be initialized before any
     /// safe read on the same allocation.
     pub unsafe fn with_scratch_uninit<R>(&self, n: usize, f: impl FnOnce(*mut [T]) -> R) -> R {
-        struct BorrowGuard<'a> {
-            depth: &'a Cell<u8>,
-            original: u8,
-        }
-        impl Drop for BorrowGuard<'_> {
-            #[inline(always)]
-            fn drop(&mut self) {
-                self.depth.set(self.original);
-            }
-        }
         let depth = self.borrow_depth.get();
         if depth < MAX_POOL_SLOTS as u8 {
             self.borrow_depth.set(depth + 1);
