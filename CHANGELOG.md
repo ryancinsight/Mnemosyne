@@ -4,6 +4,14 @@
 
 ### Added
 
+- A new book chapter, [Guard Pages](docs/book/guard_pages.md), documents the
+  `MemoryBackend::make_guard` seam, the per-backend `SUPPORTS_MAKE_GUARD`
+  support matrix, and the arena's opt-in `segment-tail-guards` /
+  `segment-header-guards` consumer features — content the ten-chapter book
+  closure left out. Cross-linked from the Hardened and Secure Policies and
+  Segment Lifecycle chapters; `SUMMARY.md` gained a nested entry under
+  chapter 8.
+
 - `allocate_segment` now recovers from a first OS allocation failure by
   purging every retained free segment back to the OS and retrying the
   mapping once, bounded to one purge and one retry. This covers the

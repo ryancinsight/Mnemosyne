@@ -4,7 +4,9 @@ Mnemosyne provides compile-time policy choices for security-sensitive or
 adversarial contexts. `StandardPolicy`, `SecurePolicy`, and `HardenedPolicy`
 are zero-sized types; their associated constants specialize the allocator
 without storing a runtime mode flag. The full policy matrix and usage surface
-are in the [allocation policy chapter](alloc_policies.md).
+are in the [allocation policy chapter](alloc_policies.md). Guard pages are a
+separate, opt-in layout-level defense that applies independently of which
+policy is in use; see [Guard Pages](guard_pages.md).
 
 ## `SecurePolicy`
 
