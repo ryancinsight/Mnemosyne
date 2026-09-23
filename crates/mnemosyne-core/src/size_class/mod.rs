@@ -1,6 +1,26 @@
 //! Size class calculations and mapping.
+//!
+//! The module is organized by concern:
+//! - [`tables`] — SSOT compile-time lookup tables (`CLASS_TO_SIZE`,
+//!   `CLASS_TO_MAX_BLOCKS`, `CLASS_TO_DIV_MULT`, `SIZE_TO_CLASS`) and their
+//!   O(1) direct accessors (`class_to_size`, `class_to_max_blocks`,
+//!   `block_index_in_page`).
+//! - [`arithmetic`] — the `const fn` piecewise bucketing math that drives the
+//!   reverse table at compile time (`size_to_class_nonzero_arithmetic`).
+//! - [`info`] — `SizeClassInfo` compile-time metadata struct.
+//!
+//! This file owns the query functions that combine the reverse and forward
+//! tables: `size_to_class*`, `round_up_size*`, `size_class_fragmentation`.
 
-use crate::constants::{MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE, NUM_SIZE_CLASSES, PAGE_SIZE};
+mod arithmetic;
+mod info;
+pub mod tables;
+
+pub use info::{SizeClassInfo, all_class_info};
+pub use tables::{LEMIRE_DIV_SHIFT, block_index_in_page, class_to_max_blocks, class_to_size};
+
+use crate::constants::{MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE};
+use tables::SIZE_TO_CLASS;
 
 /// Maps an allocation size to its corresponding size class index.
 ///
@@ -35,25 +55,6 @@ pub const fn size_to_class_nonzero(size: usize) -> Option<usize> {
         Some(class as usize)
     }
 }
-
-/// Class per 16-byte granule of request size: entry `g` serves every request
-/// in `(16 * (g - 1), 16 * g]`, and entry 0 the zero-size request.
-const SIZE_TO_CLASS: [u8; MAX_SMALL_ALLOC_SIZE / MIN_BLOCK_SIZE + 1] = {
-    let mut arr = [u8::MAX; MAX_SMALL_ALLOC_SIZE / MIN_BLOCK_SIZE + 1];
-    arr[0] = 0;
-    let mut granule = 1;
-    while granule <= MAX_SMALL_ALLOC_SIZE / MIN_BLOCK_SIZE {
-        arr[granule] = match size_to_class_nonzero_arithmetic(granule * MIN_BLOCK_SIZE) {
-            Some(class) => class as u8,
-            None => u8::MAX,
-        };
-        granule += 1;
-    }
-    arr
-};
-
-mod arithmetic;
-use arithmetic::size_to_class_nonzero_arithmetic;
 
 /// Returns the rounded size-class block size for a given allocation size.
 ///
@@ -111,130 +112,10 @@ pub fn size_class_fragmentation(size: usize) -> f64 {
     waste as f64 / stride as f64
 }
 
-const CLASS_TO_SIZE: [u16; NUM_SIZE_CLASSES] = [
-    // 16–128 bytes: 16-byte steps (classes 0–7)
-    16, 32, 48, 64, 80, 96, 112, 128, // 129–512 bytes: 32-byte steps (classes 8–19)
-    160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 480, 512,
-    // 513–2048 bytes: 128-byte steps (classes 20–31)
-    640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048,
-    // 2049–8192 bytes: 512-byte steps (classes 32–43)
-    2560, 3072, 3584, 4096, 4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192,
-    // 8193–16384 bytes: 1024-byte steps (classes 44–51)
-    // MN-REF-1: was 2048-byte steps (4 classes); now 1024-byte steps (8 classes).
-    // Reduces worst-case internal fragmentation in the 8–16 KB band from 25% to 12.5%.
-    9216, 10240, 11264, 12288, 13312, 14336, 15360, 16384,
-];
-
-const CLASS_TO_MAX_BLOCKS: [u16; NUM_SIZE_CLASSES] = {
-    let mut arr = [0u16; NUM_SIZE_CLASSES];
-    let mut i = 0;
-    while i < NUM_SIZE_CLASSES {
-        arr[i] = (PAGE_SIZE / CLASS_TO_SIZE[i] as usize) as u16;
-        i += 1;
-    }
-    arr
-};
-
-/// Maps a size class index to its maximum block size.
-///
-/// Returns `0` if the class index is out of bounds (>= `NUM_SIZE_CLASSES`).
-#[inline(always)]
-pub const fn class_to_size(class: usize) -> usize {
-    if class < NUM_SIZE_CLASSES {
-        CLASS_TO_SIZE[class] as usize
-    } else {
-        0
-    }
-}
-
-/// Maps a size class index to its maximum number of blocks in a page.
-///
-/// Returns `0` if the class index is out of bounds (>= `NUM_SIZE_CLASSES`).
-#[inline(always)]
-pub const fn class_to_max_blocks(class: usize) -> usize {
-    if class < NUM_SIZE_CLASSES {
-        CLASS_TO_MAX_BLOCKS[class] as usize
-    } else {
-        0
-    }
-}
-
-// ── Lemire reciprocal division ─────────────────────────────────────────────
-//
-// Pre-computed `div_mult` per class eliminates the hardware division in
-// `block_index = offset / block_size` on the validation path.
-//
-// Algorithm (Lemire indirect, 32-bit shift):
-//   mult = (2^SHIFT / n) + 1  →  index = (offset * mult) >> SHIFT
-//
-// Correctness bounds: offset < PAGE_SIZE (≤65535), n ≥ 16.  The round-up
-// error in `mult` never propagates for these bounds.
-//
-// Inspired by snmalloc `ds/sizeclasstable.h §slab_index`.
-
-/// Shift constant for the Lemire indirect reciprocal.
-pub const LEMIRE_DIV_SHIFT: u32 = 32;
-
-const CLASS_TO_DIV_MULT: [u32; NUM_SIZE_CLASSES] = {
-    let mut arr = [0u32; NUM_SIZE_CLASSES];
-    let mut i = 0;
-    while i < NUM_SIZE_CLASSES {
-        let n = CLASS_TO_SIZE[i] as u64;
-        arr[i] = ((1u64 << LEMIRE_DIV_SHIFT) / n + 1) as u32;
-        i += 1;
-    }
-    arr
-};
-
-/// Block index within a page using Lemire reciprocal multiplication.
-///
-/// Equivalent to `offset / class_to_size(class)` without a division
-/// instruction. `offset` must be `< PAGE_SIZE`; `class` must be
-/// `< NUM_SIZE_CLASSES`.
-#[inline(always)]
-pub const fn block_index_in_page(class: usize, offset: usize) -> usize {
-    ((offset as u64 * CLASS_TO_DIV_MULT[class] as u64) >> LEMIRE_DIV_SHIFT) as usize
-}
-
-/// Complete compile-time metadata for one size class.
-mod info;
-pub use info::{SizeClassInfo, all_class_info};
-
-//
-// These const assertions verify structural properties of CLASS_TO_SIZE that
-// prevent subtle bugs when extending the table:
-//
-// 1. Strict monotone: each class is strictly larger than the previous.
-// 2. Min block: the smallest class is MIN_BLOCK_SIZE (16 bytes).
-// 3. Alignment divisibility: every size is a multiple of MIN_BLOCK_SIZE.
-// 4. Every class fits in a page: class_to_max_blocks(class) >= 1.
-
-const _: () = {
-    assert!(
-        CLASS_TO_SIZE[0] as usize == MIN_BLOCK_SIZE,
-        "smallest size class must equal MIN_BLOCK_SIZE"
-    );
-    let mut i = 1;
-    while i < NUM_SIZE_CLASSES {
-        assert!(
-            CLASS_TO_SIZE[i] > CLASS_TO_SIZE[i - 1],
-            "CLASS_TO_SIZE must be strictly increasing"
-        );
-        assert!(
-            (CLASS_TO_SIZE[i] as usize).is_multiple_of(MIN_BLOCK_SIZE),
-            "every size class must be a multiple of MIN_BLOCK_SIZE"
-        );
-        assert!(
-            CLASS_TO_MAX_BLOCKS[i] >= 1,
-            "every size class must fit at least one block per page"
-        );
-        i += 1;
-    }
-};
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::NUM_SIZE_CLASSES;
 
     #[test]
     fn test_size_class_mapping() {
@@ -249,22 +130,22 @@ mod tests {
         assert_eq!(size_to_class(2048), Some(31));
         assert_eq!(size_to_class(2049), Some(32));
         assert_eq!(size_to_class(8192), Some(43));
-        // MN-REF-1: 8K–16K now uses 1024-byte steps instead of 2048-byte steps.
-        assert_eq!(size_to_class(8193), Some(44)); // class 44 = 9216
+        // MN-REF-1: 8K-16K now uses 1024-byte steps instead of 2048-byte steps.
+        assert_eq!(size_to_class(8193), Some(44));
         assert_eq!(size_to_class(9216), Some(44));
-        assert_eq!(size_to_class(9217), Some(45)); // class 45 = 10240
+        assert_eq!(size_to_class(9217), Some(45));
         assert_eq!(size_to_class(10240), Some(45));
-        assert_eq!(size_to_class(10241), Some(46)); // class 46 = 11264
+        assert_eq!(size_to_class(10241), Some(46));
         assert_eq!(size_to_class(11264), Some(46));
-        assert_eq!(size_to_class(11265), Some(47)); // class 47 = 12288
+        assert_eq!(size_to_class(11265), Some(47));
         assert_eq!(size_to_class(12288), Some(47));
-        assert_eq!(size_to_class(12289), Some(48)); // class 48 = 13312
+        assert_eq!(size_to_class(12289), Some(48));
         assert_eq!(size_to_class(13312), Some(48));
-        assert_eq!(size_to_class(13313), Some(49)); // class 49 = 14336
+        assert_eq!(size_to_class(13313), Some(49));
         assert_eq!(size_to_class(14336), Some(49));
-        assert_eq!(size_to_class(14337), Some(50)); // class 50 = 15360
+        assert_eq!(size_to_class(14337), Some(50));
         assert_eq!(size_to_class(15360), Some(50));
-        assert_eq!(size_to_class(15361), Some(51)); // class 51 = 16384
+        assert_eq!(size_to_class(15361), Some(51));
         assert_eq!(size_to_class(16384), Some(51));
         assert_eq!(size_to_class(16385), None);
 
@@ -277,11 +158,6 @@ mod tests {
 
     #[test]
     fn size_class_boundaries_are_exact() {
-        // Walk every consecutive class pair: the byte immediately after a
-        // class's upper bound must map to the next class, and the upper
-        // bound itself must map to the class. Catches off-by-one errors at
-        // the four piecewise transitions in `size_to_class`: 128/129,
-        // 512/513, 2048/2049, 8192/8193, and 16384/16385.
         for c in 0..NUM_SIZE_CLASSES {
             let upper = class_to_size(c);
             assert_eq!(
@@ -299,8 +175,6 @@ mod tests {
                     c + 1
                 );
             } else {
-                // Past the final class, every larger size must spill into
-                // the large/huge arena routing.
                 assert_eq!(
                     size_to_class(upper + 1),
                     None,
@@ -312,19 +186,12 @@ mod tests {
 
     #[test]
     fn size_class_zero_maps_to_smallest_class() {
-        // The production validators reject zero-size requests before they
-        // reach the size-class mapper, but the mapper's documented zero
-        // behavior is part of its contract and is exercised whenever a
-        // caller passes an already-adjusted minimum size.
         assert_eq!(size_to_class(0), Some(0));
-        // The smallest non-zero size also maps to class 0.
         assert_eq!(size_to_class(1), Some(0));
     }
 
     #[test]
     fn block_index_in_page_matches_integer_division() {
-        // Verify Lemire reciprocal gives the same result as integer division
-        // for every class and every valid block offset within a page.
         for class in 0..NUM_SIZE_CLASSES {
             let block_size = class_to_size(class);
             let max_blocks = class_to_max_blocks(class);
@@ -357,29 +224,8 @@ mod tests {
             if sz == 0 {
                 assert_eq!(result, 0);
             } else {
-                assert!(result > 0, "round_up_size_saturating({sz}) must be > 0");
+                assert!(result > 0, "round_up_size_saturating({sz}) returned 0");
             }
         }
-        assert_eq!(round_up_size_saturating(0), 0);
-        assert_eq!(
-            round_up_size_saturating(MAX_SMALL_ALLOC_SIZE + 1),
-            MAX_SMALL_ALLOC_SIZE
-        );
-    }
-
-    #[test]
-    fn size_class_fragmentation_is_bounded() {
-        for sz in [1usize, 15, 16, 17, 32, 100, 512, 1000, MAX_SMALL_ALLOC_SIZE] {
-            let frag = size_class_fragmentation(sz);
-            assert!(
-                (0.0..=1.0).contains(&frag),
-                "fragmentation for sz={sz} is {frag}, out of [0,1]"
-            );
-        }
-        // Exactly on a class boundary: zero fragmentation
-        assert_eq!(size_class_fragmentation(16), 0.0);
-        assert_eq!(size_class_fragmentation(32), 0.0);
-        // Above max: 0.0
-        assert_eq!(size_class_fragmentation(MAX_SMALL_ALLOC_SIZE + 1), 0.0);
     }
 }

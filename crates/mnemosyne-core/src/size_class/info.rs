@@ -4,10 +4,9 @@
 //! from the individual lookup tables in [super], so a consumer that needs
 //! more than one field per class makes only one call.
 
-use super::{
-    CLASS_TO_DIV_MULT, CLASS_TO_MAX_BLOCKS, CLASS_TO_SIZE, LEMIRE_DIV_SHIFT, MAX_SMALL_ALLOC_SIZE,
-    NUM_SIZE_CLASSES, class_to_size, size_to_class,
-};
+use super::tables::{CLASS_TO_DIV_MULT, CLASS_TO_MAX_BLOCKS, CLASS_TO_SIZE, LEMIRE_DIV_SHIFT};
+use super::{class_to_size, size_to_class};
+use crate::constants::{MAX_SMALL_ALLOC_SIZE, NUM_SIZE_CLASSES};
 ///
 /// Bundles all the per-class constants that are computed separately in the
 /// individual lookup functions — convenient when a consumer needs multiple
