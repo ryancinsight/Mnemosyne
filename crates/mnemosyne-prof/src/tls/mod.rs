@@ -1,5 +1,3 @@
-use core::sync::atomic::Ordering;
-
 #[derive(Clone, Copy)]
 pub(crate) struct ThreadState {
     pub(crate) bytes_until_sample: isize,
