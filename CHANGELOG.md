@@ -4,6 +4,29 @@
 
 ### Added
 
+- `allocate_segment` retries after a purge on the first OS allocation failure.
+  When `B::allocate(SEGMENT_MAPPING_SIZE)` returns null, the allocator now
+  calls `purge_segment_pool::<B>()` to release all retained free segments back
+  to the OS (they are exclusively pool-owned at that point and cannot be
+  referenced by any thread-local allocator) and retries the OS mapping once.
+  This is the OOM recovery path previously held in the stale
+  `refactor/mnemosyne-free-helpers-split` branch, re-derived against main.
+
+- `AlignedVec` query, search, sort, and in-place reordering methods extracted
+  into a new `aligned_vec/query.rs` module (SRP). `aligned_vec/length.rs`
+  is now focused on operations that change the buffer's length or content;
+  `query.rs` holds all delegating read-only, sort, reorder, and chunked-
+  iteration methods. No public API change; all 409 tests pass.
+
+### Changed
+
+- All `TEST_LOCK` acquisitions in the `global_alloc_tests` integration suite
+  (28 sites) and in `mnemosyne-backend`'s recorder tests (5 sites) now call a
+  shared `lock_test()` helper that uses `.unwrap_or_else(|e| e.into_inner())`
+  instead of `.expect("poisoned")`. A panicking test no longer blankets
+  subsequent serialized tests with `PoisonError` failures that hide their own
+  subjects. (MN-TEST-LOCK-POISONING-HIDES-RESULTS)
+
 - `ScratchPool::with_scratch_bounded` and `ScratchBank::with_scratch_bounded`
   record each depth's high-water request (the slot's *provision*), and
   `ScratchPool::release` / `ScratchPool::reset` (plus `ScratchBank`
