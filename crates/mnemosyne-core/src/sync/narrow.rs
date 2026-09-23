@@ -6,10 +6,15 @@
 //! (primarily WASM) do not run under the same throughput pressure as 64-bit
 //! hosts.
 
+#[cfg(not(target_pointer_width = "64"))]
 use super::AtomicFreeList;
+#[cfg(not(target_pointer_width = "64"))]
 use crate::loom_shim::Ordering;
+#[cfg(not(target_pointer_width = "64"))]
 use crate::types::{Block, Segment};
+#[cfg(not(target_pointer_width = "64"))]
 use core::ptr::NonNull;
+
 #[cfg(not(target_pointer_width = "64"))]
 impl AtomicFreeList {
     /// Aborts when `block_ptr` is already the queue's head.

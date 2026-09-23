@@ -5,7 +5,7 @@
 //! immutable class stride. Per-thread counters batch global updates so the
 //! allocator hot path does not contend on one cache line for every operation.
 //!
-//! The counters are always enabled (no feature gate).  They are not
+//! The counters are always enabled (no feature gate). They are not
 //! synchronised with each other — a snapshot can observe counts from
 //! different points in time — and pending per-thread batches may not yet be
 //! visible. Each global counter is monotone-non-decreasing, so the
@@ -23,270 +23,18 @@
 //! excluded from post-reset snapshots regardless of flush ordering.
 //!
 //! Fragmentation ratio per class: `(alloc_bytes - dealloc_bytes) /
-//! alloc_bytes`.  Internal fragmentation per class: `(alloc_bytes -
+//! alloc_bytes`. Internal fragmentation per class: `(alloc_bytes -
 //! requested_bytes) / alloc_bytes`.
 
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::Ordering;
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::size_class::class_to_size;
 
-// Two process-wide per-class atomic arrays. Allocation bytes are derived from
-// the immutable class stride when a snapshot is read.
-static ALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] = [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
-static DEALLOC_COUNT: [AtomicU64; NUM_SIZE_CLASSES] =
-    [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
-/// Cumulative user-requested bytes per class; used to compute internal
-/// fragmentation: `(alloc_bytes - requested_bytes) / alloc_bytes`.
-///
-/// Updated with a direct relaxed `fetch_add` (not batched) because the
-/// request size varies per call and cannot be accumulated in the
-/// fixed-class `PendingCount` slots. The hot-path overhead is one extra
-/// `LOCK XADD` per allocation, which is dominated by the cache-line cost
-/// of the alloc itself.
-static REQUESTED_BYTES: [AtomicU64; NUM_SIZE_CLASSES] =
-    [const { AtomicU64::new(0) }; NUM_SIZE_CLASSES];
+mod batch;
+mod snapshot;
 
-/// Process-wide reset generation counter. Incremented on every `reset_bin_stats()`.
-///
-/// Each TLS batch records the generation it was started in. When a flush
-/// observes that this counter has advanced, the batch is discarded rather
-/// than adding stale pre-reset counts to the fresh global arrays.
-static RESET_GENERATION: AtomicU32 = AtomicU32::new(0);
-
-// Eight direct-mapped entries cover the common case of one or a few active
-// size classes while keeping the per-thread footprint bounded at 256 bytes.
-// A class collision flushes the displaced entry; it never drops observations.
-const PENDING_SLOTS: usize = 8;
-const FLUSH_BATCH: u32 = 64;
-const EMPTY_CLASS: usize = usize::MAX;
-
-const _: () = assert!(PENDING_SLOTS.is_power_of_two());
-
-#[derive(Clone, Copy)]
-struct PendingCount {
-    class: usize,
-    count: u32,
-    /// The `RESET_GENERATION` value when this slot was first populated.
-    /// If the global generation has since advanced, this batch is stale
-    /// and will be discarded rather than flushed.
-    generation: u32,
-}
-
-impl PendingCount {
-    const fn new() -> Self {
-        Self {
-            class: EMPTY_CLASS,
-            count: 0,
-            generation: 0,
-        }
-    }
-
-    #[inline(always)]
-    fn record(&mut self, class: usize, global: &[AtomicU64; NUM_SIZE_CLASSES]) {
-        if self.class != class {
-            self.flush(global);
-            self.class = class;
-            // Stamp the generation when starting a new accumulation slot.
-            self.generation = RESET_GENERATION.load(Ordering::Relaxed);
-        }
-
-        self.count += 1;
-        if self.count == FLUSH_BATCH {
-            self.flush(global);
-        }
-    }
-
-    #[inline]
-    fn flush(&mut self, global: &[AtomicU64; NUM_SIZE_CLASSES]) {
-        if self.count != 0 {
-            // If the global reset generation has advanced past the one
-            // recorded when we started accumulating, discard the stale batch.
-            let current_gen = RESET_GENERATION.load(Ordering::Relaxed);
-            if current_gen == self.generation && self.class < NUM_SIZE_CLASSES {
-                global[self.class].fetch_add(self.count as u64, Ordering::Relaxed);
-            }
-            // Always reset regardless of whether we flushed.
-            self.count = 0;
-            self.class = EMPTY_CLASS;
-        }
-    }
-}
-
-struct ThreadBinStats {
-    alloc: [PendingCount; PENDING_SLOTS],
-    dealloc: [PendingCount; PENDING_SLOTS],
-}
-
-impl ThreadBinStats {
-    const fn new() -> Self {
-        Self {
-            alloc: [PendingCount::new(); PENDING_SLOTS],
-            dealloc: [PendingCount::new(); PENDING_SLOTS],
-        }
-    }
-
-    #[inline(always)]
-    fn record_alloc(&mut self, class: usize) {
-        self.alloc[class & (PENDING_SLOTS - 1)].record(class, &ALLOC_COUNT);
-    }
-
-    #[inline(always)]
-    fn record_dealloc(&mut self, class: usize) {
-        self.dealloc[class & (PENDING_SLOTS - 1)].record(class, &DEALLOC_COUNT);
-    }
-
-    #[inline]
-    fn flush(&mut self) {
-        for pending in &mut self.alloc {
-            pending.flush(&ALLOC_COUNT);
-        }
-        for pending in &mut self.dealloc {
-            pending.flush(&DEALLOC_COUNT);
-        }
-    }
-}
-
-impl Drop for ThreadBinStats {
-    fn drop(&mut self) {
-        self.flush();
-    }
-}
-
-std::thread_local! {
-    static THREAD_STATS: core::cell::UnsafeCell<ThreadBinStats> =
-        const { core::cell::UnsafeCell::new(ThreadBinStats::new()) };
-}
-
-#[inline]
-fn allocation_bytes(alloc_count: u64, block_size: usize) -> u64 {
-    alloc_count.saturating_mul(block_size as u64)
-}
-
-/// Records one allocation with the explicit adjusted request size.
-///
-/// Updates both the batched alloc-count and the direct requested-bytes
-/// counter so per-class internal fragmentation can be measured.
-#[inline(always)]
-pub(crate) fn record_alloc_with_size(class: usize, adjusted_size: usize) {
-    if class < NUM_SIZE_CLASSES {
-        THREAD_STATS.with(|stats| {
-            // SAFETY: `THREAD_STATS` is owned by the current thread.
-            unsafe { (*stats.get()).record_alloc(class) };
-        });
-        REQUESTED_BYTES[class].fetch_add(adjusted_size as u64, Ordering::Relaxed);
-    }
-}
-
-/// Records one deallocation into `class`.
-#[inline(always)]
-pub(crate) fn record_dealloc(class: usize) {
-    if class < NUM_SIZE_CLASSES {
-        THREAD_STATS.with(|stats| {
-            // SAFETY: `THREAD_STATS` is owned by the current thread. The
-            // closure cannot run concurrently for the same TLS value.
-            unsafe { (*stats.get()).record_dealloc(class) };
-        });
-    }
-}
-
-#[inline]
-fn flush_current_thread() {
-    THREAD_STATS.with(|stats| {
-        // SAFETY: `THREAD_STATS` is owned by the current thread. The closure
-        // cannot run concurrently for the same TLS value.
-        unsafe { (*stats.get()).flush() };
-    });
-}
-
-/// Per-size-class allocation statistics snapshot.
-///
-/// Non-exhaustive: this is telemetry the allocator *produces*, and its field
-/// set grows as new counters are added — `requested_bytes` was the most recent.
-/// Marking it so keeps each addition a non-breaking change instead of a major
-/// one. Construct via [`Default`] and read the fields.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[non_exhaustive]
-pub struct BinSnapshot {
-    /// Total allocations served from this size class.
-    pub alloc_count: u64,
-    /// Total frees returned to this size class.
-    pub dealloc_count: u64,
-    /// Cumulative bytes allocated (size-class block size × alloc_count).
-    ///
-    /// The product saturates at `u64::MAX` rather than wrapping.
-    pub alloc_bytes: u64,
-    /// Cumulative user-requested bytes for this class.
-    ///
-    /// Populated by `record_alloc_with_size`; zero when the call sites only
-    /// use `record_alloc`. Internal fragmentation =
-    /// `(alloc_bytes - requested_bytes) / alloc_bytes`.
-    pub requested_bytes: u64,
-    /// Block size of this size class in bytes.
-    pub block_size: usize,
-    /// Live allocation estimate: `alloc_count − dealloc_count`.
-    ///
-    /// Under-estimates because the two counters are not snapshotted
-    /// atomically, but never negative from the caller's perspective:
-    /// subtraction uses saturating arithmetic.
-    pub live_estimate: u64,
-}
-
-impl BinSnapshot {
-    /// Counters advanced since `baseline`, saturating at zero where one
-    /// decreased or was reset.
-    ///
-    /// Lives here rather than at the call site because [`BinSnapshot`] is
-    /// `#[non_exhaustive]`: only this crate may build one by literal, so a new
-    /// counter field extends this method instead of breaking every consumer
-    /// that computes a delta.
-    #[must_use]
-    pub fn saturating_delta(&self, baseline: &Self) -> Self {
-        Self {
-            alloc_count: self.alloc_count.saturating_sub(baseline.alloc_count),
-            dealloc_count: self.dealloc_count.saturating_sub(baseline.dealloc_count),
-            alloc_bytes: self.alloc_bytes.saturating_sub(baseline.alloc_bytes),
-            requested_bytes: self
-                .requested_bytes
-                .saturating_sub(baseline.requested_bytes),
-            block_size: self.block_size,
-            live_estimate: self.live_estimate.saturating_sub(baseline.live_estimate),
-        }
-    }
-
-    /// Fragmentation ratio: `live_bytes / alloc_bytes`, in `[0.0, 1.0]`.
-    ///
-    /// Returns `0.0` when nothing has ever been allocated in this class.
-    #[inline]
-    #[must_use]
-    pub fn fragmentation_ratio(&self) -> f64 {
-        if self.alloc_bytes == 0 {
-            return 0.0;
-        }
-        let live_bytes = self.live_estimate.saturating_mul(self.block_size as u64);
-        (live_bytes as f64 / self.alloc_bytes as f64).min(1.0)
-    }
-
-    /// Internal fragmentation: `(alloc_bytes - requested_bytes) / alloc_bytes`.
-    ///
-    /// Returns `0.0` when `requested_bytes` is zero (not tracked) or
-    /// `alloc_bytes` is zero.
-    #[inline]
-    #[must_use]
-    pub fn internal_fragmentation_ratio(&self) -> f64 {
-        if self.alloc_bytes == 0 || self.requested_bytes == 0 {
-            return 0.0;
-        }
-        let waste = self.alloc_bytes.saturating_sub(self.requested_bytes);
-        (waste as f64 / self.alloc_bytes as f64).min(1.0)
-    }
-
-    /// Live bytes in this class: `live_estimate × block_size`.
-    #[inline]
-    #[must_use]
-    pub fn live_bytes(&self) -> u64 {
-        self.live_estimate.saturating_mul(self.block_size as u64)
-    }
-}
+pub(crate) use batch::{record_alloc_with_size, record_dealloc};
+pub use snapshot::BinSnapshot;
 
 /// Returns a snapshot for size class `class`, or `None` if out of range.
 #[must_use]
@@ -294,15 +42,15 @@ pub fn bin_snapshot(class: usize) -> Option<BinSnapshot> {
     if class >= NUM_SIZE_CLASSES {
         return None;
     }
-    flush_current_thread();
-    let alloc_count = ALLOC_COUNT[class].load(Ordering::Relaxed);
-    let dealloc_count = DEALLOC_COUNT[class].load(Ordering::Relaxed);
+    batch::flush_current_thread();
+    let alloc_count = batch::ALLOC_COUNT[class].load(Ordering::Relaxed);
+    let dealloc_count = batch::DEALLOC_COUNT[class].load(Ordering::Relaxed);
     let block_size = class_to_size(class);
     Some(BinSnapshot {
         alloc_count,
         dealloc_count,
-        alloc_bytes: allocation_bytes(alloc_count, block_size),
-        requested_bytes: REQUESTED_BYTES[class].load(Ordering::Relaxed),
+        alloc_bytes: batch::allocation_bytes(alloc_count, block_size),
+        requested_bytes: batch::REQUESTED_BYTES[class].load(Ordering::Relaxed),
         block_size,
         live_estimate: alloc_count.saturating_sub(dealloc_count),
     })
@@ -311,16 +59,16 @@ pub fn bin_snapshot(class: usize) -> Option<BinSnapshot> {
 /// Returns snapshots for all `NUM_SIZE_CLASSES` size classes.
 #[must_use]
 pub fn all_bin_snapshots() -> [BinSnapshot; NUM_SIZE_CLASSES] {
-    flush_current_thread();
+    batch::flush_current_thread();
     core::array::from_fn(|class| {
-        let alloc_count = ALLOC_COUNT[class].load(Ordering::Relaxed);
-        let dealloc_count = DEALLOC_COUNT[class].load(Ordering::Relaxed);
+        let alloc_count = batch::ALLOC_COUNT[class].load(Ordering::Relaxed);
+        let dealloc_count = batch::DEALLOC_COUNT[class].load(Ordering::Relaxed);
         let block_size = class_to_size(class);
         BinSnapshot {
             alloc_count,
             dealloc_count,
-            alloc_bytes: allocation_bytes(alloc_count, block_size),
-            requested_bytes: REQUESTED_BYTES[class].load(Ordering::Relaxed),
+            alloc_bytes: batch::allocation_bytes(alloc_count, block_size),
+            requested_bytes: batch::REQUESTED_BYTES[class].load(Ordering::Relaxed),
             block_size,
             live_estimate: alloc_count.saturating_sub(dealloc_count),
         }
@@ -352,8 +100,8 @@ pub fn total_live_bytes() -> u64 {
 /// Process-wide total allocation count across all small size classes.
 #[must_use]
 pub fn total_alloc_count() -> u64 {
-    flush_current_thread();
-    ALLOC_COUNT
+    batch::flush_current_thread();
+    batch::ALLOC_COUNT
         .iter()
         .map(|c| c.load(Ordering::Relaxed))
         .fold(0u64, u64::saturating_add)
@@ -376,12 +124,12 @@ pub fn reset_bin_stats() {
     // flush that still reads the old generation only adds counts the
     // zeroing below immediately erases. A stronger ordering here would not
     // change what the Relaxed loads at the guard can observe.
-    RESET_GENERATION.fetch_add(1, Ordering::Relaxed);
-    flush_current_thread();
+    batch::RESET_GENERATION.fetch_add(1, Ordering::Relaxed);
+    batch::flush_current_thread();
     for class in 0..NUM_SIZE_CLASSES {
-        ALLOC_COUNT[class].store(0, Ordering::Relaxed);
-        DEALLOC_COUNT[class].store(0, Ordering::Relaxed);
-        REQUESTED_BYTES[class].store(0, Ordering::Relaxed);
+        batch::ALLOC_COUNT[class].store(0, Ordering::Relaxed);
+        batch::DEALLOC_COUNT[class].store(0, Ordering::Relaxed);
+        batch::REQUESTED_BYTES[class].store(0, Ordering::Relaxed);
     }
 }
 
@@ -391,7 +139,7 @@ pub fn reset_bin_stats() {
 /// it explicitly before reading from a different thread.
 #[inline]
 pub fn flush_tls_stats() {
-    flush_current_thread();
+    batch::flush_current_thread();
 }
 
 /// One-line human-readable summary of process-wide bin stats.
@@ -416,8 +164,8 @@ pub fn summary_line() -> std::string::String {
 /// Zero until `record_alloc_with_size` call sites are wired (done in Phase 19).
 #[must_use]
 pub fn total_requested_bytes() -> u64 {
-    flush_current_thread();
-    REQUESTED_BYTES
+    batch::flush_current_thread();
+    batch::REQUESTED_BYTES
         .iter()
         .map(|c| c.load(Ordering::Relaxed))
         .fold(0u64, u64::saturating_add)
@@ -453,7 +201,7 @@ pub fn total_internal_fragmentation() -> f64 {
 #[inline]
 #[must_use]
 pub fn reset_generation_count() -> u32 {
-    RESET_GENERATION.load(Ordering::Relaxed)
+    batch::RESET_GENERATION.load(Ordering::Relaxed)
 }
 
 /// Returns the fractional distribution of `alloc_count` across all size
@@ -484,9 +232,9 @@ pub fn alloc_distribution() -> [f64; NUM_SIZE_CLASSES] {
 mod tests {
     use core::sync::atomic::AtomicU64;
 
+    use super::batch::{FLUSH_BATCH, PendingCount, RESET_GENERATION};
     use super::{
-        FLUSH_BATCH, NUM_SIZE_CLASSES, PendingCount, RESET_GENERATION, all_bin_snapshots,
-        bin_snapshot, reset_bin_stats, reset_generation_count,
+        NUM_SIZE_CLASSES, all_bin_snapshots, bin_snapshot, reset_bin_stats, reset_generation_count,
     };
 
     #[test]
