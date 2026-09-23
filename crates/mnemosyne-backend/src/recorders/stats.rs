@@ -71,7 +71,7 @@ pub struct BackendMemoryStats {
     /// Cumulative byte count passed to confirmed `decommit` calls (the commit
     /// charge / resident backing returned to the OS).
     pub decommit_bytes: usize,
-    /// Subset of `decommit_bytes` that used `MADV_FREE` (lazy, no IPI).
+    /// Subset of `decommit_bytes` that used `MADV_FREE` (lazy purge).
     ///
     /// On Linux ≥ 4.5, `decommit` prefers `MADV_FREE` over `MADV_DONTNEED`
     /// to avoid IPI broadcast storms during segment release. This counter

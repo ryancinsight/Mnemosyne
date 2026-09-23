@@ -4,7 +4,7 @@
 //! SSOT for the piecewise class-step schedule. The lookup table in the parent
 //! module calls it once per granule during initialization and caches the result.
 
-use crate::constants::{MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE};
+use crate::constants::MAX_SMALL_ALLOC_SIZE;
 pub(super) const fn size_to_class_nonzero_arithmetic(size: usize) -> Option<usize> {
     if size > MAX_SMALL_ALLOC_SIZE {
         return None;
