@@ -133,27 +133,28 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// must not already be linked into any owned-segments list.
     #[inline]
     pub(crate) unsafe fn push_owned_segment<P: AllocPolicy>(&mut self, segment: *mut Segment) {
+        let allocator_ptr = (self as *mut ThreadAllocator<B>).cast::<core::ffi::c_void>();
+        // SAFETY: `segment` is the live caller-passed segment; `self` is the
+        // owning allocator. The writes are not aliased by any concurrent
+        // thread-and-permission accessor.
+        unsafe { Segment::set_owner_allocator(segment, allocator_ptr) };
+        // Owner encoding differs by platform: Windows x86-64 encodes a thread
+        // ID so `resolve_owner_slot` can detect same-thread cross-policy access;
+        // all other targets encode the allocator pointer directly.
         #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
-        {
-            let tid = mnemosyne_core::types::current_thread_id();
-            // SAFETY: `segment` is the live caller-passed segment;
-            // `self` is the owning allocator. The writes are not
-            // aliased by any concurrent thread-and-permission accessor.
-            unsafe {
-                Segment::set_owner_allocator(segment, (self as *mut ThreadAllocator<B>).cast());
-                Segment::set_owner(segment, SegmentOwner::from_thread_id(tid));
-            }
-        }
-        #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
-        {
-            unsafe {
-                Segment::set_owner_allocator(segment, (self as *mut ThreadAllocator<B>).cast());
-                Segment::set_owner(
-                    segment,
-                    SegmentOwner::from_ptr(self as *mut ThreadAllocator<B>),
-                );
-            }
-        }
+        unsafe {
+            Segment::set_owner(
+                segment,
+                SegmentOwner::from_thread_id(mnemosyne_core::types::current_thread_id()),
+            )
+        };
+        #[cfg(not(all(windows, target_arch = "x86_64", not(miri))))]
+        unsafe {
+            Segment::set_owner(
+                segment,
+                SegmentOwner::from_ptr(self as *mut ThreadAllocator<B>),
+            )
+        };
         with_owned_segment_token::<B, _>(|mut token| {
             // SAFETY: `segment` was just acquired by this thread and is
             // exclusively owned; the token provides the permission proof.
