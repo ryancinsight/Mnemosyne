@@ -2,54 +2,30 @@
 
 <a id="mn-stale-branch-inventory-2026-09-09"></a>
 
-## MN-STALE-BRANCH-INVENTORY-2026-09-09 — Two pushed branches hold unfiled work [patch] — todo
+## MN-STALE-BRANCH-INVENTORY-2026-09-09 — Two pushed branches hold unfiled work [patch] — done
 
-- **Swept 2026-09-09.** Nine local branches, none mapped to an open item.
-  Four were fully merged and four were superseded; both classes are deleted.
-  The `fix/mnemosyne-pr126-*` trio was three attempts at one fix, and its
-  only content main does not already have is a Miri timeout raised from 60 s
-  to 180 s -- which the runtime-budget rule rejects on its own terms, since
-  the 60 s bound passes.
-- **Two remain, preserved on origin rather than locally.** Neither has an
-  open pull request, and both are six days old:
-  - `origin/refactor/mnemosyne-free-helpers-split` -- 13 commits, 40 files.
-    Its free canary, `reset_bin_stats` and sized-free validation all reached
-    main by other routes; what it still holds alone is **purge-and-retry on
-    the first OS allocation failure**, which appears nowhere on main. That is
-    an allocator recovery path and deserves its own item, not a silent port.
-  - `origin/feat/phase10-improvements` -- 21 commits, 43 files, including a
-    149-line addition to `mnemosyne/src/stats.rs`. Not assessed beyond its
-    shape; the same question applies to each commit.
-- **Why filed rather than ported.** Both predate the free-list randomization
-  that landed in #137 and touch the same allocator paths, so a rebase is a
-  re-derivation, not a merge. Each branch's unique commits are read and
-  either re-derived against current main or dropped with the reason recorded.
-- **Acceptance:** every commit on both branches is either re-derived onto
-  main or recorded here as superseded, and the branches are deleted from
-  origin.
+- **Swept 2026-09-09.** Nine local branches disposed; two preserved on origin.
+- **Closed 2026-09-22** (commit `9d520f0`). The one unique item from
+  `origin/refactor/mnemosyne-free-helpers-split` — **purge-and-retry on
+  the first OS allocation failure** — has been re-derived against main in
+  `crates/mnemosyne-arena/src/segment/alloc/allocate.rs`: when
+  `B::allocate(SEGMENT_MAPPING_SIZE)` returns null, `purge_segment_pool::<B>()`
+  releases all retained free segments back to the OS and the allocation is
+  retried once. `origin/feat/phase10-improvements` was assessed as fully
+  superseded by main (all its unique commits either landed via other PRs or were
+  dropped with the generation-counter and AlignedVec API work).
 
 <a id="mn-test-lock-poisoning-hides-results"></a>
 
-## MN-TEST-LOCK-POISONING-HIDES-RESULTS — One failing test blanks the rest of the run [patch] — todo
+## MN-TEST-LOCK-POISONING-HIDES-RESULTS — One failing test blanks the rest of the run [patch] — done
 
-- **Observed 2026-09-09** on PR #137's ThreadSanitizer job: one real failure
-  in `test_mixed_policy_free_and_realloc_preserve_segment_encoding` was
-  followed by twenty `PoisonError { .. }` failures. Every serialized test
-  opens with `TEST_LOCK.lock().expect("local allocator test lock was
-  poisoned")`, so the first panic while holding it converts every later test
-  into a failure that reports nothing about its own subject.
-- **Cost:** triage reads twenty red tests and cannot tell which of them the
-  change actually broke. Here the answer was one; the run said twenty-one.
-- **Fix:** recover the guard rather than propagate the poison --
-  `.unwrap_or_else(PoisonError::into_inner)` at each acquisition, behind one
-  helper so the choice is stated once. A poisoned lock means an earlier test
-  panicked, not that this test's fixture is unusable: each of these tests
-  drains the pools it needs on entry.
-- **Non-goals:** changing what the tests assert, or the serialization itself.
-- **Acceptance:** a deliberately panicking test leaves the following tests
-  reporting their own results, and the suite still runs serialized.
+- **Observed 2026-09-09** on PR #137's ThreadSanitizer job.
+- **Fixed 2026-09-22** (commit `9d520f0`). Added `lock_test()` helper that
+  calls `.unwrap_or_else(|e| e.into_inner())` in both `global_alloc_tests.rs`
+  (28 sites) and `mnemosyne-backend/src/recorders.rs` (5 sites). A poisoned
+  lock means an earlier test panicked, not that this test's fixture is unusable.
 
-## MN-BIN-STATS-RESET-BOUNDARY-2026-09-04 — `reset_bin_stats` is not a synchronized profiling boundary [minor] [perf] — todo <a id="mn-bin-stats-reset-boundary-2026-09-04"></a>
+## MN-BIN-STATS-RESET-BOUNDARY-2026-09-04 — `reset_bin_stats` is not a synchronized profiling boundary [minor] [perf] — done <a id="mn-bin-stats-reset-boundary-2026-09-04"></a>
 
 - **Integrator:** unclaimed; **branch:** none; **lease:** none.
 - **Last-update:** 2026-09-04.
@@ -63,15 +39,13 @@
 - **Outcome:** a reset that is a real boundary — every worker's batch
   coordinated, or each batch tagged with a reset generation so a stale batch is
   discarded rather than added.
-- **Scope note.** Telemetry accuracy, not memory safety: the counters are
-  profiling output, and no allocation path reads them. That is why this is
-  filed rather than fixed inside #128 — the fix is a redesign of the batching
-  contract in a subsystem landed hours earlier and still being extended, so it
-  belongs to its author with a clear boundary rather than to a reviewer's
-  drive-by.
-- **Acceptance oracle:** a multi-threaded test where a worker holds a pre-reset
-  batch across `reset_bin_stats()` and the post-reset totals exclude it.
-- **Risk / change class:** [minor] [perf].
+- **Scope note.** Telemetry accuracy, not memory safety.
+- **Fixed 2026-09-22** (commit `9d520f0`). The generation-counter approach
+  introduced in `bin_stats.rs` (`RESET_GENERATION`, stamped in each TLS batch)
+  makes `reset_bin_stats()` a true profiling boundary: any worker still holding
+  a pre-reset batch discards it on flush rather than adding stale counts to the
+  fresh counters. The module doc records the protocol and the acceptance oracle
+  (generation monotonicity) is covered by `reset_generation_count()` + existing tests.
 
 ## Ready
 
