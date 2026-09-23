@@ -36,6 +36,7 @@ pub mod numa;
 pub(crate) mod raw_heap;
 pub mod tier;
 pub mod tiered_backend;
+pub(crate) mod tiered_block;
 pub mod tiered_heap;
 
 #[cfg(test)]
@@ -51,4 +52,5 @@ pub use heap::{Heap, ReallocError, ReallocFailure};
 pub use numa::{NumaError, allocate_interleaved, bind_to_node, first_touch};
 pub use tier::{MemoryTier, PlacementHint};
 pub use tiered_backend::TieredBackend;
-pub use tiered_heap::{TieredBlock, TieredHeap, TieredReallocError, scope_tiered};
+pub use tiered_block::{TieredBlock, TieredReallocError};
+pub use tiered_heap::{TieredHeap, scope_tiered};

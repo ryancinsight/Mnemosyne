@@ -23,7 +23,7 @@
 //!    setting leaked across boundaries (a panic / re-entrant allocator
 //!    call would misclassify the tier and corrupt the wrong pool). The
 //!    typed enum keeps the tier knowledge *with the value* (the
-//!    [`crate::tiered_heap::TieredBlock`] carries it) instead of
+//!    [`crate::TieredBlock`] carries it) instead of
 //!    stashing it in TLS.
 //! 2. **Single dispatch table.** Both [`TieredBackend`] and
 //!    [`crate::tiered_heap::TieredHeap`] call into
