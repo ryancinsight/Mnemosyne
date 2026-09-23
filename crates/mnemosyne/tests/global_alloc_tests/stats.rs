@@ -208,3 +208,38 @@ fn test_reset_keeps_segments_cached_and_records_telemetry() {
     // — drain the pool to pop the segment and write through it.
     purge();
 }
+
+/// A block that outlives its allocating thread leaves that thread's segment in
+/// the orphan pool. The segment round trip `test_purge` performs must not pick
+/// the orphan up as an empty segment, or the purge unmaps the live block, the
+/// access-violation class the ThreadSanitizer job hit when libtest wrote into a
+/// channel block allocated by a finished test thread.
+#[test]
+fn block_outliving_its_thread_survives_segment_round_trip_and_purge() {
+    let _guard = TEST_LOCK
+        .lock()
+        .expect("global allocator test lock was poisoned");
+    let mut block = thread::spawn(|| std::boxed::Box::new([7u8; 4096]))
+        .join()
+        .expect("allocating thread panicked");
+    // Empty the free pool so the round trip below reaches past it.
+    purge();
+
+    // SAFETY: the segment is returned exactly once, immediately.
+    let segment = unsafe {
+        mnemosyne_arena::allocate_segment::<mnemosyne_backend::MemoryBackendWrapper>()
+            .expect("segment allocation must succeed")
+    };
+    // SAFETY: `allocate_segment` returned an exclusively-owned empty segment.
+    unsafe {
+        mnemosyne_arena::deallocate_segment::<mnemosyne_backend::MemoryBackendWrapper>(segment);
+    }
+    purge();
+
+    block[0] = 1;
+    assert_eq!(block[0], 1);
+    assert!(
+        block[1..].iter().all(|&byte| byte == 7),
+        "the live block's contents changed across the purge"
+    );
+}
