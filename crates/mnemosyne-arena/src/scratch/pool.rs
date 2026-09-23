@@ -125,58 +125,7 @@ impl<T: ScratchElement> ScratchPool<T> {
     /// recursive calls), a temporary buffer is allocated instead.
     #[inline]
     pub fn with_scratch<R>(&self, n: usize, f: impl FnOnce(&mut [T]) -> R) -> R {
-        struct BorrowGuard<'a> {
-            depth: &'a Cell<u8>,
-            original: u8,
-        }
-
-        impl Drop for BorrowGuard<'_> {
-            #[inline(always)]
-            fn drop(&mut self) {
-                self.depth.set(self.original);
-            }
-        }
-
-        let depth = self.borrow_depth.get();
-        if depth < MAX_POOL_SLOTS as u8 {
-            self.borrow_depth.set(depth + 1);
-            let _guard = BorrowGuard {
-                depth: &self.borrow_depth,
-                original: depth,
-            };
-            // SAFETY: exclusive access guaranteed by borrow_depth tracking.
-            // Each nesting level gets its own slot index.
-            let vec = unsafe { &mut *self.slots[depth as usize].get() };
-            // Ensure the buffer is large enough. If the buffer was already
-            // grown by a prior call, reuse it without re-zeroing (only newly
-            // added elements are zeroed by ensure_len).
-            if n > vec.len() {
-                vec.ensure_len(n);
-                // Republish this slot's capacity to its mirror. Reading it
-                // back through the live exclusive `vec` is the reborrow the
-                // accessors themselves must not perform, so every slot keeps a
-                // figure readable from outside the `UnsafeCell`.
-                self.slot_capacities[depth as usize].set(vec.capacity());
-            }
-            debug_assert!(
-                self.slot_capacities[depth as usize].get() == vec.capacity(),
-                "slot capacity mirror drifted from the slot's actual capacity"
-            );
-            debug_assert_eq!(
-                vec.as_mut_ptr() as usize % T::ALIGN_BYTES,
-                0,
-                "Scratch buffer not aligned to {} bytes",
-                T::ALIGN_BYTES
-            );
-            // Return exactly `n` elements (not the full buffer).
-            let slice = &mut vec.as_mut_slice()[..n];
-            f(slice)
-        } else {
-            // All slots exhausted; allocate owned fallback.
-            let mut owned = AlignedVec::with_capacity(n);
-            owned.ensure_len(n);
-            f(owned.as_mut_slice())
-        }
+        self.borrow_slot::<false, R>(n, f)
     }
 
     /// Like [`with_scratch`](Self::with_scratch), but records the request for
@@ -197,6 +146,17 @@ impl<T: ScratchElement> ScratchPool<T> {
     /// [`with_scratch`]: Self::with_scratch
     #[inline]
     pub fn with_scratch_bounded<R>(&self, n: usize, f: impl FnOnce(&mut [T]) -> R) -> R {
+        self.borrow_slot::<true, R>(n, f)
+    }
+
+    /// Shared implementation for [`with_scratch`] and [`with_scratch_bounded`].
+    ///
+    /// `PROVISION` is a compile-time constant: when `false` the provision
+    /// tracking branch is eliminated by the optimizer and the two public forms
+    /// have identical hot-path machine code, differing only in the
+    /// cold-provision-update path.
+    #[inline]
+    fn borrow_slot<const PROVISION: bool, R>(&self, n: usize, f: impl FnOnce(&mut [T]) -> R) -> R {
         struct BorrowGuard<'a> {
             depth: &'a Cell<u8>,
             original: u8,
@@ -217,16 +177,21 @@ impl<T: ScratchElement> ScratchPool<T> {
                 original: depth,
             };
             let idx = depth as usize;
-            // Record this depth's high-water request before the buffer is
-            // grown, so `release` can distinguish the requested size from
-            // growth-policy headroom.
-            let provision = &self.provisions[idx];
-            provision.set(provision.get().max(n));
+            if PROVISION {
+                // Record this depth's high-water request so `release` can
+                // distinguish the requested size from growth-policy headroom.
+                let provision = &self.provisions[idx];
+                provision.set(provision.get().max(n));
+            }
             // SAFETY: exclusive access guaranteed by borrow_depth tracking.
             // Each nesting level gets its own slot index.
             let vec = unsafe { &mut *self.slots[idx].get() };
             if n > vec.len() {
                 vec.ensure_len(n);
+                // Republish this slot's capacity to its mirror. Reading it
+                // back through the live exclusive `vec` is the reborrow the
+                // accessors themselves must not perform, so every slot keeps a
+                // figure readable from outside the `UnsafeCell`.
                 self.slot_capacities[idx].set(vec.capacity());
             }
             debug_assert!(
@@ -239,9 +204,11 @@ impl<T: ScratchElement> ScratchPool<T> {
                 "Scratch buffer not aligned to {} bytes",
                 T::ALIGN_BYTES
             );
+            // Return exactly `n` elements (not the full buffer).
             let slice = &mut vec.as_mut_slice()[..n];
             f(slice)
         } else {
+            // All slots exhausted; allocate owned fallback.
             let mut owned = AlignedVec::with_capacity(n);
             owned.ensure_len(n);
             f(owned.as_mut_slice())
