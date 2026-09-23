@@ -4,6 +4,25 @@
 
 ### Added
 
+- Three further deep vertical module splits enforcing SRP/SoC on
+  mixed-concern files, with no public API change (all workspace tests pass,
+  undocumented-unsafe ratchet held at 0):
+  - `mnemosyne-backend/src/recorders.rs` (358 L) → `recorders/{mod, stats}.rs`
+    — `stats.rs` owns the atomic counters, `BackendMemoryStats` snapshot,
+    recorder functions, and their tests; `mod.rs` is a thin public-API wrapper
+    that cfg-gates the linux-only `record_hugepage_hint`/`record_purge_only`.
+  - `mnemosyne-heap/src/raw_heap.rs` (431 L) →
+    `raw_heap/{mod, alloc, free, realloc}.rs` — split `RawHeap<P,B>` by
+    allocation lifecycle: `alloc` (fast route + large/huge fallback), `free`
+    (free-list return + large/huge release helpers), `realloc` (grow/shrink
+    dispatch + in-place reuse), `mod` (struct + `new`/`alloc`/`stats`).
+  - `mnemosyne-heap/src/numa.rs` (357 L) →
+    `numa/{mod, linux, windows, fallback}.rs` — separate the NUMA execution
+    primitives by platform target (`mbind` on Linux, `VirtualAllocExNuma` on
+    Windows, no-op/plain fallback elsewhere); `mod.rs` keeps the shared
+    `NumaError`, cross-platform `first_touch`, and cfg-gated re-exports.
+    Verified on both the Windows host and an `x86_64-unknown-linux-gnu` check.
+
 - Nine deep vertical module splits across `mnemosyne-core` and
   `mnemosyne-local`, each enforcing SRP on previously mixed-concern files:
   - `policy.rs` (347 L) → `policy/{mod, alloc_policy, impls, marker}.rs`
