@@ -128,62 +128,15 @@ pub unsafe fn release_segment_mapping<B: HasSegmentPool>(segment: *mut Segment) 
 /// The caller must ensure that no threads are concurrently mutating the segment pool
 /// or accessing purged segment memory.
 pub unsafe fn purge_segment_pool<B: HasSegmentPool>() {
-    let pool = B::global_segment_pool();
-    // Detach each node's retained chain with `take_all` — one lifetime-locked
-    // atomic swap of the tagged head — then run the OS-release syscalls on the
-    // privately-owned detached chain. One swap per node instead of one CAS per
-    // segment, so the decay thread never serializes round-by-round with
-    // allocators pushing/popping the same head line (mirrors
-    // `GlobalHugePool::purge`).
-    let mut purged = 0usize;
-    for node in pool.nodes() {
-        let (mut head, _count) = node.take_all();
-        while !head.is_null() {
-            let segment = head;
-            // SAFETY: `segment` is a node of the chain `take_all` atomically
-            // detached from this pool, so it is a valid, exclusively-owned
-            // `Segment`; `next` is read before the mapping is released.
-            head = unsafe {
-                (*segment)
-                    .next_free_segment
-                    .load(core::sync::atomic::Ordering::Relaxed)
-            };
-            // SAFETY: `segment` was exclusively acquired from `take_all`
-            // and has not yet been pushed back; it is a valid, initialized
-            // `Segment` whose allocation matches backend `B`.
-            let release = unsafe { release_segment_mapping::<B>(segment) };
-            match release {
-                SegmentRelease::Released => purged += 1,
-                SegmentRelease::RetainedAfterFailure => {
-                    // The backend declined to release `segment`; re-cache it and
-                    // every still-unprocessed segment for this node, then stop
-                    // sweeping it (matching the prior stop-on-failure behavior so
-                    // pool metadata never claims a purge for a mapping we own).
-                    // SAFETY: `segment` is exclusively owned by this purge sweep;
-                    // returning it to the node pool transfers ownership.
-                    unsafe { node.push_unbounded(segment) };
-                    while !head.is_null() {
-                        let s = head;
-                        // SAFETY: `s` is a node of the detached chain; loading
-                        // its next link before re-caching is sound.
-                        head = unsafe {
-                            (*s).next_free_segment
-                                .load(core::sync::atomic::Ordering::Relaxed)
-                        };
-                        // SAFETY: `s` is exclusively owned by this sweep pass.
-                        unsafe { node.push_unbounded(s) };
-                    }
-                    break;
-                }
-            }
-        }
-    }
-    // One purge "call" per invocation, with the total released count (preserves
-    // the prior telemetry contract).
-    pool.record_purge(purged);
-
-    // SAFETY: Releases all cached huge blocks back to the OS.
-    unsafe { B::global_huge_pool().purge::<B>() };
+    // `purge_segment_pool_with_warm(0)` is identical to this function:
+    // when `warm_threshold = 0`, the retention branch (`kept < 0`) is never
+    // taken, so every retained segment is released unconditionally — the same
+    // outcome as the previous hand-rolled body. Delegating here eliminates
+    // ~70 lines of duplicated logic and makes the relationship between the
+    // two public entry points explicit.
+    //
+    // SAFETY: forwarded unchanged — same contract as this function.
+    unsafe { purge_segment_pool_with_warm::<B>(0) }
 }
 
 /// Like [`purge_segment_pool`] but retains up to `warm_threshold` committed
