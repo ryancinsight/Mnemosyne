@@ -214,6 +214,32 @@ impl GlobalSegmentPool {
         self.nodes[node].record_reset(count);
     }
 
+    /// Cumulative purge-and-retry attempts after a first OS allocation
+    /// failure (`allocate_segment`'s OOM recovery path), summed over nodes.
+    #[inline]
+    pub fn oom_retry_count(&self) -> usize {
+        self.nodes.iter().map(|n| n.oom_retry_count()).sum()
+    }
+
+    /// Cumulative purge-and-retry attempts whose retried `B::allocate` call
+    /// succeeded, summed over nodes — a subset of [`Self::oom_retry_count`].
+    #[inline]
+    pub fn oom_retry_success_count(&self) -> usize {
+        self.nodes.iter().map(|n| n.oom_retry_success_count()).sum()
+    }
+
+    /// Records one purge-and-retry attempt against the calling thread's NUMA
+    /// node pool, matching [`Self::record_purge`]'s node-attribution
+    /// convention — the retry itself is not node-scoped (it follows a
+    /// pool-wide purge), so attributing it to the calling thread's node is
+    /// as meaningful as any other choice and keeps one counter family per
+    /// node rather than adding a separate global counter.
+    #[inline]
+    pub(crate) fn record_oom_retry(&self, succeeded: bool) {
+        let node = numa_bucket(current_numa_node());
+        self.nodes[node].record_oom_retry(succeeded);
+    }
+
     /// Returns a point-in-time snapshot of the pool's key counters.
     ///
     /// Useful for diagnostic logging and telemetry. All fields are read
@@ -228,6 +254,8 @@ impl GlobalSegmentPool {
             purge_calls: self.purge_call_count(),
             reset_segments: self.reset_segments_count(),
             reset_calls: self.reset_call_count(),
+            oom_retries: self.oom_retry_count(),
+            oom_retry_successes: self.oom_retry_success_count(),
         }
     }
 }
