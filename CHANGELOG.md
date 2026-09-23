@@ -4,6 +4,21 @@
 
 ### Added
 
+- Two parallel SRP splits, no public API change, unsafe-doc ratchet held at 0:
+  - `mnemosyne-arena/src/scratch/aligned_vec/traits.rs` (359 L → 106 L) —
+    new sibling files in the existing directory module: `iter.rs` (IntoIter
+    struct + all iterator impls + IntoIterator for owned/&/&mut), `convert.rs`
+    (From/AsRef/AsMut/Borrow/BorrowMut/Box/Vec/slice conversions +
+    FromIterator/Extend), and `AlignedVec<u8>` string ops moved to `bytes.rs`
+    (fmt::Write, Display, From<&str>, push_str/as_str/to_string_lossy).
+  - `mnemosyne-core/src/size_class/mod.rs` (358 L → 218 L) + new `tables.rs`
+    (140 L) — extract the SSOT compile-time data and O(1) accessors: all four
+    lookup tables (CLASS_TO_SIZE, CLASS_TO_MAX_BLOCKS, CLASS_TO_DIV_MULT,
+    SIZE_TO_CLASS), LEMIRE_DIV_SHIFT, class_to_size, class_to_max_blocks,
+    block_index_in_page, structural const assertions. mod.rs now owns only the
+    query functions and tests; `pub mod tables` re-exports keep public paths
+    unchanged.
+
 - Three further deep vertical module splits enforcing SRP/SoC on
   mixed-concern files, with no public API change (all workspace tests pass,
   undocumented-unsafe ratchet held at 0):
