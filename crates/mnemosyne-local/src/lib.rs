@@ -62,7 +62,8 @@ pub use fast_path_cache::{
 pub use free::{thread_free, thread_free_layout};
 pub use local_alloc::{SizeClassOccupancy, ThreadAllocator, ThreadAllocatorStats};
 pub use realloc::thread_realloc;
-pub use tls_slot::{LocalAllocatorSelector, LocalAllocatorSlot};
+pub use selector_traits::{LocalAllocatorSelector, PolicySlotSelection};
+pub use tls_slot::LocalAllocatorSlot;
 #[cfg(nightly_tls_active)]
 pub use tls_slot::{ThreadExitReclaim, arm_thread_exit};
 pub use usable_size::{thread_allocator_stats, usable_size};
@@ -79,3 +80,4 @@ pub use validation::{initialize_allocated_bytes, poison_freed_bytes};
 pub mod internal;
 
 mod selector;
+pub mod selector_traits;
