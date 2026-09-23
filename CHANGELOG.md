@@ -7,6 +7,19 @@
 - Three further deep vertical module splits enforcing SRP/SoC on
   mixed-concern files, with no public API change (all workspace tests pass,
   undocumented-unsafe ratchet held at 0):
+  - `mnemosyne-core/src/types/segment/mod.rs` (531 L, directory module) —
+    three new sibling submodules added: `location.rs` (`locate_segment` /
+    `locate_page` free functions), `freelist.rs` (cookie derivation,
+    mode validation, encryption-flag read), `access.rs` (ownership and
+    current-slicing raw-pointer accessors). `ownership.rs` unchanged.
+    `mod.rs` reduced to ~270 L of struct shape + `Send/Sync` + lifecycle
+    methods. All public paths via `types.rs` re-exports unchanged.
+  - `mnemosyne-arena/src/scratch/pool.rs` (427 L) → directory module
+    `pool/{mod, borrow, manage, query}.rs` — `borrow.rs` owns the
+    PROVISION-generic `borrow_slot`, the safe and unsafe borrow entry
+    points; `manage.rs` owns `release`, `reset`, `prewarm`, `preload`,
+    `shrink_all_slots`; `query.rs` owns the Cell-mirror read-only
+    accessors; `mod.rs` the struct, `MAX_POOL_SLOTS`, and constructors.
   - `mnemosyne-arena/src/segment/pool/huge_pool.rs` (427 L) →
     `huge_pool/{mod, bucket, push, pop, stats, purge}.rs` — `bucket.rs` owns
     the SSOT size-to-bucket geometry and over-provision cap; `push`/`pop`
