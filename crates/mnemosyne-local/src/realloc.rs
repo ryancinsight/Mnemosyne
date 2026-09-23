@@ -1,18 +1,18 @@
 use crate::alloc::small_path_class;
+use crate::free_helpers::resolve_owner_slot;
 use crate::usable_size;
 use crate::{
     LocalAllocatorSelector, ThreadAllocator, initialize_allocated_bytes, poison_freed_bytes,
     thread_alloc_layout, thread_free,
 };
 use core::alloc::Layout;
-use core::ffi::c_void;
 use core::ptr::NonNull;
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::constants::{MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE};
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::round_up_size;
 use mnemosyne_core::types::Segment;
-use mnemosyne_core::types::{Block, SegmentOwner, locate_segment};
+use mnemosyne_core::types::{Block, locate_segment};
 
 /// Whether a small reallocation can stay in its current size class.
 ///
@@ -351,57 +351,4 @@ pub unsafe fn thread_realloc<
     }
 
     new_ptr
-}
-
-/// Resolves the owning allocator slot for a segment, applying platform-specific
-/// thread-identity detection.
-///
-/// Returns `(is_owner, owner_slot_ptr)` where:
-/// - `is_owner` — whether the calling context owns this segment's allocator
-/// - `owner_slot_ptr` — the concrete slot pointer to use for the in-place
-///   realloc path (`null` when `is_owner` is `false`)
-///
-/// This is a **non-generic** helper: all platform differences are
-/// `#[cfg]`-gated here so the generic `thread_realloc<P,B>` body does not
-/// duplicate the ownership-resolution logic per monomorphization.
-///
-/// # Safety
-///
-/// `segment` must point to a live, initialized segment header.
-#[inline]
-unsafe fn resolve_owner_slot(
-    segment: *mut Segment,
-    owner: SegmentOwner,
-    slot_ptr: *mut c_void,
-) -> (bool, *mut c_void) {
-    #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
-    {
-        // On Windows x86-64, check both the calling slot and the owning thread's
-        // allocator directly: when the caller uses a different policy slot than the
-        // one that owns the segment (e.g. StandardPolicy caller on a HardenedPolicy
-        // segment), `slot_ptr` won't match but the owning allocator still lives on
-        // this thread and can safely perform the in-place free.
-        // SAFETY: `segment` is a live header; `owner_allocator` reads only the
-        // atomic ownership field via raw-pointer projection.
-        let tid = mnemosyne_core::types::current_thread_id();
-        let owner_allocator = unsafe { Segment::owner_allocator(segment) };
-        let same_thread_owner = !owner_allocator.is_null() && owner.matches_thread_id(tid);
-        let caller_owner = !slot_ptr.is_null() && owner.matches(slot_ptr);
-        if same_thread_owner {
-            return (true, owner_allocator);
-        }
-        if caller_owner {
-            return (true, slot_ptr);
-        }
-        return (false, core::ptr::null_mut());
-    }
-    #[cfg(not(all(windows, target_arch = "x86_64", not(miri))))]
-    {
-        let caller_owner = !slot_ptr.is_null() && owner.matches(slot_ptr);
-        if caller_owner {
-            (true, slot_ptr)
-        } else {
-            (false, core::ptr::null_mut())
-        }
-    }
 }
