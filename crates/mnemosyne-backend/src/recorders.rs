@@ -203,11 +203,13 @@ mod tests {
 
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    fn lock_test() -> std::sync::MutexGuard<'static, ()> {
+        TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn mapping_telemetry_tracks_deltas_and_peak() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
+        let _guard = lock_test();
         let before = backend_memory_stats();
         let size = 4096;
 
@@ -249,9 +251,7 @@ mod tests {
 
     #[test]
     fn failed_release_increments_call_count_without_byte_delta() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
+        let _guard = lock_test();
         let before = backend_memory_stats();
         let size = 4096;
 
@@ -277,9 +277,7 @@ mod tests {
 
     #[test]
     fn page_reset_telemetry_increments_call_and_byte_counters_only() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
+        let _guard = lock_test();
         // record_page_reset must increment both call and byte counters
         // without touching current_mapped_bytes, because a reset releases
         // physical backing while leaving the virtual mapping committed.
@@ -311,9 +309,7 @@ mod tests {
 
     #[test]
     fn decommit_telemetry_increments_call_and_byte_counters_only() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
+        let _guard = lock_test();
         // record_decommit must increment both counters without touching
         // current_mapped_bytes (the reservation persists) or the unmap/reset
         // counters.
@@ -346,9 +342,7 @@ mod tests {
     #[cfg(all(target_os = "linux", not(miri)))]
     #[test]
     fn hugepage_hint_telemetry_increments_only_its_own_call_counter() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
+        let _guard = lock_test();
         // The hint carries no size and changes no mapping extent, so
         // record_hugepage_hint must move its own counter and nothing else.
         let before = backend_memory_stats();
@@ -372,9 +366,7 @@ mod tests {
 
     #[test]
     fn guard_telemetry_increments_call_and_byte_counters_only() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
+        let _guard = lock_test();
         // record_guard_install must increment both counters without
         // perturbing current_mapped_bytes, page_reset, or unmap counters.
         let before = backend_memory_stats();

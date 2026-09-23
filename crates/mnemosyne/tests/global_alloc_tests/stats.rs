@@ -2,9 +2,7 @@ use super::*;
 
 #[test]
 fn test_segment_reclamation() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     // Allocate and deallocate large blocks multiple times
     // If segments are not reclaimed/reused, this would exhaust virtual address space or leak memory.
     for _ in 0..20 {
@@ -28,9 +26,7 @@ fn test_segment_reclamation() {
 
 #[test]
 fn test_memory_stats_retention_bound() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     const SIZES: [usize; 40] = [
         8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 160, 192, 224, 256, 288,
         320, 352, 384, 416, 448, 480, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792,
@@ -98,9 +94,7 @@ fn test_memory_stats_retention_bound() {
 
 #[test]
 fn test_purge() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     // Clear any existing segments in the pool.
     purge();
 
@@ -143,9 +137,7 @@ fn test_purge() {
 
 #[test]
 fn test_reset_keeps_segments_cached_and_records_telemetry() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     // Start from a clean pool so the retention count is deterministic.
     purge();
 
