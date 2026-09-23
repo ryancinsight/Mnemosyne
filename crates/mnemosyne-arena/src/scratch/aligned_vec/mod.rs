@@ -3,6 +3,7 @@
 
 mod bytes;
 mod length;
+mod query;
 mod storage;
 mod traits;
 
