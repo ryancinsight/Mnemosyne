@@ -156,11 +156,7 @@ impl<T: ScratchElement> ScratchPool<T> {
     /// have identical hot-path machine code, differing only in the
     /// cold-provision-update path.
     #[inline]
-    fn borrow_slot<const PROVISION: bool, R>(
-        &self,
-        n: usize,
-        f: impl FnOnce(&mut [T]) -> R,
-    ) -> R {
+    fn borrow_slot<const PROVISION: bool, R>(&self, n: usize, f: impl FnOnce(&mut [T]) -> R) -> R {
         struct BorrowGuard<'a> {
             depth: &'a Cell<u8>,
             original: u8,

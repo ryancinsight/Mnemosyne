@@ -544,8 +544,6 @@ impl<T: ScratchElement> AlignedVec<T> {
     }
 }
 
-
-
 // ── Drain iterator ───────────────────────────────────────────────────────────
 
 /// A draining iterator returned by [`AlignedVec::drain`].
