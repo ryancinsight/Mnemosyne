@@ -1,77 +1,24 @@
-use super::page::{pop_page_free_block, try_allocate_page_local, try_reclaim_and_allocate};
+//! Cold allocation path for [`super::super::ThreadAllocator`]: the slow route
+//! when `alloc_class` finds no ready active-page block.
+//!
+//! Three stages in sequence:
+//! 1. [`ThreadAllocator::alloc_cold`] — reclaim / move-full / get-new-page dispatch.
+//! 2. [`ThreadAllocator::get_new_page`] — page acquisition from the empty list,
+//!    current segment, or a freshly acquired segment.
+//! 3. [`acquire_policy_compatible_segment`] — pop segments until one whose
+//!    free-list mode matches policy `P` is found; defer incompatibles.
+
 use crate::local_alloc::ThreadAllocator;
 use core::ptr::NonNull;
 use mnemosyne_arena::{HasSegmentPool, allocate_segment};
 use mnemosyne_core::constants::PAGES_PER_SEGMENT;
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::class_to_size;
-#[cfg(test)]
-use mnemosyne_core::size_class::size_to_class;
 use mnemosyne_core::types::{Page, Segment};
 
+use super::super::page::{pop_page_free_block, try_allocate_page_local, try_reclaim_and_allocate};
+
 impl<B: HasSegmentPool> ThreadAllocator<B> {
-    /// Allocates a small memory block of the specified size class.
-    ///
-    /// # Safety
-    ///
-    /// `class` must be a valid size class index (< `NUM_SIZE_CLASSES`). Every
-    /// policy used with this allocator instance must have the same
-    /// `ENABLE_FREE_LIST_ENCRYPTION` value; the public `thread_*` entry points
-    /// enforce that separation through their mode-keyed TLS slots.
-    #[inline(always)]
-    pub unsafe fn alloc_class<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
-        if let Some(page_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
-            // Raw pointer, not `&mut`: these paths reach the parent segment, and
-            // a `Unique` tag minted here would have to be popped by that access.
-            let page = page_ptr.as_ptr();
-
-            // 1. Check thread-local free list or lazy bump allocation.
-            if let Some(block) = unsafe { try_allocate_page_local::<P>(page) } {
-                return block.as_ptr() as *mut u8;
-            }
-
-            // 2. Reclaim batched cross-thread frees only after the local list is empty.
-            // SAFETY: `page` is owned by this allocator and `try_reclaim_and_allocate`
-            // upholds the `Page::reclaim_thread_free` contract on its behalf.
-            if let Some(block) =
-                unsafe { try_reclaim_and_allocate::<P>(page, &mut self.cross_thread_reclaimed) }
-            {
-                return block.as_ptr() as *mut u8;
-            }
-        }
-
-        // Outline the cold allocation path to keep alloc() small and fast.
-        // SAFETY: `class` is the same caller-validated size-class index
-        // (< `NUM_SIZE_CLASSES`, the contract of `alloc_class`) that indexed
-        // `active_pages` above, satisfying `alloc_cold`'s bounds precondition.
-        unsafe { self.alloc_cold::<P>(class) }
-    }
-
-    /// Allocates a block of memory of the given size.
-    ///
-    /// Returns null if the size is not a small class or if allocation fails.
-    ///
-    /// This size-taking entry point exists only for the crate's own tests, which
-    /// drive the allocator by byte size; production callers route through
-    /// `alloc_class` (size-class already resolved) or the crate's public
-    /// `thread_alloc*` entry points, so it is gated out of non-test builds to
-    /// keep the public unsafe surface minimal.
-    ///
-    /// # Safety
-    ///
-    /// This method is unsafe because it works with raw pointers and handles
-    /// manual memory layouts. The policy mode must match the mode used by all
-    /// pages already owned by this allocator instance.
-    #[cfg(test)]
-    #[inline(always)]
-    pub unsafe fn alloc<P: AllocPolicy>(&mut self, size: usize) -> *mut u8 {
-        let class = match size_to_class(size) {
-            Some(c) => c,
-            None => return core::ptr::null_mut(),
-        };
-        unsafe { self.alloc_class::<P>(class) }
-    }
-
     /// Cold path for allocating a block when active pages are full.
     ///
     /// Marked as `#[inline(never)]` to prevent pollution of instruction cache.
@@ -85,8 +32,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     pub unsafe fn alloc_cold<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
         // The container's gate is raised across this call, so the sweep takes
         // its guarded branch.
+        // SAFETY: this is an `unsafe fn`; the caller upholds the allocator
+        // invariants, and `record_defrag_operation` only modifies bookkeeping.
         unsafe { self.record_defrag_operation::<P>(true) };
         // 1. Move the current active page to full_pages if it is indeed full.
+        // SAFETY: `class` is a caller-validated size-class index
+        // (< `NUM_SIZE_CLASSES`), so it is a valid index into `active_pages`.
         if let Some(active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
             // SAFETY: `active_ptr` came from this allocator's own active list,
             // so the page is live and owned by this thread. It remains raw so
@@ -99,6 +50,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 return block.as_ptr() as *mut u8;
             }
             // The page is truly full! Move it to full_pages.
+            // SAFETY: `active_ptr` is the live active page just read above;
+            // `class` is the caller-validated size-class index for that page.
             unsafe {
                 self.unlink_page(active_ptr.as_ptr(), class);
                 self.push_full_page(active_ptr, class);
@@ -106,6 +59,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         }
 
         // 1b. Check if the new head of active_pages can satisfy the allocation.
+        // SAFETY: same `class` bounds as above — valid index into `active_pages`.
         if let Some(active_ptr) = unsafe { *self.active_pages.get_unchecked(class) } {
             // SAFETY: as above; raw pointer keeps this off a `Unique` tag.
             let active_page = active_ptr.as_ptr();
@@ -203,7 +157,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let block_size = class_to_size(class);
 
         // Check if there is an empty page in the defragmentation list first.
+        // SAFETY: `pop_best_empty_page` accesses this allocator's own defrag
+        // list under exclusive `&mut` — no concurrent access is possible here.
         if let Some(page_ptr) = unsafe { self.pop_best_empty_page() } {
+            // SAFETY: `page_ptr` is a live empty page from this allocator's own
+            // defrag list; `class_to_size(class)` and free-list initialization
+            // write only within the page's backing region.
             unsafe {
                 let random_value = if P::RANDOMIZE_ALLOCATION {
                     self.next_random() ^ page_ptr.as_ptr() as u64 ^ (class as u64).rotate_left(17)
@@ -320,6 +279,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         } else {
                             0
                         };
+                        // SAFETY: `found_page` is a live interior pointer to
+                        // this segment's page array; writing `block_size` and
+                        // `size_class` initializes its class metadata before
+                        // the free-list is built below.
                         unsafe {
                             (*found_page).block_size = block_size as _;
                             (*found_page).size_class = class as u8;
@@ -346,7 +309,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         return found_page;
                     }
 
-                    // Fallback to allocating another segment recursively
+                    // Fallback to allocating another segment recursively.
+                    // SAFETY: same caller contract — `class` is a valid
+                    // size-class index and the allocator state is consistent.
                     return unsafe { self.get_new_page::<P>(class) };
                 } else {
                     self.fresh_segments += 1;
@@ -429,6 +394,9 @@ unsafe fn acquire_policy_compatible_segment<P: AllocPolicy, B: HasSegmentPool>()
 -> Option<*mut Segment> {
     let mut deferred: *mut Segment = core::ptr::null_mut();
     let chosen = loop {
+        // SAFETY: `allocate_segment` accesses only global pool/OS state that
+        // is internally synchronized; the returned segment (if any) is
+        // exclusively owned by this caller.
         let Some(seg_ptr) = (unsafe { allocate_segment::<B>() }) else {
             break None;
         };
