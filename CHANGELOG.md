@@ -7,6 +7,13 @@
 - Three further deep vertical module splits enforcing SRP/SoC on
   mixed-concern files, with no public API change (all workspace tests pass,
   undocumented-unsafe ratchet held at 0):
+  - `mnemosyne-arena/src/segment/pool/huge_pool.rs` (427 L) →
+    `huge_pool/{mod, bucket, push, pop, stats, purge}.rs` — `bucket.rs` owns
+    the SSOT size-to-bucket geometry and over-provision cap; `push`/`pop`
+    carry admission and local-first stealing retrieval; `stats` the advisory
+    counters/snapshot; `purge` the OS reclamation; `mod.rs` the struct,
+    budget constants, and `new`. The bucket-geometry SSOT is re-exported so
+    `pool::huge_pool::*` paths keep resolving.
   - `mnemosyne-backend/src/recorders.rs` (358 L) → `recorders/{mod, stats}.rs`
     — `stats.rs` owns the atomic counters, `BackendMemoryStats` snapshot,
     recorder functions, and their tests; `mod.rs` is a thin public-API wrapper
