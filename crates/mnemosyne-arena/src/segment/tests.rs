@@ -872,9 +872,12 @@ fn first_os_allocation_failure_purges_and_retries() {
     // takes it when the OS declines the first mapping request.
     let segment = unsafe { allocate_segment::<FirstAllocationFailsBackend>() };
 
-    assert!(
-        segment.is_some(),
-        "purge-and-retry must recover a transient first-allocation failure"
+    let segment =
+        segment.expect("purge-and-retry must recover a transient first-allocation failure");
+    assert_eq!(
+        segment as usize % SEGMENT_ALIGN,
+        0,
+        "the retried mapping must yield a SEGMENT_ALIGN-aligned segment"
     );
     assert_eq!(
         FIRST_ALLOCATION_FAILS_CALLS.load(Ordering::Relaxed),
@@ -900,6 +903,6 @@ fn first_os_allocation_failure_purges_and_retries() {
     );
 
     unsafe {
-        deallocate_segment::<FirstAllocationFailsBackend>(segment.expect("checked Some above"));
+        deallocate_segment::<FirstAllocationFailsBackend>(segment);
     }
 }
