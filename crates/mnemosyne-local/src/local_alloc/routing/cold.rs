@@ -242,9 +242,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                     P::ENABLE_FREE_LIST_ENCRYPTION,
                                     "adopted an orphan whose free-list mode does not match the policy"
                                 );
-                                let reclaimed = Page::reclaim_thread_free_if_present_for_policy::<P>(
-                                    seg_ptr, i,
-                                );
+                                let reclaimed =
+                                    Page::reclaim_thread_free_if_present_for_policy(seg_ptr, i);
                                 if reclaimed > 0 {
                                     self.record_cross_thread_reclaimed(reclaimed);
                                 }

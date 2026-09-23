@@ -261,24 +261,25 @@ impl Page {
         unsafe { Self::reclaim_thread_free_in_segment(segment, page_index, encrypted, randomized) }
     }
 
-    /// Policy-typed wrapper over the present-only remote-free drain.
+    /// Drains cross-thread frees only when the page-local queue is currently
+    /// non-empty.
+    ///
+    /// Non-generic: the `_for_policy` name was historical; no policy const is
+    /// consumed in the body — encoding mode and randomization come from the
+    /// segment's own metadata, not from `P`. Removing the type parameter
+    /// eliminates unnecessary monomorphization at every call site.
     ///
     /// # Safety
-    /// `segment` must point at a live segment and `page_index` must be one of
-    /// its pages. `P` selects the TLS slot and the allocator's compile-time
-    /// semantics only: the encoding mode is read from the segment itself, so a
-    /// policy whose `ENABLE_FREE_LIST_ENCRYPTION` differs from the segment's
-    /// recorded mode is sound here and aborts nothing.
+    /// Carries [`Page::reclaim_thread_free_if_present_in_segment`]'s contract
+    /// unchanged.
     #[inline]
-    pub unsafe fn reclaim_thread_free_if_present_for_policy<P: crate::policy::AllocPolicy>(
+    pub unsafe fn reclaim_thread_free_if_present_for_policy(
         segment: *mut Segment,
         page_index: usize,
     ) -> usize {
         // SAFETY: forwarded from the caller's contract — the segment and page
         // remain live, and only the page's recorded mode decides how its
-        // remote-free chain is encoded. The caller's policy remains relevant for
-        // TLS-slot selection and the allocator's compile-time semantics, but it
-        // must never override the owning segment's runtime free-list mode.
+        // remote-free chain is encoded.
         let page = unsafe { Self::page_in_segment(segment, page_index) };
         let encrypted = unsafe { Segment::free_list_encrypted(segment) };
         let randomized = unsafe { (*page).secondary_free.is_some() };
@@ -291,22 +292,28 @@ impl Page {
 
     /// Policy-typed wrapper over [`Page::reclaim_thread_free_in_segment`].
     ///
+    /// Non-generic: see [`Self::reclaim_thread_free_if_present_for_policy`] for
+    /// the rationale. The `P` type parameter was removed because no policy const
+    /// is used in the body.
+    ///
     /// # Safety
     ///
     /// Carries [`Page::reclaim_thread_free_in_segment`]'s contract unchanged.
     #[inline]
-    pub unsafe fn reclaim_thread_free_for_policy<P: crate::policy::AllocPolicy>(
+    pub unsafe fn reclaim_thread_free_for_policy(
         segment: *mut Segment,
         page_index: usize,
     ) -> usize {
-        // SAFETY: preconditions forwarded unchanged. The segment's recorded
-        // `free_list_encrypted` bit is the authoritative source of truth for the
-        // queue encoding; the caller policy affects only the TLS slot and the
-        // compile-time semantics of the allocator instance, not the live page's
-        // link format.
+        // SAFETY: `segment` is a live, initialized segment per the caller's contract;
+        // `page_in_segment` projects to its page array at an in-range index.
         let page = unsafe { Self::page_in_segment(segment, page_index) };
+        // SAFETY: `segment` is live; `free_list_encrypted` reads only its
+        // initialization-time mode bit.
         let encrypted = unsafe { Segment::free_list_encrypted(segment) };
+        // SAFETY: `page` is the live page projected above; `secondary_free` is an
+        // initialized field for every allocated page.
         let randomized = unsafe { (*page).secondary_free.is_some() };
+        // SAFETY: forwarded from the caller's contract.
         unsafe { Self::reclaim_thread_free_in_segment(segment, page_index, encrypted, randomized) }
     }
 }

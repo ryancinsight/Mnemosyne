@@ -41,6 +41,57 @@ pub fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> boo
     }
 }
 
+/// Determines whether a reallocation can be served in-place without copying.
+///
+/// This is a **non-generic** helper: it uses only `MAX_SMALL_ALLOC_SIZE`,
+/// `MIN_BLOCK_SIZE`, and `usable_size` (all non-generic), so it compiles
+/// once and is shared across every `(P, B)` monomorphization of
+/// `thread_realloc`, reducing the amount of code specialized per policy.
+///
+/// Returns `true` when the existing block is large enough for `new_size` and
+/// no copy is required.
+///
+/// # Safety
+///
+/// `ptr` must be a non-null allocation of `layout` returned by this allocator;
+/// `usable_size(ptr)` reads the originating segment metadata.
+#[inline]
+unsafe fn realloc_can_reuse(ptr: *mut u8, layout: Layout, new_size: usize) -> bool {
+    let is_small = layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE;
+    if new_size <= layout.size() {
+        if is_small {
+            // Small shrink: the existing class block already holds `new_size`;
+            // reuse when the shrink stays within the half-capacity threshold
+            // that prevents excessive block fragmentation.
+            return new_size >= layout.size() / 2;
+        }
+        // Large/huge shrink: fast-path reuse for modest shrinks; page-rounded
+        // comparison for larger ones.
+        let new_adjusted = core::cmp::max(new_size, layout.align());
+        if new_size >= layout.size() / 2 {
+            return true;
+        }
+        if new_adjusted > MAX_SMALL_ALLOC_SIZE || layout.align() > MIN_BLOCK_SIZE {
+            // SAFETY: `ptr` is a live allocation per the caller's contract;
+            // `usable_size` reads only segment/page metadata.
+            let current_usable = unsafe { usable_size(ptr) };
+            let page_size = mnemosyne_core::constants::PAGE_SIZE;
+            let new_page_rounded = (new_adjusted + page_size - 1) & !(page_size - 1);
+            return new_page_rounded >= current_usable;
+        }
+        false
+    } else {
+        // Grow: reuse in place if the allocation already has capacity.
+        if is_small {
+            small_realloc_fits_existing_class(layout, new_size)
+        } else {
+            // SAFETY: same contract as above.
+            let current_usable = unsafe { usable_size(ptr) };
+            new_size <= current_usable
+        }
+    }
+}
+
 /// Reallocates a memory block, optimizing performance and memory footprint by avoiding redundant
 /// allocation-deallocation cycles, reusing existing size-class blocks in place, and reducing TLS
 /// lookup overhead.
@@ -89,54 +140,9 @@ pub unsafe fn thread_realloc<
     if !ptr.is_null() && new_size != 0 {
         let is_grow = new_size > layout.size();
 
-        let mut can_reuse = false;
-        {
-            let is_small =
-                layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE;
-
-            if new_size <= layout.size() {
-                if is_small {
-                    if new_size >= layout.size() / 2 {
-                        can_reuse = true;
-                    }
-                } else {
-                    // Large/huge shrink. When the request stays above half the
-                    // old size, reuse in place regardless of the exact mapping.
-                    // The page-rounded comparison against the current usable size
-                    // is the only branch that consumes `usable_size` (a
-                    // segment-header dereference), so it is computed only there.
-                    let new_adjusted = core::cmp::max(new_size, layout.align());
-                    if new_size >= layout.size() / 2 {
-                        can_reuse = true;
-                    } else if new_adjusted > MAX_SMALL_ALLOC_SIZE || layout.align() > MIN_BLOCK_SIZE
-                    {
-                        // SAFETY: `ptr` is non-null and, per the realloc `# Safety`
-                        // contract, was returned by a Mnemosyne allocation, which
-                        // is exactly `usable_size`'s precondition.
-                        let current_usable = unsafe { usable_size(ptr) };
-                        let page_size = mnemosyne_core::constants::PAGE_SIZE;
-                        let new_page_rounded = (new_adjusted + page_size - 1) & !(page_size - 1);
-                        if new_page_rounded >= current_usable {
-                            can_reuse = true;
-                        }
-                    }
-                }
-            } else {
-                // new_size > layout.size()
-                if is_small {
-                    if small_realloc_fits_existing_class(layout, new_size) {
-                        can_reuse = true;
-                    }
-                } else {
-                    // SAFETY: `ptr` is the non-null allocation from the realloc
-                    // `# Safety` contract, satisfying `usable_size`'s precondition.
-                    let current_usable = unsafe { usable_size(ptr) };
-                    if new_size <= current_usable {
-                        can_reuse = true;
-                    }
-                }
-            }
-        }
+        // SAFETY: `ptr` is non-null and allocator-owned per the caller's
+        // `# Safety` contract; `realloc_can_reuse` only reads metadata.
+        let can_reuse = unsafe { realloc_can_reuse(ptr, layout, new_size) };
 
         if can_reuse {
             if P::ZERO_INITIALIZE && is_grow {
