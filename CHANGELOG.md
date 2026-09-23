@@ -4,6 +4,14 @@
 
 ### Added
 
+- A new book chapter, [Guard Pages](docs/book/guard_pages.md), documents the
+  `MemoryBackend::make_guard` seam, the per-backend `SUPPORTS_MAKE_GUARD`
+  support matrix, and the arena's opt-in `segment-tail-guards` /
+  `segment-header-guards` consumer features — content the ten-chapter book
+  closure left out. Cross-linked from the Hardened and Secure Policies and
+  Segment Lifecycle chapters; `SUMMARY.md` gained a nested entry under
+  chapter 8.
+
 - `ScratchPool::with_scratch_bounded` and `ScratchBank::with_scratch_bounded`
   record each depth's high-water request (the slot's *provision*), and
   `ScratchPool::release` / `ScratchPool::reset` (plus `ScratchBank`
