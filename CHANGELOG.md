@@ -4,6 +4,22 @@
 
 ### Added
 
+- Two further SRP splits, no public API change, unsafe-doc ratchet held at 0:
+  - `mnemosyne-local/src/local_alloc/routing.rs` (442 L) → directory module
+    `routing/{mod.rs (71 L), cold.rs}` — split by allocation temperature:
+    `mod.rs` owns the `alloc_class<P>` hot dispatch that serves the active-page
+    fast path; `cold.rs` owns `alloc_cold<P>` (page-full reclaim/move/search
+    loop), `get_new_page<P>` (empty-list / current-segment / orphan-adopt page
+    acquisition), and `acquire_policy_compatible_segment<P,B>` (mode-filtered
+    segment pop with inline orphan deferral). All 14 unsafe blocks in `cold.rs`
+    carry `// SAFETY:` comments; several were added or repositioned after the
+    split moved them past the 14-line scanner proximity window.
+  - `mnemosyne-heap/src/brand.rs` (320 L) → `brand/{mod.rs (107 L),
+    branded_cell.rs (248 L)}` — `BrandedCell<'brand, T>` (GhostCell-style
+    interior mutability + borrow/borrow_mut/borrow_mut_2/borrow_mut_3 +
+    Send/Sync/Debug/PartialEq/Hash) extracted into a focused sibling module;
+    `mod.rs` keeps `BrandedBlock<'brand, T>` and the melinoe re-exports.
+
 - Two parallel SRP splits, no public API change, unsafe-doc ratchet held at 0:
   - `mnemosyne-arena/src/scratch/aligned_vec/traits.rs` (359 L → 106 L) —
     new sibling files in the existing directory module: `iter.rs` (IntoIter
