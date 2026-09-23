@@ -828,3 +828,82 @@ fn test_arena_stats_track_huge_pool_blocks_and_bytes() {
         let _ = Box::from_raw(block);
     }
 }
+
+struct FirstAllocationFailsBackend;
+
+static FIRST_ALLOCATION_FAILS_POOLS: BackendPools = BackendPools::new();
+static FIRST_ALLOCATION_FAILS_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+impl MemoryBackend for FirstAllocationFailsBackend {
+    unsafe fn allocate(size: usize) -> *mut u8 {
+        // Simulate a transient OS allocation failure (e.g. a working-set
+        // spike the retained pool is holding address space against) on the
+        // very first call; every later call allocates for real.
+        if FIRST_ALLOCATION_FAILS_CALLS.fetch_add(1, Ordering::Relaxed) == 0 {
+            return core::ptr::null_mut();
+        }
+        let layout = std::alloc::Layout::from_size_align(size, SEGMENT_ALIGN)
+            .expect("segment mapping layout must be valid");
+        unsafe { std::alloc::alloc(layout) }
+    }
+
+    unsafe fn deallocate(ptr: *mut u8, size: usize) -> bool {
+        let layout = std::alloc::Layout::from_size_align(size, SEGMENT_ALIGN)
+            .expect("segment mapping layout must be valid");
+        unsafe {
+            std::alloc::dealloc(ptr, layout);
+        }
+        true
+    }
+}
+
+impl super::pool::private::Sealed for FirstAllocationFailsBackend {}
+
+impl HasSegmentPool for FirstAllocationFailsBackend {
+    fn pools() -> &'static BackendPools {
+        &FIRST_ALLOCATION_FAILS_POOLS
+    }
+}
+
+#[test]
+fn first_os_allocation_failure_purges_and_retries() {
+    FIRST_ALLOCATION_FAILS_CALLS.store(0, Ordering::Relaxed);
+    let before = arena_memory_stats::<FirstAllocationFailsBackend>();
+
+    // SAFETY: FirstAllocationFailsBackend is a valid HasSegmentPool
+    // implementor with its own private pools; this exercises the OOM
+    // purge-and-retry path in `allocate_segment` exactly as production code
+    // takes it when the OS declines the first mapping request.
+    let segment = unsafe { allocate_segment::<FirstAllocationFailsBackend>() };
+
+    assert!(
+        segment.is_some(),
+        "purge-and-retry must recover a transient first-allocation failure"
+    );
+    assert_eq!(
+        FIRST_ALLOCATION_FAILS_CALLS.load(Ordering::Relaxed),
+        2,
+        "bounded to one retry: the first B::allocate call fails, the second succeeds"
+    );
+
+    let after = arena_memory_stats::<FirstAllocationFailsBackend>();
+    assert_eq!(
+        after.purge_calls,
+        before.purge_calls + 1,
+        "the retry path must purge the retained pool exactly once before retrying"
+    );
+    assert_eq!(
+        after.oom_retries,
+        before.oom_retries + 1,
+        "the OOM retry counter must move exactly once"
+    );
+    assert_eq!(
+        after.oom_retry_successes,
+        before.oom_retry_successes + 1,
+        "the retry succeeded, so the success counter must move too"
+    );
+
+    unsafe {
+        deallocate_segment::<FirstAllocationFailsBackend>(segment.expect("checked Some above"));
+    }
+}

@@ -4,6 +4,34 @@
 
 ### Added
 
+- `allocate_segment` now recovers from a first OS allocation failure by
+  purging every retained free segment back to the OS and retrying the
+  mapping once, bounded to one purge and one retry. This covers the
+  working-set-spike scenario where the retained pool holds address space
+  the OS temporarily needs elsewhere. The attempt and its outcome are
+  observable through two new counters, `ArenaMemoryStats::oom_retries` and
+  `oom_retry_successes` (and the matching `SegmentPoolStats` fields),
+  following the crate's existing counter-based telemetry convention rather
+  than adding a tracing dependency to a `no_std`-capable crate
+  (MN-STALE-BRANCH-INVENTORY-2026-09-09).
+
+  `cargo-semver-checks` (informational gate) flags the two new fields as a
+  major-class break, since `ArenaMemoryStats`/`SegmentPoolStats` were
+  exhaustively constructible. Marked both `#[non_exhaustive]` in the same
+  change — they are snapshot types returned by an API function, never
+  constructed by callers, and have already gained fields three times, so
+  the attribute forecloses this recurring on the next addition too — but
+  the transition itself remains a semver-relevant change for
+  `mnemosyne-arena`'s next version bump (currently `0.4.0`).
+
+### Changed
+
+- `ArenaMemoryStats` and `SegmentPoolStats` are now `#[non_exhaustive]`.
+  Both are read-only telemetry snapshots returned by `arena_memory_stats`
+  / `GlobalSegmentPool::stats`, never constructed by callers; no in-repo
+  caller builds either via struct literal. Semver-relevant for
+  `mnemosyne-arena`'s next version bump.
+
 - `ScratchPool::with_scratch_bounded` and `ScratchBank::with_scratch_bounded`
   record each depth's high-water request (the slot's *provision*), and
   `ScratchPool::release` / `ScratchPool::reset` (plus `ScratchBank`
