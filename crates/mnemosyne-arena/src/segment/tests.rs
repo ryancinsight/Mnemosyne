@@ -230,7 +230,6 @@ fn fresh_segment_install_increments_guard_telemetry_and_round_trips() {
 #[test]
 fn fresh_segment_installs_tail_guard_in_alignment_slack() {
     while GuardRecordingBackend::global_segment_pool().pop().is_some() {}
-    while GuardRecordingBackend::global_orphan_pool().pop().is_some() {}
     GUARD_CALLS.store(0, Ordering::Relaxed);
     for i in 0..2 {
         GUARD_PTRS[i].store(0, Ordering::Relaxed);
@@ -266,7 +265,6 @@ fn fresh_segment_installs_tail_guard_in_alignment_slack() {
 #[test]
 fn fresh_segment_installs_header_guard_in_page_0() {
     while GuardRecordingBackend::global_segment_pool().pop().is_some() {}
-    while GuardRecordingBackend::global_orphan_pool().pop().is_some() {}
     GUARD_CALLS.store(0, Ordering::Relaxed);
     for i in 0..2 {
         GUARD_PTRS[i].store(0, Ordering::Relaxed);
@@ -391,10 +389,6 @@ fn test_segment_tail_slack_decommit() {
         .pop()
         .is_some()
     {}
-    while DecommitRecordingBackend::global_orphan_pool()
-        .pop()
-        .is_some()
-    {}
     DECOMMIT_CALLS.store(0, Ordering::Relaxed);
     DECOMMIT_BYTES.store(0, Ordering::Relaxed);
 
@@ -476,7 +470,6 @@ fn test_reset_segment_pool_propagates_correct_bounds() {
     });
 
     while ResetRecordingBackend::global_segment_pool().pop().is_some() {}
-    while ResetRecordingBackend::global_orphan_pool().pop().is_some() {}
     RESET_CALLS.store(0, Ordering::Relaxed);
     LAST_RESET_PTR.store(0, Ordering::Relaxed);
     LAST_RESET_SIZE.store(0, Ordering::Relaxed);

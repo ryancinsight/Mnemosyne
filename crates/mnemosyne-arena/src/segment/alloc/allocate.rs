@@ -15,35 +15,29 @@ use mnemosyne_core::constants::PAGE_SIZE;
 use mnemosyne_core::constants::{SEGMENT_ALIGN, SEGMENT_SIZE};
 use mnemosyne_core::types::Segment;
 
-/// Helper to pop a segment from the global segment pool or orphan pool,
-/// monomorphized per backend `B` (`#[inline(never)]` keeps this cold pool path
-/// out of the hot caller).
+/// Pops a retained free segment from the global segment pool and
+/// re-initializes it, monomorphized per backend `B` (`#[inline(never)]` keeps
+/// this cold pool path out of the hot caller).
+///
+/// Only the free pool is consulted: a retained segment holds no live
+/// allocation, so re-initializing it erases nothing a caller still reads.
 ///
 /// # Safety
 ///
-/// The caller must ensure that the global segment and orphan pools contain valid,
-/// initialized `Segment` structures. The returned segment (if any) is owned by the caller.
+/// The caller must ensure that the global segment pool contains valid,
+/// initialized `Segment` structures. The returned segment (if any) is owned by
+/// the caller.
 #[inline(never)]
-unsafe fn allocate_segment_from_pools<B: HasSegmentPool>() -> Option<*mut Segment> {
-    // 1. Try to pop from the global segment pool
-    if let Some(segment) = B::global_segment_pool().pop() {
-        // SAFETY: segment points to a valid allocated Segment. We re-initialize
-        // the segment to erase stale epoch metadata and reset it for new allocations.
-        unsafe {
-            let raw_ptr = (*segment).raw_alloc_ptr;
-            let node = (*segment).numa_node;
-            Segment::initialize(segment, raw_ptr, node);
-        }
-        return Some(segment);
+unsafe fn pop_free_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
+    let segment = B::global_segment_pool().pop()?;
+    // SAFETY: segment points to a valid allocated Segment. We re-initialize
+    // the segment to erase stale epoch metadata and reset it for new allocations.
+    unsafe {
+        let raw_ptr = (*segment).raw_alloc_ptr;
+        let node = (*segment).numa_node;
+        Segment::initialize(segment, raw_ptr, node);
     }
-
-    // 2. Try to pop from the global orphan pool.
-    // SAFETY: Returning popped orphaned segment as is, preserving active allocations.
-    if let Some(segment) = B::global_orphan_pool().pop() {
-        return Some(segment);
-    }
-
-    None
+    Some(segment)
 }
 
 /// Helper to return a segment to the global segment pool, monomorphized per
@@ -140,7 +134,33 @@ pub(crate) unsafe fn decommit_mapping_slack<B: mnemosyne_core::MemoryBackend>(
     }
 }
 
-/// Allocates an aligned segment of memory, either from the pool or from the OS.
+/// A segment handed out by [`acquire_segment`], tagged with whether it may
+/// still hold live allocations.
+///
+/// The distinction decides what the new owner may do with the segment: a
+/// [`Free`](Self::Free) segment holds nothing, so it may be carved up or handed
+/// back through [`deallocate_segment`](super::deallocate_segment); an
+/// [`Orphan`](Self::Orphan) holds blocks a dead thread cache allocated and
+/// other threads may still read, write, or free, so it may be adopted but
+/// never returned to the free pool or the OS until every one of its pages is
+/// empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcquiredSegment {
+    /// A freshly mapped or pool-reinitialized segment with no live allocation.
+    Free(*mut Segment),
+    /// A segment from the orphan pool, handed out as is with its live
+    /// allocations, per-page free lists, and pending cross-thread frees.
+    Orphan(*mut Segment),
+}
+
+/// Allocates an empty, aligned segment, either from the free pool or from the
+/// OS.
+///
+/// Never returns an orphan: an orphaned segment still holds live allocations,
+/// and a caller of this function may hand the segment straight back through
+/// [`deallocate_segment`](super::deallocate_segment), which would put those
+/// allocations in the free pool for reuse or for a purge to unmap. Thread
+/// caches that can adopt an orphan use [`acquire_segment`].
 ///
 /// # Monomorphization and ZST Static Routing
 ///
@@ -157,12 +177,45 @@ pub(crate) unsafe fn decommit_mapping_slack<B: mnemosyne_core::MemoryBackend>(
 ///   `deallocate_segment` or released to the OS via `release_segment_mapping`.
 #[inline]
 pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
-    // SAFETY: allocate_segment_from_pools retrieves a valid segment from pools if available.
-    if let Some(segment) = unsafe { allocate_segment_from_pools::<B>() } {
+    // SAFETY: forwarded to the caller — the free pool holds valid segments.
+    if let Some(segment) = unsafe { pop_free_segment::<B>() } {
         return Some(segment);
     }
+    // SAFETY: forwarded to the caller.
+    unsafe { map_fresh_segment::<B>() }
+}
 
-    // 3. Fall back to OS allocation
+/// Acquires a segment for a thread cache: a retained free segment first, then
+/// an orphan to adopt, then a fresh OS mapping.
+///
+/// # Safety
+///
+/// As [`allocate_segment`]. Additionally, an [`AcquiredSegment::Orphan`] must
+/// be adopted — its live pages kept intact — or pushed back to the orphan
+/// pool; it must not reach [`deallocate_segment`](super::deallocate_segment)
+/// or [`release_segment_mapping`](super::release_segment_mapping) while any of
+/// its pages holds a live allocation.
+#[inline]
+pub unsafe fn acquire_segment<B: HasSegmentPool>() -> Option<AcquiredSegment> {
+    // SAFETY: forwarded to the caller — the free pool holds valid segments.
+    if let Some(segment) = unsafe { pop_free_segment::<B>() } {
+        return Some(AcquiredSegment::Free(segment));
+    }
+    if let Some(segment) = B::global_orphan_pool().pop() {
+        return Some(AcquiredSegment::Orphan(segment));
+    }
+    // SAFETY: forwarded to the caller.
+    unsafe { map_fresh_segment::<B>() }.map(AcquiredSegment::Free)
+}
+
+/// Maps, aligns, and initializes a fresh segment from the OS, purging the free
+/// pool and retrying once when the first mapping request fails.
+///
+/// # Safety
+///
+/// As [`allocate_segment`].
+#[inline(never)]
+unsafe fn map_fresh_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
     // We allocate twice the segment size to ensure we can find an aligned boundary.
     // SAFETY: SEGMENT_MAPPING_SIZE is non-zero and aligned. We call B::allocate.
     let mut raw_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
@@ -208,8 +261,8 @@ pub unsafe fn allocate_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
     // `mbind(MPOL_BIND)` enforces first-touch locality so pages are allocated
     // from the correct socket rather than relying on the OS default policy.
     // This call goes to the kernel only once per fresh segment (cold path);
-    // segments recycled from the pool retain their prior NUMA binding and skip
-    // this site entirely (they return early above via `allocate_segment_from_pools`).
+    // segments recycled from the pool retain their prior NUMA binding and never
+    // reach this function (they return early via `pop_free_segment`).
     //
     // SAFETY: `aligned_ptr` points to the segment-aligned base of the
     // `SEGMENT_MAPPING_SIZE` mapping that is exclusively owned at this point

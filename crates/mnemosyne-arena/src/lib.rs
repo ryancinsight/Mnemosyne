@@ -20,9 +20,9 @@ pub use scratch::{
     ScratchPool,
 };
 pub use segment::{
-    ArenaMemoryStats, GlobalHugePool, GlobalSegmentPool, HasSegmentPool, HugePoolStats,
-    MAX_RETAINED_SEGMENTS, SEGMENT_MAPPING_SIZE, SegmentPoolStats, allocate_segment,
-    arena_memory_stats, checked_align_up, deallocate_segment, purge_segment_pool,
+    AcquiredSegment, ArenaMemoryStats, GlobalHugePool, GlobalSegmentPool, HasSegmentPool,
+    HugePoolStats, MAX_RETAINED_SEGMENTS, SEGMENT_MAPPING_SIZE, SegmentPoolStats, acquire_segment,
+    allocate_segment, arena_memory_stats, checked_align_up, deallocate_segment, purge_segment_pool,
     purge_segment_pool_with_warm, reset_segment_pool, try_deallocate_segment,
 };
 

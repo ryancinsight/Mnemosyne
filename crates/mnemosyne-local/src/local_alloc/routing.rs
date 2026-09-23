@@ -1,7 +1,7 @@
 use super::page::{pop_page_free_block, try_allocate_page_local, try_reclaim_and_allocate};
 use crate::local_alloc::ThreadAllocator;
 use core::ptr::NonNull;
-use mnemosyne_arena::{HasSegmentPool, allocate_segment};
+use mnemosyne_arena::{AcquiredSegment, HasSegmentPool, acquire_segment};
 use mnemosyne_core::constants::PAGES_PER_SEGMENT;
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::class_to_size;
@@ -236,21 +236,16 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         if self.current_segment.is_none() || self.next_page_index >= PAGES_PER_SEGMENT {
             // SAFETY: acquires a policy-compatible segment from the OS/pools;
             // policy-incompatible orphans are returned to the orphan pool.
-            if let Some(seg_ptr) = unsafe { acquire_policy_compatible_segment::<P, B>() } {
-                // Determine if this is an orphaned segment vs a fresh/reinitialized segment.
-                // An orphaned segment has pages[1].block_size > 0.
-                // SAFETY: `seg_ptr` is the non-null segment just returned by
-                // `allocate_segment`; reading `pages[1].block_size` from its
-                // initialized mapping distinguishes a previously-used (orphan)
-                // segment from a fresh one.
-                let is_orphan = unsafe { (*seg_ptr).pages[1].block_size > 0 };
-
-                if is_orphan {
+            let Some(acquired) = (unsafe { acquire_policy_compatible_segment::<P, B>() }) else {
+                return core::ptr::null_mut();
+            };
+            match acquired {
+                AcquiredSegment::Orphan(seg_ptr) => {
                     self.orphan_segments_adopted += 1;
                     let mut found_page: *mut Page = core::ptr::null_mut();
                     let mut found_page_index = 0;
                     // SAFETY: `seg_ptr` is a live, mapped segment from
-                    // `allocate_segment` and is now claimed exclusively by this
+                    // `acquire_segment` and is now claimed exclusively by this
                     // thread; `push_owned_segment` stamps ownership before any
                     // other thread can observe it. Every `pages[i]` for
                     // `i in 1..PAGES_PER_SEGMENT` is within the segment's page
@@ -348,7 +343,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                     // Fallback to allocating another segment recursively
                     return unsafe { self.get_new_page::<P>(class) };
-                } else {
+                }
+                AcquiredSegment::Free(seg_ptr) => {
                     self.fresh_segments += 1;
                     // Fresh segment initialization
                     // SAFETY: seg_ptr is valid, exclusive to this thread, and initialized.
@@ -359,8 +355,6 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     }
                     self.next_page_index = 1; // page 0 is segment header
                 }
-            } else {
-                return core::ptr::null_mut();
             }
         }
 
@@ -415,32 +409,29 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 /// before any chain is encoded.
 ///
 /// Termination: each loop iteration either consumes one finite-pool segment
-/// (free pool re-initializes, so `pages[1].block_size == 0` ends the loop;
-/// each deferred orphan shrinks the orphan pool) or reaches the OS path,
-/// which yields a fresh segment or `None`.
+/// (a free segment ends the loop; each deferred orphan shrinks the orphan
+/// pool) or reaches the OS path, which yields a fresh segment or `None`.
 ///
 /// # Safety
 ///
-/// Same contract as [`allocate_segment`]: the global pools must contain valid,
+/// Same contract as [`acquire_segment`]: the global pools must contain valid,
 /// initialized `Segment`s. The returned segment (if any) is exclusively owned
-/// by the caller.
+/// by the caller, and an orphan must be adopted with its live pages intact.
 #[inline(never)]
 unsafe fn acquire_policy_compatible_segment<P: AllocPolicy, B: HasSegmentPool>()
--> Option<*mut Segment> {
+-> Option<AcquiredSegment> {
     let mut deferred: *mut Segment = core::ptr::null_mut();
     let chosen = loop {
-        let Some(seg_ptr) = (unsafe { allocate_segment::<B>() }) else {
+        let Some(acquired) = (unsafe { acquire_segment::<B>() }) else {
             break None;
         };
-        // SAFETY: `seg_ptr` is the initialized, exclusively-owned segment just
-        // returned by `allocate_segment`; `pages[1].block_size > 0`
-        // distinguishes a previously-used orphan from a fresh segment, and
-        // `free_list_encrypted` is its recorded chain-encoding mode.
-        let incompatible_orphan = unsafe {
-            (*seg_ptr).pages[1].block_size > 0
-                && (*seg_ptr).free_list_encrypted != P::ENABLE_FREE_LIST_ENCRYPTION
+        let AcquiredSegment::Orphan(seg_ptr) = acquired else {
+            break Some(acquired);
         };
-        if incompatible_orphan {
+        // SAFETY: `seg_ptr` is the initialized, exclusively-owned orphan just
+        // returned by `acquire_segment`; `free_list_encrypted` is its recorded
+        // chain-encoding mode.
+        if unsafe { (*seg_ptr).free_list_encrypted } != P::ENABLE_FREE_LIST_ENCRYPTION {
             // SAFETY: the segment is exclusively owned after the pop, so its
             // `next_free_segment` link is free to thread the deferral chain.
             unsafe {
@@ -451,7 +442,7 @@ unsafe fn acquire_policy_compatible_segment<P: AllocPolicy, B: HasSegmentPool>()
             deferred = seg_ptr;
             continue;
         }
-        break Some(seg_ptr);
+        break Some(acquired);
     };
     while !deferred.is_null() {
         // SAFETY: `deferred` walks the exclusively-owned deferral chain built

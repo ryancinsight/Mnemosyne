@@ -166,6 +166,14 @@
 
 ### Fixed
 
+- `allocate_segment` no longer hands out orphaned segments. An orphan still
+  holds blocks a finished thread allocated, so a caller that returned it
+  through `deallocate_segment` put live memory in the free pool, where
+  `purge` unmapped it or a later allocation re-initialized it; the
+  ThreadSanitizer job faulted writing a libtest channel block this way.
+  Thread caches now adopt orphans through the new `acquire_segment`, whose
+  `AcquiredSegment::{Free, Orphan}` result replaces the
+  `pages[1].block_size` heuristic that told the two apart.
 - Replace the NUMA binding test's existence-only result check with an exact
   `Ok(())` assertion. Hosted Rust verification, Loom, and Miri pass at
   provider head `39d76d2` (run `32024295467`).
