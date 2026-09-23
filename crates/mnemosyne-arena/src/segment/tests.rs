@@ -2,10 +2,13 @@
 
 extern crate std;
 
-#[expect(unused_imports)]
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
+use super::alloc::SEGMENT_MAPPING_SIZE;
+#[cfg(feature = "segment-tail-guards")]
+use super::alloc::SEGMENT_TAIL_GUARD_SIZE;
 use super::alloc::{
-    SEGMENT_MAPPING_SIZE, SEGMENT_TAIL_GUARD_SIZE, allocate_segment, deallocate_segment,
-    purge_segment_pool, release_segment_mapping, reset_segment_pool,
+    allocate_segment, deallocate_segment, purge_segment_pool, release_segment_mapping,
+    reset_segment_pool,
 };
 use super::pool::{BackendPools, GlobalHugePool, GlobalSegmentPool, HasSegmentPool};
 use super::stats::{SegmentRelease, arena_memory_stats};
