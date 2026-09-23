@@ -1,50 +1,5 @@
 # Backlog
 
-<a id="mn-stale-branch-inventory-2026-09-09"></a>
-
-## MN-STALE-BRANCH-INVENTORY-2026-09-09 — Two pushed branches hold unfiled work [patch] — todo
-
-- **Swept 2026-09-09.** Nine local branches, none mapped to an open item.
-  Four were fully merged and four were superseded; both classes are deleted.
-  The `fix/mnemosyne-pr126-*` trio was three attempts at one fix, and its
-  only content main does not already have is a Miri timeout raised from 60 s
-  to 180 s -- which the runtime-budget rule rejects on its own terms, since
-  the 60 s bound passes.
-- **Two remain, preserved on origin rather than locally.** Neither has an
-  open pull request, and both are six days old:
-  - `origin/refactor/mnemosyne-free-helpers-split` -- 13 commits, 40 files.
-    Its free canary, `reset_bin_stats` and sized-free validation all reached
-    main by other routes; what it still held alone was **purge-and-retry on
-    the first OS allocation failure**. **Landed 2026-09-23**, re-derived
-    natively against current main in `crates/mnemosyne-arena/src/segment/alloc/allocate.rs`
-    rather than ported from the stale branch: bounded to one purge and one
-    retry, with the attempt and its outcome surfaced through two new
-    counters (`ArenaMemoryStats::oom_retries` / `oom_retry_successes`,
-    matching `SegmentPoolStats`) and a test
-    (`segment::tests::first_os_allocation_failure_purges_and_retries`) that
-    forces the first `B::allocate` call to fail and asserts the retry
-    succeeds and both counters move. This branch's content is now fully
-    accounted for.
-  - `origin/feat/phase10-improvements` (`a07f999d`) -- 25 commits ahead of
-    main. **Assessed 2026-09-23: superseded.** Of the 60 public items its
-    diff adds, 58 resolve on main by name; the other two have main
-    equivalents (`AlignedVecIntoIter` -> main's owned `IntoIterator` for
-    `AlignedVec`, `resize_fill` -> `resize` then `fill`).
-- **Integrator: claude-opus-5.5 (takeover 2026-09-23).** The item carried no
-  integrator and no recorded activity; taken over to land the
-  free-helpers-split branch's sole remaining content.
-- **Why filed rather than ported.** Both predate the free-list randomization
-  that landed in #137 and touch the same allocator paths, so a rebase is a
-  re-derivation, not a merge. Each branch's unique commits are read and
-  either re-derived against current main or dropped with the reason recorded.
-- **Acceptance:** every commit on both branches is either re-derived onto
-  main or recorded here as superseded, and the branches are deleted from
-  origin. Both are now accounted for; **remaining:** delete
-  `refactor/mnemosyne-free-helpers-split` (`e26ee023`) and
-  `feat/phase10-improvements` (`a07f999d`) from origin. Blocked on
-  permission: the session's remote-branch deletion was refused and needs
-  the owner.
-
 ## Ready
 
 <a id="MN-WASM-ENV-2026-09-11"></a>
