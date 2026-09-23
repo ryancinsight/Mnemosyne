@@ -2,9 +2,7 @@ use super::*;
 
 #[test]
 fn test_basic_allocation() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     let x = std::boxed::Box::new(42);
     assert_eq!(*x, 42);
     drop(x);
@@ -12,9 +10,7 @@ fn test_basic_allocation() {
 
 #[test]
 fn alloc_free_alloc_refreshes_page_metadata_provenance() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     let layout = Layout::from_size_align(64, 32).expect("64-byte, 32-aligned layout is valid");
 
     unsafe {
@@ -48,9 +44,7 @@ fn alloc_free_alloc_refreshes_page_metadata_provenance() {
 
 #[test]
 fn test_multithreaded_allocation() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     let mut handles = std::vec::Vec::new();
     for _ in 0..10 {
         handles.push(thread::spawn(|| {
@@ -70,9 +64,7 @@ fn test_multithreaded_allocation() {
 
 #[test]
 fn test_cross_thread_free_is_reclaimed_by_owner_page_drain() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
 
     unsafe {
         mnemosyne_arena::purge_segment_pool::<mnemosyne_backend::MemoryBackendWrapper>();
@@ -143,9 +135,7 @@ fn test_cross_thread_free_is_reclaimed_by_owner_page_drain() {
 
 #[test]
 fn test_overflow_protection() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     // 1. Direct call to thread_alloc with size that triggers overflow
     let ptr1 = unsafe {
         mnemosyne_local::thread_alloc::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
@@ -170,9 +160,7 @@ fn test_overflow_protection() {
 
 #[test]
 fn test_zero_size_allocation_returns_null() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     let layout = Layout::from_size_align(0, 8).expect("zero-size 8-byte aligned Layout is valid");
 
     let ptr = unsafe { ALLOCATOR.alloc(layout) };
@@ -188,9 +176,7 @@ fn test_zero_size_allocation_returns_null() {
 
 #[test]
 fn test_small_aligned_allocations_are_aligned() {
-    let _guard = TEST_LOCK
-        .lock()
-        .expect("global allocator test lock was poisoned");
+    let _guard = lock_test();
     // Alignments above MIN_BLOCK_SIZE (16) on the small path must return
     // correctly aligned, usable memory. Sizes include ones whose natural size
     // class has a non-power-of-two stride (40->48, 96, 100->112, 400->416),
