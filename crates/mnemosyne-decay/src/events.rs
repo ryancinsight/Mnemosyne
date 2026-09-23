@@ -9,7 +9,7 @@
 //!   immediate sweep is requested ([`super::request_decay_step`]).
 
 use core::sync::atomic::Ordering;
-use std::sync::{Condvar, Mutex, OnceLock};
+use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
 use super::{DECAY_EVENT, DECAY_FINAL_EXIT_GENERATION, DECAY_STEP_GENERATION, DECAY_WAKE_EVENT};

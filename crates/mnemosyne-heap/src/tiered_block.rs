@@ -1,10 +1,9 @@
 //! Tier-carrying block handles and reallocation failures shared by
-//! [`crate::tiered_heap::TieredHeap`] for any [`AllocPolicy`].
+//! [`crate::tiered_heap::TieredHeap`] for any [`mnemosyne_core::AllocPolicy`].
 
 use crate::brand::BrandedBlock;
 use crate::heap::{ReallocError, ReallocFailure};
 use crate::tier::MemoryTier;
-use mnemosyne_core::AllocPolicy;
 
 /// A [`BrandedBlock`] enriched with the [`MemoryTier`] it was allocated
 /// against.
