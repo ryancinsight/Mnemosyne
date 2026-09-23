@@ -4,6 +4,20 @@
 
 ### Added
 
+- Nine deep vertical module splits across `mnemosyne-core` and
+  `mnemosyne-local`, each enforcing SRP on previously mixed-concern files:
+  - `policy.rs` (347 L) → `policy/{mod, alloc_policy, impls, marker}.rs`
+  - `size_class.rs` (555 L) → `size_class/{mod, info}.rs`
+  - `sync.rs` (458 L) → `sync/{mod, wide, narrow}.rs` (platform-cfg explicit)
+  - `per_cpu.rs` (325 L) → `per_cpu/{mod, types, ops}.rs`
+  - `bin_stats.rs` (532 L) → `bin_stats/{mod, batch, snapshot}.rs`
+  - `tls_slot.rs` (461 L) → `selector_traits.rs` + `tls_slot.rs` (DIP traits extracted)
+  - `aligned_vec/length.rs` (588 L) → `length.rs` + `element_ops.rs`
+  - `mnemosyne-decay/src/lib.rs` → `engine.rs` + `events.rs` + `orphan.rs` + `lib.rs`
+  - `local_alloc/freelist_keys.rs` extracted from `local_alloc.rs`
+
+  No public API change on any split; all 412 tests pass.
+
 - `AlignedVec::ensure_len_exact` grows to exactly the requested capacity
   (using `grow_to`) rather than applying the geometric doubling policy of
   `ensure_len`. The bounded scratch path (`ScratchPool::with_scratch_bounded`,

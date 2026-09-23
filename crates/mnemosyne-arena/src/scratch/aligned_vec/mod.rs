@@ -2,6 +2,7 @@
 //! reused buffer never exposes stale data.
 
 mod bytes;
+mod element_ops;
 mod length;
 mod query;
 mod storage;
