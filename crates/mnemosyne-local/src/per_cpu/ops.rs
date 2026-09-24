@@ -8,19 +8,24 @@ use super::{
 
 /// Tries to allocate a block from the per-CPU cache.
 ///
-/// The `try_alloc_cpu` / `try_free_cpu` pair share the outer shape
-/// (cpu-id fetch, two-round CPU-refresh retry) but their inner steps are
-/// direction-specific and deliberately not factored: alloc scans for the first
-/// non-empty slot and CASes it to empty under `Acquire`, while free scans for a
-/// double-free plus the first empty slot and CASes it to the pointer under
-/// `Release`. Extracting a shared skeleton would obscure the differing scan
-/// predicate, memory ordering, and abort condition on this hot path.
+/// Returns null when the policy uses free-list encryption (HardenedPolicy):
+/// the cache stores raw unencoded pointers that are incompatible with
+/// per-page XOR keys. Otherwise delegates to `try_alloc_cpu_raw` which
+/// compiles once regardless of how many non-encrypting policies call this.
 #[inline(always)]
 pub fn try_alloc_cpu<P: AllocPolicy>(class: usize) -> *mut u8 {
     if P::ENABLE_FREE_LIST_ENCRYPTION {
         return core::ptr::null_mut();
     }
+    try_alloc_cpu_raw(class)
+}
 
+/// Non-generic SSOT for the CPU-cache allocation path.
+///
+/// Extracted from `try_alloc_cpu<P>` so StandardPolicy and SecurePolicy — both
+/// non-encrypting — share one instantiation of the ~60-line body.
+#[inline(always)]
+fn try_alloc_cpu_raw(class: usize) -> *mut u8 {
     if DISABLE_CPU_CACHE.load(Ordering::Relaxed) || !PER_CPU_CACHE_ENABLED.load(Ordering::Relaxed) {
         return core::ptr::null_mut();
     }
