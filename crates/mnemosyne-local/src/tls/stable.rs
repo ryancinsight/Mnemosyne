@@ -22,33 +22,23 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for StandardTls<B, S
 
     #[inline(always)]
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
-        S::get_slot_standard(|slot| {
-            S::arm_thread_exit(slot);
-            // SAFETY: `allocator_ptr` returns this slot's own live address.
-            unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
-        })
+        S::slot_access_armed(f)
     }
 
     #[inline(always)]
     unsafe fn with_allocator_unguarded<R>(
         f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
     ) -> Option<R> {
-        S::get_slot_standard(|slot| {
-            // SAFETY: `allocator_ptr` returns this slot's own live address, and
-            // the caller's no-re-entry contract is forwarded unchanged.
-            unsafe { LocalAllocatorSlot::<B>::with_allocator_unguarded(slot.allocator_ptr(), f) }
-        })
+        // SAFETY: caller's no-re-entry contract forwarded unchanged.
+        unsafe { S::slot_access_unguarded(f) }
     }
 
     #[inline(always)]
     fn get_allocator_ptr() -> *mut core::ffi::c_void {
         S::get_slot_standard(|slot| slot.allocator_ptr())
     }
-
-    #[inline(always)]
-    fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
-        S::get_slot_standard(|slot| slot.allocator_ptr())
-    }
+    // get_allocator_ptr_raw uses the TlsProvider default (delegates to get_allocator_ptr)
+    // since StandardTls has no fast raw-cache path — both return the same value.
 }
 
 /// Portable TLS provider that caches the raw slot pointer in a standard `thread_local!` `Cell`.

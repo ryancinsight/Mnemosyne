@@ -29,11 +29,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
     #[inline(always)]
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
         let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
-            return S::get_slot_standard(|slot| {
-                S::arm_thread_exit(slot);
-                // SAFETY: `allocator_ptr` returns this slot's own live address.
-                unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
-            });
+            return S::slot_access_armed(f);
         };
         let ptr = get_os_tls_value(key);
         if !ptr.is_null() {
@@ -63,14 +59,8 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
         f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
     ) -> Option<R> {
         let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
-            return S::get_slot_standard(|slot| {
-                S::arm_thread_exit(slot);
-                // SAFETY: `allocator_ptr` returns this slot's own live address,
-                // and the caller's no-re-entry contract is forwarded unchanged.
-                unsafe {
-                    LocalAllocatorSlot::<B>::with_allocator_unguarded(slot.allocator_ptr(), f)
-                }
-            });
+            // SAFETY: caller's no-re-entry contract forwarded unchanged.
+            return unsafe { S::slot_access_unguarded(f) };
         };
         let ptr = get_os_tls_value(key);
         if !ptr.is_null() {
@@ -150,11 +140,7 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
     #[inline(always)]
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
         let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
-            return S::get_slot_standard(|slot| {
-                S::arm_thread_exit(slot);
-                // SAFETY: `allocator_ptr` returns this slot's own live address.
-                unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
-            });
+            return S::slot_access_armed(f);
         };
         // SAFETY: `key` is a `TlsAlloc`-allocated key (`get_os_tls_key`), the
         // precondition of `get_teb_tls_slot`, which reads this thread's own TEB
@@ -189,14 +175,8 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
         f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
     ) -> Option<R> {
         let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
-            return S::get_slot_standard(|slot| {
-                S::arm_thread_exit(slot);
-                // SAFETY: `allocator_ptr` returns this slot's own live address,
-                // and the caller's no-re-entry contract is forwarded unchanged.
-                unsafe {
-                    LocalAllocatorSlot::<B>::with_allocator_unguarded(slot.allocator_ptr(), f)
-                }
-            });
+            // SAFETY: caller's no-re-entry contract forwarded unchanged.
+            return unsafe { S::slot_access_unguarded(f) };
         };
         // SAFETY: `key` is a `TlsAlloc`-allocated key, satisfying
         // `get_teb_tls_slot`'s precondition; it reads this thread's TEB slot.
