@@ -4,6 +4,38 @@
 
 ### Added
 
+- Five de-monomorphization / zero-cost abstraction consolidations (session 9-10).
+  All unsafe-doc ratchet at 0; >258 tests pass:
+
+  **Phantom-brand ZST de-B-monomorphization** (page/lists.rs, segment/ownership.rs):
+  `push_page_front<B>`, `unlink_page_from_list<B>`, `move_page_between_lists_branded<B>`,
+  `push_owned_segment_front<B>`, `unlink_owned_segment_from_list<B>` carried `B` only
+  in `PageListToken<'id,B>` / `OwnedSegmentToken<'id,B>` — both ZST phantom brands.
+  Every `token.page()` / `token.segment()` call reduces to the identity on the
+  raw pointer; function bodies were IDENTICAL for all B values. Extracted five
+  non-generic raw helpers (compile once each) with thin branded facades.
+  Effect: ~5 functions × 6+ backends → 5 functions × 1 copy.
+
+  **TLS trait SSOT** (tls/traits.rs, stable.rs, native.rs):
+  - `TlsSlotAccess::slot_access_armed` / `slot_access_unguarded` (provided methods):
+    `get_slot_standard + arm_thread_exit + with_allocator` pattern extracted from 6 sites.
+  - `TlsProvider::get_allocator_ptr_raw` default impl: removes explicit override from
+    `StandardTls` where it was identical to `get_allocator_ptr`.
+
+  **`read_teb_self` SSOT** (os_helpers.rs, prof/tls/os_key.rs):
+  Windows `gs:[0x30]` TEB self-pointer asm appeared 4× across 2 crates → private helper.
+
+  **Three de-monomorphization consolidations** (core, local, arena):
+  - `try_pop_bump_block<P>` → non-generic free fn (zero P:: in body).
+  - `resolve_huge_dealloc_segment` non-B extraction from `deallocate_large_or_huge<B>`.
+  - SAFETY comment fix for cfg-gated `push_owned_segment` blocks.
+
+  **SSOT helpers extracted across earlier sessions** (reclaim_and_record,
+  purge_segment_pool delegation, assert_block_in_page, sum_counter,
+  resolve_owner_slot, BorrowGuard, realloc_can_reuse, slot_access_armed/unguarded,
+  reclaim_thread_free_for_policy phantom-P removal, defrag-chain phantom-P removal,
+  reclaim_and_record, purge_segment_pool delegation, push_owned_segment cfg dedup).
+
 - Two further SRP splits, no public API change, unsafe-doc ratchet held at 0:
   - `mnemosyne-local/src/local_alloc/routing.rs` (442 L) → directory module
     `routing/{mod.rs (71 L), cold.rs}` — split by allocation temperature:
