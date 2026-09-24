@@ -54,6 +54,21 @@ unsafe extern "system" {
     ) -> i32;
 }
 
+/// Returns `true` only when the VM operation arguments are valid and we are not
+/// running under Miri (which does not emulate Windows page-management syscalls).
+///
+/// SSOT for the `if ptr.is_null() || size == 0: return false` +
+/// `#[cfg(miri)] return false` guard that `page_reset`, `decommit`, and
+/// `make_guard` all open with.
+#[inline(always)]
+fn vm_args_valid(ptr: *mut u8, size: usize) -> bool {
+    if ptr.is_null() || size == 0 {
+        return false;
+    }
+    // cfg!(miri) is const-folded at compile time; the dead branch is eliminated.
+    !cfg!(miri)
+}
+
 /// Windows virtual memory backend using `VirtualAlloc`/`VirtualFree`.
 pub struct WindowsBackend;
 
@@ -137,13 +152,7 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
     /// success and `NULL` on failure, so we map the return into a
     /// boolean release status.
     unsafe fn page_reset(ptr: *mut u8, size: usize) -> bool {
-        if ptr.is_null() || size == 0 {
-            return false;
-        }
-        #[cfg(miri)]
-        {
-            return false;
-        }
+        if !vm_args_valid(ptr, size) { return false; }
         #[cfg(not(miri))]
         {
             // SAFETY: ptr is inside an active VirtualAlloc-managed region and
@@ -167,13 +176,7 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
     /// reservation that holds no live data; the range faults on access until
     /// re-committed or the base reservation is released.
     unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
-        if ptr.is_null() || size == 0 {
-            return false;
-        }
-        #[cfg(miri)]
-        {
-            return false;
-        }
+        if !vm_args_valid(ptr, size) { return false; }
         #[cfg(not(miri))]
         {
             // SAFETY: ptr/size describe a page-aligned subrange of a live
@@ -188,13 +191,7 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
     /// access-violation. The mapping itself remains reserved, so a
     /// later `deallocate` covering the range still releases cleanly.
     unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
-        if ptr.is_null() || size == 0 {
-            return false;
-        }
-        #[cfg(miri)]
-        {
-            return false;
-        }
+        if !vm_args_valid(ptr, size) { return false; }
         #[cfg(not(miri))]
         {
             let mut old_protect: u32 = 0;
@@ -213,3 +210,4 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
         }
     }
 }
+
