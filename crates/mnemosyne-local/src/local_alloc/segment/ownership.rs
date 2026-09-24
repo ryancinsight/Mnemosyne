@@ -58,26 +58,40 @@ fn with_owned_segment_token<B: HasSegmentPool, R>(
 
 /// Prepends a branded segment to a branded intrusive owned-segments list.
 ///
+/// The type-safety contract is enforced by `token`; the logic lives in
+/// the non-generic [`push_owned_segment_front_raw`] that compiles once.
+///
 /// # Safety
 ///
 /// `segment` and the list rooted at `head_slot` must belong to `token`, and
 /// `segment` must not already be linked into any owned-segments list.
 #[inline(always)]
 unsafe fn push_owned_segment_front<'id, B: HasSegmentPool>(
-    token: &mut OwnedSegmentToken<'id, B>,
+    _token: &mut OwnedSegmentToken<'id, B>,
     head_slot: &mut *mut Segment,
     segment: BrandedSegment<'id>,
 ) {
-    let raw_segment = segment.ptr();
-    // SAFETY: `segment` and the list rooted at `head_slot` belong to
-    // the allocator permission represented by `token`; no other
-    // GhostCell permission may touch them, so the prev/next link
-    // writes plus the head-slot update are exclusive here.
+    // SAFETY: caller's token contract guarantees exclusive access to
+    // `segment` and the list rooted at `head_slot`.
+    unsafe { push_owned_segment_front_raw(segment.ptr(), head_slot) }
+}
+
+/// Non-generic core of [`push_owned_segment_front`].
+///
+/// # Safety
+///
+/// `raw_segment` must be exclusively owned and not yet linked in any list.
+/// The list rooted at `head_slot` must be exclusively accessible.
+#[inline(always)]
+unsafe fn push_owned_segment_front_raw(raw_segment: *mut Segment, head_slot: &mut *mut Segment) {
+    // SAFETY: `raw_segment` is exclusively owned per the caller's contract;
+    // reading and writing its link fields is unaliased.
     unsafe {
         (*raw_segment).prev_owned_segment = core::ptr::null_mut();
         (*raw_segment).next_owned_segment = *head_slot;
         if !(*head_slot).is_null() {
-            let _head = token.segment(*head_slot);
+            // SAFETY: `*head_slot` is in the caller-owned list; setting its
+            // back-pointer is an exclusive write within the same list.
             (**head_slot).prev_owned_segment = raw_segment;
         }
         *head_slot = raw_segment;
@@ -86,32 +100,47 @@ unsafe fn push_owned_segment_front<'id, B: HasSegmentPool>(
 
 /// Unlinks a branded segment from a branded intrusive owned-segments list.
 ///
+/// The type-safety contract is enforced by `token`; the logic lives in
+/// the non-generic [`unlink_owned_segment_from_list_raw`] that compiles once.
+///
 /// # Safety
 ///
 /// `segment` must be linked in the list rooted at `head_slot`, and its
 /// neighbours must belong to the same token permission.
 #[inline(always)]
 unsafe fn unlink_owned_segment_from_list<'id, B: HasSegmentPool>(
-    token: &mut OwnedSegmentToken<'id, B>,
+    _token: &mut OwnedSegmentToken<'id, B>,
     head_slot: &mut *mut Segment,
     segment: BrandedSegment<'id>,
 ) {
-    let raw_segment = segment.ptr();
-    // SAFETY: `segment` is branded by `token` (caller contract) and is linked in
-    // the list rooted at `head_slot`; its `prev`/`next` neighbours carry the
-    // same token permission, so reading the link fields and rewriting the
-    // neighbours' and head's pointers is exclusive and unaliased here.
+    // SAFETY: caller's token contract guarantees exclusive access.
+    unsafe { unlink_owned_segment_from_list_raw(segment.ptr(), head_slot) }
+}
+
+/// Non-generic core of [`unlink_owned_segment_from_list`].
+///
+/// # Safety
+///
+/// `raw_segment` must be exclusively owned and currently linked in the list
+/// rooted at `head_slot`. All neighbour segments must be exclusively accessible.
+#[inline(always)]
+unsafe fn unlink_owned_segment_from_list_raw(
+    raw_segment: *mut Segment,
+    head_slot: &mut *mut Segment,
+) {
+    // SAFETY: `raw_segment` is exclusively owned per the caller's contract;
+    // reading its link fields is unaliased.
     unsafe {
         let prev = (*raw_segment).prev_owned_segment;
         let next = (*raw_segment).next_owned_segment;
         if prev.is_null() {
             *head_slot = next;
         } else {
-            let _prev = token.segment(prev);
+            // SAFETY: `prev` is a live segment in the caller-owned list.
             (*prev).next_owned_segment = next;
         }
         if !next.is_null() {
-            let _next = token.segment(next);
+            // SAFETY: `next` is a live segment in the caller-owned list.
             (*next).prev_owned_segment = prev;
         }
         (*raw_segment).prev_owned_segment = core::ptr::null_mut();
