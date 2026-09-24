@@ -12,6 +12,7 @@ pub use crate::{
     do_local_free_internal, do_local_free_internal_policy, initialize_allocated_bytes,
     poison_freed_bytes, small_realloc_fits_existing_class, thread_free_layout,
 };
+pub use crate::free_helpers::free_large_or_huge_raw;
 pub use core::alloc::Layout;
 pub use core::ptr::NonNull;
 pub use mnemosyne_arena::HasSegmentPool;

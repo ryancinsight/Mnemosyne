@@ -6,8 +6,8 @@ use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
 use mnemosyne_local::LocalAllocatorSelector;
 use mnemosyne_local::internal::{
-    Block, HasSegmentPool, Segment, deallocate_large_or_huge, do_local_free_internal,
-    ensure_options_initialized, poison_freed_bytes,
+    Block, HasSegmentPool, Segment, do_local_free_internal, ensure_options_initialized,
+    free_large_or_huge_raw, poison_freed_bytes,
 };
 
 impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> RawHeap<P, B> {
@@ -53,7 +53,7 @@ impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> RawHeap<P, B
             // large/huge allocation, whose deallocation path `ptr` was routed
             // through at alloc time; the `# Safety` contract guarantees `ptr`
             // is live and owned.
-            unsafe { free_large_or_huge::<B>(ptr, P::ENABLE_POISONING, P::POISON_FREE_BYTE) };
+            unsafe { free_large_or_huge_raw::<B>(ptr, P::ENABLE_POISONING, P::POISON_FREE_BYTE) };
             return;
         }
 
@@ -152,37 +152,6 @@ impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> RawHeap<P, B
 
 /// # Safety
 ///
-/// `ptr` must be a live large/huge block previously returned by this
-/// backend `B`, not yet freed; the segment pointer is stored in the slot
-/// immediately preceding the user payload at allocation time.
-///
-/// `enable_poisoning` and `poison_free_byte` must equal the policy's
-/// `ENABLE_POISONING` and `POISON_FREE_BYTE` consts; passed as plain values so
-/// this function compiles once per `B` rather than once per `(P, B)`.
-#[cold]
-#[inline(never)]
-unsafe fn free_large_or_huge<B: HasSegmentPool>(
-    ptr: *mut u8,
-    enable_poisoning: bool,
-    poison_free_byte: u8,
-) {
-    // SAFETY: every large/huge allocation writes its owning `*mut Segment`
-    // into the pointer-sized slot directly preceding the user payload, so
-    // `(ptr as *mut *mut Segment) - 1` reads back that live segment pointer.
-    let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-    if enable_poisoning {
-        // SAFETY: `ptr`/`segment` are the live block and its owning segment;
-        // `huge_or_large_size` reads only metadata inside that mapping.
-        let size = unsafe { huge_or_large_size(ptr, segment) };
-        // SAFETY: `size` is the block's allocated length; `ptr` is valid for
-        // that many bytes.
-        unsafe { core::ptr::write_bytes(ptr, poison_free_byte, size) };
-    }
-    // SAFETY: `ptr` and its recovered owning `segment` form the matching pair
-    // for `deallocate_large_or_huge`, which releases the originating mapping.
-    let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
-}
-
 /// # Safety
 ///
 /// `ptr` must be a live block of this allocator and `page`/`page_index`

@@ -125,3 +125,42 @@ pub(crate) unsafe fn resolve_owner_slot(
         }
     }
 }
+
+/// Non-generic SSOT for the large/huge free path.
+///
+/// Recovers the owning segment from the metadata slot preceding `ptr`,
+/// optionally poisons the block, and releases the segment mapping.
+///
+/// Both `classified.rs` (in `mnemosyne-local`) and `raw_heap/free.rs`
+/// (in `mnemosyne-heap`) perform this identical 3-step sequence — one for
+/// the hot `thread_free` path and one for the branded `RawHeap::free` path.
+/// Sharing the body here compiles it once per `B` instead of once per `(P,B)`
+/// at each use site.
+///
+/// `enable_poisoning` and `poison_free_byte` must equal the policy's
+/// `P::ENABLE_POISONING` and `P::POISON_FREE_BYTE`.
+///
+/// # Safety
+///
+/// `ptr` must be a live large/huge block previously returned by backend `B`.
+/// The owning `*mut Segment` is stored in the pointer-sized slot directly
+/// preceding the user payload (written at allocation time).
+#[inline(always)]
+pub unsafe fn free_large_or_huge_raw<B: mnemosyne_arena::HasSegmentPool>(
+    ptr: *mut u8,
+    enable_poisoning: bool,
+    poison_free_byte: u8,
+) {
+    // SAFETY: per the caller's contract, `(ptr as *mut *mut Segment) - 1` is
+    // the metadata slot written at `allocate_large_or_huge` time.
+    let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+    if enable_poisoning {
+        // SAFETY: `segment` is the live owning header; `huge_mapping_suffix_from`
+        // reads only metadata within that mapping.
+        let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
+        // SAFETY: `ptr` is valid for `size` bytes within the live mapping.
+        unsafe { core::ptr::write_bytes(ptr, poison_free_byte, size) };
+    }
+    // SAFETY: `ptr`/`segment` are the matching pair for `deallocate_large_or_huge`.
+    let _ = unsafe { mnemosyne_arena::deallocate_large_or_huge::<B>(ptr, segment) };
+}

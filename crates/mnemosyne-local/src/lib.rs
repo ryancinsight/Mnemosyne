@@ -72,6 +72,8 @@ pub use usable_size::{thread_allocator_stats, usable_size};
 #[doc(hidden)]
 pub use free::{do_local_free_internal, do_local_free_internal_policy};
 #[doc(hidden)]
+pub use free_helpers::free_large_or_huge_raw;
+#[doc(hidden)]
 pub use realloc::small_realloc_fits_existing_class;
 #[doc(hidden)]
 pub use validation::{initialize_allocated_bytes, poison_freed_bytes};
