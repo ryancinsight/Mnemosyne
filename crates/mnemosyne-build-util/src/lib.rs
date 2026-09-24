@@ -18,12 +18,16 @@ use std::process::Command;
 /// Behavior (identical for every consumer):
 /// 1. Declares `cargo::rustc-check-cfg=cfg(nightly_tls_active)` so the cfg is
 ///    always known to the lint machinery, active or not.
-/// 2. Declares `cargo::rerun-if-env-changed=RUSTC` so switching toolchains
-///    re-runs the probe.
-/// 3. When the consuming crate's `nightly_tls` cargo feature is enabled
+/// 2. When the consuming crate's `nightly_tls` cargo feature is enabled
 ///    (`CARGO_FEATURE_NIGHTLY_TLS` is set) and `$RUSTC -vV` reports a
 ///    `release:` line containing `nightly`, emits
 ///    `cargo::rustc-cfg=nightly_tls_active`.
+///
+/// No `rerun-if-env-changed=RUSTC` is declared. Cargo keys the build-script
+/// unit on the compiler identity, so each toolchain gets its own probe run;
+/// tracking the override variable would instead rerun the probe, and rebuild
+/// every dependent, whenever builds alternate between a shell that exports
+/// `RUSTC` and one that does not.
 ///
 /// A missing or failing `rustc` invocation leaves the cfg inactive: the
 /// consumer then compiles its stable (non-`#[thread_local]`) path, which is
@@ -31,7 +35,6 @@ use std::process::Command;
 /// fallback.
 pub fn emit_nightly_tls_cfg() {
     println!("cargo::rustc-check-cfg=cfg(nightly_tls_active)");
-    println!("cargo::rerun-if-env-changed=RUSTC");
 
     if env::var_os("CARGO_FEATURE_NIGHTLY_TLS").is_none() {
         return;
