@@ -212,7 +212,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         if self.current_segment.is_none() || self.next_page_index >= PAGES_PER_SEGMENT {
             // SAFETY: acquires a policy-compatible segment from the OS/pools;
             // policy-incompatible orphans are returned to the orphan pool.
-            if let Some(seg_ptr) = unsafe { acquire_policy_compatible_segment::<P, B>() } {
+            if let Some(seg_ptr) = unsafe { acquire_policy_compatible_segment::<B>(P::ENABLE_FREE_LIST_ENCRYPTION) } {
                 // Determine if this is an orphaned segment vs a fresh/reinitialized segment.
                 // An orphaned segment has pages[1].block_size > 0.
                 // SAFETY: `seg_ptr` is the non-null segment just returned by
@@ -401,9 +401,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 /// Same contract as [`allocate_segment`]: the global pools must contain valid,
 /// initialized `Segment`s. The returned segment (if any) is exclusively owned
 /// by the caller.
+///
+/// `enable_encryption` must equal `P::ENABLE_FREE_LIST_ENCRYPTION` for the
+/// policy `P` that will own the returned segment; it is passed as a plain
+/// `bool` so this function compiles once per `B` rather than once per `(P, B)`.
 #[inline(never)]
-unsafe fn acquire_policy_compatible_segment<P: AllocPolicy, B: HasSegmentPool>()
--> Option<*mut Segment> {
+unsafe fn acquire_policy_compatible_segment<B: HasSegmentPool>(
+    enable_encryption: bool,
+) -> Option<*mut Segment> {
     let mut deferred: *mut Segment = core::ptr::null_mut();
     let chosen = loop {
         // SAFETY: `allocate_segment` accesses only global pool/OS state that
@@ -418,7 +423,7 @@ unsafe fn acquire_policy_compatible_segment<P: AllocPolicy, B: HasSegmentPool>()
         // `free_list_encrypted` is its recorded chain-encoding mode.
         let incompatible_orphan = unsafe {
             (*seg_ptr).pages[1].block_size > 0
-                && (*seg_ptr).free_list_encrypted != P::ENABLE_FREE_LIST_ENCRYPTION
+                && (*seg_ptr).free_list_encrypted != enable_encryption
         };
         if incompatible_orphan {
             // SAFETY: the segment is exclusively owned after the pop, so its

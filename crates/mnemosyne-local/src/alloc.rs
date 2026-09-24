@@ -1,4 +1,5 @@
 use crate::per_cpu;
+use crate::validation::init_bytes;
 use crate::{LocalAllocatorSelector, ThreadAllocator, initialize_allocated_bytes};
 use mnemosyne_arena::{HasSegmentPool, allocate_large_or_huge};
 use mnemosyne_core::constants::MIN_BLOCK_SIZE;
@@ -176,7 +177,7 @@ unsafe fn thread_alloc_checked<
         None => {
             // SAFETY: `adjusted_size` is non-zero and `align` is a power of two
             // — validated by `is_valid_alloc_request` upstream.
-            return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
+            return unsafe { allocate_large_or_huge_initialized::<B>(adjusted_size, align, P::ENABLE_POISONING, P::ZERO_INITIALIZE, P::POISON_ALLOC_BYTE) };
         }
     };
 
@@ -278,14 +279,14 @@ unsafe fn thread_alloc_cold<
     };
     if slot_ptr.is_null() {
         // SAFETY: `adjusted_size != 0` and `align` is a power of two.
-        return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
+        return unsafe { allocate_large_or_huge_initialized::<B>(adjusted_size, align, P::ENABLE_POISONING, P::ZERO_INITIALIZE, P::POISON_ALLOC_BYTE) };
     }
     // SAFETY: this thread's live TLS slot address (== the allocator address).
 
     // Gate before borrowing.
     if unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::is_allocating(slot_ptr) } {
         // SAFETY: `adjusted_size != 0` and `align` is a power of two.
-        return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
+        return unsafe { allocate_large_or_huge_initialized::<B>(adjusted_size, align, P::ENABLE_POISONING, P::ZERO_INITIALIZE, P::POISON_ALLOC_BYTE) };
     }
 
     unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(slot_ptr, true) };
@@ -297,7 +298,7 @@ unsafe fn thread_alloc_cold<
 
     if ptr.is_null() {
         // SAFETY: `adjusted_size != 0` and `align` is a power of two.
-        return unsafe { allocate_large_or_huge_initialized::<P, B>(adjusted_size, align) };
+        return unsafe { allocate_large_or_huge_initialized::<B>(adjusted_size, align, P::ENABLE_POISONING, P::ZERO_INITIALIZE, P::POISON_ALLOC_BYTE) };
     }
     // SAFETY: `ptr` is a freshly allocated block for `class`; initialization
     // writes stay within the allocation.
@@ -306,20 +307,30 @@ unsafe fn thread_alloc_cold<
     ptr
 }
 
+/// Allocates a large/huge block and initializes it per policy. Extracted so
+/// the non-P body compiles once per `B`; callers pass the policy flags as
+/// plain booleans which the compiler constant-folds.
+///
+/// # Safety
+///
+/// `size != 0` and `align` is a non-zero power of two.
 #[inline(always)]
-unsafe fn allocate_large_or_huge_initialized<P: AllocPolicy, B: HasSegmentPool>(
+unsafe fn allocate_large_or_huge_initialized<B: HasSegmentPool>(
     size: usize,
     align: usize,
+    enable_poisoning: bool,
+    zero_init: bool,
+    poison_alloc_byte: u8,
 ) -> *mut u8 {
     let ptr = {
-        // SAFETY: `allocate_large_or_huge`'s contract: `size != 0` (from the
-        // caller) and `align` is a non-zero power of two (from `Layout`).
-        unsafe { allocate_large_or_huge::<B>(size, align, P::ENABLE_POISONING) }
+        // SAFETY: `size != 0` and `align` is valid per the caller's contract.
+        unsafe { allocate_large_or_huge::<B>(size, align, enable_poisoning) }
     };
     if !ptr.is_null() {
         // SAFETY: `ptr` is a freshly allocated block; `size` bytes of
         // writes stay within the allocation.
-        unsafe { initialize_allocated_bytes::<P>(ptr, size) };
+        unsafe { init_bytes(ptr, size, zero_init, enable_poisoning, poison_alloc_byte) };
     }
     ptr
 }
+
