@@ -38,31 +38,14 @@ impl<T: ScratchElement> AlignedVec<T> {
         if min_len > self.capacity {
             self.grow_geometric(min_len);
         }
-        // Zero only the newly added range.
-        // SAFETY: capacity was grown to `>= min_len` above, so the range
-        // `[self.len, min_len)` lies fully inside the allocation. All-zero is a
-        // valid bit pattern for every `ScratchElement` type (`f32`/`f64`/`u8`/
-        // `eunomia::Complex`), so zeroing produces valid initialized `T`
-        // values.
-        unsafe {
-            let dst = self.ptr.add(self.len);
-            core::ptr::write_bytes(dst, 0, min_len - self.len);
-        }
-        self.len = min_len;
+        // SAFETY: capacity >= min_len after grow; `[self.len, min_len)` is
+        // inside the allocation; all-zero is valid for every `ScratchElement`.
+        unsafe { self.extend_with_zeros(min_len) };
     }
 
     /// Like [`ensure_len`][Self::ensure_len] but grows to exactly `min_len`,
-    /// never more.
-    ///
-    /// Where `ensure_len` calls `grow_geometric` (which may overshoot by up
-    /// to `capacity`) to amortize reallocation, `ensure_len_exact` calls
-    /// `grow_to` so the allocation is sized to the request with no headroom.
-    /// Use this on paths where a caller-stated provision bounds the retained
-    /// capacity (e.g. `borrow_slot::<PROVISION=true>` in
-    /// `ScratchPool`), so that a subsequent `shrink_to(provision)` is an
-    /// inexpensive no-op rather than a real deallocation.
-    ///
-    /// Callers that rely on amortized growth should use `ensure_len`.
+    /// never more. Use when a provision bounds retained capacity so a
+    /// subsequent `shrink_to` is a no-op.
     #[inline]
     pub(crate) fn ensure_len_exact(&mut self, min_len: usize) {
         if min_len <= self.len {
@@ -71,14 +54,23 @@ impl<T: ScratchElement> AlignedVec<T> {
         if min_len > self.capacity {
             self.grow_to(min_len);
         }
-        // SAFETY: capacity was grown to exactly `min_len` above, so the range
-        // `[self.len, min_len)` lies fully inside the allocation. All-zero is a
-        // valid bit pattern for every `ScratchElement` type.
+        // SAFETY: capacity == min_len after grow_to; same zero-validity.
+        unsafe { self.extend_with_zeros(min_len) };
+    }
+
+    /// Zeros the range `[self.len, new_len)` and advances `self.len`.
+    ///
+    /// # Safety
+    ///
+    /// `capacity >= new_len` and `new_len >= self.len`. All-zero must be a
+    /// valid bit pattern for `T` (guaranteed by `ScratchElement`).
+    #[inline(always)]
+    unsafe fn extend_with_zeros(&mut self, new_len: usize) {
+        // SAFETY: the caller guarantees capacity and zero-validity.
         unsafe {
-            let dst = self.ptr.add(self.len);
-            core::ptr::write_bytes(dst, 0, min_len - self.len);
+            core::ptr::write_bytes(self.ptr.add(self.len), 0, new_len - self.len);
         }
-        self.len = min_len;
+        self.len = new_len;
     }
 
     /// Creates a buffer of exactly `len` elements, every one equal to `value`.
