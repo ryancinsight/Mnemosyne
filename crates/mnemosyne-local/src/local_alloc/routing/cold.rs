@@ -19,6 +19,23 @@ use mnemosyne_core::types::{Page, Segment};
 use super::super::page::{pop_page_free_block, try_allocate_page_local, try_reclaim_and_allocate};
 
 impl<B: HasSegmentPool> ThreadAllocator<B> {
+    /// Computes the free-list randomisation seed for a new page.
+    ///
+    /// Returns `rng ^ ptr_bits ^ class_hash` when `randomize` is `true`,
+    /// otherwise `0` without advancing the RNG. Accepts `randomize` as a plain
+    /// `bool` so callers can pass `P::RANDOMIZE_ALLOCATION` from a generic
+    /// context; the compiler constant-folds the branch in both cases.
+    #[inline(always)]
+    fn page_init_random(&mut self, randomize: bool, ptr_bits: u64, class: usize) -> u64 {
+        if randomize {
+            self.next_random() ^ ptr_bits ^ (class as u64).rotate_left(17)
+        } else {
+            0
+        }
+    }
+}
+
+impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// Cold path for allocating a block when active pages are full.
     ///
     /// Marked as `#[inline(never)]` to prevent pollution of instruction cache.
@@ -164,11 +181,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // defrag list; `class_to_size(class)` and free-list initialization
             // write only within the page's backing region.
             unsafe {
-                let random_value = if P::RANDOMIZE_ALLOCATION {
-                    self.next_random() ^ page_ptr.as_ptr() as u64 ^ (class as u64).rotate_left(17)
-                } else {
-                    0
-                };
+                let random_value = self.page_init_random(
+                    P::RANDOMIZE_ALLOCATION,
+                    page_ptr.as_ptr() as u64,
+                    class,
+                );
                 let page = page_ptr.as_ptr();
 
                 (*page).block_size = block_size as _;
@@ -273,11 +290,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     }
 
                     if !found_page.is_null() {
-                        let random_value = if P::RANDOMIZE_ALLOCATION {
-                            self.next_random() ^ found_page as u64 ^ (class as u64).rotate_left(17)
-                        } else {
-                            0
-                        };
+                        let random_value = self.page_init_random(
+                            P::RANDOMIZE_ALLOCATION,
+                            found_page as u64,
+                            class,
+                        );
                         // SAFETY: `found_page` is a live interior pointer to
                         // this segment's page array; writing `block_size` and
                         // `size_class` initializes its class metadata before
@@ -344,11 +361,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // SAFETY: `seg` is the current live segment and `page_index` was
         // validated against `PAGES_PER_SEGMENT` by the refill condition.
         let page_start = unsafe { Page::page_start_in_segment(seg, page_index) };
-        let random_value = if P::RANDOMIZE_ALLOCATION {
-            self.next_random() ^ page_ptr as u64 ^ (class as u64).rotate_left(17)
-        } else {
-            0
-        };
+        let random_value = self.page_init_random(P::RANDOMIZE_ALLOCATION, page_ptr as u64, class);
         unsafe {
             Page::initialize_free_list_in_segment::<P>(seg, page_index, page_start, random_value);
         }
