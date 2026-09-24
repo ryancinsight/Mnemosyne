@@ -48,6 +48,26 @@ fn sum_counter(arr: &[AtomicU64; NUM_SIZE_CLASSES]) -> u64 {
         .fold(0u64, u64::saturating_add)
 }
 
+/// Constructs a [`BinSnapshot`] for a single size class.
+///
+/// Non-generic SSOT shared by [`bin_snapshot`] and [`all_bin_snapshots`],
+/// eliminating the 5-line construction that previously appeared in both.
+/// Callers must flush the per-thread batch counters first.
+#[inline(always)]
+fn make_bin_snapshot(class: usize) -> BinSnapshot {
+    let alloc_count = batch::ALLOC_COUNT[class].load(Ordering::Relaxed);
+    let dealloc_count = batch::DEALLOC_COUNT[class].load(Ordering::Relaxed);
+    let block_size = class_to_size(class);
+    BinSnapshot {
+        alloc_count,
+        dealloc_count,
+        alloc_bytes: batch::allocation_bytes(alloc_count, block_size),
+        requested_bytes: batch::REQUESTED_BYTES[class].load(Ordering::Relaxed),
+        block_size,
+        live_estimate: alloc_count.saturating_sub(dealloc_count),
+    }
+}
+
 /// Returns a snapshot for size class `class`, or `None` if out of range.
 #[must_use]
 pub fn bin_snapshot(class: usize) -> Option<BinSnapshot> {
@@ -55,36 +75,14 @@ pub fn bin_snapshot(class: usize) -> Option<BinSnapshot> {
         return None;
     }
     batch::flush_current_thread();
-    let alloc_count = batch::ALLOC_COUNT[class].load(Ordering::Relaxed);
-    let dealloc_count = batch::DEALLOC_COUNT[class].load(Ordering::Relaxed);
-    let block_size = class_to_size(class);
-    Some(BinSnapshot {
-        alloc_count,
-        dealloc_count,
-        alloc_bytes: batch::allocation_bytes(alloc_count, block_size),
-        requested_bytes: batch::REQUESTED_BYTES[class].load(Ordering::Relaxed),
-        block_size,
-        live_estimate: alloc_count.saturating_sub(dealloc_count),
-    })
+    Some(make_bin_snapshot(class))
 }
 
 /// Returns snapshots for all `NUM_SIZE_CLASSES` size classes.
 #[must_use]
 pub fn all_bin_snapshots() -> [BinSnapshot; NUM_SIZE_CLASSES] {
     batch::flush_current_thread();
-    core::array::from_fn(|class| {
-        let alloc_count = batch::ALLOC_COUNT[class].load(Ordering::Relaxed);
-        let dealloc_count = batch::DEALLOC_COUNT[class].load(Ordering::Relaxed);
-        let block_size = class_to_size(class);
-        BinSnapshot {
-            alloc_count,
-            dealloc_count,
-            alloc_bytes: batch::allocation_bytes(alloc_count, block_size),
-            requested_bytes: batch::REQUESTED_BYTES[class].load(Ordering::Relaxed),
-            block_size,
-            live_estimate: alloc_count.saturating_sub(dealloc_count),
-        }
-    })
+    core::array::from_fn(make_bin_snapshot)
 }
 
 /// Returns the index of the hottest size class (highest alloc_count), or
