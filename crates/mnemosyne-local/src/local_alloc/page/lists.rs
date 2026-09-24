@@ -144,7 +144,7 @@ pub(crate) unsafe fn move_page_between_lists_branded<'id, B: HasSegmentPool>(
 /// `raw_page` must be exclusively owned by the calling allocator's page-list
 /// authority and must not already be linked into `head_slot`.
 #[inline(always)]
-unsafe fn push_page_front_raw(
+pub(crate) unsafe fn push_page_front_raw(
     raw_page: NonNull<Page>,
     head_slot: &mut Option<NonNull<Page>>,
     list_state: u8,
@@ -227,7 +227,7 @@ pub(crate) unsafe fn unlink_page_from_list_raw(
 /// `raw_page` must be exclusively owned and currently linked in `from_head_slot`.
 /// Every page reachable from both lists must be exclusively accessible.
 #[inline(always)]
-unsafe fn move_page_raw(
+pub(crate) unsafe fn move_page_raw(
     raw_page: NonNull<Page>,
     from_head_slot: &mut Option<NonNull<Page>>,
     to_head_slot: &mut Option<NonNull<Page>>,
