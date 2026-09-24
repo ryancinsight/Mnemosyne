@@ -1,6 +1,5 @@
-use super::super::page::{unlink_page_from_list, with_page_list_token};
+use super::super::page::unlink_page_from_list_raw;
 use super::super::*;
-use super::fixtures::MockBackend;
 use core::ptr::NonNull;
 use mnemosyne_core::policy::StandardPolicy;
 use mnemosyne_core::types::Page;
@@ -139,12 +138,8 @@ fn unlink_page_from_list_splices_and_reports_membership() {
     let mut head = Some(n0);
 
     // Unlink the MIDDLE node: head -> p0 -> p2, p1 detached.
-    // SAFETY: all nodes live and are treated as belonging to this test's
-    // branded page-list permission.
-    with_page_list_token::<MockBackend, _>(|mut token| unsafe {
-        let page = token.page(n1);
-        unlink_page_from_list(&mut token, &mut head, page);
-    });
+    // SAFETY: all nodes live and are exclusively owned by this test.
+    unsafe { unlink_page_from_list_raw(n1, &mut head) };
     assert_eq!(head, Some(n0));
     // SAFETY: nodes remain live.
     unsafe {
@@ -157,11 +152,8 @@ fn unlink_page_from_list_splices_and_reports_membership() {
     }
 
     // Unlink the HEAD node: head -> p2.
-    // SAFETY: `p0` is the head and belongs to the same branded test list.
-    with_page_list_token::<MockBackend, _>(|mut token| unsafe {
-        let page = token.page(n0);
-        unlink_page_from_list(&mut token, &mut head, page);
-    });
+    // SAFETY: `n0` is the head and is exclusively owned by this test.
+    unsafe { unlink_page_from_list_raw(n0, &mut head) };
     assert_eq!(head, Some(n2));
     unsafe {
         assert_eq!((*p2).prev_page, None);
@@ -171,11 +163,8 @@ fn unlink_page_from_list_splices_and_reports_membership() {
     }
 
     // Unlink the TAIL/only node: list empties.
-    // SAFETY: `p2` is the sole node and belongs to the same branded test list.
-    with_page_list_token::<MockBackend, _>(|mut token| unsafe {
-        let page = token.page(n2);
-        unlink_page_from_list(&mut token, &mut head, page);
-    });
+    // SAFETY: `n2` is the sole node and is exclusively owned by this test.
+    unsafe { unlink_page_from_list_raw(n2, &mut head) };
     assert!(head.is_none());
 
     // Reclaim the raw allocations.

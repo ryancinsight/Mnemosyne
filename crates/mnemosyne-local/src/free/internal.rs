@@ -2,9 +2,7 @@
 
 use crate::ThreadAllocator;
 use crate::free_helpers::is_sole_active_page;
-use crate::local_alloc::page::{
-    move_page_between_lists_branded, push_page_front, unlink_page_from_list, with_page_list_token,
-};
+use crate::local_alloc::page::{move_page_raw, push_page_front_raw, unlink_page_from_list_raw};
 use core::ptr::NonNull;
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::types::{Block, Page, Segment};
@@ -108,78 +106,48 @@ pub unsafe fn do_local_free_internal_policy<
     let class = unsafe { (*page).size_class } as usize;
     let page_ptr = unsafe { NonNull::new_unchecked(page) };
 
-    with_page_list_token::<B, _>(|mut token| {
-        // SAFETY: `page_ptr` is non-null (built above from the contract-valid `page`)
-        // and belongs to the page lists the token brands.
-        let branded_page = unsafe { token.page(page_ptr) };
-        // SAFETY: the transitions below take the token that proves exclusive access to
-        // this allocator's page lists, and `page`'s `list_state` names the list it
-        // currently sits in, so unlink/move operate on a linked node.
-        if was_full {
-            if becomes_empty && !alloc.is_current_segment(segment) {
-                // Case 1: Went from full directly to empty
-                unsafe {
-                    unlink_page_from_list(
-                        &mut token,
-                        alloc.full_pages.get_unchecked_mut(class),
-                        branded_page,
-                    );
-                    push_page_front(&mut token, &mut alloc.empty_pages, branded_page, 3);
-                }
-            } else {
-                // Case 2: Went from full to active.
-                //
-                // DELAY_PAGE_WAKE hysteresis (snmalloc 0.7.x `random_larger_thresholds`
-                // / `waking` field): when the policy requests it, keep the page in the
-                // full list until at least `capacity / WAKE_DENOMINATOR` blocks have
-                // been freed. This prevents rapid LIFO address reuse and makes
-                // use-after-free and heap-spray exploits harder to land by widening
-                // the temporal window between free and realloc.
-                //
-                // Under `StandardPolicy`, `DELAY_PAGE_WAKE = false` and the compiler
-                // eliminates the entire guard as dead code (zero-cost monomorphization).
-                let max_blocks = mnemosyne_core::size_class::class_to_max_blocks(class);
-                // SAFETY: `page` is exclusively owned per this function's contract;
-                // `alloc_count` is a valid initialized field.
-                let freed_so_far =
-                    max_blocks.saturating_sub(unsafe { (*page).alloc_count } as usize);
-                let wake_threshold = max_blocks / (P::WAKE_DENOMINATOR as usize).max(1);
-                if !P::DELAY_PAGE_WAKE || freed_so_far >= wake_threshold {
-                    // SAFETY: `class < NUM_SIZE_CLASSES` — validated upstream;
-                    // `branded_page` is exclusively owned by this thread and the
-                    // page list operations preserve ownership invariants.
-                    unsafe {
-                        move_page_between_lists_branded(
-                            &mut token,
-                            alloc.full_pages.get_unchecked_mut(class),
-                            alloc.active_pages.get_unchecked_mut(class),
-                            branded_page,
-                            1,
-                        );
-                    }
-                }
-                // When DELAY_PAGE_WAKE and threshold not yet reached, the page
-                // stays in the full list; future frees will re-evaluate.
+    // SAFETY: `alloc: &mut ThreadAllocator<B>` proves exclusive access to the
+    // page lists; each branch below only touches the list that `list_state`
+    // names, which the caller guarantees contains `page_ptr`.
+    if was_full {
+        if becomes_empty && !alloc.is_current_segment(segment) {
+            // Case 1: Full → empty
+            unsafe {
+                unlink_page_from_list_raw(page_ptr, alloc.full_pages.get_unchecked_mut(class));
+                push_page_front_raw(page_ptr, &mut alloc.empty_pages, 3);
             }
-        } else if becomes_empty && !alloc.is_current_segment(segment) {
-            // Case 3: Went from active to empty (only if not the only active page)
-            // SAFETY: `active_pages[class]` is this thread's own active-list head
-            // and `page` is its live, owner-exclusive page, so the predicate's
-            // head read is valid.
-            let is_only_active =
-                unsafe { is_sole_active_page(*alloc.active_pages.get_unchecked(class), page) };
-            if !is_only_active {
+        } else {
+            // Case 2: Full → active (with optional DELAY_PAGE_WAKE hysteresis).
+            let max_blocks = mnemosyne_core::size_class::class_to_max_blocks(class);
+            // SAFETY: `page` is exclusively owned per this function's contract.
+            let freed_so_far =
+                max_blocks.saturating_sub(unsafe { (*page).alloc_count } as usize);
+            let wake_threshold = max_blocks / (P::WAKE_DENOMINATOR as usize).max(1);
+            if !P::DELAY_PAGE_WAKE || freed_so_far >= wake_threshold {
                 unsafe {
-                    unlink_page_from_list(
-                        &mut token,
+                    move_page_raw(
+                        page_ptr,
+                        alloc.full_pages.get_unchecked_mut(class),
                         alloc.active_pages.get_unchecked_mut(class),
-                        branded_page,
+                        1,
                     );
-                    push_page_front(&mut token, &mut alloc.empty_pages, branded_page, 3);
                 }
+            }
+            // When DELAY_PAGE_WAKE and threshold not yet reached, the page
+            // stays in the full list; future frees will re-evaluate.
+        }
+    } else if becomes_empty && !alloc.is_current_segment(segment) {
+        // Case 3: Active → empty (only when not the sole active page)
+        // SAFETY: `active_pages[class]` is this thread's own active-list head.
+        let is_only_active =
+            unsafe { is_sole_active_page(*alloc.active_pages.get_unchecked(class), page) };
+        if !is_only_active {
+            unsafe {
+                unlink_page_from_list_raw(page_ptr, alloc.active_pages.get_unchecked_mut(class));
+                push_page_front_raw(page_ptr, &mut alloc.empty_pages, 3);
             }
         }
-    });
+    }
 
     becomes_empty
 }

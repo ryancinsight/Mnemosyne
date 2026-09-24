@@ -1,5 +1,5 @@
 use crate::local_alloc::ThreadAllocator;
-use crate::local_alloc::page::{push_page_front, unlink_page_from_list, with_page_list_token};
+use crate::local_alloc::page::{push_page_front_raw, unlink_page_from_list_raw};
 use core::ptr::NonNull;
 use mnemosyne_arena::{HasSegmentPool, deallocate_segment, try_deallocate_segment};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
@@ -220,62 +220,50 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 // allocator's own lists, and every `NonNull::new_unchecked`
                 // wraps a non-null interior page pointer.
                 unsafe {
-                    with_page_list_token::<B, _>(|mut token| {
-                        let mut mask = (*segment).page_occupied_mask;
-                        while mask != 0 {
-                            let i = mask.trailing_zeros() as usize;
-                            mask &= mask - 1;
-                            if i == 0 {
-                                continue;
-                            }
-                            let pg = &raw mut (*segment).pages[i]; // keep for page-list ops below
-                            // SAFETY: live segment, valid occupied-page index, pre-read encrypted.
-                            reclaim_and_record(
-                                segment,
-                                i,
-                                dynamic_encrypted,
-                                &mut self.cross_thread_reclaimed,
-                            );
-                            total_allocations += (*pg).alloc_count;
+                    // SAFETY: `self: &mut ThreadAllocator<B>` provides exclusive
+                    // list access; each `pg_ptr` is a live page owned by this thread.
+                    let mut mask = (*segment).page_occupied_mask;
+                    while mask != 0 {
+                        let i = mask.trailing_zeros() as usize;
+                        mask &= mask - 1;
+                        if i == 0 {
+                            continue;
+                        }
+                        let pg = &raw mut (*segment).pages[i];
+                        // SAFETY: live segment, valid occupied-page index, pre-read encrypted.
+                        reclaim_and_record(
+                            segment,
+                            i,
+                            dynamic_encrypted,
+                            &mut self.cross_thread_reclaimed,
+                        );
+                        total_allocations += (*pg).alloc_count;
 
-                            if (*pg).alloc_count == 0
-                                && ((*pg).list_state == 1 || (*pg).list_state == 2)
-                            {
-                                let class = (*pg).size_class as usize;
-                                // SAFETY: `active_pages[class]` is this thread's
-                                // own active-list head and `pg` is a live,
-                                // owner-exclusive page of this segment, so the
-                                // predicate's head read is valid.
-                                let is_only_active = crate::free_helpers::is_sole_active_page(
-                                    self.active_pages[class],
-                                    pg,
-                                );
-                                if !is_only_active {
-                                    let pg_ptr = NonNull::new_unchecked(pg);
-                                    let branded_page = token.page(pg_ptr);
-                                    if (*pg).list_state == 1 {
-                                        unlink_page_from_list(
-                                            &mut token,
-                                            self.active_pages.get_unchecked_mut(class),
-                                            branded_page,
-                                        );
-                                    } else {
-                                        unlink_page_from_list(
-                                            &mut token,
-                                            self.full_pages.get_unchecked_mut(class),
-                                            branded_page,
-                                        );
-                                    }
-                                    push_page_front(
-                                        &mut token,
-                                        &mut self.empty_pages,
-                                        branded_page,
-                                        3,
+                        if (*pg).alloc_count == 0
+                            && ((*pg).list_state == 1 || (*pg).list_state == 2)
+                        {
+                            let class = (*pg).size_class as usize;
+                            let is_only_active = crate::free_helpers::is_sole_active_page(
+                                self.active_pages[class],
+                                pg,
+                            );
+                            if !is_only_active {
+                                let pg_ptr = NonNull::new_unchecked(pg);
+                                if (*pg).list_state == 1 {
+                                    unlink_page_from_list_raw(
+                                        pg_ptr,
+                                        self.active_pages.get_unchecked_mut(class),
+                                    );
+                                } else {
+                                    unlink_page_from_list_raw(
+                                        pg_ptr,
+                                        self.full_pages.get_unchecked_mut(class),
                                     );
                                 }
+                                push_page_front_raw(pg_ptr, &mut self.empty_pages, 3);
                             }
                         }
-                    });
+                    }
                 }
             }
 
