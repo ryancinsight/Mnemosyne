@@ -23,9 +23,9 @@ pub unsafe fn miri_cleanup_pools<B: mnemosyne_arena::HasSegmentPool>() {
         // SAFETY: `segment` was just popped from the orphan pool.
         let encrypted = unsafe { (*segment).free_list_encrypted };
         // SAFETY: `OccupiedPageBits` skips bit 0; each `page_index` is a valid occupied page.
-        for page_index in mnemosyne_core::types::OccupiedPageBits::new(
-            unsafe { (*segment).page_occupied_mask }
-        ) {
+        for page_index in
+            mnemosyne_core::types::OccupiedPageBits::new(unsafe { (*segment).page_occupied_mask })
+        {
             // SAFETY: the caller holds the serialized test lock.
             unsafe {
                 let randomized = (*segment).pages[page_index].secondary_free.is_some();

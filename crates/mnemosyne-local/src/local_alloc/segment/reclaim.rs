@@ -208,32 +208,28 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     );
                     total_allocations += (*pg).alloc_count;
 
-                        if (*pg).alloc_count == 0
-                            && ((*pg).list_state == 1 || (*pg).list_state == 2)
-                        {
-                            let class = (*pg).size_class as usize;
-                            let is_only_active = crate::free_helpers::is_sole_active_page(
-                                self.active_pages[class],
-                                pg,
-                            );
-                            if !is_only_active {
-                                let pg_ptr = NonNull::new_unchecked(pg);
-                                if (*pg).list_state == 1 {
-                                    unlink_page_from_list_raw(
-                                        pg_ptr,
-                                        self.active_pages.get_unchecked_mut(class),
-                                    );
-                                } else {
-                                    unlink_page_from_list_raw(
-                                        pg_ptr,
-                                        self.full_pages.get_unchecked_mut(class),
-                                    );
-                                }
-                                push_page_front_raw(pg_ptr, &mut self.empty_pages, 3);
+                    if (*pg).alloc_count == 0 && ((*pg).list_state == 1 || (*pg).list_state == 2) {
+                        let class = (*pg).size_class as usize;
+                        let is_only_active =
+                            crate::free_helpers::is_sole_active_page(self.active_pages[class], pg);
+                        if !is_only_active {
+                            let pg_ptr = NonNull::new_unchecked(pg);
+                            if (*pg).list_state == 1 {
+                                unlink_page_from_list_raw(
+                                    pg_ptr,
+                                    self.active_pages.get_unchecked_mut(class),
+                                );
+                            } else {
+                                unlink_page_from_list_raw(
+                                    pg_ptr,
+                                    self.full_pages.get_unchecked_mut(class),
+                                );
                             }
+                            push_page_front_raw(pg_ptr, &mut self.empty_pages, 3);
                         }
                     }
                 }
+            }
 
             if total_allocations == 0 && self.owned_segment_count >= RECLAIM_THRESHOLD_SEGMENTS {
                 // SAFETY: the sweep above observed zero live allocations across
@@ -263,28 +259,21 @@ unsafe fn unlink_segment_pages<B: HasSegmentPool>(
     alloc: &mut ThreadAllocator<B>,
     segment: *mut Segment,
 ) {
-    // SAFETY: `segment` is a live segment owned by `alloc` (caller contract), so
-    // reading its `page_linked_mask` is a valid, unaliased load.
-    let mut mask = unsafe { (*segment).page_linked_mask };
-    while mask != 0 {
-        let i = mask.trailing_zeros() as usize;
-        mask &= mask - 1;
-        // SAFETY: `i` is a set bit of `page_linked_mask`, indexing a valid page
-        // of `segment`; the segment is exclusive to `alloc`, so `&mut pages[i]`
-        // is unaliased.
+    // SAFETY: `segment` is a live segment owned by `alloc` (caller contract).
+    // `OccupiedPageBits` skips bit 0 and yields only set-bit indices of
+    // pages currently linked into `alloc`'s active/full/empty lists.
+    for i in OccupiedPageBits::new(unsafe { (*segment).page_linked_mask }) {
+        // SAFETY: `i` is a set bit of `page_linked_mask`, indexing a valid
+        // linked page of `segment`; the segment is exclusive to `alloc`.
         let pg = unsafe { &raw mut (*segment).pages[i] };
         // SAFETY: `pg` addresses a live page of `segment`.
         let state = unsafe { (*pg).list_state };
         if state == 1 || state == 2 {
-            // SAFETY: as above.
+            // SAFETY: list_state 1/2 means `pg` is in the active/full list.
             let class = unsafe { (*pg).size_class } as usize;
-            // SAFETY: `list_state` 1/2 means `pg` is linked into the active/full
-            // list for `class`; unlinking it from that list is the matching
-            // operation on `alloc`'s own structures.
             unsafe { alloc.unlink_page(pg, class) };
         } else if state == 3 {
-            // SAFETY: `list_state == 3` means `pg` is linked into `alloc`'s
-            // empty-page list, the list this unlink operates on.
+            // SAFETY: list_state 3 means `pg` is in the empty-page list.
             unsafe { alloc.unlink_empty_page(pg) };
         }
     }

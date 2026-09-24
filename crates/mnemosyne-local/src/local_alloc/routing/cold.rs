@@ -16,9 +16,7 @@ use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::class_to_size;
 use mnemosyne_core::types::{Page, Segment};
 
-use super::super::page::{
-    try_allocate_page_local_dynamic, try_reclaim_and_allocate_dynamic,
-};
+use super::super::page::{try_allocate_page_local_dynamic, try_reclaim_and_allocate_dynamic};
 
 impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// Computes the free-list randomisation seed for a new page.
@@ -78,7 +76,6 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             self.push_active_page(NonNull::new_unchecked(page), class);
         }
     }
-
 }
 
 impl<B: HasSegmentPool> ThreadAllocator<B> {
@@ -95,7 +92,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     pub unsafe fn alloc_cold<P: AllocPolicy>(&mut self, class: usize) -> *mut u8 {
         // SAFETY: forwarded — same contract.
         unsafe {
-            self.alloc_cold_raw(class, P::ENABLE_FREE_LIST_ENCRYPTION, P::RANDOMIZE_ALLOCATION)
+            self.alloc_cold_raw(
+                class,
+                P::ENABLE_FREE_LIST_ENCRYPTION,
+                P::RANDOMIZE_ALLOCATION,
+            )
         }
     }
 
@@ -151,7 +152,12 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 return block.as_ptr() as *mut u8;
             }
             if let Some(block) = unsafe {
-                try_reclaim_and_allocate_dynamic(active_page, &mut self.cross_thread_reclaimed, enable_encryption, randomize)
+                try_reclaim_and_allocate_dynamic(
+                    active_page,
+                    &mut self.cross_thread_reclaimed,
+                    enable_encryption,
+                    randomize,
+                )
             } {
                 return block.as_ptr() as *mut u8;
             }
@@ -173,8 +179,14 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             let page = page_ptr.as_ptr();
             // SAFETY: `page` is owned by this allocator. Since it is in full_pages,
             // we know it has no local free blocks. We only need to check for cross-thread frees to reclaim.
-            let block_opt =
-                unsafe { try_reclaim_and_allocate_dynamic(page, &mut self.cross_thread_reclaimed, enable_encryption, randomize) };
+            let block_opt = unsafe {
+                try_reclaim_and_allocate_dynamic(
+                    page,
+                    &mut self.cross_thread_reclaimed,
+                    enable_encryption,
+                    randomize,
+                )
+            };
             if let Some(block) = block_opt {
                 if unsafe { ((*page).alloc_count as usize) < (*page).max_blocks() } {
                     // Page is no longer full! Move it back to active list.
@@ -195,7 +207,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // SAFETY: `class` is the caller-validated size-class index, satisfying
         // `get_new_page`'s implicit bounds expectation; it returns either null
         // (handled below) or a page freshly installed into `active_pages`.
-        let new_page_ptr = unsafe { self.get_new_page_dynamic(class, enable_encryption, randomize) };
+        let new_page_ptr =
+            unsafe { self.get_new_page_dynamic(class, enable_encryption, randomize) };
         if new_page_ptr.is_null() {
             return core::ptr::null_mut();
         }
@@ -210,13 +223,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let block = unsafe { Page::pop_block_dynamic(page, enable_encryption, randomize) };
 
         // SAFETY: `page` is the freshly allocated page above with one block
-        // just popped, so the count increment matches an actual allocation.
-        // Addressed by segment so no page reference is minted.
-        unsafe {
-            let segment = Page::parent_segment_of(page);
-            let page_index = (*page).index_in_segment();
-            Page::increment_alloc_count_in_segment(segment, page_index);
-        }
+        // just popped; `increment_alloc_count` derives segment/index internally.
+        unsafe { Page::increment_alloc_count(page) };
 
         // If it becomes full immediately, move to full list
         if unsafe { (*page).alloc_count as usize == (*page).max_blocks() } {
@@ -255,7 +263,15 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 let page = page_ptr.as_ptr();
                 let segment = Page::parent_segment_of(page);
                 let page_index = (*page).page_index as usize;
-                self.setup_and_activate_page_dynamic(page, segment, page_index, class, block_size, enable_encryption, randomize);
+                self.setup_and_activate_page_dynamic(
+                    page,
+                    segment,
+                    page_index,
+                    class,
+                    block_size,
+                    enable_encryption,
+                    randomize,
+                );
                 self.recycled_pages += 1;
                 return page;
             }
@@ -265,7 +281,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         if self.current_segment.is_none() || self.next_page_index >= PAGES_PER_SEGMENT {
             // SAFETY: acquires a policy-compatible segment from the OS/pools;
             // policy-incompatible orphans are returned to the orphan pool.
-            if let Some(seg_ptr) = unsafe { acquire_policy_compatible_segment::<B>(enable_encryption) } {
+            if let Some(seg_ptr) =
+                unsafe { acquire_policy_compatible_segment::<B>(enable_encryption) }
+            {
                 // Determine if this is an orphaned segment vs a fresh/reinitialized segment.
                 // An orphaned segment has pages[1].block_size > 0.
                 // SAFETY: `seg_ptr` is the non-null segment just returned by
@@ -308,8 +326,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                 // matching every sweep-path reclaim.
                                 let encrypted = (*seg_ptr).free_list_encrypted;
                                 debug_assert_eq!(
-                                    encrypted,
-                                    enable_encryption,
+                                    encrypted, enable_encryption,
                                     "adopted an orphan whose free-list mode does not match the policy"
                                 );
                                 let reclaimed =
@@ -348,8 +365,13 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         // this allocator after the adoption above.
                         unsafe {
                             self.setup_and_activate_page_dynamic(
-                                found_page, seg_ptr, found_page_index, class, block_size,
-                                enable_encryption, randomize,
+                                found_page,
+                                seg_ptr,
+                                found_page_index,
+                                class,
+                                block_size,
+                                enable_encryption,
+                                randomize,
                             );
                         }
                         return found_page;
@@ -358,7 +380,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                     // Fallback to allocating another segment recursively.
                     // SAFETY: same caller contract — `class` is a valid
                     // size-class index and the allocator state is consistent.
-                    return unsafe { self.get_new_page_dynamic(class, enable_encryption, randomize) };
+                    return unsafe {
+                        self.get_new_page_dynamic(class, enable_encryption, randomize)
+                    };
                 } else {
                     self.fresh_segments += 1;
                     // Fresh segment initialization
@@ -387,7 +411,15 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // SAFETY: `seg` is the current live segment; `page_index` was validated
         // against `PAGES_PER_SEGMENT` by the refill condition above.
         unsafe {
-            self.setup_and_activate_page_dynamic(page_ptr, seg, page_index, class, block_size, enable_encryption, randomize);
+            self.setup_and_activate_page_dynamic(
+                page_ptr,
+                seg,
+                page_index,
+                class,
+                block_size,
+                enable_encryption,
+                randomize,
+            );
         }
 
         self.fresh_pages += 1;
@@ -474,5 +506,3 @@ unsafe fn acquire_policy_compatible_segment<B: HasSegmentPool>(
     }
     chosen
 }
-
-

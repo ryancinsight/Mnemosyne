@@ -15,7 +15,11 @@ pub(crate) unsafe fn try_allocate_page_local<P: AllocPolicy>(
 ) -> Option<NonNull<Block>> {
     // SAFETY: forwarded.
     unsafe {
-        try_allocate_page_local_dynamic(page, P::ENABLE_FREE_LIST_ENCRYPTION, P::RANDOMIZE_ALLOCATION)
+        try_allocate_page_local_dynamic(
+            page,
+            P::ENABLE_FREE_LIST_ENCRYPTION,
+            P::RANDOMIZE_ALLOCATION,
+        )
     }
 }
 
@@ -46,9 +50,9 @@ pub(crate) unsafe fn try_allocate_page_local_dynamic(
             return None;
         };
         if (*page).alloc_count == 0 {
-            let segment = Page::parent_segment_of(page);
-            let page_index = (*page).index_in_segment();
-            Page::increment_alloc_count_in_segment(segment, page_index);
+            // SAFETY: `page` is a live, exclusively-owned page; `increment_alloc_count`
+            // derives the parent segment and index internally.
+            Page::increment_alloc_count(page);
         } else {
             (*page).alloc_count = ((*page).alloc_count as usize + 1) as u32;
         }

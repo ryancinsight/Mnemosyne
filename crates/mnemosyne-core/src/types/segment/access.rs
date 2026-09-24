@@ -143,16 +143,16 @@ impl Segment {
     }
 }
 
-// ── Zero-cost bit-scan iterator ───────────────────────────────────────────────
+// ── Zero-cost page-bit iterator ───────────────────────────────────────────────
 
-/// Iterator over the **non-zero set-bit indices** of a `page_occupied_mask`
-/// value, skipping bit 0 (the segment header / page-0 slot is never allocated
-/// from and must never be processed by reclaim sweeps).
+/// Iterator over the **non-zero set-bit indices** of any `u32` segment page
+/// bitmask (`page_occupied_mask` or `page_linked_mask`), automatically
+/// skipping bit 0 (the segment header / page-0 slot).
 ///
 /// This replaces the repeated hand-rolled pattern:
 ///
 /// ```text
-/// let mut mask = (*seg).page_occupied_mask;
+/// let mut mask = (*seg).page_occupied_mask;   // or page_linked_mask
 /// while mask != 0 {
 ///     let i = mask.trailing_zeros() as usize;
 ///     mask &= mask - 1;
@@ -168,16 +168,11 @@ pub struct OccupiedPageBits {
 }
 
 impl OccupiedPageBits {
-    /// Constructs the iterator from a raw `page_occupied_mask` value.
-    ///
-    /// # Safety
-    ///
-    /// The caller is responsible for reading the mask from a live segment under
-    /// appropriate ownership; this struct is purely arithmetic.
+    /// Constructs the iterator from a `page_occupied_mask` or `page_linked_mask`
+    /// value, clearing bit 0 so page 0 (the segment header) is never yielded.
     #[inline(always)]
     pub fn new(mask: u32) -> Self {
-        // Always clear bit 0: page 0 is the segment header and is never
-        // occupied in the page-allocation sense.
+        // Clear bit 0: page 0 is the segment header and is never in any list.
         Self { mask: mask & !1 }
     }
 }

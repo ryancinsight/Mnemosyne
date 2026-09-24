@@ -177,7 +177,15 @@ unsafe fn thread_alloc_checked<
         None => {
             // SAFETY: `adjusted_size` is non-zero and `align` is a power of two
             // — validated by `is_valid_alloc_request` upstream.
-            return unsafe { allocate_large_or_huge_initialized::<B>(adjusted_size, align, P::ENABLE_POISONING, P::ZERO_INITIALIZE, P::POISON_ALLOC_BYTE) };
+            return unsafe {
+                allocate_large_or_huge_initialized::<B>(
+                    adjusted_size,
+                    align,
+                    P::ENABLE_POISONING,
+                    P::ZERO_INITIALIZE,
+                    P::POISON_ALLOC_BYTE,
+                )
+            };
         }
     };
 
@@ -279,14 +287,30 @@ unsafe fn thread_alloc_cold<
     };
     if slot_ptr.is_null() {
         // SAFETY: `adjusted_size != 0` and `align` is a power of two.
-        return unsafe { allocate_large_or_huge_initialized::<B>(adjusted_size, align, P::ENABLE_POISONING, P::ZERO_INITIALIZE, P::POISON_ALLOC_BYTE) };
+        return unsafe {
+            allocate_large_or_huge_initialized::<B>(
+                adjusted_size,
+                align,
+                P::ENABLE_POISONING,
+                P::ZERO_INITIALIZE,
+                P::POISON_ALLOC_BYTE,
+            )
+        };
     }
     // SAFETY: this thread's live TLS slot address (== the allocator address).
 
     // Gate before borrowing.
     if unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::is_allocating(slot_ptr) } {
         // SAFETY: `adjusted_size != 0` and `align` is a power of two.
-        return unsafe { allocate_large_or_huge_initialized::<B>(adjusted_size, align, P::ENABLE_POISONING, P::ZERO_INITIALIZE, P::POISON_ALLOC_BYTE) };
+        return unsafe {
+            allocate_large_or_huge_initialized::<B>(
+                adjusted_size,
+                align,
+                P::ENABLE_POISONING,
+                P::ZERO_INITIALIZE,
+                P::POISON_ALLOC_BYTE,
+            )
+        };
     }
 
     unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(slot_ptr, true) };
@@ -298,7 +322,15 @@ unsafe fn thread_alloc_cold<
 
     if ptr.is_null() {
         // SAFETY: `adjusted_size != 0` and `align` is a power of two.
-        return unsafe { allocate_large_or_huge_initialized::<B>(adjusted_size, align, P::ENABLE_POISONING, P::ZERO_INITIALIZE, P::POISON_ALLOC_BYTE) };
+        return unsafe {
+            allocate_large_or_huge_initialized::<B>(
+                adjusted_size,
+                align,
+                P::ENABLE_POISONING,
+                P::ZERO_INITIALIZE,
+                P::POISON_ALLOC_BYTE,
+            )
+        };
     }
     // SAFETY: `ptr` is a freshly allocated block for `class`; initialization
     // writes stay within the allocation.
@@ -333,4 +365,3 @@ unsafe fn allocate_large_or_huge_initialized<B: HasSegmentPool>(
     }
     ptr
 }
-

@@ -86,7 +86,11 @@ impl Page {
     pub unsafe fn pop_block<P: crate::policy::AllocPolicy>(page: *mut Self) -> NonNull<Block> {
         // SAFETY: forwarded — same contract.
         unsafe {
-            Self::pop_block_dynamic(page, P::ENABLE_FREE_LIST_ENCRYPTION, P::RANDOMIZE_ALLOCATION)
+            Self::pop_block_dynamic(
+                page,
+                P::ENABLE_FREE_LIST_ENCRYPTION,
+                P::RANDOMIZE_ALLOCATION,
+            )
         }
     }
 
@@ -113,9 +117,8 @@ impl Page {
         if let Some(block) = unsafe { try_pop_bump_block(page) } {
             return block;
         }
-        let (head, use_secondary) = unsafe {
-            Self::choose_free_head(page, (*page).alloc_count as usize, randomize)
-        };
+        let (head, use_secondary) =
+            unsafe { Self::choose_free_head(page, (*page).alloc_count as usize, randomize) };
         let Some(block) = head else {
             abort_on_corruption("pop_block called on an exhausted page");
         };
@@ -123,8 +126,8 @@ impl Page {
         let page_addr = page.addr();
         let segment_addr = page_addr & !(crate::constants::SEGMENT_SIZE - 1);
         // SAFETY: `page` is exclusively owned; its `page_index` is initialized.
-        let page_start = segment_addr
-            + (unsafe { (*page).page_index as usize } << crate::constants::PAGE_SHIFT);
+        let page_start =
+            segment_addr + (unsafe { (*page).page_index as usize } << crate::constants::PAGE_SHIFT);
         // SAFETY: `page` is exclusively owned; `block_size` is initialized.
         let block_size = unsafe { (*page).block_size } as usize;
         assert_block_in_page(
@@ -138,8 +141,7 @@ impl Page {
         let page_index = unsafe { (*page).page_index as usize };
         // SAFETY: `page` retains the parent mapping provenance and its
         // initialized index is in range, satisfying `cookie_for_dynamic`.
-        let cookie =
-            unsafe { Segment::cookie_for_dynamic(segment, enable_encryption, page_index) };
+        let cookie = unsafe { Segment::cookie_for_dynamic(segment, enable_encryption, page_index) };
         // SAFETY: `block` came from one of the page-local free chains, whose
         // nodes are validated above to lie within the page and be
         // `MIN_BLOCK_SIZE`-aligned, so `block.as_ptr()` is a valid, aligned
@@ -271,7 +273,11 @@ impl Page {
                     if let Some(prev) = primary_prev {
                         // SAFETY: `prev` is a freshly carved block of this page.
                         unsafe {
-                            (*prev.as_ptr()).set_next_dynamic(Some(block), enable_encryption, cookie);
+                            (*prev.as_ptr()).set_next_dynamic(
+                                Some(block),
+                                enable_encryption,
+                                cookie,
+                            );
                         }
                     } else {
                         unsafe { (*page).free = Some(block) };
@@ -281,7 +287,11 @@ impl Page {
                     if let Some(prev) = secondary_prev {
                         // SAFETY: `prev` is a freshly carved block of this page.
                         unsafe {
-                            (*prev.as_ptr()).set_next_dynamic(Some(block), enable_encryption, cookie);
+                            (*prev.as_ptr()).set_next_dynamic(
+                                Some(block),
+                                enable_encryption,
+                                cookie,
+                            );
                         }
                     } else {
                         unsafe { (*page).secondary_free = Some(block) };

@@ -92,6 +92,24 @@ impl Page {
         };
     }
 
+    /// Convenience wrapper for the 3-line allocation hot path:
+    /// `parent_segment_of → index_in_segment → increment_alloc_count_in_segment`.
+    ///
+    /// Avoids repeating the segment/index derivation at every call site.
+    ///
+    /// # Safety
+    ///
+    /// `page` must be a live, initialized page exclusively owned by the
+    /// calling thread. Carries `increment_alloc_count_in_segment`'s contract.
+    #[inline(always)]
+    pub unsafe fn increment_alloc_count(page: *mut Self) {
+        // SAFETY: caller guarantees a live page with mapping provenance.
+        let segment = unsafe { Self::parent_segment_of(page) };
+        let page_index = unsafe { (*page).index_in_segment() };
+        // SAFETY: `segment`/`page_index` are the valid parent-header/index pair.
+        unsafe { Self::increment_alloc_count_in_segment(segment, page_index) };
+    }
+
     /// Increments `alloc_count`, setting the segment occupancy bit only on the
     /// empty-to-occupied transition.
     ///

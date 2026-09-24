@@ -13,6 +13,4 @@ pub use owner::SegmentOwner;
 pub use owner::current_thread_id;
 pub use page::Page;
 pub use page::try_pop_bump_block;
-pub use segment::{
-    OccupiedPageBits, Segment, SegmentOwnership, locate_page, locate_segment,
-};
+pub use segment::{OccupiedPageBits, Segment, SegmentOwnership, locate_page, locate_segment};
