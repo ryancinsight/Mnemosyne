@@ -2,19 +2,6 @@ use core::ptr::NonNull;
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::types::{Block, Page, Segment, try_pop_bump_block};
 
-/// Pops the head block from an initialized page-local free list.
-///
-/// # Safety
-///
-/// `page` must identify a live page whose `free` list is `Some`.
-#[inline(always)]
-pub(crate) unsafe fn pop_page_free_block<P: AllocPolicy>(page: *mut Page) -> NonNull<Block> {
-    // SAFETY: caller guarantees `page` is live with a non-empty free list.
-    unsafe {
-        Page::pop_block_dynamic(page, P::ENABLE_FREE_LIST_ENCRYPTION, P::RANDOMIZE_ALLOCATION)
-    }
-}
-
 /// Allocates one block from a page-local free list or from that page's lazy
 /// bump range. Returns `None` when the page has no local free block and no
 /// uninitialized block remaining.

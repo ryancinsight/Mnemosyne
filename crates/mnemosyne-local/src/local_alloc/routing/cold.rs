@@ -17,8 +17,7 @@ use mnemosyne_core::size_class::class_to_size;
 use mnemosyne_core::types::{Page, Segment};
 
 use super::super::page::{
-    pop_page_free_block, try_allocate_page_local, try_allocate_page_local_dynamic,
-    try_reclaim_and_allocate, try_reclaim_and_allocate_dynamic,
+    try_allocate_page_local_dynamic, try_reclaim_and_allocate_dynamic,
 };
 
 impl<B: HasSegmentPool> ThreadAllocator<B> {
@@ -76,47 +75,6 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         }
     }
 
-    /// Stamps metadata, builds the free list, and enqueues a page into the
-    /// active list for `class`.
-    ///
-    /// This is the **SSOT** for the 3× repeated "set block_size / size_class →
-    /// compute random seed → initialize_free_list_in_segment → push_active_page"
-    /// sequence inside [`ThreadAllocator::get_new_page`].
-    ///
-    /// `segment` and `page_index` identify which segment header owns `page`;
-    /// callers that do not already have them handy must derive them first.
-    ///
-    /// # Safety
-    ///
-    /// `page` must be a live interior pointer into `segment`'s page array at
-    /// `page_index`, exclusively owned by this allocator. `block_size` must be
-    /// the stride for `class` (validated by the caller via `class_to_size`).
-    #[inline(always)]
-    unsafe fn setup_and_activate_page<P: AllocPolicy>(
-        &mut self,
-        page: *mut Page,
-        segment: *mut Segment,
-        page_index: usize,
-        class: usize,
-        block_size: usize,
-    ) {
-        let random_value =
-            self.page_init_random(P::RANDOMIZE_ALLOCATION, page as u64, class);
-        // SAFETY: `page` is a live interior page of `segment` exclusively
-        // owned by this allocator; the field writes are unaliased.
-        unsafe {
-            (*page).block_size = block_size as _;
-            (*page).size_class = class as u8;
-            let page_start = Page::page_start_in_segment(segment, page_index);
-            Page::initialize_free_list_in_segment::<P>(
-                segment,
-                page_index,
-                page_start,
-                random_value,
-            );
-            self.push_active_page(NonNull::new_unchecked(page), class);
-        }
-    }
 }
 
 impl<B: HasSegmentPool> ThreadAllocator<B> {
@@ -269,18 +227,6 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             }
         }
         block.as_ptr() as *mut u8
-    }
-
-    /// Obtains a new page for the given size class.
-    ///
-    /// # Safety
-    ///
-    /// Accesses and modifies segment pointers.
-    pub(crate) unsafe fn get_new_page<P: AllocPolicy>(&mut self, class: usize) -> *mut Page {
-        // SAFETY: forwarded.
-        unsafe {
-            self.get_new_page_dynamic(class, P::ENABLE_FREE_LIST_ENCRYPTION, P::RANDOMIZE_ALLOCATION)
-        }
     }
 
     /// Non-generic body of `get_new_page`.

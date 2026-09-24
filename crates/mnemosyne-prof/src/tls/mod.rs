@@ -80,7 +80,6 @@ pub(crate) fn get_profiler_state() -> *mut ThreadState {
 }
 
 #[inline(always)]
-
 pub(crate) fn should_skip_alloc_fast_path(
     size: usize,
     hook_absent: bool,

@@ -3,7 +3,7 @@ use crate::local_alloc::page::{push_page_front_raw, unlink_page_from_list_raw};
 use core::ptr::NonNull;
 use mnemosyne_arena::{HasSegmentPool, deallocate_segment, try_deallocate_segment};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
-use mnemosyne_core::types::{Page, Segment, SegmentOwner};
+use mnemosyne_core::types::{OccupiedPageBits, Page, Segment};
 
 const MIN_RETAINED_OWNED_SEGMENTS: usize = 3;
 const RECLAIM_THRESHOLD_SEGMENTS: usize = MIN_RETAINED_OWNED_SEGMENTS + 1;
@@ -59,19 +59,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                 let dynamic_encrypted = (*curr).free_list_encrypted;
                 let mut total_allocations = 0;
-                let mut mask = (*curr).page_occupied_mask;
-                while mask != 0 {
-                    let i = mask.trailing_zeros() as usize;
-                    mask &= mask - 1;
-                    if i == 0 {
-                        continue;
-                    }
-                    // Raw pointer, never `&mut`: remote threads read this
-                    // page's metadata concurrently during cross-thread frees,
-                    // so a `&mut` here would assert an exclusivity the design
-                    // does not have — Miri reports the retag as a data race
-                    // against those reads.
-                    // SAFETY: `curr` is live/exclusive; `i` is a valid occupied-page index.
+                // SAFETY: `curr` is live/exclusive; `i` indexes valid occupied pages.
+                for i in OccupiedPageBits::new((*curr).page_occupied_mask) {
+                    // Raw pointer, not `&mut`: remote threads read page metadata
+                    // during cross-thread frees — a `&mut` would alias those reads.
                     let page = reclaim_and_record(
                         curr,
                         i,
@@ -84,8 +75,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 // Clear the allocator cache before the owner token so a remote
                 // thread cannot observe a stale, non-null allocator on a segment
                 // that has already been handed back to the global pool.
-                Segment::set_owner_allocator(curr, core::ptr::null_mut());
-                Segment::set_owner(curr, SegmentOwner::NONE);
+                // SAFETY: `curr` is exclusively owned by this teardown sweep.
+                Segment::clear_ownership(curr);
                 Segment::set_current(curr, false);
                 (*curr).next_owned_segment = core::ptr::null_mut();
                 (*curr).prev_owned_segment = core::ptr::null_mut();
@@ -93,8 +84,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 // An empty segment may be cached or unmapped, both bounded. One
                 // still holding live allocations cannot be unmapped, so the
                 // orphan pool is its only sink and it goes straight to the
-                // deferred chain — the batched placement costs it one shared
-                // acquisition instead of its own.
+                // deferred chain.
                 if total_allocations > 0 || !try_deallocate_segment::<B>(curr) {
                     deferred.push(curr);
                 }
@@ -135,18 +125,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // SAFETY: `segment` is a live segment owned by this allocator (the
         // caller's precondition; it is not `current_segment`, checked above).
-        // Each `i` comes from a set bit of `page_occupied_mask`, so it indexes a
-        // valid, occupied entry of the segment's page array, and `&mut pages[i]`
-        // is unaliased because the segment is exclusive to this thread.
+        // `OccupiedPageBits` skips bit 0; each remaining `i` is a valid index.
         unsafe {
             let dynamic_encrypted = (*segment).free_list_encrypted;
-            let mut mask = (*segment).page_occupied_mask;
-            while mask != 0 {
-                let i = mask.trailing_zeros() as usize;
-                mask &= mask - 1;
-                if i == 0 {
-                    continue;
-                }
+            for i in OccupiedPageBits::new((*segment).page_occupied_mask) {
                 let pg = Page::page_in_segment(segment, i);
                 if (*pg).alloc_count > 0 {
                     // SAFETY: live segment, valid occupied-page index, pre-read encrypted mode.
@@ -212,32 +194,19 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             let dynamic_encrypted = unsafe { (*segment).free_list_encrypted };
             let mut total_allocations = 0;
 
-            if unsafe { (*segment).page_occupied_mask != 0 } {
-                // SAFETY: `segment` is owned by this thread; each `i` is a set
-                // bit of `page_occupied_mask`, indexing a valid occupied page,
-                // so `&mut pages[i]` is in-bounds and unaliased. The page-list
-                // token scopes the active/full/empty list mutations to this
-                // allocator's own lists, and every `NonNull::new_unchecked`
-                // wraps a non-null interior page pointer.
-                unsafe {
-                    // SAFETY: `self: &mut ThreadAllocator<B>` provides exclusive
-                    // list access; each `pg_ptr` is a live page owned by this thread.
-                    let mut mask = (*segment).page_occupied_mask;
-                    while mask != 0 {
-                        let i = mask.trailing_zeros() as usize;
-                        mask &= mask - 1;
-                        if i == 0 {
-                            continue;
-                        }
-                        let pg = &raw mut (*segment).pages[i];
-                        // SAFETY: live segment, valid occupied-page index, pre-read encrypted.
-                        reclaim_and_record(
-                            segment,
-                            i,
-                            dynamic_encrypted,
-                            &mut self.cross_thread_reclaimed,
-                        );
-                        total_allocations += (*pg).alloc_count;
+            // SAFETY: `segment` is owned by this thread; `OccupiedPageBits`
+            // skips bit 0 and yields only set-bit indices of valid occupied pages.
+            unsafe {
+                for i in OccupiedPageBits::new((*segment).page_occupied_mask) {
+                    let pg = &raw mut (*segment).pages[i];
+                    // SAFETY: live segment, valid occupied-page index, pre-read encrypted.
+                    reclaim_and_record(
+                        segment,
+                        i,
+                        dynamic_encrypted,
+                        &mut self.cross_thread_reclaimed,
+                    );
+                    total_allocations += (*pg).alloc_count;
 
                         if (*pg).alloc_count == 0
                             && ((*pg).list_state == 1 || (*pg).list_state == 2)
@@ -265,7 +234,6 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                         }
                     }
                 }
-            }
 
             if total_allocations == 0 && self.owned_segment_count >= RECLAIM_THRESHOLD_SEGMENTS {
                 // SAFETY: the sweep above observed zero live allocations across
@@ -340,12 +308,9 @@ unsafe fn unlink_segment_pages<B: HasSegmentPool>(
 /// `deallocate_segment` returns a segment with no live references exactly once.
 #[inline]
 unsafe fn detach_and_release_segment<B: HasSegmentPool>(segment: *mut Segment) {
-    // SAFETY: `segment` is the fully-detached live segment per the contract;
-    // writing its owner identity and releasing it is a valid, exclusive final
-    // access before ownership returns to the pool.
+    // SAFETY: `segment` is the fully-detached live segment per the contract.
     unsafe {
-        Segment::set_owner_allocator(segment, core::ptr::null_mut());
-        Segment::set_owner(segment, SegmentOwner::NONE);
+        Segment::clear_ownership(segment);
         deallocate_segment::<B>(segment);
     }
 }

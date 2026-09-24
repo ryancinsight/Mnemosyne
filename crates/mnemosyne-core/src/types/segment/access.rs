@@ -99,21 +99,99 @@ impl Segment {
         unsafe { (*field).owner() }
     }
 
-    /// Publishes a new owner identity for this segment.
+    /// Publishes the segment's owner identity.
     ///
-    /// `Release`: pairs with [`Segment::owner`]'s `Acquire` so everything the
-    /// owner wrote before claiming or orphaning the segment is visible to the
-    /// remote thread that observes the new identity. Raw-pointer form for the
-    /// same whole-struct-retag reason as the reader.
+    /// Takes a raw pointer for the same aliasing and ordering reasons as
+    /// [`Segment::owner`]. The owner write is `Release`, so a remote thread
+    /// that observes the identity with [`Segment::owner`] also observes the
+    /// state published before the claim.
     ///
     /// # Safety
     ///
-    /// `segment` must point to a live segment header.
+    /// `segment` must point to a live segment header owned exclusively by the
+    /// caller for the duration of the write.
     #[inline(always)]
     pub unsafe fn set_owner(segment: *const Segment, owner: SegmentOwner) {
-        // SAFETY: caller guarantees a live header.
+        // SAFETY: caller guarantees a live header and exclusive ownership; the
+        // projection touches only the atomic owner field.
         let field = unsafe { &raw const (*segment).ownership };
         // SAFETY: `field` addresses the initialized ownership pair.
         unsafe { (*field).set_owner(owner) };
+    }
+
+    /// Clears both ownership fields atomically — sets the allocator to null and
+    /// the owner token to [`SegmentOwner::NONE`].
+    ///
+    /// This is the **SSOT** for the 2-line "null out + clear token" sequence
+    /// that appears in `reclaim_owned_segments`, `detach_and_release_segment`,
+    /// and `drain_orphan_pool`. Calling both stores in sequence is correct only
+    /// when the caller exclusively owns the segment (no remote thread can read
+    /// a partially-cleared identity).
+    ///
+    /// # Safety
+    ///
+    /// `segment` must point to a live segment header that is exclusively owned
+    /// by the caller.
+    #[inline(always)]
+    pub unsafe fn clear_ownership(segment: *mut Segment) {
+        // SAFETY: caller guarantees exclusive ownership; both writes are to the
+        // initialized ownership field via raw projections.
+        unsafe {
+            Self::set_owner_allocator(segment, core::ptr::null_mut());
+            Self::set_owner(segment, SegmentOwner::NONE);
+        }
+    }
+}
+
+// ── Zero-cost bit-scan iterator ───────────────────────────────────────────────
+
+/// Iterator over the **non-zero set-bit indices** of a `page_occupied_mask`
+/// value, skipping bit 0 (the segment header / page-0 slot is never allocated
+/// from and must never be processed by reclaim sweeps).
+///
+/// This replaces the repeated hand-rolled pattern:
+///
+/// ```text
+/// let mut mask = (*seg).page_occupied_mask;
+/// while mask != 0 {
+///     let i = mask.trailing_zeros() as usize;
+///     mask &= mask - 1;
+///     if i == 0 { continue; }
+///     // ... body using i
+/// }
+/// ```
+///
+/// The iterator is a newtype over a `u32`, so it is zero-cost in release
+/// builds; the entire loop body inlines.
+pub struct OccupiedPageBits {
+    mask: u32,
+}
+
+impl OccupiedPageBits {
+    /// Constructs the iterator from a raw `page_occupied_mask` value.
+    ///
+    /// # Safety
+    ///
+    /// The caller is responsible for reading the mask from a live segment under
+    /// appropriate ownership; this struct is purely arithmetic.
+    #[inline(always)]
+    pub fn new(mask: u32) -> Self {
+        // Always clear bit 0: page 0 is the segment header and is never
+        // occupied in the page-allocation sense.
+        Self { mask: mask & !1 }
+    }
+}
+
+impl Iterator for OccupiedPageBits {
+    type Item = usize;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<usize> {
+        if self.mask == 0 {
+            return None;
+        }
+        let i = self.mask.trailing_zeros() as usize;
+        self.mask &= self.mask - 1;
+        Some(i)
     }
 }

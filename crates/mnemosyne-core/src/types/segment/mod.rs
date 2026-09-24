@@ -14,6 +14,7 @@ mod freelist;
 mod location;
 mod ownership;
 
+pub use access::OccupiedPageBits;
 pub use location::{locate_page, locate_segment};
 pub use ownership::SegmentOwnership;
 
@@ -164,7 +165,6 @@ unsafe impl Sync for Segment {}
 ///
 /// Atomics come from [`crate::loom_shim`], so a loom model drives this exact
 /// code rather than a transcription of it. That is the point of the type
-
 impl Default for Segment {
     /// Fresh segments default to the standard unencrypted free-list mode.
     ///

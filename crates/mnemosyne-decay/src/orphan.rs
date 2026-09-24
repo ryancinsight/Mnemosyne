@@ -9,7 +9,7 @@
 
 use core::sync::atomic::Ordering;
 use mnemosyne_arena::HasSegmentPool;
-use mnemosyne_core::types::{Page, Segment, SegmentOwner};
+use mnemosyne_core::types::{OccupiedPageBits, Page, Segment};
 
 /// Drains the orphan pool for backend `B`.
 ///
@@ -25,23 +25,10 @@ pub(super) fn drain_orphan_pool<B: HasSegmentPool>() {
         let dynamic_encrypted = unsafe { (*segment).free_list_encrypted };
         let mut total_allocations = 0;
 
-        // SAFETY: `segment` is exclusively owned; `page_occupied_mask` is a
-        // valid initialized header field.
-        let mut mask = unsafe { (*segment).page_occupied_mask };
-        while mask != 0 {
-            let i = mask.trailing_zeros() as usize;
-            mask &= mask - 1;
-            if i == 0 {
-                continue;
-            }
-            // Address pages through the segment pointer, not a `&mut Page`,
-            // because reclaim reads the segment header for the free-list cookie
-            // and a page borrow held across that access carries a different
-            // provenance root.
-            // SAFETY: `i < PAGES_PER_SEGMENT` (from the occupied mask) and
-            // `segment` is exclusively owned at this point.
+        // SAFETY: `OccupiedPageBits` skips bit 0; each `i` indexes a valid page.
+        for i in OccupiedPageBits::new(unsafe { (*segment).page_occupied_mask }) {
+            // SAFETY: `segment` is exclusively owned; `i` is a valid index.
             let page = unsafe { &raw mut (*segment).pages[i] };
-            // SAFETY: `segment` is exclusively owned and `i` is in-range.
             unsafe {
                 let randomized = (*page).secondary_free.is_some();
                 Page::reclaim_thread_free_if_present_in_segment_with_randomized(
@@ -51,7 +38,6 @@ pub(super) fn drain_orphan_pool<B: HasSegmentPool>() {
                     randomized,
                 );
             }
-            // SAFETY: `page` is inside the exclusively-owned segment's pages array.
             total_allocations += unsafe { (*page).alloc_count };
         }
 
@@ -59,8 +45,7 @@ pub(super) fn drain_orphan_pool<B: HasSegmentPool>() {
             // All pages are empty — return the segment mapping to the OS.
             // SAFETY: `segment` is exclusively owned and all its pages are empty.
             unsafe {
-                Segment::set_owner_allocator(segment, core::ptr::null_mut());
-                Segment::set_owner(segment, SegmentOwner::NONE);
+                Segment::clear_ownership(segment);
                 (*segment).next_owned_segment = core::ptr::null_mut();
                 (*segment).prev_owned_segment = core::ptr::null_mut();
                 mnemosyne_arena::deallocate_segment::<B>(segment);

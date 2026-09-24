@@ -20,26 +20,21 @@ pub unsafe fn miri_cleanup_pools<B: mnemosyne_arena::HasSegmentPool>() {
     }
 
     for segment in orphaned {
-        // SAFETY: `segment` was just popped from the orphan pool, giving
-        // exclusive ownership; the header fields are valid and initialized.
-        let mut occupied = unsafe { (*segment).page_occupied_mask };
-        // SAFETY: same ownership argument as above.
+        // SAFETY: `segment` was just popped from the orphan pool.
         let encrypted = unsafe { (*segment).free_list_encrypted };
-        while occupied != 0 {
-            let page_index = occupied.trailing_zeros() as usize;
-            occupied &= occupied - 1;
-            if page_index != 0 {
-                // SAFETY: the caller holds the serialized test lock, and the
-                // segment is detached from the orphan pool.
-                unsafe {
-                    let randomized = (*segment).pages[page_index].secondary_free.is_some();
-                    mnemosyne_core::types::Page::reclaim_thread_free_if_present_in_segment_with_randomized(
-                        segment,
-                        page_index,
-                        encrypted,
-                        randomized,
-                    );
-                }
+        // SAFETY: `OccupiedPageBits` skips bit 0; each `page_index` is a valid occupied page.
+        for page_index in mnemosyne_core::types::OccupiedPageBits::new(
+            unsafe { (*segment).page_occupied_mask }
+        ) {
+            // SAFETY: the caller holds the serialized test lock.
+            unsafe {
+                let randomized = (*segment).pages[page_index].secondary_free.is_some();
+                mnemosyne_core::types::Page::reclaim_thread_free_if_present_in_segment_with_randomized(
+                    segment,
+                    page_index,
+                    encrypted,
+                    randomized,
+                );
             }
         }
 

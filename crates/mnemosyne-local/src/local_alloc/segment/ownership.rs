@@ -109,14 +109,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// Prepends `segment` to this thread's intrusive doubly-linked
     /// owned-segments list and stamps the ownership token.
     ///
-    /// This is the single authoritative insertion point for the owned-segments
-    /// list; both the fresh-segment and orphan-adoption paths route through it
-    /// so the `prev`/`next` invariant and `owned_segment_count` stay aligned.
-    ///
     /// # Safety
     ///
     /// `segment` must be a live segment owned exclusively by this allocator and
     /// must not already be linked into any owned-segments list.
+    #[cfg(test)]
     #[inline]
     pub(crate) unsafe fn push_owned_segment<P: AllocPolicy>(&mut self, segment: *mut Segment) {
         // SAFETY: forwarded.

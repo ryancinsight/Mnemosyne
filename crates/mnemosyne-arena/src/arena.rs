@@ -341,7 +341,7 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
         // SAFETY: the pool declined to cache this huge segment, so `raw_ptr`/
         // `huge_size` name its still-live OS mapping, released here through the
         // allocating backend `B`.
-        unsafe { B::deallocate(raw_ptr, huge_size as usize) }
+        unsafe { B::deallocate(raw_ptr, huge_size) }
     } else {
         // It is a standard segment containing page allocations.
         // Return it to the global segment pool.

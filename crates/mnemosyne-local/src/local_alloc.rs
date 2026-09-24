@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_backend::DefaultBackend;
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
-use mnemosyne_core::types::{Page, Segment};
+use mnemosyne_core::types::{OccupiedPageBits, Page, Segment};
 
 pub use stats::{SizeClassOccupancy, ThreadAllocatorStats};
 
@@ -213,11 +213,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             unsafe {
                 let seg_ptr = current.as_ptr();
                 Segment::set_current(seg_ptr, false);
-                let mut mask = (*seg_ptr).page_occupied_mask;
-                while mask != 0 {
-                    let i = mask.trailing_zeros() as usize;
-                    mask &= mask - 1;
-                    if i > 0 && (*seg_ptr).pages[i].alloc_count == 0 {
+                // Prune pages that are now empty from the occupied mask.
+                // SAFETY: `seg_ptr` is exclusively owned; `OccupiedPageBits` skips bit 0.
+                for i in OccupiedPageBits::new((*seg_ptr).page_occupied_mask) {
+                    if (*seg_ptr).pages[i].alloc_count == 0 {
                         (*seg_ptr).page_occupied_mask &= !(1 << i);
                     }
                 }
