@@ -6,6 +6,27 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+/// Shared SSOT for the CAS-and-maybe-free step inside `init_os_tls_key`.
+///
+/// Both the Windows and POSIX branches of `init_os_tls_key` perform exactly
+/// the same `compare_exchange` → on-loser-free → `then_some` sequence;
+/// only the destructor (`free_fn`) differs. Extracting here removes the
+/// duplication and makes the logic easy to verify once.
+#[inline(always)]
+fn cas_tls_key(
+    atomic_key: &AtomicU32,
+    key: u32,
+    free_fn: impl FnOnce(u32),
+) -> Option<u32> {
+    match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Relaxed) {
+        Ok(_) => Some(key),
+        Err(existing) => {
+            free_fn(key);
+            (existing != u32::MAX).then_some(existing)
+        }
+    }
+}
+
 /// Retrieves an initialized OS TLS key, initializing lazily on first call.
 ///
 /// Returns `None` only when OS TLS key allocation fails.
@@ -37,13 +58,9 @@ fn init_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
             if key == u32::MAX {
                 return None;
             }
-            match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Relaxed) {
-                Ok(_) => Some(key),
-                Err(existing) => {
-                    TlsFree(key);
-                    (existing != u32::MAX).then_some(existing)
-                }
-            }
+            // SAFETY: `key` is the just-allocated TLS slot; `TlsFree` on the
+            // CAS-loser path frees it exactly once.
+            cas_tls_key(atomic_key, key, |k| { TlsFree(k); })
         }
         #[cfg(not(windows))]
         {
@@ -59,13 +76,9 @@ fn init_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
             if res != 0 {
                 return None;
             }
-            match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Relaxed) {
-                Ok(_) => Some(key),
-                Err(existing) => {
-                    pthread_key_delete(key);
-                    (existing != u32::MAX).then_some(existing)
-                }
-            }
+            // SAFETY: `key` is the just-created pthread key; `pthread_key_delete`
+            // on the CAS-loser path deletes it exactly once.
+            cas_tls_key(atomic_key, key, |k| { pthread_key_delete(k); })
         }
     }
 }
@@ -148,6 +161,22 @@ unsafe fn read_teb_self() -> *mut u8 {
     teb
 }
 
+/// Returns the TEB expansion-slot array pointer, or null if not yet allocated.
+///
+/// SSOT for the `*(teb.add(0x1780) as *mut *mut *mut c_void)` read shared by
+/// `get_teb_tls_slot` and `set_teb_tls_slot`.
+///
+/// # Safety
+/// Only valid on Windows x86-64 outside Miri.
+#[cfg(all(windows, target_arch = "x86_64", not(miri)))]
+#[inline(always)]
+unsafe fn teb_expansion_slots() -> *mut *mut core::ffi::c_void {
+    // SAFETY: `read_teb_self` yields the current thread's TEB; the expansion-slot
+    // pointer resides at TEB+0x1780, a fixed offset in the well-known Windows
+    // x86-64 TEB layout.
+    unsafe { *(read_teb_self().add(0x1780) as *mut *mut *mut core::ffi::c_void) }
+}
+
 /// Reads a TLS slot directly from the Thread Environment Block (TEB) on Windows x86_64.
 ///
 /// For `index < 64`, uses the inline TLS array at GS:0x1480.
@@ -165,8 +194,6 @@ pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
     unsafe {
         if index < 64 {
             let val: *mut core::ffi::c_void;
-            // SAFETY: `index < 64` is a `TlsAlloc`-allocated key in the
-            // TEB's 64-slot inline TLS array at TEB+0x1480.
             core::arch::asm!(
                 "mov {}, gs:[0x1480 + {} * 8]",
                 out(reg) val,
@@ -175,10 +202,8 @@ pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
             );
             val
         } else {
-            // SAFETY: `gs:[0x30]` reads the TEB self-pointer (see `read_teb_self`);
-            // the expansion-slot pointer at TEB+0x1780 is null-checked before dereference.
-            let teb = read_teb_self();
-            let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
+            // SAFETY: `teb_expansion_slots` reads TEB+0x1780 per its contract.
+            let expansion_slots = teb_expansion_slots();
             if expansion_slots.is_null() {
                 core::ptr::null_mut()
             } else {
@@ -197,12 +222,9 @@ pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
 pub(crate) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void) {
     // SAFETY: `index` is a valid `TlsAlloc`-allocated key (caller's contract).
     // The TEB inline array (GS+0x1480) and expansion-slot pointer (GS+0x1780)
-    // are within the well-known TEB layout for Windows x86-64. The asm writes
-    // only the slot word; no register the compiler owns is clobbered.
+    // are within the well-known Windows x86-64 TEB layout.
     unsafe {
         if index < 64 {
-            // SAFETY: `index < 64` is a `TlsAlloc`-allocated slot in the
-            // TEB's 64-slot inline TLS array.
             core::arch::asm!(
                 "mov gs:[0x1480 + {} * 8], {}",
                 in(reg) index as usize,
@@ -210,10 +232,8 @@ pub(crate) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void)
                 options(nostack, preserves_flags)
             );
         } else {
-            // SAFETY: `gs:[0x30]` reads the TEB self-pointer (see `read_teb_self`);
-            // the expansion-slot pointer is null-checked before any dereference or write.
-            let teb = read_teb_self();
-            let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
+            // SAFETY: `teb_expansion_slots` reads TEB+0x1780 per its contract.
+            let expansion_slots = teb_expansion_slots();
             if !expansion_slots.is_null() {
                 *expansion_slots.add(index as usize - 64) = value;
             } else {
