@@ -4,6 +4,37 @@
 
 ### Added
 
+- Session 12: P-elimination from `#[cold]`/`#[inline(never)]` functions + cross-crate SSOT.
+  411/411 tests pass; safety ratchet at 0.
+
+  **`acquire_policy_compatible_segment<P,B>` → `<B>(enable_encryption: bool)`**
+  `#[inline(never)]` function used P only for `P::ENABLE_FREE_LIST_ENCRYPTION`.
+  3P×N binary copies → N.
+
+  **`free_large_or_huge_raw<B>` SSOT across crates**
+  The "recover segment + optionally poison + deallocate_large_or_huge" 5-line
+  sequence existed independently in `classified.rs` (mnemosyne-local) and
+  `raw_heap/free.rs` (mnemosyne-heap). Extracted `pub free_large_or_huge_raw<B>`
+  into `free_helpers.rs`, re-exported through `internal.rs`. Deleted the
+  per-heap-crate standalone `free_large_or_huge<B>`.
+
+  **`validation.rs`: non-generic `init_bytes` / `poison_bytes` workers**
+  `initialize_allocated_bytes<P>` and `poison_freed_bytes<P>` were 3-5 line
+  functions using P::ZERO_INITIALIZE / ENABLE_POISONING / POISON_*_BYTE.
+  Extracted `pub(crate) init_bytes` and `poison_bytes` non-generic workers;
+  the `<P>` wrappers become 1-line thin shells. SecurePolicy and HardenedPolicy
+  share the same (zero_init=true, poison=true) instantiation.
+
+  **`allocate_large_or_huge_initialized<P,B>` → `<B>`**
+  Converted to non-P by passing P::consts as plain bool args. Those 3 inlined
+  calls inside `thread_alloc_cold<P,B>` now produce identical code for
+  SecurePolicy and HardenedPolicy, improving ICF.
+
+  **`realloc_delta_init` non-generic SSOT**
+  Extracted the 20-line `can_reuse` branch of `thread_realloc<P,B>` (grow
+  initialization + shrink poisoning) into a non-generic helper using the
+  `init_bytes`/`poison_bytes` workers.
+
 - Session 11: Complete elimination of phantom-brand ZST wrapper layers (page-lists + owned-segments).
   411/411 tests pass; safety ratchet at 0.
 
