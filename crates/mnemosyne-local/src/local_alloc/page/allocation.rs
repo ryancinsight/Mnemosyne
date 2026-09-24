@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 use mnemosyne_core::policy::AllocPolicy;
-use mnemosyne_core::types::{Block, Page, Segment};
+use mnemosyne_core::types::{Block, Page, Segment, try_pop_bump_block};
 
 /// Pops the head block from an initialized page-local free list.
 ///
@@ -46,7 +46,7 @@ pub(crate) unsafe fn try_allocate_page_local<P: AllocPolicy>(
         {
             return None;
         }
-        let block = if let Some(block) = Page::try_pop_bump_block::<P>(page) {
+        let block = if let Some(block) = try_pop_bump_block(page) {
             block
         } else if (*page).free.is_some() || (*page).secondary_free.is_some() {
             Page::pop_block::<P>(page)

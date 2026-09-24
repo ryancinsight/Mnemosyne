@@ -141,6 +141,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // Owner encoding differs by platform: Windows x86-64 encodes a thread
         // ID so `resolve_owner_slot` can detect same-thread cross-policy access;
         // all other targets encode the allocator pointer directly.
+        // SAFETY: `segment` is the live caller-passed segment; `self` is the
+        // owning allocator. The writes are not aliased by any concurrent accessor.
         #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
         unsafe {
             Segment::set_owner(
@@ -148,6 +150,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 SegmentOwner::from_thread_id(mnemosyne_core::types::current_thread_id()),
             )
         };
+        // SAFETY: same contract as the Windows path above — live segment,
+        // owning allocator pointer, no concurrent aliasing.
         #[cfg(not(all(windows, target_arch = "x86_64", not(miri))))]
         unsafe {
             Segment::set_owner(

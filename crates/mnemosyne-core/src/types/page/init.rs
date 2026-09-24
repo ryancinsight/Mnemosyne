@@ -21,61 +21,60 @@ const fn gcd(mut a: usize, mut b: usize) -> usize {
     a
 }
 
-impl Page {
-    /// Tries to carve the next block from a page's uninitialized bump range.
-    ///
-    /// Keeping this raw-pointer operation in the core page owner lets local
-    /// allocators use the same lazy-allocation contract without reconstructing
-    /// a `Page` reference or calling the free-list path for every block.
-    ///
-    /// # Safety
-    ///
-    /// `page` must identify a live, exclusively owned page whose metadata has
-    /// been initialized. The page's `block_size`, `size_class`, `page_index`,
-    /// and `initialized_blocks` fields must describe a valid page layout.
-    #[inline(always)]
-    pub unsafe fn try_pop_bump_block<P: crate::policy::AllocPolicy>(
-        page: *mut Page,
-    ) -> Option<NonNull<Block>> {
-        // SAFETY: the caller guarantees that `page` is a live initialized page
-        // exclusively owned by this allocation path.
-        let (free, secondary, initialized, block_size, size_class, page_index) = unsafe {
-            (
-                (*page).free,
-                (*page).secondary_free,
-                (*page).initialized_blocks,
-                (*page).block_size,
-                (*page).size_class,
-                (*page).page_index as usize,
-            )
-        };
-        if free.is_some() || secondary.is_some() {
-            return None;
-        }
-
-        let max_blocks = crate::size_class::class_to_max_blocks(size_class as usize);
-        if initialized as usize >= max_blocks {
-            return None;
-        }
-
-        // SAFETY: `initialized < max_blocks` means the next block remains
-        // inside this page, and the page metadata is exclusively owned here.
-        unsafe { (*page).initialized_blocks = initialized + 1 };
-
-        let segment_addr = page.addr() & !(crate::constants::SEGMENT_SIZE - 1);
-        let segment = page.map_addr(|_| segment_addr).cast::<Segment>();
-        // SAFETY: `page` retains its parent segment mapping's provenance and
-        // the initialized page index selects an in-range physical page.
-        let page_start = unsafe { Self::page_start_in_segment(segment, page_index) };
-        // SAFETY: the bump-range invariant established above bounds this block
-        // offset within the page and preserves the block's required alignment.
-        let block_ptr =
-            unsafe { page_start.add(initialized as usize * block_size as usize) } as *mut Block;
-        // SAFETY: `page_start` is non-null and the in-bounds offset keeps the
-        // returned block pointer non-null.
-        Some(unsafe { NonNull::new_unchecked(block_ptr) })
+/// Tries to carve the next block from a page's uninitialized bump range.
+///
+/// Non-generic: bump allocation needs only page-metadata arithmetic with no
+/// policy const. Removing the `<P: AllocPolicy>` type parameter means this
+/// compiles once rather than once per policy — the body is identical across
+/// all policies.
+///
+/// # Safety
+///
+/// `page` must identify a live, exclusively owned page whose metadata has
+/// been initialized. The page's `block_size`, `size_class`, `page_index`,
+/// and `initialized_blocks` fields must describe a valid page layout.
+#[inline(always)]
+pub unsafe fn try_pop_bump_block(page: *mut Page) -> Option<NonNull<Block>> {
+    // SAFETY: the caller guarantees that `page` is a live initialized page
+    // exclusively owned by this allocation path.
+    let (free, secondary, initialized, block_size, size_class, page_index) = unsafe {
+        (
+            (*page).free,
+            (*page).secondary_free,
+            (*page).initialized_blocks,
+            (*page).block_size,
+            (*page).size_class,
+            (*page).page_index as usize,
+        )
+    };
+    if free.is_some() || secondary.is_some() {
+        return None;
     }
 
+    let max_blocks = crate::size_class::class_to_max_blocks(size_class as usize);
+    if initialized as usize >= max_blocks {
+        return None;
+    }
+
+    // SAFETY: `initialized < max_blocks` means the next block remains
+    // inside this page, and the page metadata is exclusively owned here.
+    unsafe { (*page).initialized_blocks = initialized + 1 };
+
+    let segment_addr = page.addr() & !(crate::constants::SEGMENT_SIZE - 1);
+    let segment = page.map_addr(|_| segment_addr).cast::<Segment>();
+    // SAFETY: `page` retains its parent segment mapping's provenance and
+    // the initialized page index selects an in-range physical page.
+    let page_start = unsafe { Page::page_start_in_segment(segment, page_index) };
+    // SAFETY: the bump-range invariant established above bounds this block
+    // offset within the page and preserves the block's required alignment.
+    let block_ptr =
+        unsafe { page_start.add(initialized as usize * block_size as usize) } as *mut Block;
+    // SAFETY: `page_start` is non-null and the in-bounds offset keeps the
+    // returned block pointer non-null.
+    Some(unsafe { NonNull::new_unchecked(block_ptr) })
+}
+
+impl Page {
     /// Pops a block from the page's local free list, using lazy/bump allocation if necessary.
     ///
     /// # Safety
@@ -87,7 +86,7 @@ impl Page {
     pub unsafe fn pop_block<P: crate::policy::AllocPolicy>(page: *mut Self) -> NonNull<Block> {
         // SAFETY: forwarded from `pop_block`'s contract — `page` is a live,
         // exclusively-owned page with free or uninitialized blocks remaining.
-        if let Some(block) = unsafe { Self::try_pop_bump_block::<P>(page) } {
+        if let Some(block) = unsafe { try_pop_bump_block(page) } {
             block
         } else {
             let (head, use_secondary) = unsafe {

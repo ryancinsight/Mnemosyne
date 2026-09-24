@@ -262,6 +262,7 @@ impl Page {
 }
 
 mod init;
+pub use init::try_pop_bump_block;
 mod occupancy;
 mod reclaim;
 
