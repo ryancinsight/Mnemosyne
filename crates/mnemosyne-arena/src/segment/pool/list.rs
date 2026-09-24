@@ -9,6 +9,16 @@ use super::tagged_stack::TaggedSegmentStack;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::types::Segment;
 
+/// Increments `calls` by 1 and `count_stat` by `count`, both Relaxed.
+///
+/// SSOT for the `(calls += 1, count += n)` pattern shared by `record_purge`
+/// and `record_reset`.
+#[inline(always)]
+fn record_call_and_count(calls: &AtomicUsize, count_stat: &AtomicUsize, count: usize) {
+    calls.fetch_add(1, Ordering::Relaxed);
+    count_stat.fetch_add(count, Ordering::Relaxed);
+}
+
 /// A reclamation-safe segment pool for a single NUMA node.
 ///
 /// The free-segment stack and its ABA-tag / ordering discipline live in the
@@ -189,8 +199,7 @@ impl NodeSegmentPool {
 
     #[inline]
     pub(crate) fn record_purge(&self, count: usize) {
-        self.purge_calls.fetch_add(1, Ordering::Relaxed);
-        self.purged.fetch_add(count, Ordering::Relaxed);
+        record_call_and_count(&self.purge_calls, &self.purged, count);
     }
 
     /// Cumulative segments whose physical backing a confirmed `page_reset` released while they stayed cached in this pool.
@@ -207,7 +216,6 @@ impl NodeSegmentPool {
 
     #[inline]
     pub(crate) fn record_reset(&self, count: usize) {
-        self.reset_calls.fetch_add(1, Ordering::Relaxed);
-        self.reset_segments.fetch_add(count, Ordering::Relaxed);
+        record_call_and_count(&self.reset_calls, &self.reset_segments, count);
     }
 }
