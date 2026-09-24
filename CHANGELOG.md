@@ -4,6 +4,32 @@
 
 ### Added
 
+- Session 11: Complete elimination of phantom-brand ZST wrapper layers (page-lists + owned-segments).
+  411/411 tests pass; safety ratchet at 0.
+
+  **Full `PageListToken<'id,B>` / `BrandedPage<'id>` infrastructure removed**
+  (page/lists.rs, transitions.rs, free/internal.rs, segment/reclaim.rs, list_tests.rs):
+  All 9 `with_page_list_token::<B,_>` closures in `transitions.rs` and 2 more in
+  `free/internal.rs` + `reclaim.rs` replaced with direct calls to the non-generic raw
+  helpers (`push_page_front_raw`, `unlink_page_from_list_raw`, `move_page_raw`).
+  The entire `PageListToken`/`BrandedPage`/`with_page_list_token`/`push_page_front`/
+  `unlink_page_from_list`/`move_page_between_lists_branded` branded API (6 generic items)
+  deleted. Tests updated to exercise `unlink_page_from_list_raw` directly.
+
+  **Full `OwnedSegmentToken<'id,B>` / `BrandedSegment<'id>` infrastructure removed**
+  (segment/ownership.rs):
+  Both `with_owned_segment_token` closures replaced with direct raw calls.
+  The entire `OwnedSegmentToken`/`BrandedSegment`/`with_owned_segment_token`/
+  `push_owned_segment_front`/`unlink_owned_segment_from_list` branded API deleted.
+
+  **`push_owned_segment<P>` body split** (segment/ownership.rs):
+  ~25-line ownership-stamp + list-push extracted into non-`<P>` `push_owned_segment_core`.
+  P-generic wrapper reduced to a 2-line thin shell.
+
+  **`page_init_random` DRY extraction** (routing/cold.rs):
+  3× identical `if P::RANDOMIZE_ALLOCATION { rng ^ ptr ^ class_hash } else { 0 }` formula
+  extracted as `page_init_random(&mut self, randomize: bool, ptr: u64, class) -> u64`.
+
 - Five de-monomorphization / zero-cost abstraction consolidations (session 9-10).
   All unsafe-doc ratchet at 0; >258 tests pass:
 
