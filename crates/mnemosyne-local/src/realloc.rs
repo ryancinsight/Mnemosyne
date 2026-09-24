@@ -1,6 +1,7 @@
 use crate::alloc::small_path_class;
 use crate::free_helpers::resolve_owner_slot;
 use crate::usable_size;
+use crate::validation::{init_bytes, poison_bytes};
 use crate::{
     LocalAllocatorSelector, ThreadAllocator, initialize_allocated_bytes, poison_freed_bytes,
     thread_alloc_layout, thread_free,
@@ -13,6 +14,43 @@ use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::round_up_size;
 use mnemosyne_core::types::Segment;
 use mnemosyne_core::types::{Block, locate_segment};
+
+/// Non-generic SSOT for the in-place realloc byte-mutation step.
+///
+/// When `realloc_can_reuse` returns true, the block stays in place but the
+/// delta region must be initialized (grow) or poisoned (shrink) per policy.
+/// All policy flags are passed as plain booleans so this body compiles once
+/// regardless of how many `(P, B)` pairs call `thread_realloc`.
+///
+/// # Safety
+///
+/// `ptr` must be a live allocation whose usable size covers `new_size`.
+#[inline(always)]
+unsafe fn realloc_delta_init(
+    ptr: *mut u8,
+    old_size: usize,
+    new_size: usize,
+    zero_init: bool,
+    poison: bool,
+    alloc_byte: u8,
+    free_byte: u8,
+) {
+    if new_size > old_size {
+        // Grow: initialize the newly accessible region.
+        // SAFETY: `ptr.add(old_size)` is within the backing block (caller
+        // contract: usable size >= new_size > old_size).
+        let delta_ptr = unsafe { ptr.add(old_size) };
+        let delta = new_size - old_size;
+        unsafe { init_bytes(delta_ptr, delta, zero_init, poison, alloc_byte) };
+    } else if new_size < old_size {
+        // Shrink: poison the truncated tail.
+        // SAFETY: `ptr.add(new_size)` through `old_size - new_size` bytes is
+        // within the backing block (new_size < old_size <= usable size).
+        let tail_ptr = unsafe { ptr.add(new_size) };
+        let truncated = old_size - new_size;
+        unsafe { poison_bytes(tail_ptr, truncated, poison, free_byte) };
+    }
+}
 
 /// Whether a small reallocation can stay in its current size class.
 ///
@@ -145,33 +183,19 @@ pub unsafe fn thread_realloc<
         let can_reuse = unsafe { realloc_can_reuse(ptr, layout, new_size) };
 
         if can_reuse {
-            if P::ZERO_INITIALIZE && is_grow {
-                // SAFETY: `ptr.add(layout.size())` starts at the end of the
-                // previously initialized range; the delta `new_size - layout.size`
-                // bytes lie within the allocation (capacity >= new_size proven
-                // by `can_reuse`). Zeroing them satisfies ZERO_INITIALIZE.
-                unsafe {
-                    core::ptr::write_bytes(ptr.add(layout.size()), 0, new_size - layout.size());
-                }
-            } else if P::ENABLE_POISONING && is_grow {
-                // SAFETY: same bounds argument as above; writing the poison byte
-                // marks the grown-into region until the caller writes real data.
-                unsafe {
-                    core::ptr::write_bytes(
-                        ptr.add(layout.size()),
-                        P::POISON_ALLOC_BYTE,
-                        new_size - layout.size(),
-                    );
-                }
-            }
-            if P::ENABLE_POISONING && new_size < layout.size() {
-                // SAFETY: `ptr.add(new_size)` starts at the new logical end of
-                // the allocation; `layout.size() - new_size` bytes are the
-                // truncated tail, still within the backing block.
-                unsafe {
-                    poison_freed_bytes::<P>(ptr.add(new_size), layout.size() - new_size);
-                }
-            }
+            // SAFETY: `ptr` is non-null and its backing block covers `new_size`
+            // (proven by `can_reuse`).
+            unsafe {
+                realloc_delta_init(
+                    ptr,
+                    layout.size(),
+                    new_size,
+                    P::ZERO_INITIALIZE,
+                    P::ENABLE_POISONING,
+                    P::POISON_ALLOC_BYTE,
+                    P::POISON_FREE_BYTE,
+                )
+            };
             return ptr;
         }
     } else {
