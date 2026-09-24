@@ -90,6 +90,17 @@ pub struct BackendMemoryStats {
     pub hugepage_hint_calls: usize,
 }
 
+/// Non-generic SSOT for the common (calls += 1, bytes += size) recorder shape.
+///
+/// `record_page_reset`, `record_guard_install`, and `record_decommit` all
+/// perform exactly these two relaxed increments; sharing the body removes the
+/// duplication while keeping each public recorder a clearly-named function.
+#[inline(always)]
+fn record_counter_and_bytes(calls: &AtomicUsize, bytes: &AtomicUsize, size: usize) {
+    calls.fetch_add(1, Ordering::Relaxed);
+    bytes.fetch_add(size, Ordering::Relaxed);
+}
+
 #[inline]
 pub(crate) fn record_map(size: usize) {
     MAP_CALLS.fetch_add(1, Ordering::Relaxed);
@@ -114,39 +125,21 @@ pub(crate) fn record_unmap_failure() {
     UNMAP_CALLS.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Records a confirmed page reset.
-///
-/// Unlike `record_unmap`, this does not decrement `current_mapped_bytes`
-/// because the virtual mapping is still committed and remains observable
-/// through the allocator's address-space accounting; the OS has only
-/// released the underlying physical backing.
 #[inline]
 pub(crate) fn record_page_reset(size: usize) {
-    PAGE_RESET_CALLS.fetch_add(1, Ordering::Relaxed);
-    PAGE_RESET_BYTES.fetch_add(size, Ordering::Relaxed);
+    record_counter_and_bytes(&PAGE_RESET_CALLS, &PAGE_RESET_BYTES, size);
 }
 
 /// Records a confirmed guard-region install.
-///
-/// Same accounting rationale as `record_page_reset`: the mapping remains
-/// reserved and `current_mapped_bytes` is intentionally unchanged. The
-/// counter increments lets external monitors observe how much of the
-/// reserved address space has been converted into guard regions.
 #[inline]
 pub(crate) fn record_guard_install(size: usize) {
-    GUARD_INSTALL_CALLS.fetch_add(1, Ordering::Relaxed);
-    GUARD_INSTALL_BYTES.fetch_add(size, Ordering::Relaxed);
+    record_counter_and_bytes(&GUARD_INSTALL_CALLS, &GUARD_INSTALL_BYTES, size);
 }
 
 /// Records a confirmed decommit.
-///
-/// Same accounting rationale as `record_page_reset`: the reservation remains,
-/// so `current_mapped_bytes` is intentionally unchanged; only the commit
-/// charge / resident backing was returned to the OS.
 #[inline]
 pub(crate) fn record_decommit(size: usize) {
-    DECOMMIT_CALLS.fetch_add(1, Ordering::Relaxed);
-    DECOMMIT_BYTES.fetch_add(size, Ordering::Relaxed);
+    record_counter_and_bytes(&DECOMMIT_CALLS, &DECOMMIT_BYTES, size);
 }
 
 /// Records a huge-page hint issued for a freshly mapped region.

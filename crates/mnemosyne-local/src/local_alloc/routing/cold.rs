@@ -46,6 +46,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// Same contract as `setup_and_activate_page`.
     #[inline(always)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the dynamic page setup keeps the segment metadata inputs explicit"
+    )]
     unsafe fn setup_and_activate_page_dynamic(
         &mut self,
         page: *mut Page,

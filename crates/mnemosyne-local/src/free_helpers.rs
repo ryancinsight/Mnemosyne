@@ -113,7 +113,7 @@ pub(crate) unsafe fn resolve_owner_slot(
         if caller_owner {
             return (true, slot_ptr);
         }
-        return (false, core::ptr::null_mut());
+        (false, core::ptr::null_mut())
     }
     #[cfg(not(all(windows, target_arch = "x86_64", not(miri))))]
     {

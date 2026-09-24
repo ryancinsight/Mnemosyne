@@ -78,6 +78,10 @@ pub unsafe fn do_local_free_internal_policy<
 ///
 /// Same contract as `do_local_free_internal_policy`.
 #[inline(always)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the non-generic free path keeps policy inputs explicit for monomorphization"
+)]
 unsafe fn do_local_free_internal_raw<B: HasSegmentPool>(
     alloc: &mut ThreadAllocator<B>,
     block: *mut Block,

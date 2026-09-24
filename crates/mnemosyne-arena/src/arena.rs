@@ -82,55 +82,21 @@ unsafe fn init_segment_layout(
     Some((user_ptr, aligned_addr, tail_slack_start, mapping_end))
 }
 
-/// Initialise a **fresh** large/huge segment from a new OS mapping.
+/// Initialises the segment header and shared metadata for a large/huge
+/// allocation, dispatching between fresh (new OS mapping) and cached
+/// (pool reuse) cases.
 ///
-/// Writes invariant header fields (`raw_alloc_ptr`, `numa_node`, and
-/// `block_size`) that are set once and never change; then calls the shared
-/// layout helper to set `alloc_count` and write the back-pointer.
-///
-/// # Safety
-/// `raw_ptr` must be a live, freshly mapped region of at least
-/// `total_alloc_size` bytes with no prior segment header.
-#[inline(always)]
-unsafe fn initialize_large_or_huge_segment_fresh(
-    raw_ptr: *mut u8,
-    total_alloc_size: usize,
-    alignment: usize,
-    size: usize,
-) -> Option<(*mut u8, usize, usize, usize)> {
-    let aligned_addr = checked_align_up(raw_ptr.addr(), SEGMENT_ALIGN)?;
-    let aligned_ptr = raw_ptr.map_addr(|_| aligned_addr).cast::<Segment>();
-    // SAFETY: fresh mapping — write invariant header fields.
-    unsafe {
-        let node = crate::current_numa_node();
-        Segment::initialize(aligned_ptr, raw_ptr, node);
-        (*aligned_ptr).pages[0].block_size = total_alloc_size as _;
-    }
-    // SAFETY: same contract as the caller's unsafe block.
-    unsafe { init_segment_layout(raw_ptr, total_alloc_size, alignment, size) }
-}
-
-/// Initialise a **cached** large/huge segment reused from the huge-pool.
-///
-/// Invariant header fields (`raw_alloc_ptr`, `block_size`) are already live
-/// from the original allocation; only `alloc_count` and the back-pointer need
-/// refreshing.  Skipping the full `Segment::initialize` path removes a cluster
-/// of header writes on every cache-hit allocation.
+/// For fresh mappings the invariant header fields (`raw_alloc_ptr`,
+/// `numa_node`, `block_size`) are written once before the shared layout
+/// computation. For cached mappings those fields are already live, so only
+/// `alloc_count` and the back-pointer are refreshed.
 ///
 /// # Safety
-/// `raw_ptr` must be a live region holding a valid, previously-initialized
-/// `Segment` header at the SEGMENT_ALIGN-aligned base of the mapping.
-#[inline(always)]
-unsafe fn initialize_large_or_huge_segment_cached(
-    raw_ptr: *mut u8,
-    total_alloc_size: usize,
-    alignment: usize,
-    size: usize,
-) -> Option<(*mut u8, usize, usize, usize)> {
-    // SAFETY: same contract as the caller's unsafe block.
-    unsafe { init_segment_layout(raw_ptr, total_alloc_size, alignment, size) }
-}
-
+///
+/// `raw_ptr` must be a live mapping of at least `total_alloc_size` bytes.
+/// When `is_cache_hit` is `false` the region must be freshly allocated with
+/// no prior segment header; when `true` the segment header must be valid
+/// and previously initialised.
 #[inline(always)]
 unsafe fn initialize_large_or_huge_segment(
     raw_ptr: *mut u8,
@@ -139,19 +105,19 @@ unsafe fn initialize_large_or_huge_segment(
     size: usize,
     is_cache_hit: bool,
 ) -> Option<(*mut u8, usize, usize, usize)> {
-    if is_cache_hit {
-        // SAFETY: forwarded contract — `raw_ptr` holds a valid previously-
-        // initialized `Segment` header whose invariant fields are live.
+    if !is_cache_hit {
+        let aligned_addr = checked_align_up(raw_ptr.addr(), SEGMENT_ALIGN)?;
+        let aligned_ptr = raw_ptr.map_addr(|_| aligned_addr).cast::<Segment>();
+        // SAFETY: fresh mapping — write invariant header fields once.
         unsafe {
-            initialize_large_or_huge_segment_cached(raw_ptr, total_alloc_size, alignment, size)
-        }
-    } else {
-        // SAFETY: forwarded contract — `raw_ptr` is a freshly allocated
-        // OS mapping whose `Segment` header has not yet been initialized.
-        unsafe {
-            initialize_large_or_huge_segment_fresh(raw_ptr, total_alloc_size, alignment, size)
+            let node = crate::current_numa_node();
+            Segment::initialize(aligned_ptr, raw_ptr, node);
+            (*aligned_ptr).pages[0].block_size = total_alloc_size as _;
         }
     }
+    // Shared: compute layout, set alloc_count, write back-pointer.
+    // SAFETY: forwarded from this function's contract.
+    unsafe { init_segment_layout(raw_ptr, total_alloc_size, alignment, size) }
 }
 
 /// Allocates a block of memory of the given size and alignment.
