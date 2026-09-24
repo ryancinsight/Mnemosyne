@@ -176,8 +176,6 @@ pub unsafe fn thread_realloc<
     new_size: usize,
 ) -> *mut u8 {
     if !ptr.is_null() && new_size != 0 {
-        let is_grow = new_size > layout.size();
-
         // SAFETY: `ptr` is non-null and allocator-owned per the caller's
         // `# Safety` contract; `realloc_can_reuse` only reads metadata.
         let can_reuse = unsafe { realloc_can_reuse(ptr, layout, new_size) };
