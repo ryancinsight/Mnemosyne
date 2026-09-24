@@ -124,6 +124,30 @@ pub(crate) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
     }
 }
 
+/// Reads the Thread Environment Block (TEB) self-pointer from `gs:[0x30]`.
+///
+/// This is the SSOT for the single-instruction `NtCurrentTeb()` equivalent
+/// used in the expansion-slot paths of `get_teb_tls_slot` and
+/// `set_teb_tls_slot`, avoiding four copies of the same inline asm block.
+///
+/// # Safety
+/// Only valid on Windows x86-64 outside Miri.
+#[cfg(all(windows, target_arch = "x86_64", not(miri)))]
+#[inline(always)]
+unsafe fn read_teb_self() -> *mut u8 {
+    let teb: *mut u8;
+    // SAFETY: `gs:[0x30]` is the TEB `Self` pointer in the well-known
+    // Windows x86-64 TEB layout; a single aligned read, no write.
+    unsafe {
+        core::arch::asm!(
+            "mov {}, gs:[0x30]",
+            out(reg) teb,
+            options(nostack, preserves_flags, readonly)
+        );
+    }
+    teb
+}
+
 /// Reads a TLS slot directly from the Thread Environment Block (TEB) on Windows x86_64.
 ///
 /// For `index < 64`, uses the inline TLS array at GS:0x1480.
@@ -151,15 +175,9 @@ pub(crate) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
             );
             val
         } else {
-            let teb: *mut u8;
-            // SAFETY: `gs:[0x30]` reads the TEB `Self` pointer; the
-            // follow-up expansion-slot pointer at TEB+0x1780 is
-            // null-checked before any dereference.
-            core::arch::asm!(
-                "mov {}, gs:[0x30]",
-                out(reg) teb,
-                options(nostack, preserves_flags, readonly)
-            );
+            // SAFETY: `gs:[0x30]` reads the TEB self-pointer (see `read_teb_self`);
+            // the expansion-slot pointer at TEB+0x1780 is null-checked before dereference.
+            let teb = read_teb_self();
             let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
             if expansion_slots.is_null() {
                 core::ptr::null_mut()
@@ -192,15 +210,9 @@ pub(crate) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void)
                 options(nostack, preserves_flags)
             );
         } else {
-            let teb: *mut u8;
-            // SAFETY: `gs:[0x30]` reads the TEB `Self` pointer; the
-            // follow-up expansion-slot pointer is null-checked before
-            // any dereference or write.
-            core::arch::asm!(
-                "mov {}, gs:[0x30]",
-                out(reg) teb,
-                options(nostack, preserves_flags, readonly)
-            );
+            // SAFETY: `gs:[0x30]` reads the TEB self-pointer (see `read_teb_self`);
+            // the expansion-slot pointer is null-checked before any dereference or write.
+            let teb = read_teb_self();
             let expansion_slots = *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void);
             if !expansion_slots.is_null() {
                 *expansion_slots.add(index as usize - 64) = value;

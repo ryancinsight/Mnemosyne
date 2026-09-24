@@ -134,6 +134,34 @@ pub(super) fn set_os_tls_value(key: u32, value: *mut core::ffi::c_void) {
     }
 }
 
+/// Reads the Thread Environment Block (TEB) self-pointer from `gs:[0x30]`.
+///
+/// SSOT for the NtCurrentTeb() expansion-slot paths in `get_teb_tls_slot`
+/// and `set_teb_tls_slot`, eliminating two copies of the same inline asm.
+///
+/// # Safety
+/// Only valid on Windows x86-64 outside Miri.
+#[cfg(all(
+    not(nightly_tls_active),
+    not(feature = "std_tls"),
+    all(windows, target_arch = "x86_64"),
+    not(miri)
+))]
+#[inline(always)]
+unsafe fn read_teb_self() -> *mut u8 {
+    let teb: *mut u8;
+    // SAFETY: `gs:[0x30]` is the TEB self-pointer in the Windows x86-64 TEB
+    // layout; a single aligned read with no side effects.
+    unsafe {
+        core::arch::asm!(
+            "mov {}, gs:[0x30]",
+            out(reg) teb,
+            options(nostack, preserves_flags, readonly)
+        );
+    }
+    teb
+}
+
 #[cfg(all(
     not(nightly_tls_active),
     not(feature = "std_tls"),
@@ -166,16 +194,8 @@ pub(super) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
         }
         val
     } else {
-        let teb: *mut u8;
-        // SAFETY: `gs:[0x30]` is the TEB self-pointer (`NtCurrentTeb`); a single
-        // aligned read of an always-mapped field, no side effects.
-        unsafe {
-            core::arch::asm!(
-                "mov {}, gs:[0x30]",
-                out(reg) teb,
-                options(nostack, preserves_flags, readonly)
-            );
-        }
+        // SAFETY: reads the TEB self-pointer via the read_teb_self SSOT.
+        let teb = unsafe { read_teb_self() };
         // SAFETY: `TEB + 0x1780` is the `TlsExpansionSlots` pointer field (fixed
         // x64 offset); reading it yields the (possibly null) base of the
         // expansion-slot array for indices >= 64.
@@ -218,15 +238,8 @@ pub(super) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void)
             );
         }
     } else {
-        let teb: *mut u8;
-        // SAFETY: `gs:[0x30]` is the TEB self-pointer; a single aligned read.
-        unsafe {
-            core::arch::asm!(
-                "mov {}, gs:[0x30]",
-                out(reg) teb,
-                options(nostack, preserves_flags, readonly)
-            );
-        }
+        // SAFETY: reads the TEB self-pointer via the read_teb_self SSOT.
+        let teb = unsafe { read_teb_self() };
         // SAFETY: `TEB + 0x1780` is the `TlsExpansionSlots` pointer field; read
         // the (possibly null) expansion-array base.
         let expansion_slots = unsafe { *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void) };
