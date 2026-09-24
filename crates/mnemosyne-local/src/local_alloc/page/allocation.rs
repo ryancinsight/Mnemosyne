@@ -4,39 +4,44 @@ use mnemosyne_core::types::{Block, Page, Segment, try_pop_bump_block};
 
 /// Pops the head block from an initialized page-local free list.
 ///
-/// # Why these take `*mut Page` rather than `&mut Page`
-///
-/// The allocator's page lists retain pointers projected from the complete
-/// segment mapping. Turning one into `&mut Page` mints a `Unique` tag, and the
-/// page's own segment accesses — the occupancy mask, `is_current`, the
-/// free-list cookie — then invalidate that tag. Keeping the pointer raw
-/// preserves the segment-spanning provenance without making an exclusivity
-/// claim the allocator cannot uphold across remote frees.
-///
 /// # Safety
 ///
-/// `page` must identify a live page whose `free` list is `Some`; callers
-/// establish this through an existing local free list, a successful
-/// `Page::reclaim_thread_free_in_segment`, or `initialize_free_list_in_segment`.
+/// `page` must identify a live page whose `free` list is `Some`.
 #[inline(always)]
 pub(crate) unsafe fn pop_page_free_block<P: AllocPolicy>(page: *mut Page) -> NonNull<Block> {
     // SAFETY: caller guarantees `page` is live with a non-empty free list.
-    unsafe { Page::pop_block::<P>(page) }
+    unsafe {
+        Page::pop_block_dynamic(page, P::ENABLE_FREE_LIST_ENCRYPTION, P::RANDOMIZE_ALLOCATION)
+    }
 }
 
 /// Allocates one block from a page-local free list or from that page's lazy
-/// bump range.
-///
-/// Returns `None` when the page has no local free block and no uninitialized
-/// block remaining.
+/// bump range. Returns `None` when the page has no local free block and no
+/// uninitialized block remaining.
 ///
 /// # Safety
 ///
-/// The caller must own `page` through the current thread allocator and must
-/// ensure that any decoded free-list links use policy `P`.
+/// The caller must own `page` through the current thread allocator.
 #[inline(always)]
 pub(crate) unsafe fn try_allocate_page_local<P: AllocPolicy>(
     page: *mut Page,
+) -> Option<NonNull<Block>> {
+    // SAFETY: forwarded.
+    unsafe {
+        try_allocate_page_local_dynamic(page, P::ENABLE_FREE_LIST_ENCRYPTION, P::RANDOMIZE_ALLOCATION)
+    }
+}
+
+/// Non-generic SSOT for `try_allocate_page_local`.
+///
+/// # Safety
+///
+/// Same contract as `try_allocate_page_local`.
+#[inline(always)]
+pub(crate) unsafe fn try_allocate_page_local_dynamic(
+    page: *mut Page,
+    enable_encryption: bool,
+    randomize: bool,
 ) -> Option<NonNull<Block>> {
     // SAFETY: caller guarantees `page` identifies a live page it owns.
     unsafe {
@@ -49,13 +54,10 @@ pub(crate) unsafe fn try_allocate_page_local<P: AllocPolicy>(
         let block = if let Some(block) = try_pop_bump_block(page) {
             block
         } else if (*page).free.is_some() || (*page).secondary_free.is_some() {
-            Page::pop_block::<P>(page)
+            Page::pop_block_dynamic(page, enable_encryption, randomize)
         } else {
             return None;
         };
-        // Most allocations keep the page occupied. Avoid reconstructing the
-        // parent segment on that hot path; only the empty-to-occupied
-        // transition needs the segment occupancy mask.
         if (*page).alloc_count == 0 {
             let segment = Page::parent_segment_of(page);
             let page_index = (*page).index_in_segment();
@@ -67,24 +69,38 @@ pub(crate) unsafe fn try_allocate_page_local<P: AllocPolicy>(
     }
 }
 
-/// Reclaims any pending cross-thread frees on `page` and, if reclamation
-/// added blocks to the local free list, pops one block and increments the
-/// page's `alloc_count`.
-///
-/// Returns the popped block when reclamation succeeded, or `None` when
-/// `page.thread_free` was empty. Any reclaimed block count is added to
-/// `reclaim_sink`, the owning allocator's per-thread `cross_thread_reclaimed`
-/// counter, so the reclaim path never touches the process-global atomic.
+/// Reclaims any pending cross-thread frees on `page` and pops one block.
 ///
 /// # Safety
 ///
-/// Same contract as `Page::reclaim_thread_free_in_segment`: the page must
-/// belong to the allocator context performing the reconciliation and every
-/// block in `page.thread_free` must belong to this page.
+/// Same contract as `Page::reclaim_thread_free_in_segment`.
 #[inline(always)]
 pub(crate) unsafe fn try_reclaim_and_allocate<P: AllocPolicy>(
     page: *mut Page,
     reclaim_sink: &mut usize,
+) -> Option<NonNull<Block>> {
+    // SAFETY: forwarded.
+    unsafe {
+        try_reclaim_and_allocate_dynamic(
+            page,
+            reclaim_sink,
+            P::ENABLE_FREE_LIST_ENCRYPTION,
+            P::RANDOMIZE_ALLOCATION,
+        )
+    }
+}
+
+/// Non-generic SSOT for `try_reclaim_and_allocate`.
+///
+/// # Safety
+///
+/// Same contract as `try_reclaim_and_allocate`.
+#[inline(always)]
+pub(crate) unsafe fn try_reclaim_and_allocate_dynamic(
+    page: *mut Page,
+    reclaim_sink: &mut usize,
+    enable_encryption: bool,
+    randomize: bool,
 ) -> Option<NonNull<Block>> {
     // SAFETY: caller guarantees `page` identifies a live page it owns.
     let (segment, page_index) = unsafe {
@@ -94,10 +110,9 @@ pub(crate) unsafe fn try_reclaim_and_allocate<P: AllocPolicy>(
         (Page::parent_segment_of(page), (*page).index_in_segment())
     };
 
-    // SAFETY: `parent_segment`/`index_in_segment` name this page's parent
-    // header and its own in-range index.
+    // SAFETY: `parent_segment`/`index_in_segment` name this page's parent header.
     let encrypted = unsafe { Segment::free_list_encrypted(segment) };
-    let randomized = P::RANDOMIZE_ALLOCATION && encrypted;
+    let randomized = randomize && encrypted;
     let reclaimed =
         unsafe { Page::reclaim_thread_free_in_segment(segment, page_index, encrypted, randomized) };
     if reclaimed == 0 {
@@ -106,7 +121,7 @@ pub(crate) unsafe fn try_reclaim_and_allocate<P: AllocPolicy>(
     *reclaim_sink += reclaimed;
     // SAFETY: a nonzero reclaim count guarantees the drained chain is now
     // linked onto the page's local free list.
-    let block = unsafe { try_allocate_page_local::<P>(page) }
+    let block = unsafe { try_allocate_page_local_dynamic(page, enable_encryption, randomize) }
         .expect("invariant: reclaimed remote frees populate the page-local free list");
     Some(block)
 }

@@ -119,25 +119,30 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// must not already be linked into any owned-segments list.
     #[inline]
     pub(crate) unsafe fn push_owned_segment<P: AllocPolicy>(&mut self, segment: *mut Segment) {
-        // SAFETY: forwarded — same contract as this function's own contract.
+        // SAFETY: forwarded.
+        unsafe { self.push_owned_segment_dynamic(segment, P::ENABLE_FREE_LIST_ENCRYPTION) }
+    }
+
+    /// Non-generic variant of `push_owned_segment`.
+    ///
+    /// Used by the `alloc_cold_raw` → `get_new_page_dynamic` cold path which
+    /// passes runtime bools rather than policy type parameters.
+    ///
+    /// # Safety
+    ///
+    /// Same contract as `push_owned_segment`.
+    #[inline]
+    pub(crate) unsafe fn push_owned_segment_dynamic(
+        &mut self,
+        segment: *mut Segment,
+        enable_encryption: bool,
+    ) {
+        // SAFETY: forwarded — same contract.
         unsafe { self.push_owned_segment_core(segment) };
 
-        if P::ENABLE_FREE_LIST_ENCRYPTION {
-            // An adopted orphan arrives with `free_list_encrypted == true` and
-            // live free chains already encoded under the keys in its header —
-            // and remote threads may concurrently push to its `thread_free`
-            // lists through those same keys. Re-keying would invalidate every
-            // live encoded link and data-race those readers, so keys are
-            // written only for segments that have never encoded a chain
-            // (fresh or pool-reinitialized: `free_list_encrypted == false`).
-            //
-            // SAFETY: `segment` is the just-pushed live segment, owned
-            // exclusively by `self`. When `free_list_encrypted` is false it
-            // holds no live allocations and is not yet visible to any remote
-            // freeing thread, satisfying `initialize_segment_keys`'s
-            // no-live-chains / no-concurrent-readers contract. The keys are
-            // per-page XOR cookies derived from the TLS seed; the segment
-            // mapping is already initialized by the arena.
+        if enable_encryption {
+            // SAFETY: same as `push_owned_segment<P>` — live segment, owned
+            // exclusively, no live chains when `free_list_encrypted` is false.
             let already_keyed = unsafe { (*segment).free_list_encrypted };
             if !already_keyed {
                 unsafe { self.initialize_segment_keys(segment) };
