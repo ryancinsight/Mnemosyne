@@ -314,16 +314,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                         for i in 1..PAGES_PER_SEGMENT {
                             let page_ptr = &raw mut (*seg_ptr).pages[i];
+                            let has_content = (*page_ptr).block_size > 0;
 
-                            if (*page_ptr).block_size > 0 {
-                                // Reclaim cross-thread frees to get accurate count.
-                                // The orphan's chains are encoded under the
-                                // segment's recorded mode; after the
-                                // policy-compatibility gate in
-                                // `acquire_policy_compatible_segment` it equals
-                                // `P::ENABLE_FREE_LIST_ENCRYPTION`, but the
-                                // dynamic flag is the authoritative source,
-                                // matching every sweep-path reclaim.
+                            // Reclaim cross-thread frees for pages that were
+                            // previously allocated from; skip fresh pages.
+                            if has_content {
                                 let encrypted = (*seg_ptr).free_list_encrypted;
                                 debug_assert_eq!(
                                     encrypted, enable_encryption,
@@ -334,21 +329,18 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                                 if reclaimed > 0 {
                                     self.record_cross_thread_reclaimed(reclaimed);
                                 }
+                            }
 
-                                if (*page_ptr).alloc_count > 0 {
-                                    let pg_class = (*page_ptr).size_class as usize;
-                                    let ptr = NonNull::new_unchecked(page_ptr);
-                                    if ((*page_ptr).alloc_count as usize) < (*page_ptr).max_blocks()
-                                    {
-                                        self.push_active_page(ptr, pg_class);
-                                    } else {
-                                        self.push_full_page(ptr, pg_class);
-                                    }
-                                } else if found_page.is_null() {
-                                    found_page = page_ptr;
-                                    found_page_index = i;
+                            // Route the page: live allocations → active/full;
+                            // empty (whether fresh or drained) → first-found slot
+                            // or the recycling empty list.
+                            if has_content && (*page_ptr).alloc_count > 0 {
+                                let pg_class = (*page_ptr).size_class as usize;
+                                let ptr = NonNull::new_unchecked(page_ptr);
+                                if ((*page_ptr).alloc_count as usize) < (*page_ptr).max_blocks() {
+                                    self.push_active_page(ptr, pg_class);
                                 } else {
-                                    self.push_empty_page(NonNull::new_unchecked(page_ptr));
+                                    self.push_full_page(ptr, pg_class);
                                 }
                             } else if found_page.is_null() {
                                 found_page = page_ptr;

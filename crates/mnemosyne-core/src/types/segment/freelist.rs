@@ -10,6 +10,23 @@ use super::Segment;
 use crate::abort::abort_on_corruption;
 use crate::constants::PAGES_PER_SEGMENT;
 
+/// Aborts when `segment` is null or misaligned, using `context` in the message.
+///
+/// SSOT for the null + alignment guard that [`Segment::cookie_for_dynamic`]
+/// and [`Segment::free_list_mode_matches`] both require before any field read.
+#[inline(always)]
+fn assert_segment_ptr(segment: *const Segment, context: &'static str) {
+    if segment.is_null() {
+        abort_on_corruption(context);
+    }
+    if !segment
+        .addr()
+        .is_multiple_of(core::mem::align_of::<Segment>())
+    {
+        abort_on_corruption(context);
+    }
+}
+
 impl Segment {
     /// Returns the free-list encryption cookie for page `page_index` under a
     /// runtime encryption flag: the per-page key when `encrypted`, else `0`.
@@ -29,20 +46,11 @@ impl Segment {
         encrypted: bool,
         page_index: usize,
     ) -> usize {
-        if segment.is_null() {
-            abort_on_corruption("free-list cookie segment pointer is null");
-        }
-        if !segment
-            .addr()
-            .is_multiple_of(core::mem::align_of::<Segment>())
-        {
-            abort_on_corruption("free-list cookie segment pointer is misaligned");
-        }
+        assert_segment_ptr(segment, "free-list cookie: null or misaligned segment pointer");
         if page_index >= PAGES_PER_SEGMENT {
             abort_on_corruption("free-list cookie page index out of range");
         }
-        // SAFETY: the null and alignment checks above discharge
-        // `free_list_mode_matches`'s precondition on `segment`.
+        // SAFETY: the guards above discharge the precondition on `segment`.
         if !unsafe { Self::free_list_mode_matches(segment, encrypted) } {
             abort_on_corruption(
                 "free-list mode mismatch: raw/decode path does not match the segment",
@@ -108,18 +116,8 @@ impl Segment {
     /// writes.
     #[inline(always)]
     pub unsafe fn free_list_mode_matches(segment: *const Segment, encrypted: bool) -> bool {
-        if segment.is_null() {
-            abort_on_corruption("free-list mode check segment pointer is null");
-        }
-        if !segment
-            .addr()
-            .is_multiple_of(core::mem::align_of::<Segment>())
-        {
-            abort_on_corruption("free-list mode check segment pointer is misaligned");
-        }
-        // SAFETY: the null and alignment aborts above leave a pointer that
-        // satisfies `free_list_encrypted`'s contract; the field it reads is
-        // written once before the segment is published.
+        assert_segment_ptr(segment, "free-list mode check: null or misaligned segment pointer");
+        // SAFETY: the guard above leaves a valid pointer.
         unsafe { Self::free_list_encrypted(segment) == encrypted }
     }
 

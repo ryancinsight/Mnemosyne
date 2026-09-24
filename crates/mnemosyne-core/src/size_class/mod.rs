@@ -59,18 +59,17 @@ pub const fn size_to_class_nonzero(size: usize) -> Option<usize> {
 /// Returns the rounded size-class block size for a given allocation size.
 ///
 /// Equivalent to `size_to_class(size).map(class_to_size)`.
+/// Returns `None` when `size > MAX_SMALL_ALLOC_SIZE`.
 #[inline(always)]
 pub const fn round_up_size(size: usize) -> Option<usize> {
     if size == 0 {
         return Some(0);
     }
-    if size > MAX_SMALL_ALLOC_SIZE {
+    // size_to_class_nonzero already returns None for size > MAX_SMALL_ALLOC_SIZE.
+    let Some(class) = size_to_class_nonzero(size) else {
         return None;
-    }
-    match size_to_class_nonzero(size) {
-        Some(class) => Some(class_to_size(class)),
-        None => None,
-    }
+    };
+    Some(class_to_size(class))
 }
 
 /// Returns the class stride for the given request, saturating to the largest
