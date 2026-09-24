@@ -7,6 +7,23 @@ use core::sync::atomic::Ordering;
 pub(super) static PROFILER_TLS_KEY: core::sync::atomic::AtomicU32 =
     core::sync::atomic::AtomicU32::new(u32::MAX);
 
+/// SSOT for the publish-or-free CAS used by both Windows and POSIX key init.
+#[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(miri)))]
+#[inline(always)]
+fn cas_tls_key(
+    atomic_key: &core::sync::atomic::AtomicU32,
+    key: u32,
+    free_fn: impl FnOnce(u32),
+) -> Option<u32> {
+    match atomic_key.compare_exchange(u32::MAX, key, Ordering::Relaxed, Ordering::Relaxed) {
+        Ok(_) => Some(key),
+        Err(existing) => {
+            free_fn(key);
+            (existing != u32::MAX).then_some(existing)
+        }
+    }
+}
+
 #[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(miri)))]
 #[inline(always)]
 pub(super) fn get_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
@@ -39,13 +56,9 @@ fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
             if key == u32::MAX {
                 return None;
             }
-            match atomic_key.compare_exchange(u32::MAX, key, Ordering::Relaxed, Ordering::Relaxed) {
-                Ok(_) => Some(key),
-                Err(existing) => {
-                    TlsFree(key);
-                    (existing != u32::MAX).then_some(existing)
-                }
-            }
+            cas_tls_key(atomic_key, key, |k| {
+                TlsFree(k);
+            })
         }
         #[cfg(not(windows))]
         {
@@ -61,13 +74,9 @@ fn init_os_tls_key(atomic_key: &core::sync::atomic::AtomicU32) -> Option<u32> {
             if res != 0 {
                 return None;
             }
-            match atomic_key.compare_exchange(u32::MAX, key, Ordering::Relaxed, Ordering::Relaxed) {
-                Ok(_) => Some(key),
-                Err(existing) => {
-                    pthread_key_delete(key);
-                    (existing != u32::MAX).then_some(existing)
-                }
-            }
+            cas_tls_key(atomic_key, key, |k| {
+                pthread_key_delete(k);
+            })
         }
     }
 }
@@ -162,6 +171,23 @@ unsafe fn read_teb_self() -> *mut u8 {
     teb
 }
 
+/// SSOT for reading `TEB + 0x1780` (`TlsExpansionSlots`) on Windows x86-64.
+///
+/// # Safety
+/// Only valid on Windows x86-64 outside Miri.
+#[cfg(all(
+    not(nightly_tls_active),
+    not(feature = "std_tls"),
+    all(windows, target_arch = "x86_64"),
+    not(miri)
+))]
+#[inline(always)]
+unsafe fn teb_expansion_slots() -> *mut *mut core::ffi::c_void {
+    // SAFETY: `read_teb_self` yields the current thread's TEB; `0x1780` is the
+    // fixed x86-64 offset of the `TlsExpansionSlots` pointer in that layout.
+    unsafe { *(read_teb_self().add(0x1780) as *mut *mut *mut core::ffi::c_void) }
+}
+
 #[cfg(all(
     not(nightly_tls_active),
     not(feature = "std_tls"),
@@ -194,12 +220,8 @@ pub(super) unsafe fn get_teb_tls_slot(index: u32) -> *mut core::ffi::c_void {
         }
         val
     } else {
-        // SAFETY: reads the TEB self-pointer via the read_teb_self SSOT.
-        let teb = unsafe { read_teb_self() };
-        // SAFETY: `TEB + 0x1780` is the `TlsExpansionSlots` pointer field (fixed
-        // x64 offset); reading it yields the (possibly null) base of the
-        // expansion-slot array for indices >= 64.
-        let expansion_slots = unsafe { *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void) };
+        // SAFETY: reads `TEB + 0x1780` via the dedicated SSOT helper.
+        let expansion_slots = unsafe { teb_expansion_slots() };
         if expansion_slots.is_null() {
             core::ptr::null_mut()
         } else {
@@ -238,11 +260,8 @@ pub(super) unsafe fn set_teb_tls_slot(index: u32, value: *mut core::ffi::c_void)
             );
         }
     } else {
-        // SAFETY: reads the TEB self-pointer via the read_teb_self SSOT.
-        let teb = unsafe { read_teb_self() };
-        // SAFETY: `TEB + 0x1780` is the `TlsExpansionSlots` pointer field; read
-        // the (possibly null) expansion-array base.
-        let expansion_slots = unsafe { *(teb.add(0x1780) as *mut *mut *mut core::ffi::c_void) };
+        // SAFETY: reads `TEB + 0x1780` via the dedicated SSOT helper.
+        let expansion_slots = unsafe { teb_expansion_slots() };
         if !expansion_slots.is_null() {
             // SAFETY: the array is non-null (just checked) and covers every
             // allocated index >= 64, so `index - 64` is an in-bounds slot.
