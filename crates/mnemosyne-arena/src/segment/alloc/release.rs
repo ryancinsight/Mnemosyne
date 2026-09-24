@@ -11,6 +11,25 @@ use super::{SEGMENT_MAPPING_SIZE, try_return_to_pool};
 use mnemosyne_core::constants::{PAGE_SIZE, SEGMENT_SIZE};
 use mnemosyne_core::types::Segment;
 
+/// Reads the `next_free_segment` link of `segment` with Relaxed ordering.
+///
+/// SSOT for the 5-line `(*s).next_free_segment.load(Relaxed)` advancement
+/// step that appears 3× across the purge and reset sweep loops.
+///
+/// # Safety
+///
+/// `segment` must be a valid, exclusively-owned `Segment` whose
+/// `next_free_segment` field has been initialized.
+#[inline(always)]
+unsafe fn load_next_segment(segment: *mut Segment) -> *mut Segment {
+    // SAFETY: caller guarantees a live, exclusively-owned segment.
+    unsafe {
+        (*segment)
+            .next_free_segment
+            .load(core::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// Returns a segment to the global pool.
 ///
 /// # Monomorphization and ZST Static Routing
@@ -159,12 +178,8 @@ pub unsafe fn purge_segment_pool_with_warm<B: HasSegmentPool>(warm_threshold: us
         let (mut head, _count) = node.take_all();
         while !head.is_null() {
             let segment = head;
-            // SAFETY: `segment` is exclusively owned by this purge sweep.
-            head = unsafe {
-                (*segment)
-                    .next_free_segment
-                    .load(core::sync::atomic::Ordering::Relaxed)
-            };
+            // SAFETY: segment is exclusively owned by this sweep.
+            head = unsafe { load_next_segment(segment) };
             if kept < warm_threshold {
                 // SAFETY: segment is exclusively owned; returning to the node
                 // pool transfers ownership.
@@ -181,13 +196,8 @@ pub unsafe fn purge_segment_pool_with_warm<B: HasSegmentPool>(warm_threshold: us
                     unsafe { node.push_unbounded(segment) };
                     while !head.is_null() {
                         let s = head;
-                        // SAFETY: `s` is the next node in the chain that was
-                        // atomically detached by `take_all`; loading its
-                        // `next_free_segment` link before re-caching it is sound.
-                        head = unsafe {
-                            (*s).next_free_segment
-                                .load(core::sync::atomic::Ordering::Relaxed)
-                        };
+                        // SAFETY: `s` is the next node in the detached chain.
+                        head = unsafe { load_next_segment(s) };
                         // SAFETY: `s` is exclusively owned by this sweep pass.
                         unsafe { node.push_unbounded(s) };
                     }
@@ -244,11 +254,8 @@ pub unsafe fn reset_segment_pool<B: HasSegmentPool>() {
             // `[segment + PAGE_SIZE, segment + SEGMENT_SIZE)` — its user pages,
             // never the page-0 header — discards no live data, and pushing it
             // back keeps it cached for reuse.
-            head = unsafe {
-                (*segment)
-                    .next_free_segment
-                    .load(core::sync::atomic::Ordering::Relaxed)
-            };
+            // SAFETY: segment is exclusively owned by this sweep.
+            head = unsafe { load_next_segment(segment) };
             unsafe {
                 (*segment)
                     .next_free_segment
