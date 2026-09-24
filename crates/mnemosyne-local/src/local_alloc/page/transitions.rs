@@ -5,21 +5,24 @@ use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::types::Page;
 
 use super::lists::{
-    PageListToken, move_page_between_lists_branded, push_page_front, unlink_page_from_list,
-    with_page_list_token,
+    move_page_between_lists_branded, push_page_front, unlink_page_from_list,
+    unlink_page_from_list_raw, with_page_list_token,
 };
 
+/// Unlinks `target` from `head_slot` if its `list_state` is 3 (empty page).
+///
+/// Non-generic SSOT for the "unlink empty page if state matches" pattern.
+/// Replaces `unlink_empty_page_with_token<B>`, which carried `B` only in the
+/// phantom `PageListToken<B>` — zero runtime effect.
 #[inline(always)]
-unsafe fn unlink_empty_page_with_token<'id, B: HasSegmentPool>(
-    token: &mut PageListToken<'id, B>,
+unsafe fn unlink_empty_page_if_present(
     head_slot: &mut Option<NonNull<Page>>,
     target: NonNull<Page>,
 ) -> bool {
     // SAFETY: the caller guarantees `target` is a valid page owned by this
     // allocator; reading `list_state` is a plain field load.
     if unsafe { target.as_ref() }.list_state == 3 {
-        let page = unsafe { token.page(target) };
-        unsafe { unlink_page_from_list(token, head_slot, page) };
+        unsafe { unlink_page_from_list_raw(target, head_slot) };
         true
     } else {
         false
@@ -177,8 +180,8 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // SAFETY: `target` is non-null (checked above) and the caller
         // guarantees it points to a valid page owned by this allocator.
         if unsafe { target.as_ref() }.list_state == 3 {
-            with_page_list_token::<B, _>(|mut token| {
-                unsafe { unlink_empty_page_with_token(&mut token, &mut self.empty_pages, target) };
+            with_page_list_token::<B, _>(|_token| {
+                unsafe { unlink_empty_page_if_present(&mut self.empty_pages, target) };
             });
             true
         } else {
@@ -197,7 +200,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             self.recycle_sweeps += 1;
         }
 
-        with_page_list_token::<B, _>(|mut token| {
+        with_page_list_token::<B, _>(|_token| {
             let mut curr = self.empty_pages;
             let mut checked = 0;
             while let Some(page_ptr) = curr {
@@ -215,7 +218,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 if has_other_allocations {
                     // Found an empty page in a dirty segment! Unlink and return it.
                     unsafe {
-                        unlink_empty_page_with_token(&mut token, &mut self.empty_pages, page_ptr);
+                        unlink_empty_page_if_present(&mut self.empty_pages, page_ptr);
                     }
                     return Some(page_ptr);
                 }
@@ -226,7 +229,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             // Fall back to LIFO (the head of the empty_pages list)
             if let Some(page_ptr) = self.empty_pages {
                 unsafe {
-                    unlink_empty_page_with_token(&mut token, &mut self.empty_pages, page_ptr);
+                    unlink_empty_page_if_present(&mut self.empty_pages, page_ptr);
                 }
                 Some(page_ptr)
             } else {

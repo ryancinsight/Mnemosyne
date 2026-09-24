@@ -184,7 +184,7 @@ unsafe fn push_page_front_raw(
 /// `raw_page` must be exclusively owned and currently linked in the list
 /// rooted at `head_slot`.
 #[inline(always)]
-unsafe fn unlink_page_from_list_raw(
+pub(crate) unsafe fn unlink_page_from_list_raw(
     raw_page: NonNull<Page>,
     head_slot: &mut Option<NonNull<Page>>,
 ) {
