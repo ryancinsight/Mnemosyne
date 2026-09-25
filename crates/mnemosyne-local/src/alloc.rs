@@ -177,15 +177,7 @@ unsafe fn thread_alloc_checked<
         None => {
             // SAFETY: `adjusted_size` is non-zero and `align` is a power of two
             // — validated by `is_valid_alloc_request` upstream.
-            return unsafe {
-                allocate_large_or_huge_initialized::<B>(
-                    adjusted_size,
-                    align,
-                    P::ENABLE_POISONING,
-                    P::ZERO_INITIALIZE,
-                    P::POISON_ALLOC_BYTE,
-                )
-            };
+            return unsafe { fallback_large_or_huge::<P, B>(adjusted_size, align) };
         }
     };
 
@@ -214,12 +206,10 @@ unsafe fn thread_alloc_checked<
                 if let Some(block) =
                     unsafe { crate::local_alloc::page::try_allocate_page_local::<P>(page) }
                 {
-                    let ptr = block.as_ptr() as *mut u8;
-                    // SAFETY: `ptr` is a freshly carved block of at least
-                    // `adjusted_size` bytes; initialization writes only within it.
-                    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-                    crate::bin_stats::record_alloc_with_size(class, adjusted_size);
-                    return ptr;
+                    // SAFETY: `block` is a freshly carved block owned by caller.
+                    return unsafe {
+                        finalize_small_alloc::<P>(block.as_ptr() as *mut u8, class, adjusted_size)
+                    };
                 }
                 // SAFETY: same valid `page`; reclaim path adopts cross-thread
                 // frees back into this page's local free list before allocating.
@@ -229,12 +219,10 @@ unsafe fn thread_alloc_checked<
                         &mut alloc.cross_thread_reclaimed,
                     )
                 } {
-                    let ptr = block.as_ptr() as *mut u8;
-                    // SAFETY: as above, `ptr` is a fresh block of at least
-                    // `adjusted_size` bytes owned by the caller.
-                    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-                    crate::bin_stats::record_alloc_with_size(class, adjusted_size);
-                    return ptr;
+                    // SAFETY: reclaimed block is now owned by this allocation path.
+                    return unsafe {
+                        finalize_small_alloc::<P>(block.as_ptr() as *mut u8, class, adjusted_size)
+                    };
                 }
             }
         }
@@ -287,30 +275,14 @@ unsafe fn thread_alloc_cold<
     };
     if slot_ptr.is_null() {
         // SAFETY: `adjusted_size != 0` and `align` is a power of two.
-        return unsafe {
-            allocate_large_or_huge_initialized::<B>(
-                adjusted_size,
-                align,
-                P::ENABLE_POISONING,
-                P::ZERO_INITIALIZE,
-                P::POISON_ALLOC_BYTE,
-            )
-        };
+        return unsafe { fallback_large_or_huge::<P, B>(adjusted_size, align) };
     }
     // SAFETY: this thread's live TLS slot address (== the allocator address).
 
     // Gate before borrowing.
     if unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::is_allocating(slot_ptr) } {
         // SAFETY: `adjusted_size != 0` and `align` is a power of two.
-        return unsafe {
-            allocate_large_or_huge_initialized::<B>(
-                adjusted_size,
-                align,
-                P::ENABLE_POISONING,
-                P::ZERO_INITIALIZE,
-                P::POISON_ALLOC_BYTE,
-            )
-        };
+        return unsafe { fallback_large_or_huge::<P, B>(adjusted_size, align) };
     }
 
     unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(slot_ptr, true) };
@@ -322,21 +294,43 @@ unsafe fn thread_alloc_cold<
 
     if ptr.is_null() {
         // SAFETY: `adjusted_size != 0` and `align` is a power of two.
-        return unsafe {
-            allocate_large_or_huge_initialized::<B>(
-                adjusted_size,
-                align,
-                P::ENABLE_POISONING,
-                P::ZERO_INITIALIZE,
-                P::POISON_ALLOC_BYTE,
-            )
-        };
+        return unsafe { fallback_large_or_huge::<P, B>(adjusted_size, align) };
     }
     // SAFETY: `ptr` is a freshly allocated block for `class`; initialization
     // writes stay within the allocation.
     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
     crate::bin_stats::record_alloc_with_size(class, adjusted_size);
     ptr
+}
+
+#[inline(always)]
+unsafe fn finalize_small_alloc<P: AllocPolicy>(
+    ptr: *mut u8,
+    class: usize,
+    adjusted_size: usize,
+) -> *mut u8 {
+    // SAFETY: `ptr` is a freshly allocated block owned by the caller.
+    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
+    crate::bin_stats::record_alloc_with_size(class, adjusted_size);
+    ptr
+}
+
+#[inline(always)]
+unsafe fn fallback_large_or_huge<P: AllocPolicy, B: HasSegmentPool>(
+    adjusted_size: usize,
+    align: usize,
+) -> *mut u8 {
+    // SAFETY: caller guarantees `adjusted_size != 0` and valid power-of-two
+    // alignment.
+    unsafe {
+        allocate_large_or_huge_initialized::<B>(
+            adjusted_size,
+            align,
+            P::ENABLE_POISONING,
+            P::ZERO_INITIALIZE,
+            P::POISON_ALLOC_BYTE,
+        )
+    }
 }
 
 /// Allocates a large/huge block and initializes it per policy. Extracted so
