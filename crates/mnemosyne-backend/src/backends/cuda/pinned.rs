@@ -1,10 +1,8 @@
 use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 
-use mnemosyne_core::MemoryBackend;
-
 use super::registry::CUDA_HOST_PINNED_ALLOCATIONS;
-use super::{CudaAllocOps, CudaAllocationRegistry, cuda_allocate, cuda_deallocate, loader};
+use super::{CudaAllocOps, CudaAllocationRegistry, loader};
 
 /// A memory backend allocating CUDA page-locked (pinned) host memory.
 ///
@@ -60,27 +58,4 @@ impl CudaAllocOps for CudaHostPinnedBackend {
     }
 }
 
-impl MemoryBackend for CudaHostPinnedBackend {
-    /// Allocates CUDA page-locked host memory. Returns null on failure
-    /// (driver unavailable, driver allocation failure, or registry full).
-    ///
-    /// # Safety
-    ///
-    /// The size must be greater than zero and page-aligned.
-    #[inline]
-    unsafe fn allocate(size: usize) -> *mut u8 {
-        // SAFETY: forwarded caller contract.
-        unsafe { cuda_allocate::<Self>(size) }
-    }
-
-    /// Deallocates memory allocated by this backend.
-    ///
-    /// # Safety
-    ///
-    /// The ptr must be valid and size must match the allocated size.
-    #[inline]
-    unsafe fn deallocate(ptr: *mut u8, _size: usize) -> bool {
-        // SAFETY: forwarded caller contract.
-        unsafe { cuda_deallocate::<Self>(ptr) }
-    }
-}
+impl_cuda_memory_backend!(CudaHostPinnedBackend);

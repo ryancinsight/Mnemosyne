@@ -5,8 +5,7 @@ use mnemosyne_core::MemoryBackend;
 
 use super::registry::CUDA_DEVICE_ALLOCATIONS;
 use super::{
-    CudaAllocOps, CudaAllocationRegistry, cuda_allocate, cuda_deallocate, loader,
-    managed_raw_alloc, managed_raw_free,
+    CudaAllocOps, CudaAllocationRegistry, loader, managed_raw_alloc, managed_raw_free,
 };
 
 /// A memory backend allocating CUDA device memory.
@@ -69,31 +68,7 @@ impl CudaAllocOps for CudaDeviceBackend {
     }
 }
 
-impl MemoryBackend for CudaDeviceBackend {
-    /// Allocates device-preferred CUDA managed memory. Returns null on
-    /// failure (driver unavailable, driver allocation failure, or registry
-    /// full).
-    ///
-    /// # Safety
-    ///
-    /// The size must be greater than zero and page-aligned.
-    #[inline]
-    unsafe fn allocate(size: usize) -> *mut u8 {
-        // SAFETY: forwarded caller contract.
-        unsafe { cuda_allocate::<Self>(size) }
-    }
-
-    /// Deallocates memory allocated by this backend.
-    ///
-    /// # Safety
-    ///
-    /// The ptr must be valid and size must match the allocated size.
-    #[inline]
-    unsafe fn deallocate(ptr: *mut u8, _size: usize) -> bool {
-        // SAFETY: forwarded caller contract.
-        unsafe { cuda_deallocate::<Self>(ptr) }
-    }
-}
+impl_cuda_memory_backend!(CudaDeviceBackend);
 
 /// Allocates through the shared device driver while allowing the arena to
 /// keep a distinct pool identity for a device memory tier.
