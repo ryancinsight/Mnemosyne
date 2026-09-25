@@ -262,10 +262,8 @@ unsafe fn thread_alloc_cold<
         let cpu_ptr = per_cpu::try_alloc_cpu::<P>(class);
         if !cpu_ptr.is_null() {
             // SAFETY: `cpu_ptr` is a freshly reserved block for `class`; the
-            // initialization writes stay within that allocation.
-            unsafe { initialize_allocated_bytes::<P>(cpu_ptr, adjusted_size) };
-            crate::bin_stats::record_alloc_with_size(class, adjusted_size);
-            return cpu_ptr;
+            // initialization and accounting happen exactly once here.
+            return unsafe { finalize_small_alloc::<P>(cpu_ptr, class, adjusted_size) };
         }
     }
 
@@ -292,15 +290,9 @@ unsafe fn thread_alloc_cold<
     let ptr = unsafe { alloc.alloc_cold::<P>(class) };
     unsafe { crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(slot_ptr, false) };
 
-    if ptr.is_null() {
-        // SAFETY: `adjusted_size != 0` and `align` is a power of two.
-        return unsafe { fallback_large_or_huge::<P, B>(adjusted_size, align) };
-    }
-    // SAFETY: `ptr` is a freshly allocated block for `class`; initialization
-    // writes stay within the allocation.
-    unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
-    crate::bin_stats::record_alloc_with_size(class, adjusted_size);
-    ptr
+    // SAFETY: either finalizes a freshly allocated `class` block or routes
+    // the validated request through the large/huge fallback.
+    unsafe { finalize_small_alloc_or_fallback::<P, B>(ptr, class, adjusted_size, align) }
 }
 
 #[inline(always)]
@@ -313,6 +305,23 @@ unsafe fn finalize_small_alloc<P: AllocPolicy>(
     unsafe { initialize_allocated_bytes::<P>(ptr, adjusted_size) };
     crate::bin_stats::record_alloc_with_size(class, adjusted_size);
     ptr
+}
+
+#[inline(always)]
+unsafe fn finalize_small_alloc_or_fallback<P: AllocPolicy, B: HasSegmentPool>(
+    ptr: *mut u8,
+    class: usize,
+    adjusted_size: usize,
+    align: usize,
+) -> *mut u8 {
+    if ptr.is_null() {
+        // SAFETY: caller guarantees `adjusted_size != 0` and a valid
+        // power-of-two alignment.
+        unsafe { fallback_large_or_huge::<P, B>(adjusted_size, align) }
+    } else {
+        // SAFETY: `ptr` is a freshly allocated small block for `class`.
+        unsafe { finalize_small_alloc::<P>(ptr, class, adjusted_size) }
+    }
 }
 
 #[inline(always)]
