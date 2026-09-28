@@ -137,9 +137,13 @@ unsafe fn hint_hugepage(ptr: *mut u8, length: usize) {
 }
 
 /// Unix virtual memory backend using `mmap`/`munmap`.
-pub struct UnixBackend;
+///
+/// Named for its role, not its OS: this module is compiled only under
+/// `target_family = "unix"`, so `DefaultBackend` is the Unix backend on this
+/// target and the `backends` module re-exports it without an alias.
+pub struct DefaultBackend;
 
-impl mnemosyne_core::MemoryBackend for UnixBackend {
+impl mnemosyne_core::MemoryBackend for DefaultBackend {
     const SUPPORTS_PAGE_RESET: bool = cfg!(any(
         target_os = "linux",
         target_os = "macos",

@@ -16,7 +16,11 @@ use mnemosyne_arena::HasSegmentPool;
 pub struct NativeOsTls<B, S>(core::marker::PhantomData<(B, S)>);
 
 #[inline(always)]
-fn init_slot_with_os_tls_key<const ARM_THREAD_EXIT: bool, B: HasSegmentPool, S: TlsSlotAccess<B>>(
+fn init_slot_with_os_tls_key<
+    const ARM_THREAD_EXIT: bool,
+    B: HasSegmentPool,
+    S: TlsSlotAccess<B>,
+>(
     key: u32,
 ) -> *mut core::ffi::c_void {
     S::get_slot_standard(|slot| {
@@ -117,7 +121,11 @@ pub struct AsmTls<B, S>(core::marker::PhantomData<(B, S)>);
 
 #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
 #[inline(always)]
-fn init_slot_with_teb_tls_key<const ARM_THREAD_EXIT: bool, B: HasSegmentPool, S: TlsSlotAccess<B>>(
+fn init_slot_with_teb_tls_key<
+    const ARM_THREAD_EXIT: bool,
+    B: HasSegmentPool,
+    S: TlsSlotAccess<B>,
+>(
     key: u32,
 ) -> *mut core::ffi::c_void {
     S::get_slot_standard(|slot| {

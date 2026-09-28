@@ -2,9 +2,7 @@ use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 
 use super::registry::CUDA_ALLOCATIONS;
-use super::{
-    CudaAllocOps, CudaAllocationRegistry, loader, managed_raw_alloc, managed_raw_free,
-};
+use super::{CudaAllocOps, CudaAllocationRegistry, loader, managed_raw_alloc, managed_raw_free};
 
 /// A zero-copy memory backend mapping memory blocks directly using CUDA
 /// managed memory.

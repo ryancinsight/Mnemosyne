@@ -279,8 +279,11 @@ impl Block {
     pub unsafe fn check_double_free(block: *const Block, page_cookie: usize) -> bool {
         Self::validate_canary_slot(block);
         // SAFETY: the canary slot is within the block by the caller's contract.
-        let observed =
-            unsafe { Self::canary_slot_ptr(block as *mut Block).cast::<usize>().read() };
+        let observed = unsafe {
+            Self::canary_slot_ptr(block as *mut Block)
+                .cast::<usize>()
+                .read()
+        };
         // `0` is the canonical cleared-slot sentinel.
         if observed == 0 {
             return false;

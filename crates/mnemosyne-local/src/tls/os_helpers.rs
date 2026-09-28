@@ -13,11 +13,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 /// only the destructor (`free_fn`) differs. Extracting here removes the
 /// duplication and makes the logic easy to verify once.
 #[inline(always)]
-fn cas_tls_key(
-    atomic_key: &AtomicU32,
-    key: u32,
-    free_fn: impl FnOnce(u32),
-) -> Option<u32> {
+fn cas_tls_key(atomic_key: &AtomicU32, key: u32, free_fn: impl FnOnce(u32)) -> Option<u32> {
     match atomic_key.compare_exchange(u32::MAX, key, Ordering::AcqRel, Ordering::Relaxed) {
         Ok(_) => Some(key),
         Err(existing) => {
@@ -60,7 +56,9 @@ fn init_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
             }
             // SAFETY: `key` is the just-allocated TLS slot; `TlsFree` on the
             // CAS-loser path frees it exactly once.
-            cas_tls_key(atomic_key, key, |k| { TlsFree(k); })
+            cas_tls_key(atomic_key, key, |k| {
+                TlsFree(k);
+            })
         }
         #[cfg(not(windows))]
         {
@@ -78,7 +76,9 @@ fn init_os_tls_key(atomic_key: &AtomicU32) -> Option<u32> {
             }
             // SAFETY: `key` is the just-created pthread key; `pthread_key_delete`
             // on the CAS-loser path deletes it exactly once.
-            cas_tls_key(atomic_key, key, |k| { pthread_key_delete(k); })
+            cas_tls_key(atomic_key, key, |k| {
+                pthread_key_delete(k);
+            })
         }
     }
 }

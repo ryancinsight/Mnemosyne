@@ -1,7 +1,7 @@
 //! Build script that decides whether a jemalloc comparator is available and,
 //! on Windows, links a system-installed `libjemalloc_s.a`. The
-//! `nightly_tls_active` cfg is emitted by the shared probe in
-//! `mnemosyne-build-util` (SSOT), not here.
+//! `nightly_tls_active` cfg is decided by the shared probe in
+//! `mnemosyne-build-util` (SSOT) and printed here.
 //!
 //! - Non-Windows targets get jemalloc through the `tikv-jemallocator`
 //!   dependency, so `jemalloc_available` is emitted unconditionally.
@@ -63,7 +63,9 @@ fn main() {
     println!("cargo::rerun-if-env-changed=MNEMOSYNE_JEMALLOC_LIB_DIR");
     println!("cargo::rerun-if-changed=build.rs");
 
-    mnemosyne_build_util::emit_nightly_tls_cfg();
+    for directive in mnemosyne_build_util::nightly_tls_directives() {
+        println!("cargo::{directive}");
+    }
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os != "windows" {

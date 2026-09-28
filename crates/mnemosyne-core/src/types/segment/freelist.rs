@@ -46,7 +46,10 @@ impl Segment {
         encrypted: bool,
         page_index: usize,
     ) -> usize {
-        assert_segment_ptr(segment, "free-list cookie: null or misaligned segment pointer");
+        assert_segment_ptr(
+            segment,
+            "free-list cookie: null or misaligned segment pointer",
+        );
         if page_index >= PAGES_PER_SEGMENT {
             abort_on_corruption("free-list cookie page index out of range");
         }
@@ -116,7 +119,10 @@ impl Segment {
     /// writes.
     #[inline(always)]
     pub unsafe fn free_list_mode_matches(segment: *const Segment, encrypted: bool) -> bool {
-        assert_segment_ptr(segment, "free-list mode check: null or misaligned segment pointer");
+        assert_segment_ptr(
+            segment,
+            "free-list mode check: null or misaligned segment pointer",
+        );
         // SAFETY: the guard above leaves a valid pointer.
         unsafe { Self::free_list_encrypted(segment) == encrypted }
     }

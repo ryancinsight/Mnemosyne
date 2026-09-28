@@ -19,7 +19,8 @@
 //!   [`BackendMemoryStats`] snapshot, and the per-concern unit tests
 //!   for the `record_*` family.
 //! - [`backends`] owns the per-OS / per-platform backend
-//!   implementations (`UnixBackend`, `WindowsBackend`, and the CUDA variants).
+//!   implementations (`DefaultBackend`, compiled from the `windows`, `unix`
+//!   or `wasm` leaf, and the CUDA variants).
 //!
 //! Public re-exports at the crate root keep the canonical
 //! `mnemosyne_backend::CudaUnifiedBackend`, `MemoryBackendWrapper`,

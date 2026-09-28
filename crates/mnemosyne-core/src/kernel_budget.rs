@@ -74,7 +74,11 @@ const fn div_capacity_or_max(capacity: u64, per_block: u64) -> u32 {
         return u32::MAX;
     }
     let blocks = capacity / per_block;
-    if blocks > u32::MAX as u64 { u32::MAX } else { blocks as u32 }
+    if blocks > u32::MAX as u64 {
+        u32::MAX
+    } else {
+        blocks as u32
+    }
 }
 
 impl KernelResourceBudget {
@@ -142,7 +146,10 @@ impl KernelResourceBudget {
     /// Same unconstrained semantics as the register limiter.
     #[must_use]
     pub const fn blocks_limited_by_shared_mem(self, unit_shared_mem_bytes: usize) -> u32 {
-        div_capacity_or_max(unit_shared_mem_bytes as u64, self.shared_mem_per_block_bytes as u64)
+        div_capacity_or_max(
+            unit_shared_mem_bytes as u64,
+            self.shared_mem_per_block_bytes as u64,
+        )
     }
 
     /// Blocks per unit limited by `max_threads_per_unit` resident threads.

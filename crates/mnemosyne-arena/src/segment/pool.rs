@@ -129,9 +129,15 @@ pub trait HasSegmentPool: mnemosyne_core::MemoryBackend + private::Sealed {
 }
 
 impl_has_segment_pool!(mnemosyne_backend::DefaultBackend, DEFAULT_BACKEND_POOLS);
-impl_has_segment_pool!(mnemosyne_backend::MemoryBackendWrapper, WRAPPER_BACKEND_POOLS);
+impl_has_segment_pool!(
+    mnemosyne_backend::MemoryBackendWrapper,
+    WRAPPER_BACKEND_POOLS
+);
 impl_has_segment_pool!(mnemosyne_backend::CudaUnifiedBackend, CUDA_BACKEND_POOLS);
 impl_has_segment_pool!(mnemosyne_backend::CudaDeviceBackend, CUDA_DEVICE_POOLS);
 impl_has_segment_pool!(mnemosyne_backend::CudaHbmBackend, CUDA_HBM_POOLS);
 impl_has_segment_pool!(mnemosyne_backend::CudaGddrBackend, CUDA_GDDR_POOLS);
-impl_has_segment_pool!(mnemosyne_backend::CudaHostPinnedBackend, CUDA_HOST_PINNED_POOLS);
+impl_has_segment_pool!(
+    mnemosyne_backend::CudaHostPinnedBackend,
+    CUDA_HOST_PINNED_POOLS
+);

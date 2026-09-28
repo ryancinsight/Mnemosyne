@@ -1,5 +1,7 @@
 //! Benchmarking crate for the Mnemosyne memory allocator.
 
+#![deny(missing_docs)]
+
 /// Whether the `snmalloc` comparator column is skipped for a given row.
 ///
 /// On Windows `x86_64`, `snmalloc`'s huge-allocation path is unreliable under

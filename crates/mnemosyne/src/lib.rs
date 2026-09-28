@@ -10,23 +10,21 @@ mod options;
 pub mod scratch;
 mod stats;
 
-pub use allocator::{Mnemosyne, MnemosyneAllocator};
+pub use allocator::{Mnemosyne, MnemosyneAllocator, warm_current_thread};
 pub use mnemosyne_arena::aligned_vec;
 pub use mnemosyne_backend::{
     CudaDeviceBackend, CudaGddrBackend, CudaHbmBackend, CudaHostPinnedBackend, CudaUnifiedBackend,
     MemoryBackendWrapper, is_cuda_available,
 };
-pub use mnemosyne_core::{
-    AllocPolicy, HardenedPolicy, PolicyMarker, SecurePolicy, StandardPolicy,
-    constants::NUM_SIZE_CLASSES,
-    mitigations,
-    options::MnemosyneOptions,
-    size_class::{
-        LEMIRE_DIV_SHIFT, SizeClassInfo, all_class_info, block_index_in_page, class_to_max_blocks,
-        class_to_size, round_up_size_saturating, size_class_fragmentation, size_to_class,
-        size_to_class_nonzero,
-    },
+pub use mnemosyne_core::constants::NUM_SIZE_CLASSES;
+pub use mnemosyne_core::mitigations;
+pub use mnemosyne_core::options::MnemosyneOptions;
+pub use mnemosyne_core::size_class::{
+    LEMIRE_DIV_SHIFT, SizeClassInfo, all_class_info, block_index_in_page, class_to_max_blocks,
+    class_to_size, round_up_size_saturating, size_class_fragmentation, size_to_class,
+    size_to_class_nonzero,
 };
+pub use mnemosyne_core::{AllocPolicy, HardenedPolicy, PolicyMarker, SecurePolicy, StandardPolicy};
 #[cfg(feature = "branded")]
 pub use mnemosyne_heap::{
     BrandedBlock, BrandedBox, BrandedCell, BrandedVec, Heap, InvariantLifetime, ReallocError,
@@ -54,32 +52,3 @@ pub use stats::{
     policy_summary, purge, purge_generic, purge_lazy, purge_standard, reset, reset_generic,
     top_n_classes,
 };
-
-/// Forces the Mnemosyne thread-local allocator to initialize for the current
-/// thread by performing a minimal allocation and deallocation through the
-/// `Mnemosyne` allocator.
-///
-/// Call this before starting any measurement window (e.g., a
-/// `stats_alloc::Region`) to flush thread-local-state initialization traffic
-/// — options parsing, arena segment acquisition, per-thread allocator setup —
-/// out of the window so that only the actual code under test is measured.
-///
-/// # Example
-///
-/// ```rust,no_run
-/// # use mnemosyne::warm_current_thread;
-/// warm_current_thread();
-/// // ... zero-allocation work; the warm call is outside the measure window
-/// ```
-pub fn warm_current_thread() {
-    use core::alloc::{GlobalAlloc, Layout};
-    let layout = Layout::new::<[u8; 8]>();
-    // SAFETY: `layout` is a valid non-zero `Layout` for eight bytes; the
-    // returned pointer is null-checked before deallocation.
-    let ptr = unsafe { Mnemosyne.alloc(layout) };
-    if !ptr.is_null() {
-        // SAFETY: `ptr` is a valid allocation from the `Mnemosyne` allocator
-        // with `layout`, and is freed exactly once immediately here.
-        unsafe { Mnemosyne.dealloc(ptr, layout) };
-    }
-}

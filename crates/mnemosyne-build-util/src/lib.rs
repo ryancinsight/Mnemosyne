@@ -3,9 +3,9 @@
 //!
 //! Several crates gate a nightly-only `#[thread_local]` fast path behind the
 //! `nightly_tls` cargo feature plus a build-time probe of the active `rustc`.
-//! The probe logic lives here once; consumer `build.rs` scripts are thin
-//! callers. This crate is consumed only through `[build-dependencies]` —
-//! never from library or binary code.
+//! The probe logic lives here once; consumer `build.rs` scripts print the
+//! directives this crate returns. This crate is consumed only through
+//! `[build-dependencies]` — never from library or binary code.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -13,32 +13,35 @@
 use std::env;
 use std::process::Command;
 
-/// Emits the `nightly_tls_active` cfg for the calling build script.
+/// Returns the `cargo::` directives the calling build script must print.
 ///
 /// Behavior (identical for every consumer):
-/// 1. Declares `cargo::rustc-check-cfg=cfg(nightly_tls_active)` so the cfg is
-///    always known to the lint machinery, active or not.
-/// 2. Declares `cargo::rerun-if-env-changed=RUSTC` so switching toolchains
-///    re-runs the probe.
+/// 1. `rustc-check-cfg=cfg(nightly_tls_active)` so the cfg is always known to
+///    the lint machinery, active or not.
+/// 2. `rerun-if-env-changed=RUSTC` so switching toolchains re-runs the probe.
 /// 3. When the consuming crate's `nightly_tls` cargo feature is enabled
 ///    (`CARGO_FEATURE_NIGHTLY_TLS` is set) and `$RUSTC -vV` reports a
-///    `release:` line containing `nightly`, emits
-///    `cargo::rustc-cfg=nightly_tls_active`.
+///    `release:` line containing `nightly`,
+///    `rustc-cfg=nightly_tls_active`.
+///
+/// The caller prints each entry as `println!("cargo::{directive}")`. Keeping
+/// the I/O in the build script keeps this crate a pure decision function and
+/// keeps the cargo protocol channel at the build-script boundary.
 ///
 /// A missing or failing `rustc` invocation leaves the cfg inactive: the
 /// consumer then compiles its stable (non-`#[thread_local]`) path, which is
 /// correct on every toolchain — this is capability detection, not an error
 /// fallback.
-pub fn emit_nightly_tls_cfg() {
-    println!("cargo::rustc-check-cfg=cfg(nightly_tls_active)");
-    println!("cargo::rerun-if-env-changed=RUSTC");
-
-    if env::var_os("CARGO_FEATURE_NIGHTLY_TLS").is_none() {
-        return;
+#[must_use]
+pub fn nightly_tls_directives() -> Vec<&'static str> {
+    let mut directives = vec![
+        "rustc-check-cfg=cfg(nightly_tls_active)",
+        "rerun-if-env-changed=RUSTC",
+    ];
+    if env::var_os("CARGO_FEATURE_NIGHTLY_TLS").is_some() && rustc_is_nightly() {
+        directives.push("rustc-cfg=nightly_tls_active");
     }
-    if rustc_is_nightly() {
-        println!("cargo::rustc-cfg=nightly_tls_active");
-    }
+    directives
 }
 
 /// Runs `$RUSTC -vV` (falling back to `rustc` when the env var is unset, as
@@ -65,42 +68,4 @@ fn release_is_nightly(version_output: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::release_is_nightly;
-
-    #[test]
-    fn nightly_release_line_is_detected() {
-        let out = "rustc 1.90.0-nightly (abcdef123 2026-06-30)\n\
-                   binary: rustc\n\
-                   commit-hash: abcdef123\n\
-                   release: 1.90.0-nightly\n\
-                   host: x86_64-pc-windows-gnu\n";
-        assert!(release_is_nightly(out));
-    }
-
-    #[test]
-    fn stable_release_line_is_not_nightly() {
-        let out = "rustc 1.88.0 (deadbeef 2026-05-01)\nrelease: 1.88.0\n";
-        assert!(!release_is_nightly(out));
-    }
-
-    #[test]
-    fn beta_release_line_is_not_nightly() {
-        let out = "release: 1.89.0-beta.3\n";
-        assert!(!release_is_nightly(out));
-    }
-
-    #[test]
-    fn nightly_outside_release_line_is_ignored() {
-        // `nightly` appearing in another line (e.g. commit description) must
-        // not trigger detection; only the `release:` channel counts.
-        let out = "rustc 1.88.0 (nightly-fix backport)\nrelease: 1.88.0\n";
-        assert!(!release_is_nightly(out));
-    }
-
-    #[test]
-    fn missing_release_line_is_not_nightly() {
-        assert!(!release_is_nightly("binary: rustc\n"));
-        assert!(!release_is_nightly(""));
-    }
-}
+mod tests;
