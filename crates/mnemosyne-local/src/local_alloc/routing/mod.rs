@@ -5,6 +5,7 @@
 //! outlined cold path in [`cold`] only when all active pages are exhausted.
 
 mod cold;
+mod segment_acquisition;
 
 use super::page::{try_allocate_page_local, try_reclaim_and_allocate};
 use crate::local_alloc::ThreadAllocator;

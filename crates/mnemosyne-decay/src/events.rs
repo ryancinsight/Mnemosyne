@@ -12,7 +12,9 @@ use core::sync::atomic::Ordering;
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
-use super::{DECAY_EVENT, DECAY_FINAL_EXIT_GENERATION, DECAY_STEP_GENERATION, DECAY_WAKE_EVENT};
+use crate::state::{
+    DECAY_EVENT, DECAY_FINAL_EXIT_GENERATION, DECAY_STEP_GENERATION, DECAY_WAKE_EVENT,
+};
 
 /// Returns the shared (Mutex, Condvar) used for step and shutdown signals.
 pub(super) fn decay_step_event() -> &'static (Mutex<()>, Condvar) {

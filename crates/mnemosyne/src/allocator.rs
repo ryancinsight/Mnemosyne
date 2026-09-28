@@ -156,3 +156,31 @@ unsafe impl<
         unsafe { thread_realloc::<P, B>(ptr, layout, new_size) }
     }
 }
+
+/// Forces the Mnemosyne thread-local allocator to initialize for the current
+/// thread by performing a minimal allocation and deallocation through the
+/// `Mnemosyne` allocator.
+///
+/// Call this before starting any measurement window (e.g., a
+/// `stats_alloc::Region`) to flush thread-local-state initialization traffic
+/// — options parsing, arena segment acquisition, per-thread allocator setup —
+/// out of the window so that only the actual code under test is measured.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # use mnemosyne::warm_current_thread;
+/// warm_current_thread();
+/// // ... zero-allocation work; the warm call is outside the measure window
+/// ```
+pub fn warm_current_thread() {
+    let layout = Layout::new::<[u8; 8]>();
+    // SAFETY: `layout` is a valid non-zero `Layout` for eight bytes; the
+    // returned pointer is null-checked before deallocation.
+    let ptr = unsafe { Mnemosyne.alloc(layout) };
+    if !ptr.is_null() {
+        // SAFETY: `ptr` is a valid allocation from the `Mnemosyne` allocator
+        // with `layout`, and is freed exactly once immediately here.
+        unsafe { Mnemosyne.dealloc(ptr, layout) };
+    }
+}

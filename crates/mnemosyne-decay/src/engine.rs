@@ -12,8 +12,9 @@
 use core::sync::atomic::Ordering;
 use mnemosyne_core::options::PURGE_CADENCE_MS;
 
-use super::events::{publish_decay_worker_exit, wait_for_decay_interval};
-use super::{SPAWNED, decay_step};
+use crate::control::decay_step;
+use crate::events::{publish_decay_worker_exit, wait_for_decay_interval};
+use crate::state::SPAWNED;
 
 /// Upper bound on the adaptive sleep interval.
 const ADAPTIVE_MAX_MS: u64 = 5_000;

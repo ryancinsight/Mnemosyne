@@ -1,52 +1,5 @@
 # Backlog
 
-<a id="mn-stale-branch-inventory-2026-09-09"></a>
-
-## MN-STALE-BRANCH-INVENTORY-2026-09-09 — Two pushed branches hold unfiled work [patch] — done
-
-- **Swept 2026-09-09.** Nine local branches disposed; two preserved on origin.
-- **Closed 2026-09-22** (commit `9d520f0`). The one unique item from
-  `origin/refactor/mnemosyne-free-helpers-split` — **purge-and-retry on
-  the first OS allocation failure** — has been re-derived against main in
-  `crates/mnemosyne-arena/src/segment/alloc/allocate.rs`: when
-  `B::allocate(SEGMENT_MAPPING_SIZE)` returns null, `purge_segment_pool::<B>()`
-  releases all retained free segments back to the OS and the allocation is
-  retried once. `origin/feat/phase10-improvements` was assessed as fully
-  superseded by main (all its unique commits either landed via other PRs or were
-  dropped with the generation-counter and AlignedVec API work).
-
-<a id="mn-test-lock-poisoning-hides-results"></a>
-
-## MN-TEST-LOCK-POISONING-HIDES-RESULTS — One failing test blanks the rest of the run [patch] — done
-
-- **Observed 2026-09-09** on PR #137's ThreadSanitizer job.
-- **Fixed 2026-09-22** (commit `9d520f0`). Added `lock_test()` helper that
-  calls `.unwrap_or_else(|e| e.into_inner())` in both `global_alloc_tests.rs`
-  (28 sites) and `mnemosyne-backend/src/recorders.rs` (5 sites). A poisoned
-  lock means an earlier test panicked, not that this test's fixture is unusable.
-
-## MN-BIN-STATS-RESET-BOUNDARY-2026-09-04 — `reset_bin_stats` is not a synchronized profiling boundary [minor] [perf] — done <a id="mn-bin-stats-reset-boundary-2026-09-04"></a>
-
-- **Integrator:** unclaimed; **branch:** none; **lease:** none.
-- **Last-update:** 2026-09-04.
-- **Finding (review of #128, verified against the code).** `reset_bin_stats()`
-  calls `flush_current_thread()` and then zeroes `ALLOC_COUNT`/`DEALLOC_COUNT`.
-  That flushes the *calling* thread's TLS batch only, so any other worker
-  holding a batch accumulated before the reset flushes it afterward and
-  reintroduces pre-reset activity into the fresh counters. Symmetrically, a
-  `fetch_add` already in flight on another thread can be lost when the reset's
-  `store(0, Relaxed)` lands after it.
-- **Outcome:** a reset that is a real boundary — every worker's batch
-  coordinated, or each batch tagged with a reset generation so a stale batch is
-  discarded rather than added.
-- **Scope note.** Telemetry accuracy, not memory safety.
-- **Fixed 2026-09-22** (commit `9d520f0`). The generation-counter approach
-  introduced in `bin_stats.rs` (`RESET_GENERATION`, stamped in each TLS batch)
-  makes `reset_bin_stats()` a true profiling boundary: any worker still holding
-  a pre-reset batch discards it on flush rather than adding stale counts to the
-  fresh counters. The module doc records the protocol and the acceptance oracle
-  (generation monotonicity) is covered by `reset_generation_count()` + existing tests.
-
 ## Ready
 
 <a id="MN-WASM-ENV-2026-09-11"></a>
@@ -89,23 +42,6 @@
 - [x] **MNEM-BOOK-DEPTH-1** [docs][minor] status=done owner=codex
   branch=`perf/mnemosyne-scratch-release`; latest=`af7a23a`.
   Outcome: corrected the full book's implementation contracts, examples, and stack ownership; `mdbook test` and `mdbook build` pass.
-
-### MN-SCRATCH-RELEASE-2026-09-04 — Pooled scratch had no reclamation path [minor] [perf] — done <a id="mn-scratch-release-2026-09-04"></a>
-
-- **Closed 2026-09-22.** `ScratchPool::release`, `ScratchPool::reset`, and the
-  `ScratchBank` pass-throughs are all shipped to main and documented in the
-  CHANGELOG. Provisions are recorded by `with_scratch_bounded`
-  (`borrow_slot<PROVISION=true>`) and honoured by `release`. Zero-allocation
-  warm pass confirmed in the CHANGELOG acceptance note.
-
-### MN-SCRATCH-GROWTH-COST-2026-09-04 [patch] [perf] — done <a id="mn-scratch-growth-cost-2026-09-04"></a>
-
-- **Closed 2026-09-22** (this session). `AlignedVec::ensure_len_exact` added in
-  `aligned_vec/length.rs` uses `grow_to` (exact) rather than `grow_geometric`
-  (doubling). `borrow_slot::<PROVISION=true>` calls it so the slot capacity
-  lands at exactly `n`, not at `max(n, old_capacity * 2)`. Two regression tests
-  pin the contract: `scratch_pool_bounded_path_does_not_overshoot_provision` and
-  `scratch_pool_unbounded_path_allows_geometric_overshoot`.
 
 <a id="mn-459"></a>
 - [x] [patch] **MN-459 — bring `mnemosyne-heap` under the Miri gate.**

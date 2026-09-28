@@ -41,7 +41,7 @@ fn segment_sized_allocation_survives_hugepage_hint() {
     let before = hugepage_hints();
     // SAFETY: SEGMENT_SIZE is a non-zero power-of-two multiple of the
     // system page size, satisfying the allocate contract.
-    let ptr = unsafe { UnixBackend::allocate(size) };
+    let ptr = unsafe { DefaultBackend::allocate(size) };
     assert!(!ptr.is_null(), "segment-sized mapping must succeed");
     assert_eq!(
         hugepage_hints(),
@@ -59,7 +59,7 @@ fn segment_sized_allocation_survives_hugepage_hint() {
     }
 
     // SAFETY: ptr is the exact base of the size-byte mapping.
-    let released = unsafe { UnixBackend::deallocate(ptr, size) };
+    let released = unsafe { DefaultBackend::deallocate(ptr, size) };
     assert!(
         released,
         "munmap reported failure for segment-sized mapping"
@@ -82,7 +82,7 @@ fn sub_segment_allocation_skips_hugepage_hint() {
     let size = PAGE_SIZE_FALLBACK;
     let before = hugepage_hints();
     // SAFETY: size is a non-zero multiple of the system page size.
-    let ptr = unsafe { UnixBackend::allocate(size) };
+    let ptr = unsafe { DefaultBackend::allocate(size) };
     assert!(!ptr.is_null());
     assert_eq!(
         hugepage_hints(),
@@ -95,7 +95,7 @@ fn sub_segment_allocation_skips_hugepage_hint() {
         ptr.add(size - 1).write_volatile(0x55);
     }
 
-    let released = unsafe { UnixBackend::deallocate(ptr, size) };
+    let released = unsafe { DefaultBackend::deallocate(ptr, size) };
     assert!(released);
 }
 
@@ -113,7 +113,7 @@ fn large_non_multiple_allocation_receives_hugepage_hint() {
     let size = 3 * 1024 * 1024;
     let before = hugepage_hints();
     // SAFETY: size is a non-zero multiple of the system page size.
-    let ptr = unsafe { UnixBackend::allocate(size) };
+    let ptr = unsafe { DefaultBackend::allocate(size) };
     assert!(!ptr.is_null(), "large mapping must succeed");
     assert_eq!(
         hugepage_hints(),
@@ -131,7 +131,7 @@ fn large_non_multiple_allocation_receives_hugepage_hint() {
 
     // SAFETY: `ptr`/`size` are exactly what the matching `allocate`
     // returned above, and the mapping has not been released yet.
-    let released = unsafe { UnixBackend::deallocate(ptr, size) };
+    let released = unsafe { DefaultBackend::deallocate(ptr, size) };
     assert!(
         released,
         "munmap reported failure for large non-multiple mapping"

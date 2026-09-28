@@ -6,6 +6,10 @@ pub mod pool;
 pub mod stats;
 #[cfg(test)]
 pub mod tests;
+#[cfg(test)]
+pub mod tests_huge_pool;
+#[cfg(test)]
+pub mod tests_telemetry;
 
 pub use alignment::checked_align_up;
 pub use alloc::{

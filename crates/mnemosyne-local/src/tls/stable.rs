@@ -5,8 +5,8 @@
 //! bypass lazy-initialization overhead on hot paths.
 
 use super::traits::{TlsProvider, TlsSlotAccess};
-use crate::tls_slot::LocalAllocatorSlot;
 use crate::ThreadAllocator;
+use crate::tls_slot::LocalAllocatorSlot;
 use mnemosyne_arena::HasSegmentPool;
 
 /// Portable TLS provider using direct standard `std::thread_local!` lookups.

@@ -10,9 +10,9 @@ use mnemosyne_core::MemoryBackend;
 /// primitives through the portable target ABI. Allocations therefore use the
 /// process global allocator with the allocator's page alignment contract, and
 /// unsupported page operations report `false` through the trait defaults.
-pub struct WasmBackend;
+pub struct DefaultBackend;
 
-impl MemoryBackend for WasmBackend {
+impl MemoryBackend for DefaultBackend {
     /// WebAssembly has no portable page-reset primitive.
     const SUPPORTS_PAGE_RESET: bool = false;
     /// WebAssembly has no portable memory-protection primitive.

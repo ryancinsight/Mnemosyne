@@ -23,10 +23,11 @@ mnemosyne-backend = "0.5"
   backing while keeping the virtual mapping committed.
 - `recorders` — telemetry counter statics and the `BackendMemoryStats` snapshot,
   reachable publicly through `backend_memory_stats()`.
-- `backends` — `UnixBackend`, `WindowsBackend`, the CUDA backends
+- `backends` — the platform `DefaultBackend` (each leaf names its backend
+  `DefaultBackend`; exactly one of the Windows, Unix, or wasm leaves compiles
+  per target) and the CUDA backends
   (`CudaUnifiedBackend`, `CudaDeviceBackend`, tier-keyed `CudaHbmBackend` and
-  `CudaGddrBackend`, `CudaHostPinnedBackend`), and `DefaultBackend`, which
-  selects the OS-conditional backing at compile time.
+  `CudaGddrBackend`, `CudaHostPinnedBackend`).
 
 ## Release accounting
 
