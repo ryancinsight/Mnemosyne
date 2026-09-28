@@ -35,7 +35,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
 }
 
 /// Releases a block previously returned by [`malloc`], [`calloc`],
-/// [`realloc`], [`aligned_alloc`], or [`posix_memalign`].
+/// [`realloc`], [`crate::aligned_alloc`], or [`crate::posix_memalign`].
 ///
 /// A null pointer is ignored, matching `free(NULL)` semantics.
 ///

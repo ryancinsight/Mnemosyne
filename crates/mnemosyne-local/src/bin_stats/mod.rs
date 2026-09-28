@@ -26,8 +26,8 @@
 //! alloc_bytes`. Internal fragmentation per class: `(alloc_bytes -
 //! requested_bytes) / alloc_bytes`.
 //!
-//! The public reading API and its tests live in [`api`]; this file stays a
-//! manifest of the module tree and its curated re-exports.
+//! The public reading API and its tests live in the private `api` module;
+//! this file stays a manifest of the module tree and its curated re-exports.
 
 mod api;
 mod batch;

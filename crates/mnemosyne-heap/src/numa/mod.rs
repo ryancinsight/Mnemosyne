@@ -9,14 +9,15 @@
 //! `PlacementHint::Numa(node)` through [`bind_to_node`] internally.
 //!
 //! The primitives are split by platform so each leaf owns one target's
-//! execution path:
-//! - [`linux`] — full support: `bind_to_node` issues `mbind(MPOL_BIND)` and
+//! execution path (each is `#[cfg]`-gated to its target, so at most one is
+//! compiled in for any given build):
+//! - `linux` — full support: `bind_to_node` issues `mbind(MPOL_BIND)` and
 //!   `allocate_interleaved` issues `mbind(MPOL_INTERLEAVE)` after a standard
 //!   allocation.
-//! - [`windows`] — `allocate_interleaved` uses `VirtualAllocExNuma` when the
+//! - `windows` — `allocate_interleaved` uses `VirtualAllocExNuma` when the
 //!   topology reports more than one node (chunked per-node commit) and falls
 //!   back to a plain allocation otherwise.
-//! - [`fallback`] — a `bind_to_node` no-op (Windows and other targets, which
+//! - `fallback` — a `bind_to_node` no-op (Windows and other targets, which
 //!   have no `mbind` equivalent for existing allocations) and a plain
 //!   `allocate_interleaved` on targets without the Windows path.
 //!

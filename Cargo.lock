@@ -250,7 +250,7 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 [[package]]
 name = "eunomia"
 version = "0.8.0"
-source = "git+https://github.com/ryancinsight/eunomia#df6fde7e5c9ea0ac958db90e381852ed91fe3a15"
+source = "git+https://github.com/ryancinsight/eunomia#08f8a721876ecb99326f39f101ceb4562b2c6491"
 dependencies = [
  "bytemuck",
  "eunomia-derive",
@@ -260,7 +260,7 @@ dependencies = [
 [[package]]
 name = "eunomia-derive"
 version = "0.8.0"
-source = "git+https://github.com/ryancinsight/eunomia#df6fde7e5c9ea0ac958db90e381852ed91fe3a15"
+source = "git+https://github.com/ryancinsight/eunomia#08f8a721876ecb99326f39f101ceb4562b2c6491"
 dependencies = [
  "proc-macro2",
  "quote",

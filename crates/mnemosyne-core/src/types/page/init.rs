@@ -94,7 +94,7 @@ impl Page {
         }
     }
 
-    /// Non-generic SSOT for [`pop_block`].
+    /// Non-generic SSOT for [`Self::pop_block`].
     ///
     /// All P:: constants are replaced with plain `bool` parameters so:
     /// - StandardPolicy `(encrypt=false, randomize=false)` and SecurePolicy
@@ -105,7 +105,7 @@ impl Page {
     ///
     /// # Safety
     ///
-    /// Same contract as [`pop_block`].
+    /// Same contract as [`Self::pop_block`].
     #[inline(always)]
     pub unsafe fn pop_block_dynamic(
         page: *mut Self,
@@ -207,7 +207,7 @@ impl Page {
         }
     }
 
-    /// Non-generic SSOT for [`initialize_free_list_in_segment`].
+    /// Non-generic SSOT for [`Self::initialize_free_list_in_segment`].
     ///
     /// # Safety
     ///

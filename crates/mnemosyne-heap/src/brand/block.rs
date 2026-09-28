@@ -29,7 +29,7 @@ impl<'brand, T> BrandedBlock<'brand, T> {
     /// `core::ptr::drop_in_place::<U>` on it and derives its deallocation
     /// path from `size_of_val` of the `U`, [`crate::Heap::realloc`] reads
     /// the pointee's layout the same way, and
-    /// [`BrandedCell::from_block`] hands out `&U`/`&mut U`. The caller must
+    /// [`super::BrandedCell::from_block`] hands out `&U`/`&mut U`. The caller must
     /// therefore guarantee:
     ///
     /// - **Layout**: the block's allocation is at least `size_of::<U>()`
