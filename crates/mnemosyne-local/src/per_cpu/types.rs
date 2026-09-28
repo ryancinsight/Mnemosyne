@@ -4,7 +4,7 @@ use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use std::boxed::Box;
 use std::sync::OnceLock;
 
-use super::{MAX_CACHED_BLOCKS, NUM_CPU_SLOTS};
+use super::state::{MAX_CACHED_BLOCKS, NUM_CPU_SLOTS};
 
 /// A lock-free block cache slot for a single CPU, protected against UAF and ABA hazards.
 #[repr(align(64))]

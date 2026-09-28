@@ -1,10 +1,11 @@
 use core::sync::atomic::Ordering;
 use mnemosyne_core::policy::AllocPolicy;
 
-use super::{
-    CpuCacheSlot, DISABLE_CPU_CACHE, MAX_CACHED_BLOCKS, PER_CPU_CACHE, PER_CPU_CACHE_ENABLED,
-    get_current_cpu_id, refresh_current_cpu_id,
+use super::state::{
+    DISABLE_CPU_CACHE, MAX_CACHED_BLOCKS, PER_CPU_CACHE, PER_CPU_CACHE_ENABLED, get_current_cpu_id,
+    refresh_current_cpu_id,
 };
+use super::types::CpuCacheSlot;
 
 /// Tries to allocate a block from the per-CPU cache.
 ///

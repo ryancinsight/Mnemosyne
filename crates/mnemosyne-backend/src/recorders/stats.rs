@@ -195,10 +195,6 @@ mod tests {
     use super::*;
     use crate::test_support::lock_test;
 
-    fn lock_test() -> std::sync::MutexGuard<'static, ()> {
-        TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
     #[test]
     fn mapping_telemetry_tracks_deltas_and_peak() {
         let _guard = lock_test();

@@ -7,6 +7,17 @@
 //! happens-before edge that makes cross-thread free safe.
 
 use crate::types::SegmentOwner;
+
+/// A segment's owner identity: who owns it, and which allocator cache its
+/// frees route to.
+///
+/// The two are published and observed as a pair. A reader that sees an owner
+/// and then reads an allocator belonging to the *previous* owner has read a
+/// torn identity and will route a free to the wrong cache, which is why the
+/// members are private and reachable only through the accessors below.
+///
+/// Atomics come from [`crate::loom_shim`], so a loom model drives this exact
+/// code rather than a transcription of it. That is the point of the type
 /// existing separately from `Segment`: a model cannot construct a whole
 /// `Segment`, whose `[Page; PAGES_PER_SEGMENT]` would create one instrumented
 /// atomic per page, but it can construct this.
