@@ -95,6 +95,13 @@ pub(crate) unsafe fn commit_in_place_free(
 /// `segment` must point to a live, initialized segment header.
 #[inline]
 pub(crate) unsafe fn resolve_owner_slot(
+    #[cfg_attr(
+        not(all(windows, target_arch = "x86_64", not(miri))),
+        expect(
+            unused_variables,
+            reason = "only the Windows x86-64 owner path reads the segment header"
+        )
+    )]
     segment: *mut Segment,
     owner: SegmentOwner,
     slot_ptr: *mut c_void,
