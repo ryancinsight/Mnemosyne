@@ -1,12 +1,14 @@
 //! Retained huge mappings, bucketed by size class within each NUMA node.
 //!
-//! The pool is decomposed by responsibility so each leaf owns one path:
-//! - [`bucket`] — the SSOT logarithmic size-to-bucket geometry and the
+//! The pool is decomposed by responsibility so each leaf owns one path
+//! (each submodule is private; its methods are re-exported through the
+//! `impl` blocks below):
+//! - `bucket` — the SSOT logarithmic size-to-bucket geometry and the
 //!   over-provision cap that bound cache reuse.
-//! - [`push`] — [`GlobalHugePool::try_push`] admission into a node bucket.
-//! - [`pop`] — [`GlobalHugePool::pop`] retrieval with local-first stealing.
-//! - [`stats`] — advisory retained-block/byte counts and the snapshot.
-//! - [`purge`] — reclamation of every bucket back to the OS.
+//! - `push` — [`GlobalHugePool::try_push`] admission into a node bucket.
+//! - `pop` — [`GlobalHugePool::pop`] retrieval with local-first stealing.
+//! - `stats` — advisory retained-block/byte counts and the snapshot.
+//! - `purge` — reclamation of every bucket back to the OS.
 //!
 //! `mod.rs` keeps only the shared `GlobalHugePool` struct shape, its budget
 //! constants, and the `new` constructor that the concern submodules extend

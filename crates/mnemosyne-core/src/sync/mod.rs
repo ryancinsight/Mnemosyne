@@ -5,7 +5,8 @@
 //!
 //! # One implementation, two head encodings
 //!
-//! [`AtomicFreeList`] has a single implementation, in [`free_list`]. The only
+//! [`AtomicFreeList`] has a single implementation, in the private `free_list`
+//! module. The only
 //! target-dependent part is how its head word is encoded, isolated behind the
 //! ZST `HeadCodec` and selected by a private per-module `SelectedHead` alias:
 //!

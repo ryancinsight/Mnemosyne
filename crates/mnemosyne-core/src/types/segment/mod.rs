@@ -1,11 +1,12 @@
 //! Segment metadata: the fixed-size mapping that owns a run of pages.
 //!
-//! Responsibility is split across focused submodules:
-//! - [`location`] — `locate_segment` / `locate_page` address-arithmetic helpers.
-//! - [`freelist`] — cookie derivation, mode validation, encryption-flag read.
-//! - [`access`] — ownership and current-slicing raw-pointer accessors.
-//! - [`ownership`] — the `SegmentOwnership` atomic pair type.
-//! - [`header`] — the `Segment` struct shape, its `Send`/`Sync` impls,
+//! Responsibility is split across focused submodules (each private; their
+//! public items are re-exported here):
+//! - `location` — `locate_segment` / `locate_page` address-arithmetic helpers.
+//! - `freelist` — cookie derivation, mode validation, encryption-flag read.
+//! - `access` — ownership and current-slicing raw-pointer accessors.
+//! - `ownership` — the `SegmentOwnership` atomic pair type.
+//! - `header` — the `Segment` struct shape, its `Send`/`Sync` impls,
 //!   `Default`, and the `initialize` / `huge_mapping_suffix_from` lifecycle
 //!   methods.
 

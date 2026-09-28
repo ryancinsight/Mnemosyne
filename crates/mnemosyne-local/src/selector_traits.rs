@@ -7,7 +7,8 @@
 //! - [`LocalAllocatorSelector<B>`] — per-backend TLS cache selection interface.
 //!
 //! Both are implemented by the `impl_local_allocator_selector!` expansion
-//! in [`crate::selector`]; the allocation/free hot paths call through them.
+//! in the private `crate::selector` module; the allocation/free hot paths
+//! call through them.
 
 use crate::local_alloc::ThreadAllocator;
 use mnemosyne_arena::HasSegmentPool;

@@ -1,11 +1,13 @@
 //! Compile-time lookup tables for the size-class layout and their direct
 //! O(1) accessors.
 //!
-//! This module is the **SSOT** for all class-layout data:
-//! - [`CLASS_TO_SIZE`] — block stride per class.
-//! - [`CLASS_TO_MAX_BLOCKS`] — page capacity per class.
-//! - [`CLASS_TO_DIV_MULT`] — Lemire reciprocal multipliers.
-//! - [`SIZE_TO_CLASS`] — granule-indexed reverse lookup (class per 16-byte granule).
+//! This module is the **SSOT** for all class-layout data (each table below
+//! is `pub(super)`, visible to the query functions but not part of the
+//! public API):
+//! - `CLASS_TO_SIZE` — block stride per class.
+//! - `CLASS_TO_MAX_BLOCKS` — page capacity per class.
+//! - `CLASS_TO_DIV_MULT` — Lemire reciprocal multipliers.
+//! - `SIZE_TO_CLASS` — granule-indexed reverse lookup (class per 16-byte granule).
 //!
 //! The companion query functions in [`super`] (`size_to_class`,
 //! `round_up_size`, …) call these; nothing else should index the raw arrays.

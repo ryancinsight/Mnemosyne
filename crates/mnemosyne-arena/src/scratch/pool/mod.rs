@@ -1,12 +1,13 @@
 //! Scratch buffer pool: a depth-tracked set of reusable aligned scratch
 //! buffers for temporal allocations.
 //!
-//! The pool is decomposed by responsibility:
-//! - [`borrow`] — the PROVISION-generic `borrow_slot`, `with_scratch`,
+//! The pool is decomposed by responsibility (each submodule is private; its
+//! methods are re-exported through the `impl` blocks below):
+//! - `borrow` — the PROVISION-generic `borrow_slot`, `with_scratch`,
 //!   `with_scratch_bounded`, and `with_scratch_uninit` borrow entry points.
-//! - [`manage`] — provision-aware `release`, `reset`, `prewarm`, `preload`,
+//! - `manage` — provision-aware `release`, `reset`, `prewarm`, `preload`,
 //!   and `shrink_all_slots` lifecycle methods.
-//! - [`query`] — read-only `borrow_depth`, `capacity`, `slot_capacity`,
+//! - `query` — read-only `borrow_depth`, `capacity`, `slot_capacity`,
 //!   `is_available`, `total_capacity_bytes` accessors.
 //!
 //! `mod.rs` keeps only the struct shape, `MAX_POOL_SLOTS`, and the

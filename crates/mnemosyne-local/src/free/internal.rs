@@ -33,7 +33,7 @@ pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
 /// Policy-aware inner free — generic over `P` so `DELAY_PAGE_WAKE` and other
 /// compile-time flags can be propagated without runtime overhead.
 ///
-/// Delegates to the non-generic [`do_local_free_internal_raw`] by passing
+/// Delegates to the non-generic `do_local_free_internal_raw` by passing
 /// the three P:: constants as plain booleans. This means `StandardPolicy`
 /// and `SecurePolicy` — which share `(enable_encryption=false, delay_wake=false,
 /// wake_denominator=4)` — compile the entire body exactly once per `B`.

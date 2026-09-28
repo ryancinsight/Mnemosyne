@@ -8,11 +8,13 @@
 //!
 //! # Module organisation
 //!
+//! Every module below is private; its public items are re-exported here.
+//!
 //! | Module | Responsibility |
 //! |--------|---------------|
-//! | [`engine`] | Background thread loop and adaptive interval |
-//! | [`events`] | Condvar-based synchronisation (step/wake signals) |
-//! | [`orphan`] | Per-backend orphan-pool draining |
+//! | `engine` | Background thread loop and adaptive interval |
+//! | `events` | Condvar-based synchronisation (step/wake signals) |
+//! | `orphan` | Per-backend orphan-pool draining |
 //! | `lib` (this file) | Public API: spawn, trigger, observe, step |
 //!
 //! [`init_decay_engine`] lazily spawns the worker thread. [`decay_step`]

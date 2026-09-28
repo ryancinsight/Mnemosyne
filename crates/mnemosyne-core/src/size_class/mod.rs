@@ -1,14 +1,15 @@
 //! Size class calculations and mapping.
 //!
-//! The module is organized by concern:
+//! The module is organized by concern (`arithmetic`, `info`, and `query` are
+//! private; their public items are re-exported here):
 //! - [`tables`] — SSOT compile-time lookup tables (`CLASS_TO_SIZE`,
 //!   `CLASS_TO_MAX_BLOCKS`, `CLASS_TO_DIV_MULT`, `SIZE_TO_CLASS`) and their
 //!   O(1) direct accessors (`class_to_size`, `class_to_max_blocks`,
 //!   `block_index_in_page`).
-//! - [`arithmetic`] — the `const fn` piecewise bucketing math that drives the
+//! - `arithmetic` — the `const fn` piecewise bucketing math that drives the
 //!   reverse table at compile time (`size_to_class_nonzero_arithmetic`).
-//! - [`info`] — `SizeClassInfo` compile-time metadata struct.
-//! - [`query`] — the functions that combine the reverse and forward tables:
+//! - `info` — `SizeClassInfo` compile-time metadata struct.
+//! - `query` — the functions that combine the reverse and forward tables:
 //!   `size_to_class*`, `round_up_size*`, `size_class_fragmentation`, and
 //!   their tests.
 
