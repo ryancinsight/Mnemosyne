@@ -10,9 +10,9 @@ use mnemosyne_core::constants::{
 mod allocate;
 mod release;
 
-pub use allocate::allocate_segment;
 pub(crate) use allocate::decommit_mapping_slack;
 use allocate::try_return_to_pool;
+pub use allocate::{AcquiredSegment, acquire_segment, allocate_segment};
 pub use release::{
     deallocate_segment, purge_segment_pool, purge_segment_pool_with_warm, release_segment_mapping,
     reset_segment_pool, try_deallocate_segment,

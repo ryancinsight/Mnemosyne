@@ -1123,43 +1123,39 @@ fn scratch_pool_preload_sets_capacity() {
     assert!(pool.slot_capacity(1) >= 128);
 }
 
-// ── MN-SCRATCH-GROWTH-COST: bounded path must not overshoot provision ────────
+// ── MN-SCRATCH-GROWTH-COST: bounded path stays amortized; release trims ──────
 
-/// A pool whose first slot was previously warmed to a non-zero capacity must
-/// not overshoot the provision when `with_scratch_bounded` is called with a
-/// larger request.
-///
-/// `grow_geometric` would compute `capacity * 2` as the new size, which can
-/// exceed the request. The bounded path uses `ensure_len_exact` so the slot
-/// lands at exactly the requested size and a subsequent `release(provision)`
-/// is a no-op rather than a real deallocation.
+/// `with_scratch_bounded` grows geometrically like the unbounded path — an
+/// exact-growth variant (`ensure_len_exact`) was evaluated and rejected
+/// (MN-SCRATCH-GROWTH-COST-2026-09-04) because it drops the amortized
+/// doubling policy `ensure_len` exists to provide. The provision bound is
+/// enforced by `release`, which trims the slot back to exactly the recorded
+/// high-water request regardless of how far growth overshot it.
 #[test]
-fn scratch_pool_bounded_path_does_not_overshoot_provision() {
+fn scratch_pool_bounded_path_release_trims_to_provision() {
     let pool = ScratchPool::<f32>::new();
 
     // Warm the slot to a capacity that is not a power of two so doubling
-    // would land on a value different from the target request.
+    // lands on a value different from the target request.
     pool.with_scratch_bounded(8192, |_| {});
     assert_eq!(pool.slot_capacity(0), 8192);
 
-    // A larger bounded request must land at exactly the new request, never
-    // at `prev_capacity * 2`.
+    // A larger bounded request may overshoot via geometric growth, exactly
+    // like the unbounded path — the request itself is still satisfied.
     pool.with_scratch_bounded(12288, |scratch| {
         assert_eq!(scratch.len(), 12288);
     });
-    assert_eq!(
-        pool.slot_capacity(0),
-        12288,
-        "bounded growth must not overshoot: got {} but expected exactly 12288 \
-         (would be {} with grow_geometric)",
-        pool.slot_capacity(0),
-        8192usize.saturating_mul(2)
+    assert!(
+        pool.slot_capacity(0) >= 12288,
+        "bounded growth must satisfy the request; got {}",
+        pool.slot_capacity(0)
     );
 
-    // After release the capacity must be clamped to the provision (12288),
-    // which is already exact — release is therefore a no-op deallocation.
+    // Release always clamps back to the recorded provision (12288), whether
+    // or not growth overshot it.
     let caps = pool.release();
     assert_eq!(caps[0], 12288, "release must retain exactly the provision");
+    assert_eq!(pool.slot_capacity(0), 12288);
 }
 
 /// Unbounded growth (with_scratch) is still allowed to overshoot for

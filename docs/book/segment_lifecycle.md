@@ -45,7 +45,8 @@ NUMA-aware global segment cache
 ```
 
 Fresh allocation performs the cold-path work: alignment, header initialization,
-NUMA binding, optional guard installation, and slack decommit. A cache hit
+NUMA binding, optional [guard installation](guard_pages.md), and slack
+decommit. A cache hit
 reinitializes the segment header and skips the OS mapping and NUMA-binding
 syscalls. The local NUMA bucket is attempted first; a miss refreshes the
 thread's NUMA observation at a bounded cadence and then steals from other

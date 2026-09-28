@@ -233,10 +233,12 @@ pub fn alloc_distribution() -> [f64; NUM_SIZE_CLASSES] {
 #[cfg(test)]
 mod tests {
     use core::sync::atomic::AtomicU64;
+    use std::sync::{Arc, Barrier};
 
-    use super::batch::{FLUSH_BATCH, PendingCount, RESET_GENERATION};
+    use super::batch::{FLUSH_BATCH, PendingCount, RESET_GENERATION, record_alloc_with_size};
     use super::{
-        NUM_SIZE_CLASSES, all_bin_snapshots, bin_snapshot, reset_bin_stats, reset_generation_count,
+        NUM_SIZE_CLASSES, all_bin_snapshots, bin_snapshot, class_to_size, flush_tls_stats,
+        reset_bin_stats, reset_generation_count,
     };
 
     #[test]
@@ -325,5 +327,50 @@ mod tests {
     #[test]
     fn snapshots_preserve_the_public_range_contract() {
         assert!(bin_snapshot(NUM_SIZE_CLASSES).is_none());
+    }
+
+    /// Cross-thread boundary proof for MN-BIN-STATS-RESET-BOUNDARY: a batch
+    /// accumulated on another thread before `reset_bin_stats` runs must not
+    /// leak into the post-reset counters once that thread finally flushes.
+    #[test]
+    fn reset_excludes_a_batch_pending_on_another_thread() {
+        const CLASS: usize = 5;
+        // Both counts stay below FLUSH_BATCH, so neither batch flushes on its
+        // own and only the explicit flushes move the global counter.
+        const PRE_RESET: u32 = FLUSH_BATCH / 2;
+        const POST_RESET: u32 = FLUSH_BATCH / 4;
+
+        let barrier = Arc::new(Barrier::new(2));
+        let worker = {
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                for _ in 0..PRE_RESET {
+                    record_alloc_with_size(CLASS, class_to_size(CLASS));
+                }
+                barrier.wait(); // pre-reset batch is pending
+                barrier.wait(); // reset has completed
+                flush_tls_stats();
+                for _ in 0..POST_RESET {
+                    record_alloc_with_size(CLASS, class_to_size(CLASS));
+                }
+                flush_tls_stats();
+            })
+        };
+
+        barrier.wait();
+        reset_bin_stats();
+        barrier.wait();
+        worker.join().expect("worker thread panicked");
+
+        let snapshot = bin_snapshot(CLASS).expect("invariant: CLASS < NUM_SIZE_CLASSES");
+        assert_eq!(
+            snapshot.alloc_count,
+            u64::from(POST_RESET),
+            "post-reset total must exclude the {PRE_RESET} allocations pending on the worker"
+        );
+        assert_eq!(
+            snapshot.requested_bytes,
+            u64::from(POST_RESET) * class_to_size(CLASS) as u64,
+        );
     }
 }

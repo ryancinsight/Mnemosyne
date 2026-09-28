@@ -60,6 +60,8 @@ jobs:
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
@@ -91,6 +93,17 @@ jobs:
       # below lints and smoke-runs it.
       - name: Lint all affected targets
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      # The segment guard features are opt-in, so the workspace lint above never
+      # compiles their cfg-gated code or tests; an import expectation that only
+      # held without them reached main unseen. Each combination is linted, and
+      # the arena's tests run with both guards on.
+      - name: Lint and test the segment guard features
+        run: |
+          for features in segment-tail-guards segment-header-guards segment-tail-guards,segment-header-guards; do
+            cargo clippy --locked -p mnemosyne-arena --features "$features" --all-targets -- -D warnings
+          done
+          cargo nextest run --locked -p mnemosyne-arena --features segment-tail-guards,segment-header-guards
 
       # `c_char` is signed on x86_64-linux and unsigned on aarch64-linux, so a
       # cast that is load-bearing on one target is a lint error on the other.
@@ -157,6 +170,8 @@ jobs:
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Release profile: loom explores a large state space and a debug build
       # makes that needlessly slow. The models assert behaviour, not timing, so
@@ -219,6 +234,8 @@ jobs:
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
@@ -391,6 +408,8 @@ jobs:
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
@@ -463,6 +482,8 @@ jobs:
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run the concurrency-bearing crates under TSan
         env:

@@ -21,6 +21,7 @@
 
 - [7. NUMA-Aware Allocation](numa_placement.md)
 - [8. Hardened and Secure Policies](hardened_secure.md)
+  - [Guard Pages](guard_pages.md)
 - [9. Profiling and Leak Detection](profiling.md)
 
 # Part IV — The Atlas Stack

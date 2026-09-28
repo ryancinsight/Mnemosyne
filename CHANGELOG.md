@@ -4,6 +4,34 @@
 
 ### Added
 
+- A new book chapter, [Guard Pages](docs/book/guard_pages.md), documents the
+  `MemoryBackend::make_guard` seam, the per-backend `SUPPORTS_MAKE_GUARD`
+  support matrix, and the arena's opt-in `segment-tail-guards` /
+  `segment-header-guards` consumer features — content the ten-chapter book
+  closure left out. Cross-linked from the Hardened and Secure Policies and
+  Segment Lifecycle chapters; `SUMMARY.md` gained a nested entry under
+  chapter 8.
+
+- `allocate_segment` now recovers from a first OS allocation failure by
+  purging every retained free segment back to the OS and retrying the
+  mapping once, bounded to one purge and one retry. This covers the
+  working-set-spike scenario where the retained pool holds address space
+  the OS temporarily needs elsewhere. The attempt and its outcome are
+  observable through two new counters, `ArenaMemoryStats::oom_retries` and
+  `oom_retry_successes` (and the matching `SegmentPoolStats` fields),
+  following the crate's existing counter-based telemetry convention rather
+  than adding a tracing dependency to a `no_std`-capable crate
+  (MN-STALE-BRANCH-INVENTORY-2026-09-09).
+
+  `cargo-semver-checks` (informational gate) flags the two new fields as a
+  major-class break, since `ArenaMemoryStats`/`SegmentPoolStats` were
+  exhaustively constructible. Marked both `#[non_exhaustive]` in the same
+  change — they are snapshot types returned by an API function, never
+  constructed by callers, and have already gained fields three times, so
+  the attribute forecloses this recurring on the next addition too — but
+  the transition itself remains a semver-relevant change for
+  `mnemosyne-arena`'s next version bump (currently `0.4.0`).
+
 - Session 12: P-elimination from `#[cold]`/`#[inline(never)]` functions + cross-crate SSOT.
   411/411 tests pass; safety ratchet at 0.
 
@@ -177,16 +205,6 @@
 
   No public API change on any split; all 412 tests pass.
 
-- `AlignedVec::ensure_len_exact` grows to exactly the requested capacity
-  (using `grow_to`) rather than applying the geometric doubling policy of
-  `ensure_len`. The bounded scratch path (`ScratchPool::with_scratch_bounded`,
-  `borrow_slot::<PROVISION=true>`) now calls `ensure_len_exact` so a slot's
-  capacity lands precisely at the provision and a subsequent `release` is a
-  no-op instead of a real deallocation. Two regression tests pin the contract:
-  `scratch_pool_bounded_path_does_not_overshoot_provision` and
-  `scratch_pool_unbounded_path_allows_geometric_overshoot`.
-  (MN-SCRATCH-GROWTH-COST-2026-09-04)
-
 - `mnemosyne-decay` decomposed into a deep vertical module hierarchy (SRP):
   `engine.rs` — adaptive thread loop; `events.rs` — Condvar-based step/wake
   signals; `orphan.rs` — per-backend orphan-pool draining. `lib.rs` is now a
@@ -214,6 +232,12 @@
   instead of `.expect("poisoned")`. A panicking test no longer blankets
   subsequent serialized tests with `PoisonError` failures that hide their own
   subjects. (MN-TEST-LOCK-POISONING-HIDES-RESULTS)
+
+- `ArenaMemoryStats` and `SegmentPoolStats` are now `#[non_exhaustive]`.
+  Both are read-only telemetry snapshots returned by `arena_memory_stats`
+  / `GlobalSegmentPool::stats`, never constructed by callers; no in-repo
+  caller builds either via struct literal. Semver-relevant for
+  `mnemosyne-arena`'s next version bump.
 
 - `ScratchPool::with_scratch_bounded` and `ScratchBank::with_scratch_bounded`
   record each depth's high-water request (the slot's *provision*), and
@@ -349,6 +373,14 @@
 
 ### Fixed
 
+- `allocate_segment` no longer hands out orphaned segments. An orphan still
+  holds blocks a finished thread allocated, so a caller that returned it
+  through `deallocate_segment` put live memory in the free pool, where
+  `purge` unmapped it or a later allocation re-initialized it; the
+  ThreadSanitizer job faulted writing a libtest channel block this way.
+  Thread caches now adopt orphans through the new `acquire_segment`, whose
+  `AcquiredSegment::{Free, Orphan}` result replaces the
+  `pages[1].block_size` heuristic that told the two apart.
 - Replace the NUMA binding test's existence-only result check with an exact
   `Ok(())` assertion. Hosted Rust verification, Loom, and Miri pass at
   provider head `39d76d2` (run `32024295467`).

@@ -27,6 +27,10 @@ pub(super) fn drain_orphan_pool<B: HasSegmentPool>() {
 
         // SAFETY: `OccupiedPageBits` skips bit 0; each `i` indexes a valid page.
         for i in OccupiedPageBits::new(unsafe { (*segment).page_occupied_mask }) {
+            // Address pages through the segment pointer, not a `&mut Page`,
+            // because reclaim reads the segment header for the free-list cookie
+            // and a page borrow held across that access carries a different
+            // provenance root.
             // SAFETY: `segment` is exclusively owned; `i` is a valid index.
             let page = unsafe { &raw mut (*segment).pages[i] };
             unsafe {
@@ -38,6 +42,7 @@ pub(super) fn drain_orphan_pool<B: HasSegmentPool>() {
                     randomized,
                 );
             }
+            // SAFETY: `page` is inside the exclusively-owned segment's pages array.
             total_allocations += unsafe { (*page).alloc_count };
         }
 

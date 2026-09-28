@@ -26,10 +26,12 @@ impl<T: ScratchElement> AlignedVec<T> {
     /// Ensures capacity for at least `min_len` elements. Only grows; never
     /// shrinks. Only zeroes **newly** allocated elements, not existing ones.
     ///
-    /// Uses geometric (doubling) growth so repeated calls are amortized.
-    /// When exact capacity is required (e.g., the bounded scratch path where
-    /// a provision bounds the retained size), use
-    /// [`ensure_len_exact`][Self::ensure_len_exact] instead.
+    /// Uses geometric (doubling) growth so repeated calls are amortized. A
+    /// provision that bounds the retained size is enforced by quiescent
+    /// [`release`][super::super::pool] trimming, not by narrowing growth
+    /// itself: an exact-growth variant was evaluated and rejected
+    /// (MN-SCRATCH-GROWTH-COST-2026-09-04) because it drops the amortized
+    /// doubling policy this method exists to provide.
     #[inline]
     pub fn ensure_len(&mut self, min_len: usize) {
         if min_len <= self.len {
@@ -40,21 +42,6 @@ impl<T: ScratchElement> AlignedVec<T> {
         }
         // SAFETY: capacity >= min_len after grow; `[self.len, min_len)` is
         // inside the allocation; all-zero is valid for every `ScratchElement`.
-        unsafe { self.extend_with_zeros(min_len) };
-    }
-
-    /// Like [`ensure_len`][Self::ensure_len] but grows to exactly `min_len`,
-    /// never more. Use when a provision bounds retained capacity so a
-    /// subsequent `shrink_to` is a no-op.
-    #[inline]
-    pub(crate) fn ensure_len_exact(&mut self, min_len: usize) {
-        if min_len <= self.len {
-            return;
-        }
-        if min_len > self.capacity {
-            self.grow_to(min_len);
-        }
-        // SAFETY: capacity == min_len after grow_to; same zero-validity.
         unsafe { self.extend_with_zeros(min_len) };
     }
 

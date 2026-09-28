@@ -28,7 +28,13 @@ pub struct HugePoolStats {
 ///
 /// All fields are individually monotone-non-decreasing relaxed reads;
 /// they are not jointly consistent (no single atomic snapshot).
+///
+/// `#[non_exhaustive]`: this snapshot has gained fields three times
+/// (`reset_segments`/`reset_calls`, `oom_retries`/`oom_retry_successes`) as
+/// telemetry grew, and will again — a growing counter set is exactly the
+/// forward-compatibility case the attribute exists for.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct SegmentPoolStats {
     /// Segments currently held in the warm cache.
     pub retained: usize,
@@ -40,6 +46,12 @@ pub struct SegmentPoolStats {
     pub reset_segments: usize,
     /// Cumulative reset-pass invocations.
     pub reset_calls: usize,
+    /// Cumulative purge-and-retry attempts after a first OS allocation
+    /// failure (`allocate_segment`'s OOM recovery path).
+    pub oom_retries: usize,
+    /// Cumulative purge-and-retry attempts whose retried allocation
+    /// succeeded, a subset of `oom_retries`.
+    pub oom_retry_successes: usize,
 }
 
 /// Sealed trait module to protect architectural invariants.
