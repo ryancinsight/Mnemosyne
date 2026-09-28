@@ -152,7 +152,9 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
     /// success and `NULL` on failure, so we map the return into a
     /// boolean release status.
     unsafe fn page_reset(ptr: *mut u8, size: usize) -> bool {
-        if !vm_args_valid(ptr, size) { return false; }
+        if !vm_args_valid(ptr, size) {
+            return false;
+        }
         #[cfg(not(miri))]
         {
             // SAFETY: ptr is inside an active VirtualAlloc-managed region and
@@ -176,7 +178,9 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
     /// reservation that holds no live data; the range faults on access until
     /// re-committed or the base reservation is released.
     unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
-        if !vm_args_valid(ptr, size) { return false; }
+        if !vm_args_valid(ptr, size) {
+            return false;
+        }
         #[cfg(not(miri))]
         {
             // SAFETY: ptr/size describe a page-aligned subrange of a live
@@ -191,7 +195,9 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
     /// access-violation. The mapping itself remains reserved, so a
     /// later `deallocate` covering the range still releases cleanly.
     unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
-        if !vm_args_valid(ptr, size) { return false; }
+        if !vm_args_valid(ptr, size) {
+            return false;
+        }
         #[cfg(not(miri))]
         {
             let mut old_protect: u32 = 0;
@@ -210,4 +216,3 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
         }
     }
 }
-

@@ -13,9 +13,13 @@
 /// `msg` names the violated invariant. It is used as the panic message on the
 /// `no_std` path; on the `std` path `std::process::abort()` carries no message,
 /// matching the historical behavior of the per-site abort blocks.
+///
+/// Public because the address-packing invariant is enforced from
+/// `mnemosyne-arena`'s segment-pool head as well as from this crate's
+/// free-list head; both must terminate under the same policy.
 #[inline(always)]
 #[cold]
-pub(crate) fn abort_on_corruption(msg: &str) -> ! {
+pub fn abort_on_corruption(msg: &str) -> ! {
     #[cfg(any(feature = "std", test))]
     {
         let _ = msg;

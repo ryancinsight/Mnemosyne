@@ -8,11 +8,12 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
-pub(crate) mod abort;
+pub mod abort;
 pub mod constants;
 pub mod kernel_budget;
 pub mod loom_shim;
 pub mod options;
+pub mod os_tls;
 pub mod policy;
 pub mod size_class;
 pub mod sync;

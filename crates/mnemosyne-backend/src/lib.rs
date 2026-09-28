@@ -37,6 +37,9 @@ pub mod mapping;
 pub mod recorders;
 pub mod reset;
 
+#[cfg(test)]
+mod test_support;
+
 pub use backends::DefaultBackend;
 pub use backends::cuda::{
     CudaDeviceBackend, CudaGddrBackend, CudaHbmBackend, CudaHostPinnedBackend, CudaUnifiedBackend,

@@ -36,9 +36,8 @@ mod tests {
 
     use crate::mapping::MemoryBackendWrapper;
     use crate::recorders::backend_memory_stats;
+    use crate::test_support::lock_test;
     use mnemosyne_core::MemoryBackend;
-
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     // `make_guard` installs a guard page through the OS (`mprotect` on unix,
@@ -47,9 +46,7 @@ mod tests {
     // the subject is unobservable under the interpreter rather than broken.
     #[cfg_attr(miri, ignore = "guard-page install is an OS call Miri cannot make")]
     fn wrapper_make_guard_records_confirmed_install_and_keeps_mapping_reserved() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
+        let _guard = lock_test();
         // Allocate, guard the whole region, confirm telemetry, then
         // release. The mapping must still be releasable after a guard
         // install because VirtualFree/munmap only require a valid
@@ -94,9 +91,7 @@ mod tests {
 
     #[test]
     fn wrapper_make_guard_rejects_null_and_zero() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
+        let _guard = lock_test();
         let null_guard = unsafe { MemoryBackendWrapper::make_guard(core::ptr::null_mut(), 4096) };
         assert!(!null_guard, "null pointer must not be accepted for guard");
 

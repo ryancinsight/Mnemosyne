@@ -82,10 +82,7 @@ impl BinStatsWindow {
     /// `total_requested_bytes_delta`.
     #[inline(always)]
     fn sum_delta_field(&self, f: impl Fn(&mnemosyne_local::BinSnapshot) -> u64) -> u64 {
-        self.delta()
-            .iter()
-            .map(f)
-            .fold(0u64, u64::saturating_add)
+        self.delta().iter().map(f).fold(0u64, u64::saturating_add)
     }
 
     /// Total allocations during the window across all size classes.

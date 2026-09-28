@@ -4,9 +4,7 @@ use core::sync::atomic::Ordering;
 use mnemosyne_core::MemoryBackend;
 
 use super::registry::CUDA_DEVICE_ALLOCATIONS;
-use super::{
-    CudaAllocOps, CudaAllocationRegistry, loader, managed_raw_alloc, managed_raw_free,
-};
+use super::{CudaAllocOps, CudaAllocationRegistry, loader, managed_raw_alloc, managed_raw_free};
 
 /// A memory backend allocating CUDA device memory.
 ///

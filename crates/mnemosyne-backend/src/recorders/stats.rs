@@ -193,12 +193,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn lock_test() -> std::sync::MutexGuard<'static, ()> {
-        TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
+    use crate::test_support::lock_test;
 
     #[test]
     fn mapping_telemetry_tracks_deltas_and_peak() {

@@ -70,15 +70,12 @@ mod tests {
 
     use crate::mapping::MemoryBackendWrapper;
     use crate::recorders::backend_memory_stats;
+    use crate::test_support::lock_test;
     use mnemosyne_core::MemoryBackend;
-
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn wrapper_page_reset_round_trips_on_active_mapping() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
+        let _guard = lock_test();
         // Allocate, reset a sub-range, write through the reset region,
         // and release. Demonstrates that the wrapper telemetry tracks
         // confirmed resets while leaving the mapping committed and
@@ -125,9 +122,7 @@ mod tests {
 
     #[test]
     fn wrapper_page_reset_rejects_null_and_zero() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
+        let _guard = lock_test();
         let null_reset = unsafe { MemoryBackendWrapper::page_reset(core::ptr::null_mut(), 4096) };
         assert!(!null_reset, "null pointer must not be accepted for reset");
 
@@ -143,9 +138,7 @@ mod tests {
 
     #[test]
     fn wrapper_decommit_returns_slack_and_keeps_reservation_releasable() {
-        let _guard = TEST_LOCK
-            .lock()
-            .expect("backend telemetry test lock was poisoned");
+        let _guard = lock_test();
         // Allocate a multi-page mapping, decommit the trailing half, confirm
         // telemetry, and prove the base reservation still releases cleanly
         // (VirtualFree(MEM_RELEASE) / munmap cover decommitted subranges). The

@@ -260,9 +260,9 @@ impl<B: HasSegmentPool> Drop for LocalAllocatorSlot<B> {
             // write clears the current thread's own TEB slot, severing the now-
             // dangling cached pointer to the slot being destroyed.
             unsafe {
-                crate::tls::os_helpers::set_teb_tls_slot(key, core::ptr::null_mut());
+                mnemosyne_core::os_tls::write_teb_slot(key, core::ptr::null_mut());
             }
-            crate::tls::os_helpers::set_os_tls_value(key, core::ptr::null_mut());
+            mnemosyne_core::os_tls::write_value(key, core::ptr::null_mut());
         }
     }
 }

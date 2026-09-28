@@ -29,8 +29,15 @@ std::thread_local! {
     };
 }
 
+/// Process-wide profiler TLS slot index, published on first use.
+///
+/// The raw OS-TLS FFI (key allocation, slot get/set, and the Windows x86-64 TEB
+/// fast path) lives once in [`mnemosyne_core::os_tls`]; this crate owns only
+/// the key and the `cfg` gate — `std_tls`/`miri`/`nightly_tls` route the
+/// profiler state through `std::thread_local!` instead.
 #[cfg(all(not(nightly_tls_active), not(feature = "std_tls"), not(miri)))]
-mod os_key;
+static PROFILER_TLS_KEY: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(u32::MAX);
 #[cfg(not(nightly_tls_active))]
 #[inline(always)]
 pub(crate) fn get_profiler_state() -> *mut ThreadState {
@@ -42,11 +49,11 @@ pub(crate) fn get_profiler_state() -> *mut ThreadState {
     {
         #[cfg(all(windows, target_arch = "x86_64"))]
         {
-            let Some(key) = os_key::get_os_tls_key(&os_key::PROFILER_TLS_KEY) else {
+            let Some(key) = mnemosyne_core::os_tls::get_or_init_key(&PROFILER_TLS_KEY) else {
                 return THREAD_STATE.with(|cell| cell.get());
             };
             // SAFETY: `key` is the profiler's own `TlsAlloc`-allocated slot index.
-            let ptr = unsafe { os_key::get_teb_tls_slot(key) } as *mut ThreadState;
+            let ptr = unsafe { mnemosyne_core::os_tls::read_teb_slot(key) } as *mut ThreadState;
             if !ptr.is_null() {
                 ptr
             } else {
@@ -55,23 +62,25 @@ pub(crate) fn get_profiler_state() -> *mut ThreadState {
                     // SAFETY: `key` is the profiler's allocated slot; we publish
                     // this thread's own `THREAD_STATE` cell pointer into it so
                     // future reads on this thread reuse the same state.
-                    unsafe { os_key::set_teb_tls_slot(key, p as *mut core::ffi::c_void) };
+                    unsafe {
+                        mnemosyne_core::os_tls::write_teb_slot(key, p as *mut core::ffi::c_void);
+                    };
                     p
                 })
             }
         }
         #[cfg(not(all(windows, target_arch = "x86_64")))]
         {
-            let Some(key) = os_key::get_os_tls_key(&os_key::PROFILER_TLS_KEY) else {
+            let Some(key) = mnemosyne_core::os_tls::get_or_init_key(&PROFILER_TLS_KEY) else {
                 return THREAD_STATE.with(|cell| cell.get());
             };
-            let ptr = os_key::get_os_tls_value(key) as *mut ThreadState;
+            let ptr = mnemosyne_core::os_tls::read_value(key) as *mut ThreadState;
             if !ptr.is_null() {
                 ptr
             } else {
                 THREAD_STATE.with(|cell| {
                     let p = cell.get();
-                    os_key::set_os_tls_value(key, p as *mut core::ffi::c_void);
+                    mnemosyne_core::os_tls::write_value(key, p as *mut core::ffi::c_void);
                     p
                 })
             }

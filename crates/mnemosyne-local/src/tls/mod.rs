@@ -8,7 +8,11 @@
 //! | [`stable`] | `StandardTls`, `CachedCellTls` (stable-channel `thread_local!`) |
 //! | [`native`] | `NativeOsTls` (`TlsGetValue`/`pthread_getspecific`), `AsmTls` (TEB inline ASM) |
 //! | [`nightly`] | `NightlyTls` (`#[thread_local]` nightly path) |
-//! | `os_helpers` | Private platform-native TLS key init, get, set functions and TEB ASM helpers |
+//!
+//! The raw platform-native TLS FFI (OS key init, get, set, and the Windows
+//! x86-64 TEB ASM helpers) is not declared here: it lives once in
+//! [`mnemosyne_core::os_tls`] so this crate and `mnemosyne-prof` share one
+//! `unsafe` implementation.
 //!
 //! # Selection Strategy
 //!
@@ -21,7 +25,6 @@
 
 pub mod native;
 pub mod nightly;
-pub(crate) mod os_helpers;
 pub mod stable;
 pub mod traits;
 
