@@ -172,22 +172,30 @@ impl GlobalSegmentPool {
         &self.nodes
     }
 
+    #[inline(always)]
+    fn sum_node_metric<F>(&self, metric: F) -> usize
+    where
+        F: Fn(&NodeSegmentPool) -> usize,
+    {
+        self.nodes.iter().map(metric).sum()
+    }
+
     /// Segments currently cached across every node pool.
     #[inline]
     pub fn retained_count(&self) -> usize {
-        self.nodes.iter().map(|n| n.retained_count()).sum()
+        self.sum_node_metric(NodeSegmentPool::retained_count)
     }
 
     /// Cumulative segments returned to the OS by purges, summed over nodes.
     #[inline]
     pub fn purged_count(&self) -> usize {
-        self.nodes.iter().map(|n| n.purged_count()).sum()
+        self.sum_node_metric(NodeSegmentPool::purged_count)
     }
 
     /// Cumulative purge passes recorded, summed over nodes.
     #[inline]
     pub fn purge_call_count(&self) -> usize {
-        self.nodes.iter().map(|n| n.purge_call_count()).sum()
+        self.sum_node_metric(NodeSegmentPool::purge_call_count)
     }
 
     #[inline]
@@ -199,13 +207,13 @@ impl GlobalSegmentPool {
     /// Cumulative segments whose physical backing a confirmed `page_reset` released while they stayed cached, summed over nodes.
     #[inline]
     pub fn reset_segments_count(&self) -> usize {
-        self.nodes.iter().map(|n| n.reset_segments_count()).sum()
+        self.sum_node_metric(NodeSegmentPool::reset_segments_count)
     }
 
     /// Cumulative reset passes recorded, summed over nodes.
     #[inline]
     pub fn reset_call_count(&self) -> usize {
-        self.nodes.iter().map(|n| n.reset_call_count()).sum()
+        self.sum_node_metric(NodeSegmentPool::reset_call_count)
     }
 
     #[inline]

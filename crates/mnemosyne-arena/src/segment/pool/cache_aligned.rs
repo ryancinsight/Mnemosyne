@@ -1,4 +1,5 @@
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+use mnemosyne_core::sync::PackedTaggedPtr;
 use mnemosyne_core::types::Segment;
 
 /// Tagged atomic segment head used by segment-pool stacks.
@@ -143,17 +144,6 @@ impl Drop for SegmentLockGuard<'_> {
 }
 
 impl TaggedHead {
-    #[cfg(target_pointer_width = "64")]
-    const PACKED_PTR_BITS: u32 = 48;
-
-    #[cfg(target_pointer_width = "64")]
-    const PTR_MASK: usize = (1usize << Self::PACKED_PTR_BITS) - 1;
-    #[cfg(not(target_pointer_width = "64"))]
-    const PTR_MASK: usize = usize::MAX;
-
-    #[cfg(target_pointer_width = "64")]
-    const TAG_MASK: usize = (1usize << (usize::BITS - Self::PACKED_PTR_BITS)) - 1;
-
     /// Creates a new empty head: the null pointer packed with tag 0.
     #[inline(always)]
     pub(crate) const fn new() -> Self {
@@ -169,35 +159,19 @@ impl TaggedHead {
 
     #[inline(always)]
     pub(crate) fn ptr(state: *mut Segment) -> *mut Segment {
-        state.map_addr(|addr| addr & Self::PTR_MASK)
+        PackedTaggedPtr::<Segment>::ptr(state)
     }
 
     #[inline(always)]
     pub(crate) fn tagged_successor(ptr: *mut Segment, current: *mut Segment) -> *mut Segment {
-        #[cfg(not(target_pointer_width = "64"))]
-        let _ = current;
-        #[cfg(target_pointer_width = "64")]
-        {
-            let addr = ptr.addr();
-            if (addr & !Self::PTR_MASK) != 0 {
-                #[cfg(any(feature = "std", test))]
-                {
-                    std::process::abort();
-                }
-                #[cfg(not(any(feature = "std", test)))]
-                {
-                    panic!("Segment address does not fit in packed huge-pool head");
-                }
-            }
-
-            let tag = (((current.addr() >> Self::PACKED_PTR_BITS) + 1) & Self::TAG_MASK)
-                << Self::PACKED_PTR_BITS;
-            ptr.map_addr(|_| tag | addr)
+        if let Err(reason) = PackedTaggedPtr::<Segment>::checked_pack(ptr) {
+            // One policy with the free-list head: an address that cannot be
+            // packed routes to the shared corruption sink (abort under `std`,
+            // panic otherwise) instead of the former hand-rolled
+            // abort-vs-`panic!` split.
+            mnemosyne_core::abort::abort_on_corruption(reason);
         }
-        #[cfg(not(target_pointer_width = "64"))]
-        {
-            ptr
-        }
+        PackedTaggedPtr::<Segment>::tagged_successor(ptr, current)
     }
 
     #[inline(always)]

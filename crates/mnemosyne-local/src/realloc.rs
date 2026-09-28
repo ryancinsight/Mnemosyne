@@ -1,5 +1,7 @@
 use crate::alloc::small_path_class;
+use crate::free_helpers::resolve_owner_slot;
 use crate::usable_size;
+use crate::validation::{init_bytes, poison_bytes};
 use crate::{
     LocalAllocatorSelector, ThreadAllocator, initialize_allocated_bytes, poison_freed_bytes,
     thread_alloc_layout, thread_free,
@@ -12,6 +14,43 @@ use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::round_up_size;
 use mnemosyne_core::types::Segment;
 use mnemosyne_core::types::{Block, locate_segment};
+
+/// Non-generic SSOT for the in-place realloc byte-mutation step.
+///
+/// When `realloc_can_reuse` returns true, the block stays in place but the
+/// delta region must be initialized (grow) or poisoned (shrink) per policy.
+/// All policy flags are passed as plain booleans so this body compiles once
+/// regardless of how many `(P, B)` pairs call `thread_realloc`.
+///
+/// # Safety
+///
+/// `ptr` must be a live allocation whose usable size covers `new_size`.
+#[inline(always)]
+unsafe fn realloc_delta_init(
+    ptr: *mut u8,
+    old_size: usize,
+    new_size: usize,
+    zero_init: bool,
+    poison: bool,
+    alloc_byte: u8,
+    free_byte: u8,
+) {
+    if new_size > old_size {
+        // Grow: initialize the newly accessible region.
+        // SAFETY: `ptr.add(old_size)` is within the backing block (caller
+        // contract: usable size >= new_size > old_size).
+        let delta_ptr = unsafe { ptr.add(old_size) };
+        let delta = new_size - old_size;
+        unsafe { init_bytes(delta_ptr, delta, zero_init, poison, alloc_byte) };
+    } else if new_size < old_size {
+        // Shrink: poison the truncated tail.
+        // SAFETY: `ptr.add(new_size)` through `old_size - new_size` bytes is
+        // within the backing block (new_size < old_size <= usable size).
+        let tail_ptr = unsafe { ptr.add(new_size) };
+        let truncated = old_size - new_size;
+        unsafe { poison_bytes(tail_ptr, truncated, poison, free_byte) };
+    }
+}
 
 /// Whether a small reallocation can stay in its current size class.
 ///
@@ -37,6 +76,57 @@ pub fn small_realloc_fits_existing_class(layout: Layout, new_size: usize) -> boo
     match round_up_size(old_adjusted_size) {
         Some(block_stride) => new_size <= block_stride,
         None => false,
+    }
+}
+
+/// Determines whether a reallocation can be served in-place without copying.
+///
+/// This is a **non-generic** helper: it uses only `MAX_SMALL_ALLOC_SIZE`,
+/// `MIN_BLOCK_SIZE`, and `usable_size` (all non-generic), so it compiles
+/// once and is shared across every `(P, B)` monomorphization of
+/// `thread_realloc`, reducing the amount of code specialized per policy.
+///
+/// Returns `true` when the existing block is large enough for `new_size` and
+/// no copy is required.
+///
+/// # Safety
+///
+/// `ptr` must be a non-null allocation of `layout` returned by this allocator;
+/// `usable_size(ptr)` reads the originating segment metadata.
+#[inline]
+unsafe fn realloc_can_reuse(ptr: *mut u8, layout: Layout, new_size: usize) -> bool {
+    let is_small = layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE;
+    if new_size <= layout.size() {
+        if is_small {
+            // Small shrink: the existing class block already holds `new_size`;
+            // reuse when the shrink stays within the half-capacity threshold
+            // that prevents excessive block fragmentation.
+            return new_size >= layout.size() / 2;
+        }
+        // Large/huge shrink: fast-path reuse for modest shrinks; page-rounded
+        // comparison for larger ones.
+        let new_adjusted = core::cmp::max(new_size, layout.align());
+        if new_size >= layout.size() / 2 {
+            return true;
+        }
+        if new_adjusted > MAX_SMALL_ALLOC_SIZE || layout.align() > MIN_BLOCK_SIZE {
+            // SAFETY: `ptr` is a live allocation per the caller's contract;
+            // `usable_size` reads only segment/page metadata.
+            let current_usable = unsafe { usable_size(ptr) };
+            let page_size = mnemosyne_core::constants::PAGE_SIZE;
+            let new_page_rounded = (new_adjusted + page_size - 1) & !(page_size - 1);
+            return new_page_rounded >= current_usable;
+        }
+        false
+    } else {
+        // Grow: reuse in place if the allocation already has capacity.
+        if is_small {
+            small_realloc_fits_existing_class(layout, new_size)
+        } else {
+            // SAFETY: same contract as above.
+            let current_usable = unsafe { usable_size(ptr) };
+            new_size <= current_usable
+        }
     }
 }
 
@@ -86,85 +176,24 @@ pub unsafe fn thread_realloc<
     new_size: usize,
 ) -> *mut u8 {
     if !ptr.is_null() && new_size != 0 {
-        let is_grow = new_size > layout.size();
-
-        let mut can_reuse = false;
-        {
-            let is_small =
-                layout.size() <= MAX_SMALL_ALLOC_SIZE && layout.align() <= MIN_BLOCK_SIZE;
-
-            if new_size <= layout.size() {
-                if is_small {
-                    if new_size >= layout.size() / 2 {
-                        can_reuse = true;
-                    }
-                } else {
-                    // Large/huge shrink. When the request stays above half the
-                    // old size, reuse in place regardless of the exact mapping.
-                    // The page-rounded comparison against the current usable size
-                    // is the only branch that consumes `usable_size` (a
-                    // segment-header dereference), so it is computed only there.
-                    let new_adjusted = core::cmp::max(new_size, layout.align());
-                    if new_size >= layout.size() / 2 {
-                        can_reuse = true;
-                    } else if new_adjusted > MAX_SMALL_ALLOC_SIZE || layout.align() > MIN_BLOCK_SIZE
-                    {
-                        // SAFETY: `ptr` is non-null and, per the realloc `# Safety`
-                        // contract, was returned by a Mnemosyne allocation, which
-                        // is exactly `usable_size`'s precondition.
-                        let current_usable = unsafe { usable_size(ptr) };
-                        let page_size = mnemosyne_core::constants::PAGE_SIZE;
-                        let new_page_rounded = (new_adjusted + page_size - 1) & !(page_size - 1);
-                        if new_page_rounded >= current_usable {
-                            can_reuse = true;
-                        }
-                    }
-                }
-            } else {
-                // new_size > layout.size()
-                if is_small {
-                    if small_realloc_fits_existing_class(layout, new_size) {
-                        can_reuse = true;
-                    }
-                } else {
-                    // SAFETY: `ptr` is the non-null allocation from the realloc
-                    // `# Safety` contract, satisfying `usable_size`'s precondition.
-                    let current_usable = unsafe { usable_size(ptr) };
-                    if new_size <= current_usable {
-                        can_reuse = true;
-                    }
-                }
-            }
-        }
+        // SAFETY: `ptr` is non-null and allocator-owned per the caller's
+        // `# Safety` contract; `realloc_can_reuse` only reads metadata.
+        let can_reuse = unsafe { realloc_can_reuse(ptr, layout, new_size) };
 
         if can_reuse {
-            if P::ZERO_INITIALIZE && is_grow {
-                // SAFETY: `ptr.add(layout.size())` starts at the end of the
-                // previously initialized range; the delta `new_size - layout.size`
-                // bytes lie within the allocation (capacity >= new_size proven
-                // by `can_reuse`). Zeroing them satisfies ZERO_INITIALIZE.
-                unsafe {
-                    core::ptr::write_bytes(ptr.add(layout.size()), 0, new_size - layout.size());
-                }
-            } else if P::ENABLE_POISONING && is_grow {
-                // SAFETY: same bounds argument as above; writing the poison byte
-                // marks the grown-into region until the caller writes real data.
-                unsafe {
-                    core::ptr::write_bytes(
-                        ptr.add(layout.size()),
-                        P::POISON_ALLOC_BYTE,
-                        new_size - layout.size(),
-                    );
-                }
-            }
-            if P::ENABLE_POISONING && new_size < layout.size() {
-                // SAFETY: `ptr.add(new_size)` starts at the new logical end of
-                // the allocation; `layout.size() - new_size` bytes are the
-                // truncated tail, still within the backing block.
-                unsafe {
-                    poison_freed_bytes::<P>(ptr.add(new_size), layout.size() - new_size);
-                }
-            }
+            // SAFETY: `ptr` is non-null and its backing block covers `new_size`
+            // (proven by `can_reuse`).
+            unsafe {
+                realloc_delta_init(
+                    ptr,
+                    layout.size(),
+                    new_size,
+                    P::ZERO_INITIALIZE,
+                    P::ENABLE_POISONING,
+                    P::POISON_ALLOC_BYTE,
+                    P::POISON_FREE_BYTE,
+                )
+            };
             return ptr;
         }
     } else {
@@ -214,29 +243,9 @@ pub unsafe fn thread_realloc<
     if is_old_small && let Some(class) = new_class {
         let slot_ptr = B::get_allocator_ptr_raw_for_policy::<P>();
         let owner = unsafe { Segment::owner(segment) };
-        #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
-        let (is_owner, owner_slot) = {
-            let tid = mnemosyne_core::types::current_thread_id();
-            let owner_allocator = unsafe { Segment::owner_allocator(segment) };
-            let same_thread_owner = !owner_allocator.is_null() && owner.matches_thread_id(tid);
-            let caller_owner = !slot_ptr.is_null() && owner.matches(slot_ptr);
-            if same_thread_owner {
-                (true, owner_allocator)
-            } else if caller_owner {
-                (true, slot_ptr)
-            } else {
-                (false, core::ptr::null_mut())
-            }
-        };
-        #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
-        let (is_owner, owner_slot) = {
-            let caller_owner = !slot_ptr.is_null() && owner.matches(slot_ptr);
-            if caller_owner {
-                (true, slot_ptr)
-            } else {
-                (false, core::ptr::null_mut())
-            }
-        };
+        // SAFETY: `segment` is the live header from `locate_segment`; the platform
+        // helper only reads ownership metadata through raw-pointer projections.
+        let (is_owner, owner_slot) = unsafe { resolve_owner_slot(segment, owner, slot_ptr) };
 
         if is_owner && !owner_slot.is_null() {
             // SAFETY: `owner_slot` is the live allocator slot that owns this

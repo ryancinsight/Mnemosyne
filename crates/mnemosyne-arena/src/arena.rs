@@ -82,55 +82,21 @@ unsafe fn init_segment_layout(
     Some((user_ptr, aligned_addr, tail_slack_start, mapping_end))
 }
 
-/// Initialise a **fresh** large/huge segment from a new OS mapping.
+/// Initialises the segment header and shared metadata for a large/huge
+/// allocation, dispatching between fresh (new OS mapping) and cached
+/// (pool reuse) cases.
 ///
-/// Writes invariant header fields (`raw_alloc_ptr`, `numa_node`, and
-/// `block_size`) that are set once and never change; then calls the shared
-/// layout helper to set `alloc_count` and write the back-pointer.
-///
-/// # Safety
-/// `raw_ptr` must be a live, freshly mapped region of at least
-/// `total_alloc_size` bytes with no prior segment header.
-#[inline(always)]
-unsafe fn initialize_large_or_huge_segment_fresh(
-    raw_ptr: *mut u8,
-    total_alloc_size: usize,
-    alignment: usize,
-    size: usize,
-) -> Option<(*mut u8, usize, usize, usize)> {
-    let aligned_addr = checked_align_up(raw_ptr.addr(), SEGMENT_ALIGN)?;
-    let aligned_ptr = raw_ptr.map_addr(|_| aligned_addr).cast::<Segment>();
-    // SAFETY: fresh mapping — write invariant header fields.
-    unsafe {
-        let node = crate::current_numa_node();
-        Segment::initialize(aligned_ptr, raw_ptr, node);
-        (*aligned_ptr).pages[0].block_size = total_alloc_size as _;
-    }
-    // SAFETY: same contract as the caller's unsafe block.
-    unsafe { init_segment_layout(raw_ptr, total_alloc_size, alignment, size) }
-}
-
-/// Initialise a **cached** large/huge segment reused from the huge-pool.
-///
-/// Invariant header fields (`raw_alloc_ptr`, `block_size`) are already live
-/// from the original allocation; only `alloc_count` and the back-pointer need
-/// refreshing.  Skipping the full `Segment::initialize` path removes a cluster
-/// of header writes on every cache-hit allocation.
+/// For fresh mappings the invariant header fields (`raw_alloc_ptr`,
+/// `numa_node`, `block_size`) are written once before the shared layout
+/// computation. For cached mappings those fields are already live, so only
+/// `alloc_count` and the back-pointer are refreshed.
 ///
 /// # Safety
-/// `raw_ptr` must be a live region holding a valid, previously-initialized
-/// `Segment` header at the SEGMENT_ALIGN-aligned base of the mapping.
-#[inline(always)]
-unsafe fn initialize_large_or_huge_segment_cached(
-    raw_ptr: *mut u8,
-    total_alloc_size: usize,
-    alignment: usize,
-    size: usize,
-) -> Option<(*mut u8, usize, usize, usize)> {
-    // SAFETY: same contract as the caller's unsafe block.
-    unsafe { init_segment_layout(raw_ptr, total_alloc_size, alignment, size) }
-}
-
+///
+/// `raw_ptr` must be a live mapping of at least `total_alloc_size` bytes.
+/// When `is_cache_hit` is `false` the region must be freshly allocated with
+/// no prior segment header; when `true` the segment header must be valid
+/// and previously initialised.
 #[inline(always)]
 unsafe fn initialize_large_or_huge_segment(
     raw_ptr: *mut u8,
@@ -139,19 +105,19 @@ unsafe fn initialize_large_or_huge_segment(
     size: usize,
     is_cache_hit: bool,
 ) -> Option<(*mut u8, usize, usize, usize)> {
-    if is_cache_hit {
-        // SAFETY: forwarded contract — `raw_ptr` holds a valid previously-
-        // initialized `Segment` header whose invariant fields are live.
+    if !is_cache_hit {
+        let aligned_addr = checked_align_up(raw_ptr.addr(), SEGMENT_ALIGN)?;
+        let aligned_ptr = raw_ptr.map_addr(|_| aligned_addr).cast::<Segment>();
+        // SAFETY: fresh mapping — write invariant header fields once.
         unsafe {
-            initialize_large_or_huge_segment_cached(raw_ptr, total_alloc_size, alignment, size)
-        }
-    } else {
-        // SAFETY: forwarded contract — `raw_ptr` is a freshly allocated
-        // OS mapping whose `Segment` header has not yet been initialized.
-        unsafe {
-            initialize_large_or_huge_segment_fresh(raw_ptr, total_alloc_size, alignment, size)
+            let node = crate::current_numa_node();
+            Segment::initialize(aligned_ptr, raw_ptr, node);
+            (*aligned_ptr).pages[0].block_size = total_alloc_size as _;
         }
     }
+    // Shared: compute layout, set alloc_count, write back-pointer.
+    // SAFETY: forwarded from this function's contract.
+    unsafe { init_segment_layout(raw_ptr, total_alloc_size, alignment, size) }
 }
 
 /// Allocates a block of memory of the given size and alignment.
@@ -243,34 +209,28 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(
     user_ptr
 }
 
-/// Frees a memory block that was allocated directly from the global arena.
+/// Resolves and validates the segment header for a large/huge deallocation.
 ///
-/// # Safety
+/// Returns `(segment_ptr, raw_alloc_ptr, huge_size)` for valid inputs, or
+/// `None` when `ptr` is null and the caller did not supply `segment_ptr`.
 ///
-/// This function is unsafe because it performs raw pointer dereferencing and
-/// releases OS-level memory mappings. Callers must guarantee:
-/// - `ptr` must be a pointer returned by a previous call to `allocate_large_or_huge`
-///   or be a block from a valid segment.
-/// - If `segment_ptr` is null, `ptr` must be preceded by a valid pointer-aligned
-///   metadata slot containing the pointer to the owning `Segment`.
-/// - If `segment_ptr` is non-null, it must point to the valid `Segment` that owns `ptr`.
-/// - The backend `B` must match the backend used to allocate the block.
-#[must_use = "ignoring the release result drops the backend failure signal; bind it to `_released` when no recovery is possible"]
-pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
+/// This is the non-`B`-sensitive preamble shared by all backends: segment
+/// resolution uses only raw pointer arithmetic and field reads, so it compiles
+/// once regardless of the `B` monomorphization axis.
+#[inline]
+fn resolve_huge_dealloc_segment(
     ptr: *mut u8,
     segment_ptr: *mut Segment,
-) -> bool {
+) -> Option<(*mut Segment, *mut u8, usize)> {
     let resolved_segment_ptr = if segment_ptr.is_null() {
         if ptr.is_null() {
-            return false;
+            return None;
         }
-        // SAFETY: per this function's contract, a `ptr` with a null `segment_ptr`
-        // was returned by `allocate_large_or_huge`, which writes the owning
-        // `Segment` pointer into the pointer-aligned metadata slot immediately
-        // preceding `ptr`. Reading that slot recovers the segment; the value is
-        // validated (non-null, segment-aligned) immediately below before use.
-        let s = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-        if s.is_null() || (s as usize) & (SEGMENT_ALIGN - 1) != 0 {
+        // SAFETY: the large/huge allocation path writes the owning `Segment`
+        // pointer into the pointer-aligned metadata slot immediately preceding
+        // `ptr`; this read recovers that candidate pointer for validation.
+        let resolved = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+        if resolved.is_null() || (resolved as usize) & (SEGMENT_ALIGN - 1) != 0 {
             #[cfg(any(feature = "std", test))]
             {
                 std::process::abort();
@@ -280,18 +240,13 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
                 panic!("Corrupt segment pointer detected in metadata slot");
             }
         }
-        s
+        resolved
     } else {
         segment_ptr
     };
 
-    if resolved_segment_ptr.is_null() {
-        return false;
-    }
-
-    // SAFETY: `resolved_segment_ptr` is non-null (checked above) and is either
-    // the caller-supplied `segment_ptr` or the validated metadata-slot pointer,
-    // both of which name a valid `Segment` exclusively owned by this free.
+    // SAFETY: `resolved_segment_ptr` is either the caller-supplied segment
+    // pointer or the validated metadata-slot back-pointer recovered above.
     let segment = unsafe { &mut *resolved_segment_ptr };
     let raw_ptr = segment.raw_alloc_ptr;
     let aligned_addr = resolved_segment_ptr as usize;
@@ -310,22 +265,49 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
         }
     }
 
-    let huge_size = segment.pages[0].block_size;
+    let huge_size = segment.pages[0].block_size as usize;
+    Some((resolved_segment_ptr, raw_ptr, huge_size))
+}
+
+/// Frees a memory block that was allocated directly from the global arena.
+///
+/// # Safety
+///
+/// This function is unsafe because it performs raw pointer dereferencing and
+/// releases OS-level memory mappings. Callers must guarantee:
+/// - `ptr` must be a pointer returned by a previous call to `allocate_large_or_huge`
+///   or be a block from a valid segment.
+/// - If `segment_ptr` is null, `ptr` must be preceded by a valid pointer-aligned
+///   metadata slot containing the pointer to the owning `Segment`.
+/// - If `segment_ptr` is non-null, it must point to the valid `Segment` that owns `ptr`.
+/// - The backend `B` must match the backend used to allocate the block.
+#[must_use = "ignoring the release result drops the backend failure signal; bind it to `_released` when no recovery is possible"]
+pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
+    ptr: *mut u8,
+    segment_ptr: *mut Segment,
+) -> bool {
+    let (resolved_segment_ptr, raw_ptr, huge_size) =
+        match resolve_huge_dealloc_segment(ptr, segment_ptr) {
+            Some(val) => val,
+            None => return false,
+        };
 
     if huge_size > 0 {
         // It is a huge allocation. Try to cache it first.
-        let node = segment.numa_node as usize;
+        // SAFETY: `resolved_segment_ptr` was validated by
+        // `resolve_huge_dealloc_segment` and still names the live segment
+        // exclusively owned by this deallocation path.
+        let node = unsafe { (*resolved_segment_ptr).numa_node as usize };
         // SAFETY: `resolved_segment_ptr` is a valid, initialized huge-allocation
         // segment exclusively owned here; `try_push` either takes ownership into
         // the pool (returns true) or leaves it untouched (returns false).
         if unsafe { B::global_huge_pool().try_push(resolved_segment_ptr, node) } {
             return true;
         }
-        let raw_ptr = segment.raw_alloc_ptr;
         // SAFETY: the pool declined to cache this huge segment, so `raw_ptr`/
         // `huge_size` name its still-live OS mapping, released here through the
         // allocating backend `B`.
-        unsafe { B::deallocate(raw_ptr, huge_size as usize) }
+        unsafe { B::deallocate(raw_ptr, huge_size) }
     } else {
         // It is a standard segment containing page allocations.
         // Return it to the global segment pool.

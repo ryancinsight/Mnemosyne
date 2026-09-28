@@ -2,10 +2,10 @@
 
 use super::cold::thread_free_cold;
 use super::internal::do_local_free_internal_policy;
-use crate::free_helpers::commit_in_place_free;
+use crate::free_helpers::{commit_in_place_free, free_large_or_huge_raw, resolve_owner_slot};
 use crate::{LocalAllocatorSelector, poison_freed_bytes};
 use core::ptr::NonNull;
-use mnemosyne_arena::{HasSegmentPool, deallocate_large_or_huge};
+use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::constants::PAGE_SIZE;
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::types::{Block, Page, Segment, locate_page, locate_segment};
@@ -41,22 +41,11 @@ pub(super) unsafe fn thread_free_classified<
     // Reading `block_size` from it would interpret user bytes as page metadata.
     // See `usable_size` for the full argument.
     if !LAYOUT_PROVES_SMALL && (page_index == 0 || unsafe { (*page_ptr).block_size } == 0) {
-        // SAFETY: huge-allocation metadata layout. `segment` is recovered
-        // from the metadata slot one pointer slot directly preceding the
-        // user payload (`(ptr as *mut *mut Segment) - 1`); every huge
-        // allocation writes this slot at `allocate_large_or_huge` time.
-        // The `huge_mapping_suffix_from` read, the `poison_freed_bytes` write,
-        // and the `deallocate_large_or_huge` call all stay inside the
-        // originating huge mapping.
-        let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
-        if P::ENABLE_POISONING {
-            // SAFETY: covered by the huge-allocation metadata argument above: the
-            // segment's raw mapping length is the actual reservation for this
-            // pointer, and it includes any alignment or prefix slack.
-            let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
-            unsafe { poison_freed_bytes::<P>(ptr, size) };
+        // SAFETY: huge-allocation metadata layout — segment pointer stored one
+        // slot before the payload; `free_large_or_huge_raw` reads and releases it.
+        unsafe {
+            free_large_or_huge_raw::<B>(ptr, P::ENABLE_POISONING, P::POISON_FREE_BYTE);
         }
-        let _released = unsafe { deallocate_large_or_huge::<B>(ptr, segment) };
         #[cfg(feature = "dealloc-probe")]
         crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::HugeClassifier);
         return;
@@ -98,30 +87,13 @@ pub(super) unsafe fn thread_free_classified<
     let randomized =
         (P::RANDOMIZE_ALLOCATION && encrypted) || unsafe { (*page_ptr).secondary_free.is_some() };
 
-    #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
-    let (is_owner, owner_allocator) = {
-        let tid = mnemosyne_core::types::current_thread_id();
-        let owner_allocator_ptr = unsafe { Segment::owner_allocator(segment) };
-        let caller_allocator = B::get_allocator_ptr_raw_for_policy::<P>();
-        let same_thread_owner = !owner_allocator_ptr.is_null() && owner.matches_thread_id(tid);
-        let caller_owner = !caller_allocator.is_null() && owner.matches(caller_allocator);
-        if same_thread_owner {
-            (true, owner_allocator_ptr)
-        } else if caller_owner {
-            (true, caller_allocator)
-        } else {
-            (false, core::ptr::null_mut())
-        }
-    };
-    #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
-    let (is_owner, owner_allocator) = {
-        let caller_allocator = B::get_allocator_ptr_raw_for_policy::<P>();
-        if owner.matches(caller_allocator) {
-            (true, caller_allocator)
-        } else {
-            (false, core::ptr::null_mut())
-        }
-    };
+    // Resolve whether the caller owns this segment's allocator, using the shared
+    // platform-specific logic (SSOT for the Windows same-thread cross-policy case).
+    let caller_allocator = B::get_allocator_ptr_raw_for_policy::<P>();
+    // SAFETY: `segment` is the live header from `locate_segment`; the helper
+    // reads only ownership metadata through raw-pointer projections.
+    let (is_owner, owner_allocator) =
+        unsafe { resolve_owner_slot(segment, owner, caller_allocator) };
 
     if is_owner && !owner_allocator.is_null() {
         // SAFETY: `page_ptr` is live (above) and this thread owns the segment, so no
@@ -211,7 +183,7 @@ pub(super) unsafe fn thread_free_classified<
                 };
                 // SAFETY: `alloc` is the exclusively-borrowed owning allocator
                 // with `is_allocating` raised, the precondition of the cold sweep.
-                unsafe { alloc.record_defrag_operation::<P>(true) };
+                unsafe { alloc.record_defrag_operation(true) };
                 unsafe {
                     crate::tls_slot::LocalAllocatorSlot::<B>::set_allocating(owner_allocator, false)
                 };

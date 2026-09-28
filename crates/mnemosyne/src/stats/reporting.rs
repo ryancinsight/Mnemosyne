@@ -75,22 +75,26 @@ impl BinStatsWindow {
         })
     }
 
+    /// Computes the sum of a single field across all size-class delta snapshots.
+    ///
+    /// SSOT for the `self.delta().iter().map(f).fold(0, saturating_add)` pattern
+    /// shared by `total_alloc_count_delta`, `total_live_bytes_delta`, and
+    /// `total_requested_bytes_delta`.
+    #[inline(always)]
+    fn sum_delta_field(&self, f: impl Fn(&mnemosyne_local::BinSnapshot) -> u64) -> u64 {
+        self.delta().iter().map(f).fold(0u64, u64::saturating_add)
+    }
+
     /// Total allocations during the window across all size classes.
     #[must_use]
     pub fn total_alloc_count_delta(&self) -> u64 {
-        self.delta()
-            .iter()
-            .map(|s| s.alloc_count)
-            .fold(0u64, u64::saturating_add)
+        self.sum_delta_field(|s| s.alloc_count)
     }
 
     /// Total live bytes at the end of the window minus the start.
     #[must_use]
     pub fn total_live_bytes_delta(&self) -> u64 {
-        self.delta()
-            .iter()
-            .map(|s| s.live_bytes())
-            .fold(0u64, u64::saturating_add)
+        self.sum_delta_field(|s| s.live_bytes())
     }
 
     /// Total user-requested bytes during the window across all size classes.
@@ -98,10 +102,7 @@ impl BinStatsWindow {
     /// Requires `record_alloc_with_size` to have been used at call sites.
     #[must_use]
     pub fn total_requested_bytes_delta(&self) -> u64 {
-        self.delta()
-            .iter()
-            .map(|s| s.requested_bytes)
-            .fold(0u64, u64::saturating_add)
+        self.sum_delta_field(|s| s.requested_bytes)
     }
 
     /// Internal fragmentation ratio over the window:

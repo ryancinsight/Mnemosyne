@@ -102,12 +102,7 @@ fn test_page_reclaim_thread_free_hot_path() {
     }
 
     // Reclaim thread_free. Since page.free is None, this triggers O(1) swap.
-    let reclaimed = unsafe {
-        Page::reclaim_thread_free_for_policy::<crate::policy::StandardPolicy>(
-            segment_ptr,
-            PAGE_INDEX,
-        )
-    };
+    let reclaimed = unsafe { Page::reclaim_thread_free_for_policy(segment_ptr, PAGE_INDEX) };
 
     assert_eq!(reclaimed, 2);
     assert_eq!(unsafe { (*page).alloc_count }, 0);
@@ -255,12 +250,8 @@ fn reclaim_if_present_for_policy_keeps_randomized_head_selection() {
         (*page).thread_free.push::<RandomizedTestPolicy>(remote);
     }
 
-    let reclaimed = unsafe {
-        Page::reclaim_thread_free_if_present_for_policy::<RandomizedTestPolicy>(
-            segment_ptr,
-            PAGE_INDEX,
-        )
-    };
+    let reclaimed =
+        unsafe { Page::reclaim_thread_free_if_present_for_policy(segment_ptr, PAGE_INDEX) };
     assert_eq!(
         reclaimed, 1,
         "the remote-free drain must reclaim the queued block"

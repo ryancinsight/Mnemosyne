@@ -1122,3 +1122,67 @@ fn scratch_pool_preload_sets_capacity() {
     assert!(pool.slot_capacity(0) >= 64);
     assert!(pool.slot_capacity(1) >= 128);
 }
+
+// ── MN-SCRATCH-GROWTH-COST: bounded path stays amortized; release trims ──────
+
+/// `with_scratch_bounded` grows geometrically like the unbounded path — an
+/// exact-growth variant (`ensure_len_exact`) was evaluated and rejected
+/// (MN-SCRATCH-GROWTH-COST-2026-09-04) because it drops the amortized
+/// doubling policy `ensure_len` exists to provide. The provision bound is
+/// enforced by `release`, which trims the slot back to exactly the recorded
+/// high-water request regardless of how far growth overshot it.
+#[test]
+fn scratch_pool_bounded_path_release_trims_to_provision() {
+    let pool = ScratchPool::<f32>::new();
+
+    // Warm the slot to a capacity that is not a power of two so doubling
+    // lands on a value different from the target request.
+    pool.with_scratch_bounded(8192, |_| {});
+    assert_eq!(pool.slot_capacity(0), 8192);
+
+    // A larger bounded request may overshoot via geometric growth, exactly
+    // like the unbounded path — the request itself is still satisfied.
+    pool.with_scratch_bounded(12288, |scratch| {
+        assert_eq!(scratch.len(), 12288);
+    });
+    assert!(
+        pool.slot_capacity(0) >= 12288,
+        "bounded growth must satisfy the request; got {}",
+        pool.slot_capacity(0)
+    );
+
+    // Release always clamps back to the recorded provision (12288), whether
+    // or not growth overshot it.
+    let caps = pool.release();
+    assert_eq!(caps[0], 12288, "release must retain exactly the provision");
+    assert_eq!(pool.slot_capacity(0), 12288);
+}
+
+/// Unbounded growth (with_scratch) is still allowed to overshoot for
+/// amortization — this test pins that contract so we don't accidentally
+/// restrict it.
+#[test]
+fn scratch_pool_unbounded_path_allows_geometric_overshoot() {
+    let pool = ScratchPool::<f32>::new();
+    pool.with_scratch(8192, |_| {});
+    // A request that fits within capacity must not reallocate.
+    let cap_before = pool.slot_capacity(0);
+    pool.with_scratch(9000, |_| {});
+    let cap_after = pool.slot_capacity(0);
+    // Geometric policy: new capacity = max(9000, 8192*2) = 16384, not 9000.
+    // Accept anything >= 9000.
+    assert!(
+        cap_after >= 9000,
+        "unbounded growth must satisfy the request; got {}",
+        cap_after
+    );
+    // And if a grow happened it must be at least as large as cap_before * 2.
+    if cap_after > cap_before {
+        assert!(
+            cap_after >= cap_before.saturating_mul(2),
+            "geometric policy: new cap {} must be >= prev*2 {}",
+            cap_after,
+            cap_before.saturating_mul(2)
+        );
+    }
+}

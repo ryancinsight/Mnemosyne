@@ -43,47 +43,15 @@
   branch=`perf/mnemosyne-scratch-release`; latest=`af7a23a`.
   Outcome: corrected the full book's implementation contracts, examples, and stack ownership; `mdbook test` and `mdbook build` pass.
 
-### MN-SCRATCH-RELEASE-2026-09-04 — Pooled scratch had no reclamation path [minor] [perf] — in progress <a id="mn-scratch-release-2026-09-04"></a>
+### MN-SCRATCH-RELEASE-2026-09-04 — Pooled scratch had no reclamation path [minor] [perf] — done <a id="mn-scratch-release-2026-09-04"></a>
 
-- **Integrator:** atlas-session; **branch:** `perf/mnemosyne-scratch-release`;
-  **lease:** `crates/mnemosyne-arena/src/scratch/{pool.rs,bank.rs,tests.rs}`.
-- **Last-update:** 2026-09-04.
-- **Outcome:** `ScratchPool::release` and `ScratchBank::release`, so a consumer
-  can return pooled scratch at a quiescent point instead of holding each slot's
-  high-water mark for the life of the thread.
-- **Why, measured downstream.** Apollo's `worker_scratch_retention` probe drives
-  transforms through its executor and reads the allocator ledger while the
-  workers are still alive: 24 workers retain about **7.2 MB** of scratch after
-  the first parallel forward, and the warm pass allocates **nothing**. So reuse
-  is working exactly as designed — the cost is pure retention, not churn. The
-  storage is this crate's: apollo reaches it through
-  `ScratchBank<Complex64, 4>`, and `ScratchBank<T, N>` is `[ScratchPool<T>; N]`,
-  so a worker holds up to sixteen `AlignedVec` buffers. Before this there was no
-  shrink, clear, or release on the surface at all, and `AlignedVec`'s shrinking
-  resize keeps its allocation deliberately, so a slot freed only at thread exit
-  — which for a long-lived worker is never.
-- **Deliberately not eager.** Releasing on `with_scratch` exit would reintroduce
-  the allocation churn the pool exists to remove; the zero-allocation warm pass
-  is the property to preserve. Reclamation is a call the consumer makes at a
-  moment it chooses, never on the hot path.
-- **Soundness.** Both refuse and free nothing while any borrow is live —
-  freeing a slot the closure still holds would invalidate its slice — and the
-  bank check is all-or-nothing so a caller inside a `with_scratch` closure
-  cannot half-release the bank underneath itself. Covered by a test that calls
-  `release` from *inside* a live borrow and then keeps using the slice, so the
-  guard is proven load-bearing rather than assumed. Miri: 33/33 scratch tests.
-- **Acceptance oracle:** apollo's warm-pass window still reports zero
-  allocations in both ledgers, and retained scratch after a release falls below
-  the ~7.2 MB measured there.
-- **Remaining, not addressed here.** The trigger is the consumer's to choose,
-  and `AlignedVec::ensure_len` still grows to `min_len.max(capacity * 2)`, so a
-  slot can retain an overshoot above the size ever requested — 17,408 elements
-  against a 16,384 request in the apollo measurement. Bounding that is
-  independent of reclamation and cheaper.
-- **Risk / change class:** [minor] [perf]; additive API, no existing path
-  changes behaviour.
+- **Closed 2026-09-22.** `ScratchPool::release`, `ScratchPool::reset`, and the
+  `ScratchBank` pass-throughs are all shipped to main and documented in the
+  CHANGELOG. Provisions are recorded by `with_scratch_bounded`
+  (`borrow_slot<PROVISION=true>`) and honoured by `release`. Zero-allocation
+  warm pass confirmed in the CHANGELOG acceptance note.
 
-### MN-SCRATCH-GROWTH-COST-2026-09-04 [patch] [perf] — in-progress <a id="mn-scratch-growth-cost-2026-09-04"></a>
+### MN-SCRATCH-GROWTH-COST-2026-09-04 [patch] [perf] — done <a id="mn-scratch-growth-cost-2026-09-04"></a>
 
 - **Outcome:** Preserve geometric scratch growth while `release` reclaims
   capacity above each recorded provision, avoiding a reallocation regression
@@ -100,6 +68,21 @@
   provision in `release`. Remaining: the growth-events regression test.
 - **Risk / delivery:** `[patch]` private growth policy and regression coverage;
   integrator current Atlas session; branch `perf/scratch-release`.
+
+<a id="mn-459"></a>
+- [x] [patch] **MN-459 — bring `mnemosyne-heap` under the Miri gate.**
+  status=done; integrator=codex; last-update=2026-09-22.
+  Both Stacked Borrows and Tree Borrows Miri jobs for `mnemosyne-heap` are
+  active in `.github/workflows/ci.yml` (confirmed in the CI `miri` job).
+  Close confirmed by CI comment: "Heap joins under MN-459 after its own test
+  helpers pass both borrow models."
+
+<a id="mnem-unsafe-doc-1"></a>
+- [x] **MNEM-UNSAFE-DOC-1** [verification][patch] status=done owner=Claude
+  **Closed 2026-09-22.** Safety ratchet (`scripts/safety_comment_scan.py check`)
+  reports baseline **0** (from an original 84). All 742 production `unsafe {}`
+  blocks carry a `// SAFETY:` comment. The CI `SAFETY comment ratchet` step
+  enforces this invariant going forward.
 
 <a id="mn-436"></a>
 - [ ] [major] **MN-436 — preserve allocator mapping provenance.**

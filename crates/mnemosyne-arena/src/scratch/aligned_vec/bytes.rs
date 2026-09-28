@@ -1,4 +1,5 @@
-//! Byte and `Pod` views over an [`AlignedVec`]'s initialized prefix.
+//! Byte, `Pod`, and UTF-8 string views over an [`AlignedVec`]'s initialized
+//! prefix.
 //!
 //! These reinterpret what is already there and never change the length, so
 //! they sit apart from the operations that do.
@@ -69,5 +70,78 @@ impl<T: ScratchElement> AlignedVec<T> {
         T: bytemuck::Pod,
     {
         bytemuck::cast_slice_mut(self.as_mut_slice())
+    }
+}
+
+/// `AlignedVec<u8>` as a `core::fmt::Write` sink.
+///
+/// Enables zero-allocation formatted output into an aligned buffer:
+///
+/// ```rust
+/// use core::fmt::Write as _;
+/// use mnemosyne_arena::AlignedVec;
+///
+/// let mut buf = AlignedVec::<u8>::with_capacity(64);
+/// write!(buf, "hello {}", 42).unwrap();
+/// assert_eq!(buf.as_slice(), b"hello 42");
+/// ```
+impl core::fmt::Write for AlignedVec<u8> {
+    /// Appends the UTF-8 bytes of `s` to the buffer, growing if needed.
+    #[inline]
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.extend_from_slice(s.as_bytes());
+        Ok(())
+    }
+}
+
+/// Formats an `AlignedVec<u8>` as a UTF-8 string (lossy).
+///
+/// Non-UTF-8 bytes are replaced with the Unicode replacement character U+FFFD.
+impl core::fmt::Display for AlignedVec<u8> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match core::str::from_utf8(self.as_slice()) {
+            Ok(s) => f.write_str(s),
+            Err(_) => {
+                // Replace non-UTF-8 bytes with U+FFFD replacement character.
+                let s = alloc::string::String::from_utf8_lossy(self.as_slice());
+                f.write_str(&s)
+            }
+        }
+    }
+}
+
+impl From<&str> for AlignedVec<u8> {
+    /// Copies the bytes of `s` into a new buffer.
+    #[inline]
+    fn from(s: &str) -> Self {
+        Self::from_slice(s.as_bytes())
+    }
+}
+
+impl AlignedVec<u8> {
+    /// Appends the bytes of `s` to the buffer.
+    ///
+    /// Equivalent to `self.extend_from_slice(s.as_bytes())` but named for
+    /// discoverability alongside the [`From<&str>`][From] impl and the
+    /// [`core::fmt::Write`] impl.
+    #[inline]
+    pub fn push_str(&mut self, s: &str) {
+        self.extend_from_slice(s.as_bytes());
+    }
+
+    /// Interprets the initialized bytes as a UTF-8 string slice.
+    ///
+    /// Returns `Err` if the bytes are not valid UTF-8.
+    #[inline]
+    pub fn as_str(&self) -> Result<&str, core::str::Utf8Error> {
+        core::str::from_utf8(self.as_slice())
+    }
+
+    /// Interprets the initialized bytes as a UTF-8 string, replacing invalid
+    /// sequences with U+FFFD.
+    #[inline]
+    #[must_use]
+    pub fn to_string_lossy(&self) -> alloc::borrow::Cow<'_, str> {
+        alloc::string::String::from_utf8_lossy(self.as_slice())
     }
 }

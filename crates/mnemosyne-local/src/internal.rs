@@ -7,6 +7,7 @@ pub use crate::options::ensure_options_initialized;
 // seam the `mnemosyne` crate uses to freeze options it configured itself,
 // and `reset_options_for_testing` exists only for tests. They live here so
 // the crate root lists what a consumer actually calls.
+pub use crate::free_helpers::free_large_or_huge_raw;
 pub use crate::options::{mark_options_initialized, reset_options_for_testing};
 pub use crate::{
     do_local_free_internal, do_local_free_internal_policy, initialize_allocated_bytes,

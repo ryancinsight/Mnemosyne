@@ -219,8 +219,7 @@ fn cross_thread_free_pushes_block_to_page_thread_free_queue() {
     // SAFETY: caller owns the page through the still-live owner segment;
     // the typed wrapper uses the existing segment mapping and reads
     // `StandardPolicy::ENABLE_FREE_LIST_ENCRYPTION` for the cookie.
-    let reclaimed =
-        unsafe { Page::reclaim_thread_free_for_policy::<StandardPolicy>(segment, page_index) };
+    let reclaimed = unsafe { Page::reclaim_thread_free_for_policy(segment, page_index) };
     assert_eq!(
         reclaimed, 1,
         "expected exactly one block from the cross-thread free on this page; got {} \
@@ -338,9 +337,7 @@ fn hardened_chain_contains(block: *mut u8) -> bool {
     // and `P` selects only the TLS slot -- the encoding mode is read from the
     // segment.
     unsafe {
-        mnemosyne_core::types::Page::reclaim_thread_free_if_present_for_policy::<HardenedPolicy>(
-            segment, page_index,
-        );
+        mnemosyne_core::types::Page::reclaim_thread_free_if_present_for_policy(segment, page_index);
     }
 
     // SAFETY: each `current` is a block of this page, reached by decoding the

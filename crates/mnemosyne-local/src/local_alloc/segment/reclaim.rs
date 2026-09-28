@@ -1,88 +1,14 @@
 use crate::local_alloc::ThreadAllocator;
-use crate::local_alloc::page::{push_page_front, unlink_page_from_list, with_page_list_token};
+use crate::local_alloc::page::{push_page_front_raw, unlink_page_from_list_raw};
 use core::ptr::NonNull;
 use mnemosyne_arena::{HasSegmentPool, deallocate_segment, try_deallocate_segment};
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
-use mnemosyne_core::policy::AllocPolicy;
-use mnemosyne_core::types::{Page, Segment, SegmentOwner};
+use mnemosyne_core::types::{OccupiedPageBits, Page, Segment};
 
 const MIN_RETAINED_OWNED_SEGMENTS: usize = 3;
 const RECLAIM_THRESHOLD_SEGMENTS: usize = MIN_RETAINED_OWNED_SEGMENTS + 1;
 
-/// Segments held back during thread teardown because no sink would accept them
-/// without waiting, linked through `next_free_segment` for one batched
-/// placement.
-///
-/// The field is free to borrow: it is the global pools' link, unused for as
-/// long as a segment belongs to a thread cache, and every node here has already
-/// been unlinked from that cache.
-struct DeferredChain {
-    /// Most recently deferred node; null when the chain is empty.
-    head: *mut Segment,
-    /// First deferred node, whose `next_free_segment` terminates the chain.
-    tail: *mut Segment,
-    len: usize,
-}
-
-impl DeferredChain {
-    #[inline]
-    const fn new() -> Self {
-        Self {
-            head: core::ptr::null_mut(),
-            tail: core::ptr::null_mut(),
-            len: 0,
-        }
-    }
-
-    /// Prepends `segment` to the chain.
-    ///
-    /// # Safety
-    ///
-    /// `segment` must be a live `Segment` exclusively owned by the caller and
-    /// unreachable from any pool; ownership transfers to the chain.
-    #[inline]
-    unsafe fn push(&mut self, segment: *mut Segment) {
-        // SAFETY: `segment` is live and exclusively owned per the contract, so
-        // writing its pool link is unobservable to any other thread.
-        unsafe {
-            (*segment)
-                .next_free_segment
-                .store(self.head, core::sync::atomic::Ordering::Relaxed);
-        }
-        if self.head.is_null() {
-            self.tail = segment;
-        }
-        self.head = segment;
-        self.len += 1;
-    }
-
-    /// Hands the whole chain to `B`'s orphan pool in one acquisition.
-    ///
-    /// # Safety
-    ///
-    /// Every node must still be exclusively owned by the caller with its owner
-    /// identity cleared; ownership transfers to the pool.
-    #[inline]
-    unsafe fn place_in_orphan_pool<B: HasSegmentPool>(self) {
-        if self.head.is_null() {
-            return;
-        }
-        let pool = B::global_orphan_pool();
-        // SAFETY: `push` built a `len`-node chain from `head` to `tail` through
-        // `next_free_segment`, exclusively owned here per the contract, which is
-        // exactly the pool's chain-push contract.
-        unsafe {
-            if !pool.try_push_chain_unbounded(self.head, self.tail, self.len) {
-                // The only wait left in the teardown, and it covers the whole
-                // chain rather than one segment: a node still holding live
-                // allocations cannot be unmapped and the orphan pool is its
-                // only sink, so the alternative here is to leak it.
-                pool.push_chain_unbounded(self.head, self.tail, self.len);
-            }
-        }
-    }
-}
-
+use crate::local_alloc::segment::deferred_chain::DeferredChain;
 impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// Reclaims every segment owned by this thread cache back to the global
     /// pools, then clears the owned-segment chain so the operation is
@@ -133,37 +59,24 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
                 let dynamic_encrypted = (*curr).free_list_encrypted;
                 let mut total_allocations = 0;
-                let mut mask = (*curr).page_occupied_mask;
-                while mask != 0 {
-                    let i = mask.trailing_zeros() as usize;
-                    mask &= mask - 1;
-                    if i == 0 {
-                        continue;
-                    }
-                    // Raw pointer, never `&mut`: remote threads read this
-                    // page's metadata concurrently during cross-thread frees,
-                    // so a `&mut` here would assert an exclusivity the design
-                    // does not have — Miri reports the retag as a data race
-                    // against those reads.
-                    let page = Page::page_in_segment(curr, i);
-                    let randomized = (*page).secondary_free.is_some();
-                    let reclaimed = Page::reclaim_thread_free_if_present_in_segment_with_randomized(
+                // SAFETY: `curr` is live/exclusive; `i` indexes valid occupied pages.
+                for i in OccupiedPageBits::new((*curr).page_occupied_mask) {
+                    // Raw pointer, not `&mut`: remote threads read page metadata
+                    // during cross-thread frees — a `&mut` would alias those reads.
+                    let page = reclaim_and_record(
                         curr,
                         i,
                         dynamic_encrypted,
-                        randomized,
+                        &mut self.cross_thread_reclaimed,
                     );
-                    if reclaimed > 0 {
-                        self.record_cross_thread_reclaimed(reclaimed);
-                    }
                     total_allocations += (*page).alloc_count;
                 }
 
                 // Clear the allocator cache before the owner token so a remote
                 // thread cannot observe a stale, non-null allocator on a segment
                 // that has already been handed back to the global pool.
-                Segment::set_owner_allocator(curr, core::ptr::null_mut());
-                Segment::set_owner(curr, SegmentOwner::NONE);
+                // SAFETY: `curr` is exclusively owned by this teardown sweep.
+                Segment::clear_ownership(curr);
                 Segment::set_current(curr, false);
                 (*curr).next_owned_segment = core::ptr::null_mut();
                 (*curr).prev_owned_segment = core::ptr::null_mut();
@@ -171,8 +84,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
                 // An empty segment may be cached or unmapped, both bounded. One
                 // still holding live allocations cannot be unmapped, so the
                 // orphan pool is its only sink and it goes straight to the
-                // deferred chain — the batched placement costs it one shared
-                // acquisition instead of its own.
+                // deferred chain.
                 if total_allocations > 0 || !try_deallocate_segment::<B>(curr) {
                     deferred.push(curr);
                 }
@@ -213,30 +125,19 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
 
         // SAFETY: `segment` is a live segment owned by this allocator (the
         // caller's precondition; it is not `current_segment`, checked above).
-        // Each `i` comes from a set bit of `page_occupied_mask`, so it indexes a
-        // valid, occupied entry of the segment's page array, and `&mut pages[i]`
-        // is unaliased because the segment is exclusive to this thread.
+        // `OccupiedPageBits` skips bit 0; each remaining `i` is a valid index.
         unsafe {
             let dynamic_encrypted = (*segment).free_list_encrypted;
-            let mut mask = (*segment).page_occupied_mask;
-            while mask != 0 {
-                let i = mask.trailing_zeros() as usize;
-                mask &= mask - 1;
-                if i == 0 {
-                    continue;
-                }
+            for i in OccupiedPageBits::new((*segment).page_occupied_mask) {
                 let pg = Page::page_in_segment(segment, i);
                 if (*pg).alloc_count > 0 {
-                    let randomized = (*pg).secondary_free.is_some();
-                    let reclaimed = Page::reclaim_thread_free_if_present_in_segment_with_randomized(
+                    // SAFETY: live segment, valid occupied-page index, pre-read encrypted mode.
+                    let pg = reclaim_and_record(
                         segment,
                         i,
                         dynamic_encrypted,
-                        randomized,
+                        &mut self.cross_thread_reclaimed,
                     );
-                    if reclaimed > 0 {
-                        self.record_cross_thread_reclaimed(reclaimed);
-                    }
                     if (*pg).alloc_count > 0 {
                         return false;
                     }
@@ -265,9 +166,16 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// consolidating cross-thread frees, identifying empty pages, and reclaiming empty segments.
     ///
     /// # Safety
+    /// Sweeps all owned segments, reclaims empty ones, and moves zero-alloc
+    /// pages to the empty list.
+    ///
+    /// Non-generic: no `P::` const is read anywhere in this function or its
+    /// callees (`unlink_segment_pages`, `detach_and_release_segment`). The
+    /// `<P: AllocPolicy>` parameter was vestigial — its removal compiles this
+    /// 140-line sweep once per `B` rather than once per `(P, B)`.
     ///
     /// The caller must ensure that the allocator is in a safe, non-reentrant state.
-    pub unsafe fn periodic_defragmentation_sweep<P: AllocPolicy>(&mut self) {
+    pub unsafe fn periodic_defragmentation_sweep(&mut self) {
         let mut curr = self.owned_segments_head;
         while !curr.is_null() {
             let segment = curr;
@@ -286,74 +194,40 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             let dynamic_encrypted = unsafe { (*segment).free_list_encrypted };
             let mut total_allocations = 0;
 
-            if unsafe { (*segment).page_occupied_mask != 0 } {
-                // SAFETY: `segment` is owned by this thread; each `i` is a set
-                // bit of `page_occupied_mask`, indexing a valid occupied page,
-                // so `&mut pages[i]` is in-bounds and unaliased. The page-list
-                // token scopes the active/full/empty list mutations to this
-                // allocator's own lists, and every `NonNull::new_unchecked`
-                // wraps a non-null interior page pointer.
-                unsafe {
-                    with_page_list_token::<B, _>(|mut token| {
-                        let mut mask = (*segment).page_occupied_mask;
-                        while mask != 0 {
-                            let i = mask.trailing_zeros() as usize;
-                            mask &= mask - 1;
-                            if i == 0 {
-                                continue;
-                            }
-                            let pg = &raw mut (*segment).pages[i];
-                            let randomized = (*pg).secondary_free.is_some();
-                            let reclaimed =
-                                Page::reclaim_thread_free_if_present_in_segment_with_randomized(
-                                    segment,
-                                    i,
-                                    dynamic_encrypted,
-                                    randomized,
-                                );
-                            if reclaimed > 0 {
-                                self.record_cross_thread_reclaimed(reclaimed);
-                            }
-                            total_allocations += (*pg).alloc_count;
+            // SAFETY: `segment` is owned by this thread; `OccupiedPageBits`
+            // skips bit 0 and yields only set-bit indices of valid occupied pages.
+            unsafe {
+                for i in OccupiedPageBits::new((*segment).page_occupied_mask) {
+                    let pg = &raw mut (*segment).pages[i];
+                    // SAFETY: live segment, valid occupied-page index, pre-read encrypted.
+                    reclaim_and_record(
+                        segment,
+                        i,
+                        dynamic_encrypted,
+                        &mut self.cross_thread_reclaimed,
+                    );
+                    total_allocations += (*pg).alloc_count;
 
-                            if (*pg).alloc_count == 0
-                                && ((*pg).list_state == 1 || (*pg).list_state == 2)
-                            {
-                                let class = (*pg).size_class as usize;
-                                // SAFETY: `active_pages[class]` is this thread's
-                                // own active-list head and `pg` is a live,
-                                // owner-exclusive page of this segment, so the
-                                // predicate's head read is valid.
-                                let is_only_active = crate::free_helpers::is_sole_active_page(
-                                    self.active_pages[class],
-                                    pg,
+                    if (*pg).alloc_count == 0 && ((*pg).list_state == 1 || (*pg).list_state == 2) {
+                        let class = (*pg).size_class as usize;
+                        let is_only_active =
+                            crate::free_helpers::is_sole_active_page(self.active_pages[class], pg);
+                        if !is_only_active {
+                            let pg_ptr = NonNull::new_unchecked(pg);
+                            if (*pg).list_state == 1 {
+                                unlink_page_from_list_raw(
+                                    pg_ptr,
+                                    self.active_pages.get_unchecked_mut(class),
                                 );
-                                if !is_only_active {
-                                    let pg_ptr = NonNull::new_unchecked(pg);
-                                    let branded_page = token.page(pg_ptr);
-                                    if (*pg).list_state == 1 {
-                                        unlink_page_from_list(
-                                            &mut token,
-                                            self.active_pages.get_unchecked_mut(class),
-                                            branded_page,
-                                        );
-                                    } else {
-                                        unlink_page_from_list(
-                                            &mut token,
-                                            self.full_pages.get_unchecked_mut(class),
-                                            branded_page,
-                                        );
-                                    }
-                                    push_page_front(
-                                        &mut token,
-                                        &mut self.empty_pages,
-                                        branded_page,
-                                        3,
-                                    );
-                                }
+                            } else {
+                                unlink_page_from_list_raw(
+                                    pg_ptr,
+                                    self.full_pages.get_unchecked_mut(class),
+                                );
                             }
+                            push_page_front_raw(pg_ptr, &mut self.empty_pages, 3);
                         }
-                    });
+                    }
                 }
             }
 
@@ -385,28 +259,21 @@ unsafe fn unlink_segment_pages<B: HasSegmentPool>(
     alloc: &mut ThreadAllocator<B>,
     segment: *mut Segment,
 ) {
-    // SAFETY: `segment` is a live segment owned by `alloc` (caller contract), so
-    // reading its `page_linked_mask` is a valid, unaliased load.
-    let mut mask = unsafe { (*segment).page_linked_mask };
-    while mask != 0 {
-        let i = mask.trailing_zeros() as usize;
-        mask &= mask - 1;
-        // SAFETY: `i` is a set bit of `page_linked_mask`, indexing a valid page
-        // of `segment`; the segment is exclusive to `alloc`, so `&mut pages[i]`
-        // is unaliased.
+    // SAFETY: `segment` is a live segment owned by `alloc` (caller contract).
+    // `OccupiedPageBits` skips bit 0 and yields only set-bit indices of
+    // pages currently linked into `alloc`'s active/full/empty lists.
+    for i in OccupiedPageBits::new(unsafe { (*segment).page_linked_mask }) {
+        // SAFETY: `i` is a set bit of `page_linked_mask`, indexing a valid
+        // linked page of `segment`; the segment is exclusive to `alloc`.
         let pg = unsafe { &raw mut (*segment).pages[i] };
         // SAFETY: `pg` addresses a live page of `segment`.
         let state = unsafe { (*pg).list_state };
         if state == 1 || state == 2 {
-            // SAFETY: as above.
+            // SAFETY: list_state 1/2 means `pg` is in the active/full list.
             let class = unsafe { (*pg).size_class } as usize;
-            // SAFETY: `list_state` 1/2 means `pg` is linked into the active/full
-            // list for `class`; unlinking it from that list is the matching
-            // operation on `alloc`'s own structures.
             unsafe { alloc.unlink_page(pg, class) };
         } else if state == 3 {
-            // SAFETY: `list_state == 3` means `pg` is linked into `alloc`'s
-            // empty-page list, the list this unlink operates on.
+            // SAFETY: list_state 3 means `pg` is in the empty-page list.
             unsafe { alloc.unlink_empty_page(pg) };
         }
     }
@@ -430,12 +297,49 @@ unsafe fn unlink_segment_pages<B: HasSegmentPool>(
 /// `deallocate_segment` returns a segment with no live references exactly once.
 #[inline]
 unsafe fn detach_and_release_segment<B: HasSegmentPool>(segment: *mut Segment) {
-    // SAFETY: `segment` is the fully-detached live segment per the contract;
-    // writing its owner identity and releasing it is a valid, exclusive final
-    // access before ownership returns to the pool.
+    // SAFETY: `segment` is the fully-detached live segment per the contract.
     unsafe {
-        Segment::set_owner_allocator(segment, core::ptr::null_mut());
-        Segment::set_owner(segment, SegmentOwner::NONE);
+        Segment::clear_ownership(segment);
         deallocate_segment::<B>(segment);
     }
+}
+
+/// Drains remote frees from page `page_index` of `segment` and accumulates the
+/// reclaimed count into `cross_thread_sink`.
+///
+/// This is the **SSOT** for the 6-line reclaim core repeated in
+/// `reclaim_owned_segments`, `try_reclaim_segment`, and
+/// `periodic_defragmentation_sweep`. Non-generic and non-method so it
+/// compiles once regardless of the backend `B`.
+///
+/// # Safety
+///
+/// `segment` must be a live segment exclusively owned by the calling
+/// allocator; `page_index` must be a non-zero set bit of
+/// `segment.page_occupied_mask`; `encrypted` must equal
+/// `segment.free_list_encrypted`.
+///
+/// Returns the raw page pointer so callers can read `alloc_count` or perform
+/// list-management afterward.
+#[inline(always)]
+unsafe fn reclaim_and_record(
+    segment: *mut Segment,
+    page_index: usize,
+    encrypted: bool,
+    cross_thread_sink: &mut usize,
+) -> *mut Page {
+    // SAFETY: live segment + in-range index per contract.
+    let page = unsafe { Page::page_in_segment(segment, page_index) };
+    // SAFETY: `page` is the initialized metadata projected above.
+    let randomized = unsafe { (*page).secondary_free.is_some() };
+    // SAFETY: valid segment/index/encrypted triple per contract.
+    let reclaimed = unsafe {
+        Page::reclaim_thread_free_if_present_in_segment_with_randomized(
+            segment, page_index, encrypted, randomized,
+        )
+    };
+    if reclaimed > 0 {
+        *cross_thread_sink += reclaimed;
+    }
+    page
 }

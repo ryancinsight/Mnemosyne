@@ -233,6 +233,16 @@ impl Block {
         }
     }
 
+    /// Returns a raw pointer to the canary slot (the second `usize` in the
+    /// block) without validation. Callers must have already called
+    /// `validate_canary_slot`.
+    #[inline(always)]
+    fn canary_slot_ptr(block: *mut Block) -> *mut usize {
+        // SAFETY: callers guarantee block is valid and the block is at least
+        // 2 × size_of::<Block>() bytes so the adjacent slot is in bounds.
+        unsafe { block.cast::<usize>().add(1) }
+    }
+
     /// Computes the multiplicative backward-edge canary value for `block`.
     #[inline(always)]
     fn canary_value(block: *const Block, page_cookie: usize) -> usize {
@@ -252,17 +262,11 @@ impl Block {
     /// `2 * size_of::<Block>()` bytes; the canary slot must lie within it.
     #[inline(always)]
     pub unsafe fn write_free_canary(block: *mut Block, page_cookie: usize) {
-        Self::validate_canary_slot(block);
-        // SAFETY: the canary slot is the second `usize` inside the block
-        // (`block + 1` in pointer arithmetic). By the caller's contract the
-        // block is at least 2 × size_of::<Block>() bytes, so the slot is
-        // within the allocation and exclusively owned by the free path.
-        unsafe {
-            block
-                .cast::<usize>()
-                .add(1)
-                .write(Self::canary_value(block, page_cookie));
-        }
+        // canary_value validates the pointer; no separate validate_canary_slot
+        // call needed here.
+        let value = Self::canary_value(block, page_cookie);
+        // SAFETY: canary_slot_ptr is within the block per the caller's contract.
+        unsafe { Self::canary_slot_ptr(block).write(value) };
     }
 
     /// Returns `true` if the backward-edge canary is present (likely double-free).
@@ -270,24 +274,27 @@ impl Block {
     /// # Safety
     ///
     /// Same requirements as [`write_free_canary`][Block::write_free_canary],
-    /// **and** the canary slot must already be initialized: this reads it, and
-    /// reading uninitialized memory is undefined behaviour regardless of the
-    /// value observed. A live allocation with an in-bounds slot is not enough —
-    /// a block that has never been through the free path has not had the slot
-    /// written, so the caller must establish initialization itself.
+    /// **and** the canary slot must already be initialized.
     #[inline(always)]
     pub unsafe fn check_double_free(block: *const Block, page_cookie: usize) -> bool {
         Self::validate_canary_slot(block);
         // SAFETY: the canary slot is within the block by the caller's contract.
-        let observed = unsafe { block.cast::<usize>().add(1).read() };
-        // `0` is the canonical cleared-slot sentinel. Treating it as "no canary"
-        // avoids false positives from a stale, uninitialized, or otherwise
-        // unsealed slot while preserving the hardened check against a real
-        // cookie-bound canary.
+        let observed = unsafe {
+            Self::canary_slot_ptr(block as *mut Block)
+                .cast::<usize>()
+                .read()
+        };
+        // `0` is the canonical cleared-slot sentinel.
         if observed == 0 {
             return false;
         }
-        observed == Self::canary_value(block, page_cookie)
+        // Compute the expected value without calling canary_value (which
+        // would re-validate the pointer we already validated above).
+        let addr = block.addr();
+        let expected = addr
+            .wrapping_add(FREE_CANARY_MAGIC)
+            .wrapping_mul(page_cookie ^ (addr >> 4));
+        observed == expected
     }
 
     /// Clears the canary when a block is taken off the free list.
@@ -299,6 +306,6 @@ impl Block {
     pub unsafe fn clear_free_canary(block: *mut Block) {
         Self::validate_canary_slot(block);
         // SAFETY: the canary slot is within the block by the caller's contract.
-        unsafe { block.cast::<usize>().add(1).write(0) };
+        unsafe { Self::canary_slot_ptr(block).write(0) };
     }
 }

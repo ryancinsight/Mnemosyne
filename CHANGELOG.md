@@ -32,7 +32,206 @@
   the transition itself remains a semver-relevant change for
   `mnemosyne-arena`'s next version bump (currently `0.4.0`).
 
+- Session 12: P-elimination from `#[cold]`/`#[inline(never)]` functions + cross-crate SSOT.
+  411/411 tests pass; safety ratchet at 0.
+
+  **`acquire_policy_compatible_segment<P,B>` → `<B>(enable_encryption: bool)`**
+  `#[inline(never)]` function used P only for `P::ENABLE_FREE_LIST_ENCRYPTION`.
+  3P×N binary copies → N.
+
+  **`free_large_or_huge_raw<B>` SSOT across crates**
+  The "recover segment + optionally poison + deallocate_large_or_huge" 5-line
+  sequence existed independently in `classified.rs` (mnemosyne-local) and
+  `raw_heap/free.rs` (mnemosyne-heap). Extracted `pub free_large_or_huge_raw<B>`
+  into `free_helpers.rs`, re-exported through `internal.rs`. Deleted the
+  per-heap-crate standalone `free_large_or_huge<B>`.
+
+  **`validation.rs`: non-generic `init_bytes` / `poison_bytes` workers**
+  `initialize_allocated_bytes<P>` and `poison_freed_bytes<P>` were 3-5 line
+  functions using P::ZERO_INITIALIZE / ENABLE_POISONING / POISON_*_BYTE.
+  Extracted `pub(crate) init_bytes` and `poison_bytes` non-generic workers;
+  the `<P>` wrappers become 1-line thin shells. SecurePolicy and HardenedPolicy
+  share the same (zero_init=true, poison=true) instantiation.
+
+  **`allocate_large_or_huge_initialized<P,B>` → `<B>`**
+  Converted to non-P by passing P::consts as plain bool args. Those 3 inlined
+  calls inside `thread_alloc_cold<P,B>` now produce identical code for
+  SecurePolicy and HardenedPolicy, improving ICF.
+
+  **`realloc_delta_init` non-generic SSOT**
+  Extracted the 20-line `can_reuse` branch of `thread_realloc<P,B>` (grow
+  initialization + shrink poisoning) into a non-generic helper using the
+  `init_bytes`/`poison_bytes` workers.
+
+- Session 11: Complete elimination of phantom-brand ZST wrapper layers (page-lists + owned-segments).
+  411/411 tests pass; safety ratchet at 0.
+
+  **Full `PageListToken<'id,B>` / `BrandedPage<'id>` infrastructure removed**
+  (page/lists.rs, transitions.rs, free/internal.rs, segment/reclaim.rs, list_tests.rs):
+  All 9 `with_page_list_token::<B,_>` closures in `transitions.rs` and 2 more in
+  `free/internal.rs` + `reclaim.rs` replaced with direct calls to the non-generic raw
+  helpers (`push_page_front_raw`, `unlink_page_from_list_raw`, `move_page_raw`).
+  The entire `PageListToken`/`BrandedPage`/`with_page_list_token`/`push_page_front`/
+  `unlink_page_from_list`/`move_page_between_lists_branded` branded API (6 generic items)
+  deleted. Tests updated to exercise `unlink_page_from_list_raw` directly.
+
+  **Full `OwnedSegmentToken<'id,B>` / `BrandedSegment<'id>` infrastructure removed**
+  (segment/ownership.rs):
+  Both `with_owned_segment_token` closures replaced with direct raw calls.
+  The entire `OwnedSegmentToken`/`BrandedSegment`/`with_owned_segment_token`/
+  `push_owned_segment_front`/`unlink_owned_segment_from_list` branded API deleted.
+
+  **`push_owned_segment<P>` body split** (segment/ownership.rs):
+  ~25-line ownership-stamp + list-push extracted into non-`<P>` `push_owned_segment_core`.
+  P-generic wrapper reduced to a 2-line thin shell.
+
+  **`page_init_random` DRY extraction** (routing/cold.rs):
+  3× identical `if P::RANDOMIZE_ALLOCATION { rng ^ ptr ^ class_hash } else { 0 }` formula
+  extracted as `page_init_random(&mut self, randomize: bool, ptr: u64, class) -> u64`.
+
+- Five de-monomorphization / zero-cost abstraction consolidations (session 9-10).
+  All unsafe-doc ratchet at 0; >258 tests pass:
+
+  **Phantom-brand ZST de-B-monomorphization** (page/lists.rs, segment/ownership.rs):
+  `push_page_front<B>`, `unlink_page_from_list<B>`, `move_page_between_lists_branded<B>`,
+  `push_owned_segment_front<B>`, `unlink_owned_segment_from_list<B>` carried `B` only
+  in `PageListToken<'id,B>` / `OwnedSegmentToken<'id,B>` — both ZST phantom brands.
+  Every `token.page()` / `token.segment()` call reduces to the identity on the
+  raw pointer; function bodies were IDENTICAL for all B values. Extracted five
+  non-generic raw helpers (compile once each) with thin branded facades.
+  Effect: ~5 functions × 6+ backends → 5 functions × 1 copy.
+
+  **TLS trait SSOT** (tls/traits.rs, stable.rs, native.rs):
+  - `TlsSlotAccess::slot_access_armed` / `slot_access_unguarded` (provided methods):
+    `get_slot_standard + arm_thread_exit + with_allocator` pattern extracted from 6 sites.
+  - `TlsProvider::get_allocator_ptr_raw` default impl: removes explicit override from
+    `StandardTls` where it was identical to `get_allocator_ptr`.
+
+  **`read_teb_self` SSOT** (os_helpers.rs, prof/tls/os_key.rs):
+  Windows `gs:[0x30]` TEB self-pointer asm appeared 4× across 2 crates → private helper.
+
+  **Three de-monomorphization consolidations** (core, local, arena):
+  - `try_pop_bump_block<P>` → non-generic free fn (zero P:: in body).
+  - `resolve_huge_dealloc_segment` non-B extraction from `deallocate_large_or_huge<B>`.
+  - SAFETY comment fix for cfg-gated `push_owned_segment` blocks.
+
+  **SSOT helpers extracted across earlier sessions** (reclaim_and_record,
+  purge_segment_pool delegation, assert_block_in_page, sum_counter,
+  resolve_owner_slot, BorrowGuard, realloc_can_reuse, slot_access_armed/unguarded,
+  reclaim_thread_free_for_policy phantom-P removal, defrag-chain phantom-P removal,
+  reclaim_and_record, purge_segment_pool delegation, push_owned_segment cfg dedup).
+
+- Two further SRP splits, no public API change, unsafe-doc ratchet held at 0:
+  - `mnemosyne-local/src/local_alloc/routing.rs` (442 L) → directory module
+    `routing/{mod.rs (71 L), cold.rs}` — split by allocation temperature:
+    `mod.rs` owns the `alloc_class<P>` hot dispatch that serves the active-page
+    fast path; `cold.rs` owns `alloc_cold<P>` (page-full reclaim/move/search
+    loop), `get_new_page<P>` (empty-list / current-segment / orphan-adopt page
+    acquisition), and `acquire_policy_compatible_segment<P,B>` (mode-filtered
+    segment pop with inline orphan deferral). All 14 unsafe blocks in `cold.rs`
+    carry `// SAFETY:` comments; several were added or repositioned after the
+    split moved them past the 14-line scanner proximity window.
+  - `mnemosyne-heap/src/brand.rs` (320 L) → `brand/{mod.rs (107 L),
+    branded_cell.rs (248 L)}` — `BrandedCell<'brand, T>` (GhostCell-style
+    interior mutability + borrow/borrow_mut/borrow_mut_2/borrow_mut_3 +
+    Send/Sync/Debug/PartialEq/Hash) extracted into a focused sibling module;
+    `mod.rs` keeps `BrandedBlock<'brand, T>` and the melinoe re-exports.
+
+- Two parallel SRP splits, no public API change, unsafe-doc ratchet held at 0:
+  - `mnemosyne-arena/src/scratch/aligned_vec/traits.rs` (359 L → 106 L) —
+    new sibling files in the existing directory module: `iter.rs` (IntoIter
+    struct + all iterator impls + IntoIterator for owned/&/&mut), `convert.rs`
+    (From/AsRef/AsMut/Borrow/BorrowMut/Box/Vec/slice conversions +
+    FromIterator/Extend), and `AlignedVec<u8>` string ops moved to `bytes.rs`
+    (fmt::Write, Display, From<&str>, push_str/as_str/to_string_lossy).
+  - `mnemosyne-core/src/size_class/mod.rs` (358 L → 218 L) + new `tables.rs`
+    (140 L) — extract the SSOT compile-time data and O(1) accessors: all four
+    lookup tables (CLASS_TO_SIZE, CLASS_TO_MAX_BLOCKS, CLASS_TO_DIV_MULT,
+    SIZE_TO_CLASS), LEMIRE_DIV_SHIFT, class_to_size, class_to_max_blocks,
+    block_index_in_page, structural const assertions. mod.rs now owns only the
+    query functions and tests; `pub mod tables` re-exports keep public paths
+    unchanged.
+
+- Three further deep vertical module splits enforcing SRP/SoC on
+  mixed-concern files, with no public API change (all workspace tests pass,
+  undocumented-unsafe ratchet held at 0):
+  - `mnemosyne-core/src/types/segment/mod.rs` (531 L, directory module) —
+    three new sibling submodules added: `location.rs` (`locate_segment` /
+    `locate_page` free functions), `freelist.rs` (cookie derivation,
+    mode validation, encryption-flag read), `access.rs` (ownership and
+    current-slicing raw-pointer accessors). `ownership.rs` unchanged.
+    `mod.rs` reduced to ~270 L of struct shape + `Send/Sync` + lifecycle
+    methods. All public paths via `types.rs` re-exports unchanged.
+  - `mnemosyne-arena/src/scratch/pool.rs` (427 L) → directory module
+    `pool/{mod, borrow, manage, query}.rs` — `borrow.rs` owns the
+    PROVISION-generic `borrow_slot`, the safe and unsafe borrow entry
+    points; `manage.rs` owns `release`, `reset`, `prewarm`, `preload`,
+    `shrink_all_slots`; `query.rs` owns the Cell-mirror read-only
+    accessors; `mod.rs` the struct, `MAX_POOL_SLOTS`, and constructors.
+  - `mnemosyne-arena/src/segment/pool/huge_pool.rs` (427 L) →
+    `huge_pool/{mod, bucket, push, pop, stats, purge}.rs` — `bucket.rs` owns
+    the SSOT size-to-bucket geometry and over-provision cap; `push`/`pop`
+    carry admission and local-first stealing retrieval; `stats` the advisory
+    counters/snapshot; `purge` the OS reclamation; `mod.rs` the struct,
+    budget constants, and `new`. The bucket-geometry SSOT is re-exported so
+    `pool::huge_pool::*` paths keep resolving.
+  - `mnemosyne-backend/src/recorders.rs` (358 L) → `recorders/{mod, stats}.rs`
+    — `stats.rs` owns the atomic counters, `BackendMemoryStats` snapshot,
+    recorder functions, and their tests; `mod.rs` is a thin public-API wrapper
+    that cfg-gates the linux-only `record_hugepage_hint`/`record_purge_only`.
+  - `mnemosyne-heap/src/raw_heap.rs` (431 L) →
+    `raw_heap/{mod, alloc, free, realloc}.rs` — split `RawHeap<P,B>` by
+    allocation lifecycle: `alloc` (fast route + large/huge fallback), `free`
+    (free-list return + large/huge release helpers), `realloc` (grow/shrink
+    dispatch + in-place reuse), `mod` (struct + `new`/`alloc`/`stats`).
+  - `mnemosyne-heap/src/numa.rs` (357 L) →
+    `numa/{mod, linux, windows, fallback}.rs` — separate the NUMA execution
+    primitives by platform target (`mbind` on Linux, `VirtualAllocExNuma` on
+    Windows, no-op/plain fallback elsewhere); `mod.rs` keeps the shared
+    `NumaError`, cross-platform `first_touch`, and cfg-gated re-exports.
+    Verified on both the Windows host and an `x86_64-unknown-linux-gnu` check.
+
+- Nine deep vertical module splits across `mnemosyne-core` and
+  `mnemosyne-local`, each enforcing SRP on previously mixed-concern files:
+  - `policy.rs` (347 L) → `policy/{mod, alloc_policy, impls, marker}.rs`
+  - `size_class.rs` (555 L) → `size_class/{mod, info}.rs`
+  - `sync.rs` (458 L) → `sync/{mod, wide, narrow}.rs` (platform-cfg explicit)
+  - `per_cpu.rs` (325 L) → `per_cpu/{mod, types, ops}.rs`
+  - `bin_stats.rs` (532 L) → `bin_stats/{mod, batch, snapshot}.rs`
+  - `tls_slot.rs` (461 L) → `selector_traits.rs` + `tls_slot.rs` (DIP traits extracted)
+  - `aligned_vec/length.rs` (588 L) → `length.rs` + `element_ops.rs`
+  - `mnemosyne-decay/src/lib.rs` → `engine.rs` + `events.rs` + `orphan.rs` + `lib.rs`
+  - `local_alloc/freelist_keys.rs` extracted from `local_alloc.rs`
+
+  No public API change on any split; all 412 tests pass.
+
+- `mnemosyne-decay` decomposed into a deep vertical module hierarchy (SRP):
+  `engine.rs` — adaptive thread loop; `events.rs` — Condvar-based step/wake
+  signals; `orphan.rs` — per-backend orphan-pool draining. `lib.rs` is now a
+  164-line public-API façade. No public API change.
+
+- `allocate_segment` retries after a purge on the first OS allocation failure.
+  When `B::allocate(SEGMENT_MAPPING_SIZE)` returns null, the allocator now
+  calls `purge_segment_pool::<B>()` to release all retained free segments back
+  to the OS (they are exclusively pool-owned at that point and cannot be
+  referenced by any thread-local allocator) and retries the OS mapping once.
+  This is the OOM recovery path previously held in the stale
+  `refactor/mnemosyne-free-helpers-split` branch, re-derived against main.
+
+- `AlignedVec` query, search, sort, and in-place reordering methods extracted
+  into a new `aligned_vec/query.rs` module (SRP). `aligned_vec/length.rs`
+  is now focused on operations that change the buffer's length or content;
+  `query.rs` holds all delegating read-only, sort, reorder, and chunked-
+  iteration methods. No public API change.
+
 ### Changed
+
+- All `TEST_LOCK` acquisitions in the `global_alloc_tests` integration suite
+  (28 sites) and in `mnemosyne-backend`'s recorder tests (5 sites) now call a
+  shared `lock_test()` helper that uses `.unwrap_or_else(|e| e.into_inner())`
+  instead of `.expect("poisoned")`. A panicking test no longer blankets
+  subsequent serialized tests with `PoisonError` failures that hide their own
+  subjects. (MN-TEST-LOCK-POISONING-HIDES-RESULTS)
 
 - `ArenaMemoryStats` and `SegmentPoolStats` are now `#[non_exhaustive]`.
   Both are read-only telemetry snapshots returned by `arena_memory_stats`

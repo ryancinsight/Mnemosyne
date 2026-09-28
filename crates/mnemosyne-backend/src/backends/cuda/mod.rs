@@ -211,6 +211,34 @@ macro_rules! impl_device_tier_backend {
     };
 }
 
+macro_rules! impl_cuda_memory_backend {
+    ($backend:ty) => {
+        impl mnemosyne_core::MemoryBackend for $backend {
+            /// Allocates CUDA-backed memory. Returns null on failure.
+            ///
+            /// # Safety
+            ///
+            /// The size must be greater than zero and page-aligned.
+            #[inline]
+            unsafe fn allocate(size: usize) -> *mut u8 {
+                // SAFETY: forwarded caller contract.
+                unsafe { super::cuda_allocate::<Self>(size) }
+            }
+
+            /// Deallocates memory allocated by this backend.
+            ///
+            /// # Safety
+            ///
+            /// The pointer must be valid and the size must match the allocation.
+            #[inline]
+            unsafe fn deallocate(ptr: *mut u8, _size: usize) -> bool {
+                // SAFETY: forwarded caller contract.
+                unsafe { super::cuda_deallocate::<Self>(ptr) }
+            }
+        }
+    };
+}
+
 mod device;
 mod pinned;
 mod unified;

@@ -98,24 +98,20 @@ impl TaggedSegmentStack {
 
     /// Pushes `segment` onto the stack and increments the count.
     ///
+    /// Equivalent to `push_chain(segment, segment, 1)`.
+    ///
     /// # Safety
     ///
     /// `segment` must be a valid, initialized, exclusively-owned `Segment`;
     /// ownership transfers to the stack.
     #[inline]
     pub(crate) unsafe fn push(&self, segment: *mut Segment) {
-        let _guard = self.mutation_lock.lock();
-        // SAFETY: the guard above holds the mutation lock, and a lone
-        // exclusively-owned segment is the one-node chain.
-        unsafe { self.splice_locked(segment, segment, 1) };
+        // SAFETY: a lone segment is a one-node chain (head == tail, len == 1).
+        unsafe { self.push_chain(segment, segment, 1) }
     }
 
     /// Pushes `segment` unless the lifetime lock is busy, reporting whether it
-    /// was pushed.
-    ///
-    /// For callers that must not wait — see
-    /// [`CacheAlignedSegmentLock::try_lock`]. On `false` the caller retains
-    /// ownership of `segment` and must place it elsewhere.
+    /// was pushed. Equivalent to `try_push_chain(segment, segment, 1)`.
     ///
     /// # Safety
     ///
@@ -123,12 +119,8 @@ impl TaggedSegmentStack {
     /// returns `true`.
     #[inline]
     pub(crate) unsafe fn try_push(&self, segment: *mut Segment) -> bool {
-        let Some(_guard) = self.mutation_lock.try_lock() else {
-            return false;
-        };
-        // SAFETY: as `push`, with the lock held by the guard above.
-        unsafe { self.splice_locked(segment, segment, 1) };
-        true
+        // SAFETY: forwarded — a lone segment is a one-node chain.
+        unsafe { self.try_push_chain(segment, segment, 1) }
     }
 
     /// Pushes a pre-linked chain of `len` segments in a single tagged CAS and

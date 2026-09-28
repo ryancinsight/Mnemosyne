@@ -94,6 +94,24 @@ impl Default for BackendPools {
     }
 }
 
+/// Implements [`private::Sealed`] and [`HasSegmentPool`] for a backend type,
+/// associating it with a named `static BackendPools` instance.
+///
+/// Each backend requires exactly 5 boilerplate lines; this macro eliminates
+/// the duplication across all 7 backends (35 → 7 lines + this definition).
+macro_rules! impl_has_segment_pool {
+    ($backend:ty, $pools_name:ident) => {
+        static $pools_name: BackendPools = BackendPools::new();
+        impl private::Sealed for $backend {}
+        impl HasSegmentPool for $backend {
+            #[inline(always)]
+            fn pools() -> &'static BackendPools {
+                &$pools_name
+            }
+        }
+    };
+}
+
 /// Trait associating a memory backend with its global pools.
 ///
 /// Implementors provide a single [`HasSegmentPool::pools`] accessor returning
@@ -122,79 +140,16 @@ pub trait HasSegmentPool: mnemosyne_core::MemoryBackend + private::Sealed {
     }
 }
 
-static DEFAULT_BACKEND_POOLS: BackendPools = BackendPools::new();
-
-impl private::Sealed for mnemosyne_backend::DefaultBackend {}
-
-impl HasSegmentPool for mnemosyne_backend::DefaultBackend {
-    #[inline(always)]
-    fn pools() -> &'static BackendPools {
-        &DEFAULT_BACKEND_POOLS
-    }
-}
-
-static WRAPPER_BACKEND_POOLS: BackendPools = BackendPools::new();
-
-impl private::Sealed for mnemosyne_backend::MemoryBackendWrapper {}
-
-impl HasSegmentPool for mnemosyne_backend::MemoryBackendWrapper {
-    #[inline(always)]
-    fn pools() -> &'static BackendPools {
-        &WRAPPER_BACKEND_POOLS
-    }
-}
-
-static CUDA_BACKEND_POOLS: BackendPools = BackendPools::new();
-
-impl private::Sealed for mnemosyne_backend::CudaUnifiedBackend {}
-
-impl HasSegmentPool for mnemosyne_backend::CudaUnifiedBackend {
-    #[inline(always)]
-    fn pools() -> &'static BackendPools {
-        &CUDA_BACKEND_POOLS
-    }
-}
-
-static CUDA_DEVICE_POOLS: BackendPools = BackendPools::new();
-
-impl private::Sealed for mnemosyne_backend::CudaDeviceBackend {}
-
-impl HasSegmentPool for mnemosyne_backend::CudaDeviceBackend {
-    #[inline(always)]
-    fn pools() -> &'static BackendPools {
-        &CUDA_DEVICE_POOLS
-    }
-}
-
-static CUDA_HBM_POOLS: BackendPools = BackendPools::new();
-
-impl private::Sealed for mnemosyne_backend::CudaHbmBackend {}
-
-impl HasSegmentPool for mnemosyne_backend::CudaHbmBackend {
-    #[inline(always)]
-    fn pools() -> &'static BackendPools {
-        &CUDA_HBM_POOLS
-    }
-}
-
-static CUDA_GDDR_POOLS: BackendPools = BackendPools::new();
-
-impl private::Sealed for mnemosyne_backend::CudaGddrBackend {}
-
-impl HasSegmentPool for mnemosyne_backend::CudaGddrBackend {
-    #[inline(always)]
-    fn pools() -> &'static BackendPools {
-        &CUDA_GDDR_POOLS
-    }
-}
-
-static CUDA_HOST_PINNED_POOLS: BackendPools = BackendPools::new();
-
-impl private::Sealed for mnemosyne_backend::CudaHostPinnedBackend {}
-
-impl HasSegmentPool for mnemosyne_backend::CudaHostPinnedBackend {
-    #[inline(always)]
-    fn pools() -> &'static BackendPools {
-        &CUDA_HOST_PINNED_POOLS
-    }
-}
+impl_has_segment_pool!(mnemosyne_backend::DefaultBackend, DEFAULT_BACKEND_POOLS);
+impl_has_segment_pool!(
+    mnemosyne_backend::MemoryBackendWrapper,
+    WRAPPER_BACKEND_POOLS
+);
+impl_has_segment_pool!(mnemosyne_backend::CudaUnifiedBackend, CUDA_BACKEND_POOLS);
+impl_has_segment_pool!(mnemosyne_backend::CudaDeviceBackend, CUDA_DEVICE_POOLS);
+impl_has_segment_pool!(mnemosyne_backend::CudaHbmBackend, CUDA_HBM_POOLS);
+impl_has_segment_pool!(mnemosyne_backend::CudaGddrBackend, CUDA_GDDR_POOLS);
+impl_has_segment_pool!(
+    mnemosyne_backend::CudaHostPinnedBackend,
+    CUDA_HOST_PINNED_POOLS
+);

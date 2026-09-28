@@ -4,73 +4,26 @@ use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
 use mnemosyne_core::types::Page;
 
-use super::lists::{
-    PageListToken, move_page_between_lists_branded, push_page_front, unlink_page_from_list,
-    with_page_list_token,
-};
-
-#[inline(always)]
-unsafe fn unlink_empty_page_with_token<'id, B: HasSegmentPool>(
-    token: &mut PageListToken<'id, B>,
-    head_slot: &mut Option<NonNull<Page>>,
-    target: NonNull<Page>,
-) -> bool {
-    // SAFETY: the caller guarantees `target` is a valid page owned by this
-    // allocator; reading `list_state` is a plain field load.
-    if unsafe { target.as_ref() }.list_state == 3 {
-        let page = unsafe { token.page(target) };
-        unsafe { unlink_page_from_list(token, head_slot, page) };
-        true
-    } else {
-        false
-    }
-}
+use super::lists::{move_page_raw, push_page_front_raw, unlink_page_from_list_raw};
 
 impl<B: HasSegmentPool> ThreadAllocator<B> {
     #[inline(always)]
     pub(crate) unsafe fn push_active_page(&mut self, page_ptr: NonNull<Page>, class: usize) {
-        with_page_list_token::<B, _>(|mut token| {
-            // SAFETY: `page_ptr` is exclusively owned by this thread allocator.
-            let page = unsafe { token.page(page_ptr) };
-            // SAFETY: `class < NUM_SIZE_CLASSES` — validated by the caller;
-            // `get_unchecked_mut` stays in bounds.
-            unsafe {
-                push_page_front(
-                    &mut token,
-                    self.active_pages.get_unchecked_mut(class),
-                    page,
-                    1,
-                )
-            };
-        });
+        // SAFETY: `&mut self` proves exclusive access; `class < NUM_SIZE_CLASSES`
+        // is validated by the caller.
+        unsafe { push_page_front_raw(page_ptr, self.active_pages.get_unchecked_mut(class), 1) };
     }
 
     #[inline(always)]
     pub(crate) unsafe fn push_full_page(&mut self, page_ptr: NonNull<Page>, class: usize) {
-        with_page_list_token::<B, _>(|mut token| {
-            // SAFETY: `page_ptr` is exclusively owned by this thread allocator.
-            let page = unsafe { token.page(page_ptr) };
-            // SAFETY: `class < NUM_SIZE_CLASSES` — validated by the caller;
-            // `get_unchecked_mut` stays in bounds.
-            unsafe {
-                push_page_front(
-                    &mut token,
-                    self.full_pages.get_unchecked_mut(class),
-                    page,
-                    2,
-                )
-            };
-        });
+        // SAFETY: same as `push_active_page`.
+        unsafe { push_page_front_raw(page_ptr, self.full_pages.get_unchecked_mut(class), 2) };
     }
 
     #[inline(always)]
     pub(crate) unsafe fn push_empty_page(&mut self, page_ptr: NonNull<Page>) {
-        with_page_list_token::<B, _>(|mut token| {
-            // SAFETY: `page_ptr` is exclusively owned by this thread allocator.
-            let page = unsafe { token.page(page_ptr) };
-            // SAFETY: forwarded — the branded page satisfies `push_page_front`.
-            unsafe { push_page_front(&mut token, &mut self.empty_pages, page, 3) };
-        });
+        // SAFETY: `&mut self` proves exclusive access to `empty_pages`.
+        unsafe { push_page_front_raw(page_ptr, &mut self.empty_pages, 3) };
     }
 
     /// Helper to unlink a page specifically from the full pages list of a class.
@@ -85,16 +38,11 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // SAFETY: `target` is non-null (checked above) and the caller
         // guarantees it points to a valid page owned by this allocator.
         if unsafe { target.as_ref() }.list_state == 2 {
-            with_page_list_token::<B, _>(|mut token| {
-                let page = unsafe { token.page(target) };
-                unsafe {
-                    unlink_page_from_list(
-                        &mut token,
-                        self.full_pages.get_unchecked_mut(class),
-                        page,
-                    )
-                };
-            });
+            // SAFETY: `&mut self` proves exclusive access; `class < NUM_SIZE_CLASSES`
+            // validated above; `target` is currently linked in `full_pages[class]`.
+            unsafe {
+                unlink_page_from_list_raw(target, self.full_pages.get_unchecked_mut(class));
+            }
             true
         } else {
             false
@@ -119,18 +67,16 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         if unsafe { page_ptr.as_ref() }.list_state != 2 {
             return false;
         }
-        with_page_list_token::<B, _>(|mut token| {
-            let page = unsafe { token.page(page_ptr) };
-            unsafe {
-                move_page_between_lists_branded(
-                    &mut token,
-                    self.full_pages.get_unchecked_mut(class),
-                    self.active_pages.get_unchecked_mut(class),
-                    page,
-                    1,
-                );
-            }
-        });
+        // SAFETY: `&mut self` proves exclusive access; page is currently linked
+        // in `full_pages[class]` (list_state == 2, checked above).
+        unsafe {
+            move_page_raw(
+                page_ptr,
+                self.full_pages.get_unchecked_mut(class),
+                self.active_pages.get_unchecked_mut(class),
+                1,
+            );
+        }
         true
     }
 
@@ -146,26 +92,17 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         let page = unsafe { target.as_ref() };
         debug_assert_eq!(page.size_class as usize, class);
         let list_state = page.list_state;
-        with_page_list_token::<B, _>(|mut token| {
-            let branded_page = unsafe { token.page(target) };
-            if list_state == 1 {
-                unsafe {
-                    unlink_page_from_list(
-                        &mut token,
-                        self.active_pages.get_unchecked_mut(class),
-                        branded_page,
-                    )
-                };
-            } else if list_state == 2 {
-                unsafe {
-                    unlink_page_from_list(
-                        &mut token,
-                        self.full_pages.get_unchecked_mut(class),
-                        branded_page,
-                    )
-                };
+        // SAFETY: `&mut self` proves exclusive access; `target` is linked in
+        // the active or full list for `class` per the list_state check below.
+        if list_state == 1 {
+            unsafe {
+                unlink_page_from_list_raw(target, self.active_pages.get_unchecked_mut(class));
             }
-        });
+        } else if list_state == 2 {
+            unsafe {
+                unlink_page_from_list_raw(target, self.full_pages.get_unchecked_mut(class));
+            }
+        }
     }
 
     /// Helper to unlink a page from the empty pages list.
@@ -177,9 +114,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         // SAFETY: `target` is non-null (checked above) and the caller
         // guarantees it points to a valid page owned by this allocator.
         if unsafe { target.as_ref() }.list_state == 3 {
-            with_page_list_token::<B, _>(|mut token| {
-                unsafe { unlink_empty_page_with_token(&mut token, &mut self.empty_pages, target) };
-            });
+            // SAFETY: `&mut self` proves exclusive access; `target` is currently
+            // linked in `empty_pages` (list_state == 3 confirmed above).
+            unsafe { unlink_page_from_list_raw(target, &mut self.empty_pages) };
             true
         } else {
             false
@@ -197,41 +134,36 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             self.recycle_sweeps += 1;
         }
 
-        with_page_list_token::<B, _>(|mut token| {
-            let mut curr = self.empty_pages;
-            let mut checked = 0;
-            while let Some(page_ptr) = curr {
-                if checked >= 16 {
-                    break;
-                }
-                checked += 1;
-                // SAFETY: every list node is a live page projected from its
-                // complete segment mapping by the allocator's routing path.
-                let segment = unsafe { Page::parent_segment_of(page_ptr.as_ptr()) };
+        let mut curr = self.empty_pages;
+        let mut checked = 0;
+        while let Some(page_ptr) = curr {
+            if checked >= 16 {
+                break;
+            }
+            checked += 1;
+            // SAFETY: every list node is a live page projected from its
+            // complete segment mapping by the allocator's routing path.
+            let segment = unsafe { Page::parent_segment_of(page_ptr.as_ptr()) };
 
-                // Check if there are other active allocations in this segment using the occupancy bitmask.
-                let has_other_allocations = unsafe { (*segment).page_occupied_mask != 0 };
+            let has_other_allocations = unsafe { (*segment).page_occupied_mask != 0 };
 
-                if has_other_allocations {
-                    // Found an empty page in a dirty segment! Unlink and return it.
-                    unsafe {
-                        unlink_empty_page_with_token(&mut token, &mut self.empty_pages, page_ptr);
-                    }
-                    return Some(page_ptr);
-                }
-
-                curr = unsafe { page_ptr.as_ref().next_page };
+            if has_other_allocations {
+                // Found an empty page in a dirty segment — unlink and return it.
+                // SAFETY: `&mut self` exclusive; `page_ptr` linked in `empty_pages`.
+                unsafe { unlink_page_from_list_raw(page_ptr, &mut self.empty_pages) };
+                return Some(page_ptr);
             }
 
-            // Fall back to LIFO (the head of the empty_pages list)
-            if let Some(page_ptr) = self.empty_pages {
-                unsafe {
-                    unlink_empty_page_with_token(&mut token, &mut self.empty_pages, page_ptr);
-                }
-                Some(page_ptr)
-            } else {
-                None
-            }
-        })
+            curr = unsafe { page_ptr.as_ref().next_page };
+        }
+
+        // Fall back to LIFO head
+        if let Some(page_ptr) = self.empty_pages {
+            // SAFETY: `&mut self` exclusive; head is linked in `empty_pages`.
+            unsafe { unlink_page_from_list_raw(page_ptr, &mut self.empty_pages) };
+            Some(page_ptr)
+        } else {
+            None
+        }
     }
 }

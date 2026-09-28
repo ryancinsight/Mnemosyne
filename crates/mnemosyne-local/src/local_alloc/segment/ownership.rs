@@ -1,117 +1,66 @@
 use crate::local_alloc::ThreadAllocator;
-use core::marker::PhantomData;
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::constants::{PAGE_SIZE, PAGES_PER_SEGMENT};
+#[cfg(test)]
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::types::{Segment, SegmentOwner};
 
-type OwnedSegmentBrand<'id, B> = fn(&'id mut ThreadAllocator<B>) -> &'id mut ThreadAllocator<B>;
+// ── Non-generic raw implementations ──────────────────────────────────────────
+//
+// OwnedSegmentToken<'id,B>/BrandedSegment<'id> were GhostCell-style ZSTs —
+// token.segment(ptr).ptr() == ptr at runtime. Exclusive access is already
+// enforced by &mut ThreadAllocator<B> at every call site; the raw helpers
+// compile once and are called directly.
 
-/// Zero-sized permission proving exclusive allocator authority over the
-/// intrusive owned-segments list for one mutation step.
-pub(crate) struct OwnedSegmentToken<'id, B: HasSegmentPool> {
-    _brand: PhantomData<OwnedSegmentBrand<'id, B>>,
-}
-
-impl<'id, B: HasSegmentPool> OwnedSegmentToken<'id, B> {
-    #[inline(always)]
-    fn new() -> Self {
-        Self {
-            _brand: PhantomData,
-        }
-    }
-
-    /// Brands `segment` with this allocator-owned-list permission.
-    ///
-    /// # Safety
-    ///
-    /// `segment` must identify a live segment whose owned-list metadata is
-    /// controlled by the allocator permission represented by this token.
-    #[inline(always)]
-    unsafe fn segment(&mut self, segment: *mut Segment) -> BrandedSegment<'id> {
-        BrandedSegment {
-            ptr: segment,
-            _brand: PhantomData,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct BrandedSegment<'id> {
-    ptr: *mut Segment,
-    _brand: PhantomData<fn(&'id mut Segment) -> &'id mut Segment>,
-}
-
-impl BrandedSegment<'_> {
-    #[inline(always)]
-    fn ptr(self) -> *mut Segment {
-        self.ptr
-    }
-}
-
-#[inline(always)]
-fn with_owned_segment_token<B: HasSegmentPool, R>(
-    f: impl for<'id> FnOnce(OwnedSegmentToken<'id, B>) -> R,
-) -> R {
-    f(OwnedSegmentToken::new())
-}
-
-/// Prepends a branded segment to a branded intrusive owned-segments list.
+/// Non-generic core for prepending a segment to an intrusive owned-segments list.
 ///
 /// # Safety
 ///
-/// `segment` and the list rooted at `head_slot` must belong to `token`, and
-/// `segment` must not already be linked into any owned-segments list.
+/// `raw_segment` must be exclusively owned and not yet linked in any list.
+/// The list rooted at `head_slot` must be exclusively accessible.
 #[inline(always)]
-unsafe fn push_owned_segment_front<'id, B: HasSegmentPool>(
-    token: &mut OwnedSegmentToken<'id, B>,
+pub(crate) unsafe fn push_owned_segment_front_raw(
+    raw_segment: *mut Segment,
     head_slot: &mut *mut Segment,
-    segment: BrandedSegment<'id>,
 ) {
-    let raw_segment = segment.ptr();
-    // SAFETY: `segment` and the list rooted at `head_slot` belong to
-    // the allocator permission represented by `token`; no other
-    // GhostCell permission may touch them, so the prev/next link
-    // writes plus the head-slot update are exclusive here.
+    // SAFETY: `raw_segment` is exclusively owned per the caller's contract;
+    // reading and writing its link fields is unaliased.
     unsafe {
         (*raw_segment).prev_owned_segment = core::ptr::null_mut();
         (*raw_segment).next_owned_segment = *head_slot;
         if !(*head_slot).is_null() {
-            let _head = token.segment(*head_slot);
+            // SAFETY: `*head_slot` is in the caller-owned list; setting its
+            // back-pointer is an exclusive write within the same list.
             (**head_slot).prev_owned_segment = raw_segment;
         }
         *head_slot = raw_segment;
     }
 }
 
-/// Unlinks a branded segment from a branded intrusive owned-segments list.
+/// Non-generic core for unlinking a segment from an intrusive owned-segments list.
 ///
 /// # Safety
 ///
-/// `segment` must be linked in the list rooted at `head_slot`, and its
-/// neighbours must belong to the same token permission.
+/// `raw_segment` must be exclusively owned and currently linked in the list
+/// rooted at `head_slot`. All neighbour segments must be exclusively accessible.
 #[inline(always)]
-unsafe fn unlink_owned_segment_from_list<'id, B: HasSegmentPool>(
-    token: &mut OwnedSegmentToken<'id, B>,
+pub(crate) unsafe fn unlink_owned_segment_from_list_raw(
+    raw_segment: *mut Segment,
     head_slot: &mut *mut Segment,
-    segment: BrandedSegment<'id>,
 ) {
-    let raw_segment = segment.ptr();
-    // SAFETY: `segment` is branded by `token` (caller contract) and is linked in
-    // the list rooted at `head_slot`; its `prev`/`next` neighbours carry the
-    // same token permission, so reading the link fields and rewriting the
-    // neighbours' and head's pointers is exclusive and unaliased here.
+    // SAFETY: `raw_segment` is exclusively owned per the caller's contract;
+    // reading its link fields is unaliased.
     unsafe {
         let prev = (*raw_segment).prev_owned_segment;
         let next = (*raw_segment).next_owned_segment;
         if prev.is_null() {
             *head_slot = next;
         } else {
-            let _prev = token.segment(prev);
+            // SAFETY: `prev` is a live segment in the caller-owned list.
             (*prev).next_owned_segment = next;
         }
         if !next.is_null() {
-            let _next = token.segment(next);
+            // SAFETY: `next` is a live segment in the caller-owned list.
             (*next).prev_owned_segment = prev;
         }
         (*raw_segment).prev_owned_segment = core::ptr::null_mut();
@@ -120,68 +69,78 @@ unsafe fn unlink_owned_segment_from_list<'id, B: HasSegmentPool>(
 }
 
 impl<B: HasSegmentPool> ThreadAllocator<B> {
+    /// Non-`<P>` core of [`push_owned_segment`]: stamps ownership metadata
+    /// and links `segment` into the owned-segments list.
+    ///
+    /// Extracted so the P-generic wrapper compiles to a 2-line thin shell; the
+    /// ~25-line body is shared across all policy instantiations.
+    ///
+    /// # Safety
+    ///
+    /// Same contract as `push_owned_segment`.
+    #[inline(always)]
+    unsafe fn push_owned_segment_core(&mut self, segment: *mut Segment) {
+        let allocator_ptr = (self as *mut ThreadAllocator<B>).cast::<core::ffi::c_void>();
+        // SAFETY: `segment` is the live caller-passed segment; `self` is the
+        // owning allocator. The writes are not aliased by any concurrent accessor.
+        unsafe { Segment::set_owner_allocator(segment, allocator_ptr) };
+        // Owner encoding differs by platform: Windows x86-64 encodes a thread
+        // ID so `resolve_owner_slot` can detect same-thread cross-policy access;
+        // all other targets encode the allocator pointer directly.
+        #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
+        unsafe {
+            Segment::set_owner(
+                segment,
+                SegmentOwner::from_thread_id(mnemosyne_core::types::current_thread_id()),
+            )
+        };
+        #[cfg(not(all(windows, target_arch = "x86_64", not(miri))))]
+        unsafe {
+            Segment::set_owner(
+                segment,
+                SegmentOwner::from_ptr(self as *mut ThreadAllocator<B>),
+            )
+        };
+        // SAFETY: `segment` is the just-acquired live segment, exclusively owned
+        // by `self`; &mut self proves exclusive access to owned_segments_head.
+        unsafe { push_owned_segment_front_raw(segment, &mut self.owned_segments_head) };
+        self.owned_segment_count += 1;
+    }
+
     /// Prepends `segment` to this thread's intrusive doubly-linked
     /// owned-segments list and stamps the ownership token.
-    ///
-    /// This is the single authoritative insertion point for the owned-segments
-    /// list; both the fresh-segment and orphan-adoption paths route through it
-    /// so the `prev`/`next` invariant and `owned_segment_count` stay aligned.
     ///
     /// # Safety
     ///
     /// `segment` must be a live segment owned exclusively by this allocator and
     /// must not already be linked into any owned-segments list.
+    #[cfg(test)]
     #[inline]
     pub(crate) unsafe fn push_owned_segment<P: AllocPolicy>(&mut self, segment: *mut Segment) {
-        #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
-        {
-            let tid = mnemosyne_core::types::current_thread_id();
-            // SAFETY: `segment` is the live caller-passed segment;
-            // `self` is the owning allocator. The writes are not
-            // aliased by any concurrent thread-and-permission accessor.
-            unsafe {
-                Segment::set_owner_allocator(segment, (self as *mut ThreadAllocator<B>).cast());
-                Segment::set_owner(segment, SegmentOwner::from_thread_id(tid));
-            }
-        }
-        #[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
-        {
-            unsafe {
-                Segment::set_owner_allocator(segment, (self as *mut ThreadAllocator<B>).cast());
-                Segment::set_owner(
-                    segment,
-                    SegmentOwner::from_ptr(self as *mut ThreadAllocator<B>),
-                );
-            }
-        }
-        with_owned_segment_token::<B, _>(|mut token| {
-            // SAFETY: `segment` was just acquired by this thread and is
-            // exclusively owned; the token provides the permission proof.
-            let branded_segment = unsafe { token.segment(segment) };
-            // SAFETY: forwarded — the branded segment and token satisfy the
-            // `push_owned_segment_front` contract.
-            unsafe {
-                push_owned_segment_front(&mut token, &mut self.owned_segments_head, branded_segment)
-            };
-        });
-        self.owned_segment_count += 1;
+        // SAFETY: forwarded.
+        unsafe { self.push_owned_segment_dynamic(segment, P::ENABLE_FREE_LIST_ENCRYPTION) }
+    }
 
-        if P::ENABLE_FREE_LIST_ENCRYPTION {
-            // An adopted orphan arrives with `free_list_encrypted == true` and
-            // live free chains already encoded under the keys in its header —
-            // and remote threads may concurrently push to its `thread_free`
-            // lists through those same keys. Re-keying would invalidate every
-            // live encoded link and data-race those readers, so keys are
-            // written only for segments that have never encoded a chain
-            // (fresh or pool-reinitialized: `free_list_encrypted == false`).
-            //
-            // SAFETY: `segment` is the just-pushed live segment, owned
-            // exclusively by `self`. When `free_list_encrypted` is false it
-            // holds no live allocations and is not yet visible to any remote
-            // freeing thread, satisfying `initialize_segment_keys`'s
-            // no-live-chains / no-concurrent-readers contract. The keys are
-            // per-page XOR cookies derived from the TLS seed; the segment
-            // mapping is already initialized by the arena.
+    /// Non-generic variant of `push_owned_segment`.
+    ///
+    /// Used by the `alloc_cold_raw` → `get_new_page_dynamic` cold path which
+    /// passes runtime bools rather than policy type parameters.
+    ///
+    /// # Safety
+    ///
+    /// Same contract as `push_owned_segment`.
+    #[inline]
+    pub(crate) unsafe fn push_owned_segment_dynamic(
+        &mut self,
+        segment: *mut Segment,
+        enable_encryption: bool,
+    ) {
+        // SAFETY: forwarded — same contract.
+        unsafe { self.push_owned_segment_core(segment) };
+
+        if enable_encryption {
+            // SAFETY: same as `push_owned_segment<P>` — live segment, owned
+            // exclusively, no live chains when `free_list_encrypted` is false.
             let already_keyed = unsafe { (*segment).free_list_encrypted };
             if !already_keyed {
                 unsafe { self.initialize_segment_keys(segment) };
@@ -231,20 +190,9 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     /// pointers into the list.
     #[inline]
     pub(crate) unsafe fn unlink_owned_segment(&mut self, segment: *mut Segment) {
-        with_owned_segment_token::<B, _>(|mut token| {
-            // SAFETY: `segment` is exclusively owned by this thread's allocator
-            // (it is in the owned list); the token provides the permission proof.
-            let branded_segment = unsafe { token.segment(segment) };
-            // SAFETY: forwarded — the branded segment and token satisfy the
-            // `unlink_owned_segment_from_list` contract.
-            unsafe {
-                unlink_owned_segment_from_list(
-                    &mut token,
-                    &mut self.owned_segments_head,
-                    branded_segment,
-                )
-            };
-        });
+        // SAFETY: `segment` is exclusively owned by this thread (it is in the
+        // owned list); &mut self proves exclusive access to owned_segments_head.
+        unsafe { unlink_owned_segment_from_list_raw(segment, &mut self.owned_segments_head) };
         debug_assert!(self.owned_segment_count > 0);
         self.owned_segment_count -= 1;
     }

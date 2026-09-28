@@ -6,6 +6,17 @@
 //! side of that trade — it periodically purges segments that have gone cold,
 //! so a burst of allocation does not pin resident memory indefinitely.
 //!
+//! # Module organisation
+//!
+//! Every module below is private; its public items are re-exported here.
+//!
+//! | Module | Responsibility |
+//! |--------|---------------|
+//! | `engine` | Background thread loop and adaptive interval |
+//! | `events` | Condvar-based synchronisation (step/wake signals) |
+//! | `orphan` | Per-backend orphan-pool draining |
+//! | `lib` (this file) | Public API: spawn, trigger, observe, step |
+//!
 //! [`init_decay_engine`] lazily spawns the worker thread. [`decay_step`]
 //! performs one sweep and is public so a caller with its own scheduler can
 //! drive reclamation without the background thread. [`request_decay_step`]

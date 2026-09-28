@@ -65,6 +65,22 @@ impl OccupancyLimits {
     }
 }
 
+/// Returns `capacity / per_block` clamped to `u32::MAX`, or `u32::MAX` when
+/// either operand is zero. This is the SSOT for the "unconstrained" semantics
+/// shared by `blocks_limited_by_registers` and `blocks_limited_by_shared_mem`.
+#[inline]
+const fn div_capacity_or_max(capacity: u64, per_block: u64) -> u32 {
+    if per_block == 0 || capacity == 0 {
+        return u32::MAX;
+    }
+    let blocks = capacity / per_block;
+    if blocks > u32::MAX as u64 {
+        u32::MAX
+    } else {
+        blocks as u32
+    }
+}
+
 impl KernelResourceBudget {
     /// Construct a budget. Returns `None` when `threads_per_block` is zero.
     #[must_use]
@@ -123,31 +139,17 @@ impl KernelResourceBudget {
     /// "no information" for the planner, never a fabricated bound.
     #[must_use]
     pub const fn blocks_limited_by_registers(self, unit_registers: u32) -> u32 {
-        let per_block = self.registers_per_block();
-        if per_block == 0 || unit_registers == 0 {
-            return u32::MAX;
-        }
-        let blocks = (unit_registers as u64) / per_block;
-        if blocks > u32::MAX as u64 {
-            u32::MAX
-        } else {
-            blocks as u32
-        }
+        div_capacity_or_max(unit_registers as u64, self.registers_per_block())
     }
 
     /// Blocks per unit limited by `unit_shared_mem_bytes` of shared memory.
     /// Same unconstrained semantics as the register limiter.
     #[must_use]
     pub const fn blocks_limited_by_shared_mem(self, unit_shared_mem_bytes: usize) -> u32 {
-        if self.shared_mem_per_block_bytes == 0 || unit_shared_mem_bytes == 0 {
-            return u32::MAX;
-        }
-        let blocks = unit_shared_mem_bytes / self.shared_mem_per_block_bytes;
-        if blocks > u32::MAX as usize {
-            u32::MAX
-        } else {
-            blocks as u32
-        }
+        div_capacity_or_max(
+            unit_shared_mem_bytes as u64,
+            self.shared_mem_per_block_bytes as u64,
+        )
     }
 
     /// Blocks per unit limited by `max_threads_per_unit` resident threads.

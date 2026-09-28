@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_backend::DefaultBackend;
 use mnemosyne_core::constants::NUM_SIZE_CLASSES;
-use mnemosyne_core::types::{Page, Segment};
+use mnemosyne_core::types::{OccupiedPageBits, Page, Segment};
 
 pub use stats::{SizeClassOccupancy, ThreadAllocatorStats};
 
@@ -152,33 +152,35 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
     ///
     /// # Safety
     ///
+    /// Increments the defragmentation counter and triggers a periodic sweep
+    /// when it overflows 64 operations.
+    ///
+    /// Non-generic: the sweep itself reads no policy const, so removing `<P>`
+    /// compiles this gate once per `B` instead of once per `(P, B)` pair.
+    ///
+    /// # Safety
+    ///
     /// The caller must hold exclusive access to this thread allocator.
     #[inline(always)]
-    pub unsafe fn record_defrag_operation<P: mnemosyne_core::AllocPolicy>(
-        &mut self,
-        is_allocating: bool,
-    ) {
+    pub unsafe fn record_defrag_operation(&mut self, is_allocating: bool) {
         self.defrag_counter += 1;
         if self.defrag_counter >= 64 {
             // SAFETY: the caller holds exclusive access to this allocator per the
             // `# Safety` contract, which is the precondition the cold sweep needs.
-            unsafe { self.run_periodic_defragmentation::<P>(is_allocating) };
+            unsafe { self.run_periodic_defragmentation(is_allocating) };
         }
     }
 
     #[cold]
     #[inline(never)]
-    unsafe fn run_periodic_defragmentation<P: mnemosyne_core::AllocPolicy>(
-        &mut self,
-        is_allocating: bool,
-    ) {
+    unsafe fn run_periodic_defragmentation(&mut self, is_allocating: bool) {
         self.defrag_counter = 0;
         if is_allocating {
             // SAFETY: `&mut self` is the exclusive borrow of this thread-affine
             // allocator; the sweep walks only this allocator's own page/segment
             // lists. The early return preserves the in-progress `is_allocating`
             // flag so the re-entrant caller restores it.
-            unsafe { self.periodic_defragmentation_sweep::<P>() };
+            unsafe { self.periodic_defragmentation_sweep() };
             return;
         }
 
@@ -189,7 +191,7 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
         //
         // SAFETY: as above, `&mut self` grants exclusive access to this
         // allocator's lists.
-        unsafe { self.periodic_defragmentation_sweep::<P>() };
+        unsafe { self.periodic_defragmentation_sweep() };
     }
 
     /// Updates the active slicing segment marker.
@@ -211,11 +213,10 @@ impl<B: HasSegmentPool> ThreadAllocator<B> {
             unsafe {
                 let seg_ptr = current.as_ptr();
                 Segment::set_current(seg_ptr, false);
-                let mut mask = (*seg_ptr).page_occupied_mask;
-                while mask != 0 {
-                    let i = mask.trailing_zeros() as usize;
-                    mask &= mask - 1;
-                    if i > 0 && (*seg_ptr).pages[i].alloc_count == 0 {
+                // Prune pages that are now empty from the occupied mask.
+                // SAFETY: `seg_ptr` is exclusively owned; `OccupiedPageBits` skips bit 0.
+                for i in OccupiedPageBits::new((*seg_ptr).page_occupied_mask) {
+                    if (*seg_ptr).pages[i].alloc_count == 0 {
                         (*seg_ptr).page_occupied_mask &= !(1 << i);
                     }
                 }

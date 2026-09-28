@@ -1,41 +1,154 @@
 //! Native OS TLS providers using platform APIs and x86_64 TEB ASM.
 //!
-//! `NativeOsTls` delegates to `TlsGetValue`/`pthread_getspecific`.
-//! `AsmTls` uses direct TEB array indexing via inline ASM on Windows x86_64
-//! and falls back to `NativeOsTls` on other architectures.
+//! One implementation, two providers: [`NativeOsTls`] routes slot reads and
+//! writes through the OS API (`TlsGetValue`/`pthread_getspecific`) and
+//! [`AsmTls`] reaches the same slot inline through the Thread Environment Block
+//! on Windows x86-64. They differ only in that read/write pair, expressed here
+//! as the ZST [`TlsSlotOps`] parameter of a single generic [`OsTlsProvider`] —
+//! the same ZST-ops shape the CUDA backends use (`CudaAllocOps`). `AsmTls` is a
+//! type alias that falls back to `NativeOsTls` off Windows x86-64, so the five
+//! one-line delegations of the former fallback impl are gone.
 
-use super::os_helpers::{get_os_tls_key, get_os_tls_value, set_os_tls_value};
-#[cfg(all(windows, target_arch = "x86_64", not(miri)))]
-use super::os_helpers::{get_teb_tls_slot, set_teb_tls_slot};
 use super::traits::{TlsProvider, TlsSlotAccess};
 use crate::ThreadAllocator;
 use crate::tls_slot::LocalAllocatorSlot;
 use mnemosyne_arena::HasSegmentPool;
+use mnemosyne_core::os_tls::{get_or_init_key, read_value, write_value};
 
-/// Platform-native TLS provider using OS-level slots (`TlsGetValue` / `pthread_getspecific`).
-pub struct NativeOsTls<B, S>(core::marker::PhantomData<(B, S)>);
+/// The slot read/write pair a native provider uses.
+///
+/// The sole axis on which the OS-API and TEB-inline providers differ; a ZST so
+/// the choice is free and monomorphizes away.
+pub trait TlsSlotOps: 'static {
+    /// Identifier folded into the provider's `TlsProvider::IDENTIFIER`.
+    const IDENTIFIER: &'static str;
 
-impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S> {
+    /// Reads this thread's slot `key`.
+    ///
+    /// # Safety
+    ///
+    /// `key` must be a valid OS TLS slot index for this process.
+    unsafe fn read(key: u32) -> *mut core::ffi::c_void;
+
+    /// Writes `ptr` into this thread's slot `key`.
+    ///
+    /// # Safety
+    ///
+    /// `key` must be a valid OS TLS slot index for this process; `ptr` is
+    /// stored opaquely and never dereferenced.
+    unsafe fn write(key: u32, ptr: *mut core::ffi::c_void);
+}
+
+/// Slot ops backed by the OS API (`TlsGetValue`/`TlsSetValue`).
+pub struct OsValueOps;
+
+impl TlsSlotOps for OsValueOps {
     const IDENTIFIER: &'static str = "NativeOsTls";
 
     #[inline(always)]
+    unsafe fn read(key: u32) -> *mut core::ffi::c_void {
+        read_value(key)
+    }
+
+    #[inline(always)]
+    unsafe fn write(key: u32, ptr: *mut core::ffi::c_void) {
+        write_value(key, ptr);
+    }
+}
+
+/// Slot ops backed by direct TEB array indexing (Windows x86-64 only).
+#[cfg(all(windows, target_arch = "x86_64", not(miri)))]
+pub struct TebSlotOps;
+
+#[cfg(all(windows, target_arch = "x86_64", not(miri)))]
+impl TlsSlotOps for TebSlotOps {
+    const IDENTIFIER: &'static str = "AsmTls";
+
+    #[inline(always)]
+    unsafe fn read(key: u32) -> *mut core::ffi::c_void {
+        // SAFETY: forwarded — `key` is an OS TLS slot index per the caller's
+        // contract.
+        unsafe { mnemosyne_core::os_tls::read_teb_slot(key) }
+    }
+
+    #[inline(always)]
+    unsafe fn write(key: u32, ptr: *mut core::ffi::c_void) {
+        // SAFETY: forwarded — `key` is an OS TLS slot index per the caller's
+        // contract; the write stores `ptr` opaquely.
+        unsafe { mnemosyne_core::os_tls::write_teb_slot(key, ptr) };
+    }
+}
+
+/// The one native provider, parameterized by its [`TlsSlotOps`].
+pub struct OsTlsProvider<B, S, O>(core::marker::PhantomData<(B, S, O)>);
+
+/// OS-API native provider (`TlsGetValue` / `pthread_getspecific`).
+pub type NativeOsTls<B, S> = OsTlsProvider<B, S, OsValueOps>;
+
+/// TEB-inline provider on Windows x86-64.
+#[cfg(all(windows, target_arch = "x86_64", not(miri)))]
+pub type AsmTls<B, S> = OsTlsProvider<B, S, TebSlotOps>;
+
+/// Off Windows x86-64 (or under Miri) `AsmTls` is the OS-API provider.
+#[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
+pub type AsmTls<B, S> = NativeOsTls<B, S>;
+
+/// Initializes this thread's slot and returns the allocator pointer.
+///
+/// The single body behind the lazy-init branch of every provider method; the
+/// only variation is whether the thread-exit sentinel is armed
+/// (`ARM_THREAD_EXIT`).
+#[inline(always)]
+fn init_slot<const ARM_THREAD_EXIT: bool, B: HasSegmentPool, S: TlsSlotAccess<B>, O: TlsSlotOps>(
+    key: u32,
+) -> *mut core::ffi::c_void {
+    S::get_slot_standard(|slot| {
+        let alloc_ptr = slot.allocator_ptr();
+        // SAFETY: `key` came from `get_or_init_key`, so it is a live OS TLS slot
+        // index for this process; `O::write` stores `alloc_ptr` opaquely.
+        unsafe { O::write(key, alloc_ptr) };
+        slot.os_key.set(key);
+        if ARM_THREAD_EXIT {
+            S::arm_thread_exit(slot);
+        }
+        alloc_ptr
+    })
+}
+
+/// Publishes `ptr` into this thread's slot for the `O`/`S` slot ops.
+///
+/// A private free helper rather than an inline body so the public
+/// [`TlsProvider::register_current_allocator_ptr`] forwards its raw pointer to
+/// a safe function; that keeps the public trait method clear of
+/// `clippy::not_unsafe_ptr_arg_deref` (the write stores the pointer opaquely).
+#[inline(always)]
+fn publish_ptr<B: HasSegmentPool, S: TlsSlotAccess<B>, O: TlsSlotOps>(ptr: *mut core::ffi::c_void) {
+    let Some(key) = get_or_init_key(S::get_os_tls_key()) else {
+        return;
+    };
+    // SAFETY: `key` came from `get_or_init_key`, so it is a live OS TLS slot
+    // index for this process; `O::write` stores `ptr` opaquely.
+    unsafe { O::write(key, ptr) };
+}
+
+impl<B: HasSegmentPool, S: TlsSlotAccess<B>, O: TlsSlotOps> TlsProvider<B>
+    for OsTlsProvider<B, S, O>
+{
+    const IDENTIFIER: &'static str = O::IDENTIFIER;
+
+    #[inline(always)]
     fn register_current_allocator_ptr(ptr: *mut core::ffi::c_void) {
-        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
-            return;
-        };
-        set_os_tls_value(key, ptr);
+        publish_ptr::<B, S, O>(ptr);
     }
 
     #[inline(always)]
     fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
-        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
-            return S::get_slot_standard(|slot| {
-                S::arm_thread_exit(slot);
-                // SAFETY: `allocator_ptr` returns this slot's own live address.
-                unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
-            });
+        let Some(key) = get_or_init_key(S::get_os_tls_key()) else {
+            return S::slot_access_armed(f);
         };
-        let ptr = get_os_tls_value(key);
+        // SAFETY: `key` is a live OS TLS slot index (`get_or_init_key`); the
+        // read yields this thread's own slot value.
+        let ptr = unsafe { O::read(key) };
         if !ptr.is_null() {
             // SAFETY: a non-null `ptr` in this thread's OS TLS slot `key` was
             // written by this thread's own `slot.allocator_ptr()` in the init
@@ -47,14 +160,9 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
             // address, by the slot's offset-0 invariant) written below.
             unsafe { LocalAllocatorSlot::<B>::with_allocator(ptr, f) }
         } else {
-            S::get_slot_standard(|slot| {
-                let alloc_ptr = slot.allocator_ptr();
-                set_os_tls_value(key, alloc_ptr);
-                slot.os_key.set(key);
-                S::arm_thread_exit(slot);
-                // SAFETY: `allocator_ptr` returns this slot's own live address.
-                unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
-            })
+            let alloc_ptr = init_slot::<true, B, S, O>(key);
+            // SAFETY: `alloc_ptr` is this slot's own live address.
+            unsafe { LocalAllocatorSlot::<B>::with_allocator(alloc_ptr, f) }
         }
     }
 
@@ -62,17 +170,12 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
     unsafe fn with_allocator_unguarded<R>(
         f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
     ) -> Option<R> {
-        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
-            return S::get_slot_standard(|slot| {
-                S::arm_thread_exit(slot);
-                // SAFETY: `allocator_ptr` returns this slot's own live address,
-                // and the caller's no-re-entry contract is forwarded unchanged.
-                unsafe {
-                    LocalAllocatorSlot::<B>::with_allocator_unguarded(slot.allocator_ptr(), f)
-                }
-            });
+        let Some(key) = get_or_init_key(S::get_os_tls_key()) else {
+            // SAFETY: caller's no-re-entry contract forwarded unchanged.
+            return unsafe { S::slot_access_unguarded(f) };
         };
-        let ptr = get_os_tls_value(key);
+        // SAFETY: `key` is a live OS TLS slot index (`get_or_init_key`).
+        let ptr = unsafe { O::read(key) };
         if !ptr.is_null() {
             // SAFETY: `ptr` is this thread's own allocator pointer stored in OS
             // TLS slot `key`; the slot is thread-local, so the pointee is
@@ -84,211 +187,32 @@ impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for NativeOsTls<B, S
             // SAFETY: as above; the caller upholds the no-re-entry contract.
             unsafe { LocalAllocatorSlot::<B>::with_allocator_unguarded(ptr, f) }
         } else {
-            S::get_slot_standard(|slot| {
-                let alloc_ptr = slot.allocator_ptr();
-                set_os_tls_value(key, alloc_ptr);
-                slot.os_key.set(key);
-                S::arm_thread_exit(slot);
-                // SAFETY: `allocator_ptr` returns this slot's own live address,
-                // and the caller's no-re-entry contract is forwarded unchanged.
-                unsafe {
-                    LocalAllocatorSlot::<B>::with_allocator_unguarded(slot.allocator_ptr(), f)
-                }
-            })
+            let alloc_ptr = init_slot::<true, B, S, O>(key);
+            // SAFETY: `alloc_ptr` is this slot's own live address, and the
+            // caller's no-re-entry contract is forwarded unchanged.
+            unsafe { LocalAllocatorSlot::<B>::with_allocator_unguarded(alloc_ptr, f) }
         }
     }
 
     #[inline(always)]
     fn get_allocator_ptr() -> *mut core::ffi::c_void {
-        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
+        let Some(key) = get_or_init_key(S::get_os_tls_key()) else {
             return S::get_slot_standard(|slot| slot.allocator_ptr());
         };
-        let ptr = get_os_tls_value(key);
+        // SAFETY: `key` is a live OS TLS slot index (`get_or_init_key`).
+        let ptr = unsafe { O::read(key) };
         if !ptr.is_null() {
             ptr
         } else {
-            S::get_slot_standard(|slot| {
-                let alloc_ptr = slot.allocator_ptr();
-                set_os_tls_value(key, alloc_ptr);
-                slot.os_key.set(key);
-                alloc_ptr
-            })
+            init_slot::<false, B, S, O>(key)
         }
     }
 
     #[inline(always)]
     fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
-        get_os_tls_key(S::get_os_tls_key()).map_or(core::ptr::null_mut(), get_os_tls_value)
-    }
-}
-
-/// Ultra-low latency TLS provider using direct TEB array indexing via inline assembly on Windows x86_64.
-///
-/// Falls back to `NativeOsTls` on other architectures.
-pub struct AsmTls<B, S>(core::marker::PhantomData<(B, S)>);
-
-#[cfg(all(windows, target_arch = "x86_64", not(miri)))]
-impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
-    const IDENTIFIER: &'static str = "AsmTls";
-
-    #[inline(always)]
-    #[expect(
-        clippy::not_unsafe_ptr_arg_deref,
-        reason = "set_teb_tls_slot writes the pointer value into a TEB slot and never reads through it, so no dereference reaches `ptr`"
-    )]
-    fn register_current_allocator_ptr(ptr: *mut core::ffi::c_void) {
-        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
-            return;
-        };
-        // SAFETY: `key` came from `get_os_tls_key`, so it is a live
-        // `TlsAlloc`-allocated slot of this process, which is
-        // `set_teb_tls_slot`'s whole precondition. The write stores `ptr` as a
-        // value; nothing reads through it here.
-        unsafe { set_teb_tls_slot(key, ptr) };
-    }
-
-    #[inline(always)]
-    fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
-        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
-            return S::get_slot_standard(|slot| {
-                S::arm_thread_exit(slot);
-                // SAFETY: `allocator_ptr` returns this slot's own live address.
-                unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
-            });
-        };
-        // SAFETY: `key` is a `TlsAlloc`-allocated key (`get_os_tls_key`), the
-        // precondition of `get_teb_tls_slot`, which reads this thread's own TEB
-        // TLS slot.
-        let ptr = unsafe { get_teb_tls_slot(key) };
-        if !ptr.is_null() {
-            // SAFETY: a non-null TEB slot value was written by this thread's own
-            // `set_teb_tls_slot(key, slot.allocator_ptr())` in the init branch
-            // below. The TEB slot is per-thread, so the pointee is exclusive to
-            // the current thread; `is_allocating` rejects nested same-thread
-            // access before a second `&mut` is formed.
-            // SAFETY: `ptr` is this thread's own slot address (== the allocator
-            // address, by the slot's offset-0 invariant) written below.
-            unsafe { LocalAllocatorSlot::<B>::with_allocator(ptr, f) }
-        } else {
-            S::get_slot_standard(|slot| {
-                let alloc_ptr = slot.allocator_ptr();
-                // SAFETY: `key` is a `TlsAlloc`-allocated key, satisfying
-                // `set_teb_tls_slot`'s precondition; it writes this thread's
-                // own TEB slot.
-                unsafe { set_teb_tls_slot(key, alloc_ptr) };
-                slot.os_key.set(key);
-                S::arm_thread_exit(slot);
-                // SAFETY: `allocator_ptr` returns this slot's own live address.
-                unsafe { LocalAllocatorSlot::<B>::with_allocator(slot.allocator_ptr(), f) }
-            })
-        }
-    }
-
-    #[inline(always)]
-    unsafe fn with_allocator_unguarded<R>(
-        f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
-    ) -> Option<R> {
-        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
-            return S::get_slot_standard(|slot| {
-                S::arm_thread_exit(slot);
-                // SAFETY: `allocator_ptr` returns this slot's own live address,
-                // and the caller's no-re-entry contract is forwarded unchanged.
-                unsafe {
-                    LocalAllocatorSlot::<B>::with_allocator_unguarded(slot.allocator_ptr(), f)
-                }
-            });
-        };
-        // SAFETY: `key` is a `TlsAlloc`-allocated key, satisfying
-        // `get_teb_tls_slot`'s precondition; it reads this thread's TEB slot.
-        let ptr = unsafe { get_teb_tls_slot(key) };
-        if !ptr.is_null() {
-            // SAFETY: `ptr` is this thread's own allocator pointer in its
-            // per-thread TEB slot; no other thread aliases it. `is_allocating`
-            // gates same-thread re-entry, and the caller of this `unsafe fn`
-            // upholds the no-re-entry contract of `with_allocator_unguarded`,
-            // so no second live `&mut` to the cache can exist.
-            // SAFETY: as above; the caller upholds the no-re-entry contract.
-            unsafe { LocalAllocatorSlot::<B>::with_allocator_unguarded(ptr, f) }
-        } else {
-            S::get_slot_standard(|slot| {
-                let alloc_ptr = slot.allocator_ptr();
-                // SAFETY: `key` is a `TlsAlloc`-allocated key; writes this
-                // thread's own TEB slot.
-                unsafe { set_teb_tls_slot(key, alloc_ptr) };
-                slot.os_key.set(key);
-                S::arm_thread_exit(slot);
-                // SAFETY: `allocator_ptr` returns this slot's own live address,
-                // and the caller's no-re-entry contract is forwarded unchanged.
-                unsafe {
-                    LocalAllocatorSlot::<B>::with_allocator_unguarded(slot.allocator_ptr(), f)
-                }
-            })
-        }
-    }
-
-    #[inline(always)]
-    fn get_allocator_ptr() -> *mut core::ffi::c_void {
-        let Some(key) = get_os_tls_key(S::get_os_tls_key()) else {
-            return S::get_slot_standard(|slot| slot.allocator_ptr());
-        };
-        // SAFETY: `key` is a `TlsAlloc`-allocated key, satisfying
-        // `get_teb_tls_slot`'s precondition; it reads this thread's TEB slot.
-        let ptr = unsafe { get_teb_tls_slot(key) };
-        if !ptr.is_null() {
-            ptr
-        } else {
-            S::get_slot_standard(|slot| {
-                let alloc_ptr = slot.allocator_ptr();
-                // SAFETY: `key` is a `TlsAlloc`-allocated key; writes this
-                // thread's own TEB slot.
-                unsafe { set_teb_tls_slot(key, alloc_ptr) };
-                slot.os_key.set(key);
-                alloc_ptr
-            })
-        }
-    }
-
-    #[inline(always)]
-    fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
-        // SAFETY: `key` is a `TlsAlloc`-allocated key, satisfying
-        // `get_teb_tls_slot`'s precondition; it reads this thread's TEB slot.
-        get_os_tls_key(S::get_os_tls_key()).map_or(core::ptr::null_mut(), |key| unsafe {
-            get_teb_tls_slot(key)
-        })
-    }
-}
-
-#[cfg(any(not(all(windows, target_arch = "x86_64")), miri))]
-impl<B: HasSegmentPool, S: TlsSlotAccess<B>> TlsProvider<B> for AsmTls<B, S> {
-    const IDENTIFIER: &'static str = "AsmTls (Fallback)";
-
-    #[inline(always)]
-    fn register_current_allocator_ptr(ptr: *mut core::ffi::c_void) {
-        <NativeOsTls<B, S> as TlsProvider<B>>::register_current_allocator_ptr(ptr);
-    }
-
-    #[inline(always)]
-    fn with_allocator<R>(f: impl FnOnce(&mut ThreadAllocator<B>) -> R) -> Option<R> {
-        <NativeOsTls<B, S> as TlsProvider<B>>::with_allocator(f)
-    }
-
-    #[inline(always)]
-    unsafe fn with_allocator_unguarded<R>(
-        f: impl FnOnce(&mut ThreadAllocator<B>) -> R,
-    ) -> Option<R> {
-        // SAFETY: forwarded unchanged — the caller satisfies
-        // `with_allocator_unguarded`'s contract: no other live borrow of this
-        // thread's allocator slot, and the fn is on the owning thread.
-        unsafe { <NativeOsTls<B, S> as TlsProvider<B>>::with_allocator_unguarded(f) }
-    }
-
-    #[inline(always)]
-    fn get_allocator_ptr() -> *mut core::ffi::c_void {
-        <NativeOsTls<B, S> as TlsProvider<B>>::get_allocator_ptr()
-    }
-
-    #[inline(always)]
-    fn get_allocator_ptr_raw() -> *mut core::ffi::c_void {
-        <NativeOsTls<B, S> as TlsProvider<B>>::get_allocator_ptr_raw()
+        // SAFETY: `key` is a live OS TLS slot index (`get_or_init_key`); the
+        // read yields this thread's cached value without triggering init.
+        get_or_init_key(S::get_os_tls_key())
+            .map_or(core::ptr::null_mut(), |key| unsafe { O::read(key) })
     }
 }

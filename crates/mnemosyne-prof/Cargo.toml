@@ -13,6 +13,10 @@ categories = ["memory-management", "development-tools::profiling"]
 
 [dependencies]
 backtrace = "0.3"
+# Raw OS-TLS slot access (key init, get/set, Windows x86-64 TEB fast path) is
+# shared with `mnemosyne-local`'s TLS providers through the one module in
+# `mnemosyne_core::os_tls`, so this crate no longer re-declares the FFI.
+mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.2.0" }
 
 [build-dependencies]
 mnemosyne-build-util = { path = "../mnemosyne-build-util", version = "0.2.0" }
