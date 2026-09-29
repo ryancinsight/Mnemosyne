@@ -79,7 +79,7 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | Re-entrancy guard (`IS_ALLOCATING` flag) | Implemented per backend | mimalloc reentrancy bit | Parity. | done |
 | **Multiple heaps per thread (`MnemosyneHeap`)** | Implemented (`MnemosyneHeap` owns its `ThreadAllocator`) | mimalloc heap API, jemalloc arenas | Supports compartmentalization (per-request arenas, freed-as-a-group). | done |
 | **Per-CPU caching** (rather than per-thread) | Implemented as a per-CPU L1 in front of the per-thread cache (`crates/mnemosyne-local/src/per_cpu`, single-CAS class stacks keyed by `current_cpu_id`); the per-thread path remains the owner of pages | tcmalloc per-CPU, snmalloc 0.6+ per-CPU | Reduces TLS overhead in heavily threaded workloads; needs `restartable sequences` on Linux. | `[arch]` |
-| **NUMA-aware arena selection** | Implemented (`GlobalSegmentPool` pops from the current NUMA bucket and steals from the other nodes when it is empty, `crates/mnemosyne-arena/src/segment/pool/segment_pool.rs:114-161`; buckets in `numa_bucket.rs`) | jemalloc `arena.numa_node`, tcmalloc per-NUMA arenas | Cross-socket bandwidth wins on >16 core boxes. | `[major]` |
+| **NUMA-aware arena selection** | Implemented (`GlobalSegmentPool` pops from the current NUMA bucket and steals from the other nodes when it is empty, `crates/mnemosyne-arena/src/segment/pool/segment_pool.rs:114-161`; buckets in `numa_bucket.rs`) | jemalloc `arena.numa_node`, tcmalloc per-NUMA arenas | Cross-socket bandwidth wins on >16 core boxes. | done |
 | Active/full page lists per size class | Implemented (`active_pages`, `full_pages`) | mimalloc full list | Parity. | done |
 | Linear scan of `full_pages` in `alloc_cold` capped at 8 | Implemented; documented bound | mimalloc full-pages traversal | Parity. The 8-cap is a design tuning knob. | done |
 | **Bucketed / ring-buffer recycle queue** instead of linear `try_recycle_page` | Linear scan over owned segments | mimalloc's `mi_segments_collect` is also linear but bounded by segment count; snmalloc uses per-class ring buffers | Reduces worst-case recycle latency under many owned segments. | `[minor]` |
@@ -105,9 +105,9 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 | Per-thread allocator stats | Implemented (`ThreadAllocatorStats`) | mimalloc `mi_stats_*`, jemalloc opt.stats_print | Parity. | done |
 | Backend telemetry (mapped bytes, peak, map/unmap calls, purges) | Implemented (`BackendMemoryStats`, `ArenaMemoryStats`) | mimalloc reset stats, jemalloc decay stats | Parity. | done |
 | Per-size-class occupancy snapshot | Implemented (`SizeClassOccupancy`) | mimalloc `mi_heap_visit_blocks`, jemalloc `arena.<i>.stats.bins` | Parity for class-level aggregation. | done |
-| **Per-allocation profiling / heap snapshot** | Implemented (`mnemosyne-prof` sampling profiler, `enable_profiling(sample_interval)`, `crates/mnemosyne-prof/src/lib.rs:86`) | jemalloc `prof.*`, mimalloc `mi_register_output` + custom profilers, tcmalloc heap profiler | Required for `pprof`-style flamegraphs; integrates with `tokio-console`, `eBPF`. | `[major]` |
+| **Per-allocation profiling / heap snapshot** | Implemented (`mnemosyne-prof` sampling profiler, `enable_profiling(sample_interval)`, `crates/mnemosyne-prof/src/lib.rs:86`) | jemalloc `prof.*`, mimalloc `mi_register_output` + custom profilers, tcmalloc heap profiler | Required for `pprof`-style flamegraphs; integrates with `tokio-console`, `eBPF`. | done |
 | **Allocation backtrace tracking (opt-in)** | Not implemented | jemalloc with `libunwind`, Bytehound | Production debugging for leaks. | `[minor]` |
-| **Tracing / event hook callback** (alloc/free user callback) | Implemented (`mnemosyne_prof::register_alloc_hook` / `register_free_hook`, `crates/mnemosyne-prof/src/lib.rs:68,77`; C ABI `mnemosyne_register_alloc_hook` / `mnemosyne_register_free_hook`, `crates/mnemosyne-c-shim/src/lib.rs:266,279`) | mimalloc `mi_register_output`, tcmalloc `MallocHook` | Enables flamegraphs without binary patching. | `[minor]` |
+| **Tracing / event hook callback** (alloc/free user callback) | Implemented (`mnemosyne_prof::register_alloc_hook` / `register_free_hook`, `crates/mnemosyne-prof/src/lib.rs:68,77`; C ABI `mnemosyne_register_alloc_hook` / `mnemosyne_register_free_hook`, `crates/mnemosyne-c-shim/src/lib.rs:266,279`) | mimalloc `mi_register_output`, tcmalloc `MallocHook` | Enables flamegraphs without binary patching. | done |
 | **Per-heap RSS estimation** (resident vs. mapped) | Implemented for whole-process `current_mapped_bytes` but not per-heap RSS estimate | mimalloc `mi_heap_collect`, jemalloc `arena.<i>.stats.mapped` | Without page-reset support, RSS = mapped. | `[minor]` |
 
 ## 8. Gap matrix — configurability / tuning
@@ -146,7 +146,7 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 ## 11. Cross-cutting observations
 
 1. **Mnemosyne's structural design is at parity with mimalloc's small-allocation
-   fast path** (three-list sharded free queue, page-local cross-thread queue,
+   fast path** (two-list sharded free queue, page-local cross-thread queue,
    64-byte page metadata, segment-rounding free classification, segment-pool
    retention, orphaned-segment adoption). The gaps cluster in three areas:
    *security hardening* (free-list encryption, guard pages, randomized order,
@@ -164,17 +164,17 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
    should be ZST-gated rather than runtime-flagged. Adding a third policy
    (`HardenedPolicy`) layered on top of `SecurePolicy` is a clean extension.
 
-4. **The C ABI gap is the largest gap to external adoption**, but is a
-   significant ongoing-maintenance commitment (libc-interpose ordering, weak
-   symbol layout, `dlsym` interaction). It belongs to `[arch]` not because
-   it changes Mnemosyne internals but because it adds a new public surface.
+4. **The remaining C ABI gap is `memalign` and its portability contract.** The
+   shipped shim already exports the required `malloc` family, `posix_memalign`,
+   `aligned_alloc`, and `malloc_usable_size`; adding another libc entry point
+   is a public-surface decision with interpose-ordering and weak-symbol costs.
 
-5. **NUMA-awareness and per-CPU caching are research-grade scope changes**
-   that would require restructuring `LocalAllocatorSelector` and the
-   segment pool. They should not be attempted until the basic per-thread
-   path is benchmark-stable against mimalloc on the same workloads — the
-   project's existing reverts on TLS-collapse experiments show that small
-   changes here are easy to regress.
+5. **Restartable-sequence per-CPU caching remains a research-grade scope
+   change.** The current per-CPU cache and NUMA segment pool are shipped;
+   adding Linux `rseq` would require a platform-specific fast path and a
+   benchmark-stable baseline against mimalloc before changing the owner path.
+   The project's existing TLS-collapse reverts show that small changes here
+   are easy to regress.
 
 6. **Recent research (Mesh, ML-driven, CHERI)** sits outside the production
    allocator scope and should be tracked as long-term `[arch]` candidates
