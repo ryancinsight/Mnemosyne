@@ -2,6 +2,13 @@
 
 ## Ready
 
+<a id="MN-CI-REQUIRED-AGGREGATE-2026-09-29"></a>
+- [ ] [correctness] **MN-CI-REQUIRED-AGGREGATE-2026-09-29 — keep required CI status present when scoped jobs skip.**
+  priority: correctness; needs: none; scope: `.github/workflows/ci.yml`, branch protection;
+  outcome: docs-only and board-only pull requests expose one required aggregate status while heavy jobs remain path-scoped.
+  acceptance: the aggregate runs with `always()`, fails on any failed or cancelled dependency, accepts intentional skips, and is the only required branch status.
+  next step: merge the workflow aggregate, point branch protection at `CI aggregate`, and re-run PR #179.
+
 <a id="MN-WASM-ENV-2026-09-11"></a>
 - [x] [patch] **MN-WASM-ENV-2026-09-11 — make allocator option discovery link-safe on WASM.**
   status=done; integrator=root; branch=`fix/mnemosyne-wasm-env-options-001`;
