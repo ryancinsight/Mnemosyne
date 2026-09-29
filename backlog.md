@@ -2,6 +2,13 @@
 
 ## Ready
 
+<a id="MN-CI-REQUIRED-AGGREGATE-2026-09-29"></a>
+- [ ] [correctness] **MN-CI-REQUIRED-AGGREGATE-2026-09-29 — keep required CI status present when scoped jobs skip.**
+  priority: correctness; needs: none; scope: `.github/workflows/ci.yml`, branch protection;
+  outcome: docs-only and board-only pull requests expose one required aggregate status while heavy jobs remain path-scoped.
+  acceptance: the aggregate runs with `always()`, fails on any failed or cancelled dependency, accepts intentional skips, and is the only required branch status.
+  next step: merge the workflow aggregate, point branch protection at `CI aggregate`, and re-run PR #179.
+
 <a id="MN-WASM-ENV-2026-09-11"></a>
 - [x] [patch] **MN-WASM-ENV-2026-09-11 — make allocator option discovery link-safe on WASM.**
   status=done; integrator=root; branch=`fix/mnemosyne-wasm-env-options-001`;
@@ -15,7 +22,10 @@
   nextest passes 459/459; all-features remains host-environment blocked by the
   existing MSYS2 GNU jemalloc archive on the MSVC target.
 
-## In progress
+<a id="MN-WASM-2026-09-06"></a>
+- [x] [arch] [minor] **MN-WASM-2026-09-06 — provide a portable WebAssembly memory backend.**
+  status=done; integrator=root; branch=`codex/mnemosyne-wasm-pointer-width`;
+  outcome delivered by PR #141; closure retained by PR #179.
 
 <a id="mn-em-book-depth-1"></a>
 - [x] **MNEM-BOOK-DEPTH-1** [docs][minor] status=done owner=codex

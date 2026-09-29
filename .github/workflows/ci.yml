@@ -617,3 +617,15 @@ jobs:
           -Zbuild-std --target x86_64-unknown-linux-gnu
           -p mnemosyne-memory-core -p mnemosyne-arena -p mnemosyne-local
           -p mnemosyne-memory
+  aggregate:
+    name: CI aggregate
+    if: always()
+    needs: [changes, lockfile, semver, verify, supply-chain, loom, miri, test-aarch64, benchmark-hygiene, test-tsan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Reject failed or cancelled jobs
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+      - name: Accept completed or intentionally skipped jobs
+        run: echo "All required jobs completed or were intentionally skipped by the path classifier."
