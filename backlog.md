@@ -84,14 +84,6 @@
   blocks carry a `// SAFETY:` comment. The CI `SAFETY comment ratchet` step
   enforces this invariant going forward.
 
-<a id="mn-436"></a>
-- [ ] [major] **MN-436 — preserve allocator mapping provenance.**
-  status=review; integrator=codex; branch=`perf/mnemosyne-scratch-release`;
-  last-update=2026-09-04. ADR 0009 and merged PRs #75/#79 deliver
-  mapping-derived raw pointers, atomic packed heads, `map_addr` tagging, and
-  migrated raw segment/page callers. Core, arena, local, and Leto path evidence
-  is green; the hosted full-suite Miri run is the final closure gate.
-
 ## Blocked
 
 <a id="atlas-mnemosyne-stage-d1"></a>
