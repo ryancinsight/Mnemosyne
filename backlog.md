@@ -15,27 +15,6 @@
   nextest passes 459/459; all-features remains host-environment blocked by the
   existing MSYS2 GNU jemalloc archive on the MSVC target.
 
-<a id="MN-WASM-2026-09-06"></a>
-- [ ] [arch] [minor] **MN-WASM-2026-09-06 — provide a portable WebAssembly memory backend.**
-  status=review; integrator=root; branch=`codex/mnemosyne-wasm-pointer-width`;
-  last-update=2026-09-10.
-  **Outcome:** the core segment key and allocator fallback constants compile on
-  32-bit WebAssembly, and `mnemosyne-backend` selects a real page-aligned
-  global-allocator backend instead of inheriting a host-only default.
-  **Acceptance:** pointer-width-safe key derivation; WASM backend allocates and
-  deallocates through `Layout`; native and WASM warning-denied Clippy, full
-  native tests, and WASM compile pass. **Evidence:** clean branch
-  `fix/mnemosyne-wasm-backend` from `origin/main` passes the segment-key
-  regression, `cargo check --target wasm32-unknown-unknown --offline`, both
-  all-target Clippy runs, and `cargo nextest run --offline` (369/369).
-  Pointer-width-safe synthetic fixtures cover wasm32. The shared main checkout
-  retains unrelated peer WIP; the provider browser/DICOM consumer remains
-  external to this item. RITK's consumer build exposed one remaining
-  pointer-width hash literal in `Page::prefer_secondary_free`; this increment
-  derives the multiplier per target width. Native nextest (40/40), native
-  warning-denied Clippy, and WASM warning-denied Clippy/check pass on the
-  current branch.
-
 ## In progress
 
 <a id="mn-em-book-depth-1"></a>
@@ -83,14 +62,6 @@
   reports baseline **0** (from an original 84). All 742 production `unsafe {}`
   blocks carry a `// SAFETY:` comment. The CI `SAFETY comment ratchet` step
   enforces this invariant going forward.
-
-<a id="mn-436"></a>
-- [ ] [major] **MN-436 — preserve allocator mapping provenance.**
-  status=review; integrator=codex; branch=`perf/mnemosyne-scratch-release`;
-  last-update=2026-09-04. ADR 0009 and merged PRs #75/#79 deliver
-  mapping-derived raw pointers, atomic packed heads, `map_addr` tagging, and
-  migrated raw segment/page callers. Core, arena, local, and Leto path evidence
-  is green; the hosted full-suite Miri run is the final closure gate.
 
 ## Blocked
 
