@@ -40,9 +40,9 @@ categories = ["memory-management", "no-std", "concurrency"]
 rust-version = "1.95"
 
 [workspace.dependencies]
-themis = { package = "themis-topology", git = "https://github.com/ryancinsight/themis", version = "0.10.1", default-features = false, features = ["std"] }
+themis = { package = "themis-topology", git = "https://github.com/ryancinsight/themis", version = "0.11.0", default-features = false, features = ["std"] }
 eunomia = { git = "https://github.com/ryancinsight/eunomia", version = "0.8.0", default-features = false }
-melinoe = { git = "https://github.com/ryancinsight/melinoe.git", version = "0.9.0", default-features = false }
+melinoe = { git = "https://github.com/ryancinsight/melinoe.git", version = "0.10.0", default-features = false }
 
 # Dev/test keep line tables only: full DWARF dominates target/ size for an
 # allocator workspace while backtraces need only line info. Overflow checks are
