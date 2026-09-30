@@ -164,6 +164,11 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
                 unsafe { VirtualAlloc(ptr as *const c_void, size, MEM_RESET, PAGE_READWRITE) };
             !result.is_null()
         }
+        #[cfg(miri)]
+        {
+            // `vm_args_valid` is false under Miri, so the guard above returned.
+            false
+        }
     }
 
     /// Releases the commit charge of a page range via
@@ -187,6 +192,11 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
             // VirtualAlloc reservation; MEM_DECOMMIT keeps the reservation valid.
             let res = unsafe { VirtualFree(ptr as *mut c_void, size, MEM_DECOMMIT) };
             res != 0
+        }
+        #[cfg(miri)]
+        {
+            // `vm_args_valid` is false under Miri, so the guard above returned.
+            false
         }
     }
 
@@ -213,6 +223,11 @@ impl mnemosyne_core::MemoryBackend for WindowsBackend {
                 )
             };
             res != 0
+        }
+        #[cfg(miri)]
+        {
+            // `vm_args_valid` is false under Miri, so the guard above returned.
+            false
         }
     }
 }
