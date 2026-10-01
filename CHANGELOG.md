@@ -226,6 +226,12 @@
 
 ### Changed
 
+- The workspace now requires Melinoe 0.10.0 and Themis 0.11.0, the current 
+  provider releases. Mnemosyne does not consume the APIs those releases changed 
+  (Melinoe's `ParallelExecutor` removal and `register_parallel_executor` 
+  signature, Themis's generic NUMA-pinned storage and `unsafe` pinned-cell 
+  traits).
+
 - All `TEST_LOCK` acquisitions in the `global_alloc_tests` integration suite
   (28 sites) and in `mnemosyne-backend`'s recorder tests (5 sites) now call a
   shared `lock_test()` helper that uses `.unwrap_or_else(|e| e.into_inner())`
