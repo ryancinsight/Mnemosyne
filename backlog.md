@@ -2,6 +2,22 @@
 
 ## Ready
 
+<a id="MN-RESCUE-QUEUE"></a>
+- [ ] [correctness] **MN-RESCUE-QUEUE — complete or close the open rescue PR.**
+  priority: correctness; status: todo; needs: none; scope: the head ref of the
+  PR below (`crates/`, `fuzz/`, `README.md`, `backlog.md`, `checklist.md`).
+  **Outcome:** each listed rescue PR is completed onto current main (ported,
+  verified, merged) or closed once its diff resolves empty against main.
+  **Acceptance:** no open `rescue/` PR for mnemosyne remains unaccounted for.
+  **Next step:** port the head onto current main (it is based on 76a32552e,
+  107 commits behind) and resolve its diff hunk by hunk against main.
+  - ryancinsight/mnemosyne#190 (`rescue/mnemosyne-audit-20260928`): one commit,
+    56 files, +1727/-1684; mostly behavior-preserving splits (tests extracted
+    from `segment/`, `tagged_stack`, `fuzz/op_sequence`; `mnemosyne-prof` and
+    `mnemosyne-decay` control/hook modules; `segment_acquisition.rs` out of
+    `routing/cold.rs`), plus backend and TLS edits and deletion of
+    `backlog.md`/`checklist.md` content (stale against current main).
+
 <a id="MN-WASM-ENV-2026-09-11"></a>
 - [x] [patch] **MN-WASM-ENV-2026-09-11 — make allocator option discovery link-safe on WASM.**
   status=done; integrator=root; branch=`fix/mnemosyne-wasm-env-options-001`;
