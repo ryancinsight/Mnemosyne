@@ -24,7 +24,7 @@ melinoe = { workspace = true }
 mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.2.0" }
 mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.5.0" }
 mnemosyne-arena = { path = "../mnemosyne-arena", version = "0.4.0" }
-mnemosyne-local = { path = "../mnemosyne-local", version = "0.4.0" }
+mnemosyne-local = { path = "../mnemosyne-local", version = "0.4.1" }
 mnemosyne-prof = { path = "../mnemosyne-prof", version = "0.2.0" }
 # Phase 3 Stage D1 device-memory integration: themis owns PlacementHint +
 # MemoryTier (atlas ADR 0002). Used here as the typed placement vocabulary
