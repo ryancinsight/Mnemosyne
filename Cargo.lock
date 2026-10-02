@@ -250,7 +250,7 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 [[package]]
 name = "eunomia"
 version = "0.8.1"
-source = "git+https://github.com/ryancinsight/eunomia#e0d980af4e3ab4ef9be6cd37c36cbfd0f9d9178d"
+source = "git+https://github.com/ryancinsight/eunomia#12fdd824147aae23ebf2666d2b94473f59240137"
 dependencies = [
  "bytemuck",
  "eunomia-derive",
@@ -260,7 +260,7 @@ dependencies = [
 [[package]]
 name = "eunomia-derive"
 version = "0.8.1"
-source = "git+https://github.com/ryancinsight/eunomia#e0d980af4e3ab4ef9be6cd37c36cbfd0f9d9178d"
+source = "git+https://github.com/ryancinsight/eunomia#12fdd824147aae23ebf2666d2b94473f59240137"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -431,7 +431,7 @@ dependencies = [
 [[package]]
 name = "melinoe"
 version = "0.10.0"
-source = "git+https://github.com/ryancinsight/melinoe.git#9e153e3b867e756cadd8033fcc92f164010c3c9d"
+source = "git+https://github.com/ryancinsight/melinoe.git#89d8e70ec77cb4d2cad43c92a2c7455524a49a60"
 
 [[package]]
 name = "memchr"
@@ -459,7 +459,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-arena"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "bytemuck",
  "eunomia",
@@ -574,7 +574,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-memory-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "loom",
 ]
@@ -898,7 +898,7 @@ dependencies = [
 [[package]]
 name = "themis-topology"
 version = "0.11.0"
-source = "git+https://github.com/ryancinsight/themis#d2c9ebd8d16a320ba473aa5f4308a37de0978048"
+source = "git+https://github.com/ryancinsight/themis#b4c6a0b8700983c6f0f0248ab3aeec2cfad7662a"
 dependencies = [
  "libc",
  "melinoe",
