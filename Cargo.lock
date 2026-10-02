@@ -250,7 +250,7 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 [[package]]
 name = "eunomia"
 version = "0.8.1"
-source = "git+https://github.com/ryancinsight/eunomia#12fdd824147aae23ebf2666d2b94473f59240137"
+source = "git+https://github.com/ryancinsight/eunomia#9931fc1f18279a205802127ba86b1b3775df1e38"
 dependencies = [
  "bytemuck",
  "eunomia-derive",
@@ -260,7 +260,7 @@ dependencies = [
 [[package]]
 name = "eunomia-derive"
 version = "0.8.1"
-source = "git+https://github.com/ryancinsight/eunomia#12fdd824147aae23ebf2666d2b94473f59240137"
+source = "git+https://github.com/ryancinsight/eunomia#9931fc1f18279a205802127ba86b1b3775df1e38"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -431,7 +431,7 @@ dependencies = [
 [[package]]
 name = "melinoe"
 version = "0.10.0"
-source = "git+https://github.com/ryancinsight/melinoe.git#89d8e70ec77cb4d2cad43c92a2c7455524a49a60"
+source = "git+https://github.com/ryancinsight/melinoe.git#57f6229004b97e7c3e19d8f2474595f10e680177"
 
 [[package]]
 name = "memchr"
@@ -898,7 +898,7 @@ dependencies = [
 [[package]]
 name = "themis-topology"
 version = "0.11.1"
-source = "git+https://github.com/ryancinsight/themis#d89d3aa6b730705e103c3e461a09b221e9700d83"
+source = "git+https://github.com/ryancinsight/themis#b7b937c37d009ac766e9613a81a48f6b94bb5430"
 dependencies = [
  "libc",
  "melinoe",
