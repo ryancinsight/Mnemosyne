@@ -1,0 +1,16 @@
+[package]
+name = "placeholder"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+members = []
+
+[dependencies.mnemosyne-c-shim]
+path = '\\?\D:\tmp\mw4\crates\mnemosyne-c-shim'
+features = ["nightly_tls"]
+
+[lib]
+path = "lib.rs"
+required-features = []

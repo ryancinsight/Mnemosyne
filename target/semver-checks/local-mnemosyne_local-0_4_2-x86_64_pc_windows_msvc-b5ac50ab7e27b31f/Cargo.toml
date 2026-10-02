@@ -1,0 +1,16 @@
+[package]
+name = "placeholder"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+members = []
+
+[dependencies.mnemosyne-local]
+path = '\\?\D:\tmp\mw4\crates\mnemosyne-local'
+features = ["dealloc-probe", "default", "nightly_tls", "segment-header-guards", "segment-tail-guards", "std_tls"]
+
+[lib]
+path = "lib.rs"
+required-features = []

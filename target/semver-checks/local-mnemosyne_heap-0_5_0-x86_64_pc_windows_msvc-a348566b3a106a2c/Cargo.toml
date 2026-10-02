@@ -1,0 +1,16 @@
+[package]
+name = "placeholder"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+members = []
+
+[dependencies.mnemosyne-heap]
+path = '\\?\D:\tmp\mw4\crates\mnemosyne-heap'
+features = ["default"]
+
+[lib]
+path = "lib.rs"
+required-features = []

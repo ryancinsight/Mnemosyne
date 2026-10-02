@@ -15,7 +15,7 @@ categories.workspace = true
 default = []
 
 [dependencies]
-mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.2.2" }
+mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.3.0" }
 
 [lints]
 workspace = true
