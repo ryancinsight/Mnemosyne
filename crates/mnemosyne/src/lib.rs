@@ -4,8 +4,13 @@
 #![deny(missing_docs)]
 
 extern crate alloc;
+// `counting` keeps its per-thread counters in `std::thread_local!`.
+// `mnemosyne-local`, a required dependency, already links `std`, so this adds
+// no requirement.
+extern crate std;
 
 mod allocator;
+pub mod counting;
 mod options;
 pub mod scratch;
 mod stats;
@@ -60,7 +65,7 @@ pub use stats::{
 /// `Mnemosyne` allocator.
 ///
 /// Call this before starting any measurement window (e.g., a
-/// `stats_alloc::Region`) to flush thread-local-state initialization traffic
+/// [`counting::measure`]) to flush thread-local-state initialization traffic
 /// — options parsing, arena segment acquisition, per-thread allocator setup —
 /// out of the window so that only the actual code under test is measured.
 ///
