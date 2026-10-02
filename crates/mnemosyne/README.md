@@ -6,7 +6,7 @@ name is `mnemosyne`; the crates.io package is `mnemosyne-memory`.
 
 ```toml
 [dependencies]
-mnemosyne-memory = "0.7"
+mnemosyne-memory = "0.8"
 ```
 
 ```rust

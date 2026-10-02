@@ -9,7 +9,7 @@ depends on nothing in the workspace. It is `#![no_std]`.
 
 ```toml
 [dependencies]
-mnemosyne-memory-core = "0.2"
+mnemosyne-memory-core = "0.3"
 ```
 
 ## Contents

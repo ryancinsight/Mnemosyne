@@ -26,9 +26,9 @@ nightly_tls = []
 std_tls = []
 
 [dev-dependencies]
-mnemosyne = { version = "0.8.0", package = "mnemosyne-memory", path = "../mnemosyne" }
-mnemosyne-local = { version = "0.5.0", path = "../mnemosyne-local" }
-mnemosyne-heap = { version = "0.5.0", path = "../mnemosyne-heap" }
+mnemosyne = { package = "mnemosyne-memory", path = "../mnemosyne" }
+mnemosyne-local = { path = "../mnemosyne-local" }
+mnemosyne-heap = { path = "../mnemosyne-heap" }
 mnemosyne-backend = { version = "0.6.0", path = "../mnemosyne-backend" }
 
 [lints]

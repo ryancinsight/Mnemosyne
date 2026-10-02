@@ -6,7 +6,7 @@ turns `MemoryBackend` calls into OS virtual-memory operations.
 
 ```toml
 [dependencies]
-mnemosyne-backend = "0.5"
+mnemosyne-backend = "0.6"
 ```
 
 ## Layout, by concern
