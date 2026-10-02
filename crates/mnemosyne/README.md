@@ -32,6 +32,10 @@ static ALLOCATOR: Mnemosyne = Mnemosyne;
 - `reset()` / `purge()` — RSS reduction, with and without surrendering address
   space.
 - `scratch` — aligned scratch lanes for `f32`, `f64`, and `u8`.
+- `counting` — `CountingAllocator<A>`, a `GlobalAlloc` wrapper that counts
+  allocations, reallocations, deallocations, and bytes per thread, and
+  `measure`, which returns a closure's value with the counts its thread
+  produced, for allocation-budget tests that must not see other threads.
 - Branded heap re-exports (`branded_scope`, `BrandedBox`, `BrandedVec`,
   `BrandedCell`) behind the `branded` feature.
 

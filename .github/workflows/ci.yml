@@ -324,6 +324,7 @@ jobs:
           echo "$changed" | grep -q '^crates/mnemosyne-local/' && groups="$groups local"
           echo "$changed" | grep -q '^crates/mnemosyne-heap/' && groups="$groups heap"
           echo "$changed" | grep -qE '^crates/mnemosyne-(decay|backend)/' && groups="$groups decaybackend"
+          echo "$changed" | grep -q '^crates/mnemosyne/' && groups="$groups facade"
           groups="$(echo "$groups" | xargs)"
           if [ -z "$groups" ]; then
             groups="local"
@@ -493,6 +494,32 @@ jobs:
         run: >-
           cargo +nightly miri nextest run -p mnemosyne-decay -p mnemosyne-backend
           --locked --profile miri
+
+      # The facade crate joins for one harness only: `counting_allocator`, which
+      # under Miri wraps `System` (the harness selects it with `cfg(miri)`) so
+      # the per-thread counting wrapper is checked for aliasing, provenance and
+      # thread-teardown behavior in isolation. The rest of the facade's tests
+      # run `Mnemosyne` itself and stay out until MN-LOCAL-MIRI-UB is fixed:
+      # Miri reports undefined behavior in `mnemosyne-local` under Stacked
+      # Borrows and Tree Borrows for any program that allocates through it.
+      # The host is Linux, the target the harness was verified on; a Windows-host
+      # run reports a violation inside the standard library's own `System`
+      # allocator, unrelated to the wrapper.
+      - name: Miri — counting allocator (Stacked Borrows)
+        if: github.event_name != 'pull_request' || contains(steps.scope.outputs.groups, 'facade')
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+        run: >-
+          cargo +nightly miri nextest run -p mnemosyne-memory --locked
+          --profile miri -E 'binary(counting_allocator)'
+
+      - name: Miri — counting allocator (Tree Borrows)
+        if: github.event_name != 'pull_request' || contains(steps.scope.outputs.groups, 'facade')
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-tree-borrows
+        run: >-
+          cargo +nightly miri nextest run -p mnemosyne-memory --locked
+          --profile miri -E 'binary(counting_allocator)'
 
   test-aarch64:
     name: Native tests (aarch64)
