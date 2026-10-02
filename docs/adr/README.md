@@ -19,3 +19,4 @@
 | [0009](0009-preserve-allocator-mapping-provenance.md) | Preserve allocator mapping provenance | Accepted |
 | [0010](0010-melinoe-permits-for-branded-heaps.md) | Use Melinoe permits for branded heap access | Accepted |
 | [0011](0011-wasm-memory-backend.md) | Provide a portable WebAssembly memory backend | Accepted |
+| [0012](0012-free-path-provenance-and-out-of-band-links.md) | Reach free-path state without the caller's provenance | Proposed |
