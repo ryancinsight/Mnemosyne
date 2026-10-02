@@ -242,6 +242,9 @@ unsafe fn map_fresh_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
             return None;
         }
     }
+    // Free and usable-size recover this segment's header from bare user
+    // addresses; they rebuild the pointer from this exposure.
+    mnemosyne_core::types::expose_mapping(raw_ptr);
 
     let numa_node = current_numa_node();
     // SAFETY: `raw_ptr` is the non-null `SEGMENT_MAPPING_SIZE` mapping just

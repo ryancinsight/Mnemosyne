@@ -172,6 +172,9 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(
             if ptr.is_null() {
                 return core::ptr::null_mut();
             }
+            // The free path recovers the header and back-pointer slot from
+            // the bare payload address; it rebuilds them from this exposure.
+            mnemosyne_core::types::expose_mapping(ptr);
             (ptr, total_alloc_size)
         }
     };
@@ -228,8 +231,9 @@ fn resolve_huge_dealloc_segment(
         }
         // SAFETY: the large/huge allocation path writes the owning `Segment`
         // pointer into the pointer-aligned metadata slot immediately preceding
-        // `ptr`; this read recovers that candidate pointer for validation.
-        let resolved = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+        // `ptr` and exposed the mapping; this read recovers that candidate
+        // pointer for validation.
+        let resolved = unsafe { *mnemosyne_core::types::locate_huge_back_pointer(ptr) };
         if resolved.is_null() || (resolved as usize) & (SEGMENT_ALIGN - 1) != 0 {
             #[cfg(any(feature = "std", test))]
             {

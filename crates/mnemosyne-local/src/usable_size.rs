@@ -1,7 +1,7 @@
 use crate::{LocalAllocatorSelector, ThreadAllocator, ThreadAllocatorStats};
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::policy::AllocPolicy;
-use mnemosyne_core::types::{Segment, locate_segment};
+use mnemosyne_core::types::{locate_huge_back_pointer, locate_segment};
 
 /// Returns the actual usable byte count of the allocation at `ptr`.
 ///
@@ -105,12 +105,13 @@ pub unsafe fn usable_size(ptr: *mut u8) -> usize {
 ///
 /// `ptr` must be a non-null user pointer from a Mnemosyne *large/huge*
 /// allocation, so the pointer slot immediately preceding it holds a valid
-/// segment header (`(ptr as *mut *mut Segment).sub(1)`).
+/// segment header ([`locate_huge_back_pointer`]).
 #[inline]
 pub(crate) unsafe fn huge_allocation_size(ptr: *mut u8) -> usize {
     // SAFETY: per the contract, the slot one pointer before `ptr` holds the
-    // originating segment header written at `allocate_large_or_huge` time.
-    let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+    // originating segment header written at `allocate_large_or_huge` time, in
+    // a mapping exposed when it was mapped.
+    let segment = unsafe { *locate_huge_back_pointer(ptr) };
     // SAFETY: the segment's raw mapping length is authoritative for large/huge
     // allocations because it includes any prefix or alignment slack in addition
     // to the requested payload size.

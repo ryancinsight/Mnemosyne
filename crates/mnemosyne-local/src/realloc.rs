@@ -13,7 +13,7 @@ use mnemosyne_core::constants::{MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE};
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::round_up_size;
 use mnemosyne_core::types::Segment;
-use mnemosyne_core::types::{Block, locate_segment};
+use mnemosyne_core::types::{Block, locate_block, locate_segment};
 
 /// Non-generic SSOT for the in-place realloc byte-mutation step.
 ///
@@ -181,6 +181,11 @@ pub unsafe fn thread_realloc<
         let can_reuse = unsafe { realloc_can_reuse(ptr, layout, new_size) };
 
         if can_reuse {
+            // SAFETY: `ptr` is a live allocation of this allocator. The block is
+            // returned as the new allocation, so it carries the mapping's
+            // provenance rather than the caller's, which may cover only the
+            // old `layout.size()` bytes.
+            let ptr = unsafe { locate_block(ptr) };
             // SAFETY: `ptr` is non-null and its backing block covers `new_size`
             // (proven by `can_reuse`).
             unsafe {

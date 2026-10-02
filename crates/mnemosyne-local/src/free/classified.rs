@@ -21,11 +21,15 @@ pub(super) unsafe fn thread_free_classified<
         return;
     }
 
-    let ptr_val = ptr as usize;
+    let ptr_val = ptr.addr();
     // SAFETY: `ptr` was previously returned by this allocator, satisfying
-    // `locate_segment`'s contract; it recovers the live segment header and the
+    // `locate_segment`'s contract; it recovers the live segment header, from
+    // the mapping's exposed provenance rather than `ptr`'s (which the caller
+    // may have narrowed to the block, e.g. through a `Box` retag), and the
     // bounded page index.
     let (segment, page_index) = unsafe { locate_segment(ptr) };
+    // The block itself stays addressed through `ptr`, the pointer the caller
+    // lent for it (see `locate_block` for why).
 
     // SAFETY: `segment` and `page_index` were validated by `locate_segment`.
     // `locate_page` avoids retaining a reference-derived metadata tag across
@@ -78,7 +82,7 @@ pub(super) unsafe fn thread_free_classified<
         unsafe { poison_freed_bytes::<P>(ptr, (*page_ptr).block_size as usize) };
     }
 
-    let block = ptr as *mut Block;
+    let block = ptr.cast::<Block>();
     // SAFETY: `segment` is the live mapping `locate_segment` recovered for `ptr`;
     // `owner` reads its ownership token, which is immutable while the segment
     // is mapped.

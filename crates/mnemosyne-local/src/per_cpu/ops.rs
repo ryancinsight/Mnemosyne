@@ -71,7 +71,12 @@ fn try_alloc_cpu_raw(class: usize) -> *mut u8 {
             Ordering::Relaxed,
         ) {
             Ok(_) => {
-                return block_ptr;
+                // The slot held the pointer the block was freed through, whose
+                // provenance the previous owner may have narrowed; the block
+                // is handed out with the mapping's provenance instead.
+                // SAFETY: `block_ptr` is a non-null block of an exposed
+                // segment mapping, cached by `try_free_cpu`.
+                return unsafe { mnemosyne_core::types::locate_block(block_ptr) };
             }
             Err(_) => {
                 if !refreshed {

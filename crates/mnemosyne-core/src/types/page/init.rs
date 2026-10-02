@@ -137,6 +137,14 @@ impl Page {
             page_start + PAGE_SIZE,
             "pop_block found a free-list node outside its page or misaligned",
         );
+        // A free-list node holds the pointer its block was freed through, whose
+        // provenance the previous owner may have narrowed (a `Box<[T]>` covers
+        // only its own bytes). The block handed out is re-derived from the
+        // page, which carries the mapping's provenance, so the new allocation
+        // covers its whole block.
+        // SAFETY: `block_addr` was checked above to lie inside this page, so it
+        // is non-null and inside the mapping `page` was projected from.
+        let block = unsafe { NonNull::new_unchecked(page.cast::<Block>().with_addr(block_addr)) };
         let segment = page.map_addr(|_| segment_addr).cast::<Segment>();
         let page_index = unsafe { (*page).page_index as usize };
         // SAFETY: `page` retains the parent mapping provenance and its
