@@ -1,7 +1,7 @@
 [package]
 name = "mnemosyne-local"
 license = "MIT OR Apache-2.0"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 rust-version.workspace = true
 repository.workspace = true
@@ -40,8 +40,8 @@ dealloc-probe = []
 mnemosyne-build-util = { path = "../mnemosyne-build-util", version = "0.2.1" }
 
 [dependencies]
-mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.2.2" }
-mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.5.1" }
+mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.3.0" }
+mnemosyne-backend = { path = "../mnemosyne-backend", version = "0.6.0" }
 mnemosyne-arena = { path = "../mnemosyne-arena", version = "0.5.0" }
 mnemosyne-decay = { path = "../mnemosyne-decay", version = "0.3.1" }
 mnemosyne-prof = { path = "../mnemosyne-prof", version = "0.2.1" }
@@ -49,7 +49,7 @@ themis = { workspace = true }
 melinoe = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-mnemosyne-heap = { version = "0.4.1", path = "../mnemosyne-heap" }
+mnemosyne-heap = { version = "0.5.0", path = "../mnemosyne-heap" }
 
 [lints]
 workspace = true

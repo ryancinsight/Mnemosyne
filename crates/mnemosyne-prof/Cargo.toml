@@ -16,7 +16,7 @@ backtrace = "0.3"
 # Raw OS-TLS slot access (key init, get/set, Windows x86-64 TEB fast path) is
 # shared with `mnemosyne-local`'s TLS providers through the one module in
 # `mnemosyne_core::os_tls`, so this crate no longer re-declares the FFI.
-mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.2.2" }
+mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.3.0" }
 
 [build-dependencies]
 mnemosyne-build-util = { path = "../mnemosyne-build-util", version = "0.2.1" }
@@ -26,10 +26,10 @@ nightly_tls = []
 std_tls = []
 
 [dev-dependencies]
-mnemosyne = { version = "0.7.1", package = "mnemosyne-memory", path = "../mnemosyne" }
-mnemosyne-local = { version = "0.4.2", path = "../mnemosyne-local" }
-mnemosyne-heap = { version = "0.4.1", path = "../mnemosyne-heap" }
-mnemosyne-backend = { version = "0.5.1", path = "../mnemosyne-backend" }
+mnemosyne = { version = "0.8.0", package = "mnemosyne-memory", path = "../mnemosyne" }
+mnemosyne-local = { version = "0.5.0", path = "../mnemosyne-local" }
+mnemosyne-heap = { version = "0.5.0", path = "../mnemosyne-heap" }
+mnemosyne-backend = { version = "0.6.0", path = "../mnemosyne-backend" }
 
 [lints]
 workspace = true
