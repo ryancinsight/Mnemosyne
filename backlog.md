@@ -30,6 +30,22 @@
   **Next step:** read the borrow-stack report at each of the three sites for the retag that invalidated the tag, then derive the access from the segment, as the reclamation seam does (MN-437).
   basis: origin/main 66a5a86899cb73fd8296b4a6858351bc3baf0398.
 
+<a id="MN-PROF-MIRI-FRAMES"></a>
+- [ ] [correctness] **MN-PROF-MIRI-FRAMES — keep captured frame provenance in `mnemosyne-prof`.**
+  priority: correctness; status: todo; needs: MN-LOCAL-MIRI-UB; scope:
+  `crates/mnemosyne-prof/src/sampler/`, `.github/workflows/ci.yml`.
+  **Outcome:** the sampler stores captured frames as pointers rather than `usize`,
+  so `backtrace::resolve` receives the provenance `frame.ip()` carried. With the
+  MN-LOCAL-MIRI-UB fix applied (PR #210),
+  `leak::test_leak_detector_integration` reaches Undefined Behavior under Miri
+  (Stacked and Tree Borrows) in `backtrace`'s `miri_resolve_frame`, called from
+  `sampler/report.rs:133` with an address that has no provenance.
+  **Acceptance:** `global_alloc_tests` Miri-clean under both models with no test
+  filter, and the CI facade Miri steps drop `not test(/^leak::/)`. That run also
+  guards the sampler's TLS copy-out fix, which only `leak::` reaches under Miri.
+  **Next step:** replace the interner's `[usize]` frame type with a pointer
+  newtype, keeping its hash and the shard selection unchanged.
+
 <a id="MN-WASM-ENV-2026-09-11"></a>
 - [x] [patch] **MN-WASM-ENV-2026-09-11 — make allocator option discovery link-safe on WASM.**
   status=done; integrator=root; branch=`fix/mnemosyne-wasm-env-options-001`;
