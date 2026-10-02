@@ -1,7 +1,7 @@
 [package]
 name = "mnemosyne-hardened"
 license = "MIT OR Apache-2.0"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version.workspace = true
 repository.workspace = true
@@ -15,7 +15,7 @@ categories.workspace = true
 default = []
 
 [dependencies]
-mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.2.1" }
+mnemosyne-core = { package = "mnemosyne-memory-core", path = "../mnemosyne-core", version = "0.2.2" }
 
 [lints]
 workspace = true
