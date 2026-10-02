@@ -18,6 +18,18 @@
     `routing/cold.rs`), plus backend and TLS edits and deletion of
     `backlog.md`/`checklist.md` content (stale against current main).
 
+<a id="MN-LOCAL-MIRI-UB"></a>
+- [ ] [correctness] **MN-LOCAL-MIRI-UB — remove the undefined behavior Miri reports in `mnemosyne-local`.**
+  priority: correctness; status: todo; needs: none; scope:
+  `crates/mnemosyne-local/src/free/classified.rs`,
+  `crates/mnemosyne-local/src/local_alloc/page/allocation.rs`,
+  `crates/mnemosyne/tests/global_alloc_tests/`, `.github/workflows/ci.yml`.
+  **Outcome:** any program that allocates through `Mnemosyne` is Miri-clean. Stacked Borrows rejects the page-metadata read at `free/classified.rs:58`; Tree Borrows rejects it at `free/classified.rs:101` and the `alloc_count` update at `local_alloc/page/allocation.rs:57`. Both reproduce on the Windows host and on `x86_64-unknown-linux-gnu`, and the `-p mnemosyne-local` unit-test job does not reach them.
+  **Reproduce:** `MIRIFLAGS="-Zmiri-disable-isolation [-Zmiri-tree-borrows]" cargo +nightly miri test -p mnemosyne-memory --test global_alloc_tests -- basic::test_basic_allocation`.
+  **Acceptance:** Miri clean on `global_alloc_tests` under Stacked Borrows and Tree Borrows, both added to the CI `miri` job; then `counting_allocator` drops its `cfg(miri)` `System` inner and wraps `Mnemosyne` under Miri too.
+  **Next step:** read the borrow-stack report at each of the three sites for the retag that invalidated the tag, then derive the access from the segment, as the reclamation seam does (MN-437).
+  basis: origin/main 66a5a86899cb73fd8296b4a6858351bc3baf0398.
+
 <a id="MN-WASM-ENV-2026-09-11"></a>
 - [x] [patch] **MN-WASM-ENV-2026-09-11 — make allocator option discovery link-safe on WASM.**
   status=done; integrator=root; branch=`fix/mnemosyne-wasm-env-options-001`;
