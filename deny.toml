@@ -17,6 +17,11 @@ allow = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# A workspace-only test dependency that closes a cycle stays path-only, so the
+# registry archive omits it: a versioned one makes `cargo package` wait on a
+# version that cannot exist before its own dependent. Path wildcards remain
+# denied on normal and build dependencies of a published crate.
+allow-wildcard-paths = true
 
 [sources]
 unknown-git = "deny"
