@@ -2,110 +2,79 @@
 
 Status: Proposed
 
-Revised 2026-10-03: corrected the root cause (wildcard provenance), added the
-split write and quarantine options, fixed thresholds before measuring, and
-recorded the option-1 prototype's measurements against them. Revised again the
-same day: main fails TB without the registry, so the bounds are re-based on the
-minimal TB-clean tree, fixed before that tree is measured.
+Revised 2026-10-03: root cause corrected (wildcard provenance); split write and
+quarantine options added with bounds fixed before measuring; bounds re-based on
+the minimal Tree Borrows-clean tree once main failed Tree Borrows; decided:
+quarantine, on four static-bound breaches against that tree.
 
 ## Context
 
 `GlobalAlloc::dealloc` receives the caller's pointer, whose Miri tag can be
 narrower than the block: a `Box<i32>` is retagged over 4 bytes of a 16-byte
-class-0 block. Every class is a multiple of 16 bytes (`CLASS_TO_SIZE`,
-`MIN_BLOCK_SIZE`), so the 8-byte link fits every block, but a 1–7 byte request
-does not cover it. The free path touches four regions beyond the caller's
-bytes: segment and page metadata (`locate_segment`); the link
-`Block::next_encoded` (`commit_in_place_free`, `do_local_free_internal_policy`,
-`AtomicFreeList::push_dynamic`); the huge back-pointer (`ptr.sub(1)` in
-`free_large_or_huge_raw`); and the poison fill and `HardenedPolicy` canary.
+class-0 block. Every class is a multiple of 16 bytes, so the 8-byte link fits
+every block, but a 1–7 byte request does not cover it. The free path touches
+four regions beyond the caller's bytes: (1) segment and page metadata
+(`locate_segment`); (2) the link `Block::next_encoded`; (3) the huge
+back-pointer (`ptr.sub(1)` in `free_large_or_huge_raw`); (4) the poison fill
+and `HardenedPolicy` canary.
 
-**Root cause.** `set_next_dynamic(&mut self)` forms an 8-byte `&mut Block` from
-the caller's pointer; when the tag covers fewer than 8 bytes, Stacked Borrows
-(SB) rejects the retag. std frees its own argument box while that box's
-protector is active (`ThreadInit::init(self: Box<Self>)`), so under Tree
-Borrows (TB) a write to those bytes through a tag that is not a child of the
-box's tag is UB. The previous revision's "no tag satisfies both models" was an
-artifact of PR #210's `with_exposed_provenance_mut`, whose wildcard matches any
-exposed tag under SB but is foreign to the protected box under TB. Writing the
-covered bytes through the caller's pointer and the rest through a
-mapping-derived pointer satisfies both models. Reusing the block before the
+**Root cause.** Forming an 8-byte `&mut Block` from a tag covering fewer bytes
+is rejected by Stacked Borrows (SB). std frees its own argument box while that
+box's protector is active (`ThreadInit::init(self: Box<Self>)`), so under Tree
+Borrows (TB) a write through a tag that is not a child of the box's tag is UB.
+PR #210's `with_exposed_provenance_mut` wildcard matches any exposed tag under
+SB but is foreign to the protected box under TB. Reusing a block before the
 protected function returns is UB under every design and is a re-open trigger.
 
-**Upstream.** rust-lang/rust#163403 (closed 2026-09-27: the widening-allocator
-problem; TB accepts it, a fix is under way); rust-lang/miri#2104 (open, the
-same SB symptom); rust-lang/miri#2686 (open, fresh provenance for
-`alloc`/`dealloc`, not implemented in Miri); rust-lang/unsafe-code-guidelines#442.
+**Upstream.** rust-lang/rust#163403 (closed 2026-09-27; TB accepts the
+widening allocator); rust-lang/miri#2104 (open, the SB symptom);
+rust-lang/miri#2686 (open, fresh provenance for `alloc`/`dealloc`);
+rust-lang/unsafe-code-guidelines#442.
 
 ## Options
 
 Regions 1 and 3 must not use the caller's provenance, and ADR 0009 rules out
 exposure, so every conforming option needs a **registry**: each 2 MiB chunk
-maps to a pointer carrying its mapping's provenance, registered at
-`B::allocate` and cleared at `B::deallocate`. `locate_segment` returns
-`donor.with_addr(masked)`; free, `realloc`, `usable_size` and the heap free
-consult it.
+maps to a pointer carrying its mapping's provenance, registered when the arena
+maps and cleared when it unmaps; `locate_segment` returns
+`donor.with_addr(masked)`.
 
-| Option | Link | SB | TB | Strict | Security |
-|---|---|---|---|---|---|
-| 1. Registry + split write | in-band | pass (measured) | pass (measured) | pass (measured) | unchanged |
-| 2. Registry + quarantine | in-band, caller's ptr | excluded | expected; fails without the registry (measured) | expected | unchanged |
-| 3. Registry + bitmap | out-of-band | expected | expected | expected | weaker |
-| 4. Registry + `u16` index array | out-of-band | expected | expected | expected | unchanged |
-| 5. Exposed provenance (#210) | either | wildcard | wildcard | unsupported | unchanged |
+| Option | Link | SB | TB | Security |
+|---|---|---|---|---|
+| 1. Registry + split write | in-band | pass | pass | unchanged |
+| 2. Registry + quarantine | in-band, caller's pointer | partly excluded | pass | unchanged |
+| 3. Registry + bitmap | out-of-band | expected | expected | weaker |
+| 4. Registry + `u16` index array | out-of-band | expected | expected | unchanged |
+| 5. Exposed provenance (#210) | either | wildcard | wildcard | unchanged |
 
 - **1. Split write.** Link and canary bytes below the request go through the
-  caller's pointer, the rest through the mapping-derived pointer, as byte
-  copies; no `&mut Block` is formed from the caller's pointer. Free lists and
-  the per-CPU cache hold only mapping-derived pointers. Poisoning stops at the
-  request. The layout-free paths (`thread_free`, the heap free, C `free`) treat
-  the whole block as covered.
-- **2. Quarantine.** Links go through the caller's pointer; CI runs TB and
-  drops SB for the allocator crates until miri#2686 lands. It still needs the
-  registry for regions 1 and 3 (Evidence: main under TB).
-- **3. Bitmap.** First-free-by-address allocation defeats the randomized
-  `secondary_free` list and drops free-list encryption (ADR 0001). Rejected.
-- **4. Index array.** 12.5% of class-0 page capacity, and poisoning and the
-  canary still need a split rule. Rejected.
-- **5. Exposure.** Violates ADR 0009; strict provenance cannot run it. Rejected.
+  caller's pointer, the rest through the mapping-derived pointer; free lists
+  hold only mapping-derived pointers; poisoning stops at the request.
+- **2. Quarantine.** Links, canary, poison and `realloc`'s in-place result go
+  through the caller's pointer as before; until miri#2686 lands, CI excludes
+  from SB the frees narrower than the link and the in-place `realloc` results
+  written past the caller's old size.
+- **Rejected:** 3 defeats the randomized `secondary_free` list and free-list
+  encryption (ADR 0001); 4 costs 12.5% of class-0 page capacity and still needs
+  a split rule; 5 violates ADR 0009 and cannot run under strict provenance.
 
-**Geometry.** A static root indexed by the high chunk bits, and leaves
-allocated from `B` on first use, zero-filled, never freed. `VA_BITS` is 47 on
-x86-64 (Windows 8.1+, Linux unhinted; Linux `arch/x86/x86_64/5level-paging`),
-48 on other 64-bit targets (AArch64 Linux unhinted, `arch/arm64/memory`), and
-32 on 32-bit targets; registration refuses a mapping above it. At 47 bits the
-root is 64 KiB of `.bss` and each leaf 64 KiB covering 16 GiB. A flat pagemap
-(one load per lookup) needs a 512 MiB reservation, which neither Miri nor
-wasm32 provides; rejected for now.
+**Geometry.** A static root over the high chunk bits; leaves from `B` on first
+use, never freed. `VA_BITS` is 47 on x86-64, 48 on other 64-bit targets, 32 on
+32-bit; registration refuses a mapping above it. At 47 bits root and leaf are
+64 KiB each, a leaf covering 16 GiB. A flat pagemap needs a 512 MiB
+reservation, which neither Miri nor wasm32 provides.
 
-## Acceptance thresholds (fixed before measurement)
+## Bounds and evidence
 
-Option 1 is chosen over option 2 only if every bound holds, measured against
-`origin/main` for `StandardPolicy` and `SecurePolicy`:
+Static path length: release x86-64, toolchain 1.97.0, release profile without
+`strip`; instructions on the defined path, every compare and branch counted, a
+call counted as one plus its callee. One registry lookup is 15 instructions
+(three branches, two dependent loads). Option 1 is the prototype on PR #217's
+head ref; `origin/main` is `58e1aee2`.
 
-- **Static path length** (release x86-64): at most +12 instructions on local
-  in-place free, local last-block free and remote push (+10 registry lookup,
-  +2 size branch); at most +10 on `realloc` and `usable_size`; +0 on alloc.
-- **Dynamic instructions** per alloc+free pair: at most +5% on the criterion
-  `allocation`, `cross_thread`, `realloc` and `throughput` suites.
-- **Cache misses** on the mimalloc-bench workloads (larson, xmalloc-test,
-  cache-scratch, cache-thrash, mstress, rptest, sh6bench, cfrac, espresso):
-  L1D at most +0.05 per alloc+free; LLC within run-to-run noise.
-- **Memory:** registry at most the root plus 64 KiB per 16 GiB span;
-  steady-state RSS at most +1% after 10^8 `latency` cycles.
-- **Miri:** `global_alloc_tests` and `mnemosyne-memory-core` clean under SB,
-  TB and strict provenance, at least four seeds, with CI's
-  `-Zmiri-disable-isolation` and #216's `leak::` exclusion (MN-PROF-MIRI-FRAMES)
-  as the only flag and filter.
-
-## Evidence
-
-Prototype: PR #217, branch `fix/mnemosyne-free-path-split-write`, head
-`743c3309`, against `origin/main` `58e1aee2`.
-
-**Static path length.** Release x86-64, toolchain 1.97.0, the release profile
-without `strip`; instructions on the defined path, every compare and branch
-counted, a call counted as one plus its callee.
+**Against main (bounds fixed first; numbers as recorded).** Bounds: +12 on the
+free paths, +10 on `realloc` and `usable_size`, +0 on alloc, private bytes
++1%.
 
 | Path | main | Option 1 | Delta | Bound |
 |---|---|---|---|---|
@@ -116,78 +85,76 @@ counted, a call counted as one plus its callee.
 | `usable_size`, small | 19 | 35 | +16 | +10 |
 | alloc (Standard, Secure) | identical code | | +0 | +0 |
 
-One registry lookup is 15 instructions (three branches, two dependent loads),
-and every free path performs one, so the local last-block free (not walked)
-also exceeds +12. Option 1's own share is the rest: spills of `FreedBlock`'s
-three fields, the covered-size branch, and `thread_realloc` no longer inlining.
+Private bytes after 10^8 `latency` cycles, mean of four runs: +140,288 B
+(+1.86%). Option 1 passes `global_alloc_tests` and `mnemosyne-memory-core`
+under SB, TB and strict provenance, seeds 1–4.
 
-**Memory.** The registry meets its bound by construction. Private bytes after
-10^8 `latency` cycles, mean of four runs: 7,536,640 to 7,676,928, +140,288 B
-(+1.86%) against +1%.
+**Main fails TB.** `global_alloc_tests` at `58e1aee2` under TB (seeds 1–4, and
+strict provenance, seed 1) aborts while libtest drops its options `Vec`:
+`thread_free_classified` reads `page.alloc_count` (`free/classified.rs:101`)
+through the page pointer masked from the caller's pointer, whose tag the
+allocator's own write (`local_alloc/page/allocation.rs:57`) had disabled.
+Quarantine therefore needs the registry too, and the bounds above, which
+measure the registry, cannot separate the options.
 
-**Miri.** `global_alloc_tests` and `mnemosyne-memory-core` pass under SB, TB and
-strict provenance on seeds 1–4 at `743c3309` (28 and 36 tests, with only the
-flag and filter above); `mnemosyne-local` and `mnemosyne-heap` pass under SB
-and TB, and `mnemosyne-arena` under SB with CI's concurrency filter. The bound
-holds.
+**Re-based on Q (fixed before Q was measured).** Q is `origin/main` plus the
+registry for regions 1 and 3, everything else through the caller's pointer.
+Option 1 is chosen only if, for `StandardPolicy` and `SecurePolicy`: static
+path +2 on the three free paths (the covered-size compare and branch; spills
+count), +0 on `usable_size` and alloc, +15 on `realloc` within class; dynamic
+instructions +2 per alloc+free pair on the criterion `allocation`,
+`cross_thread`, `realloc` and `throughput` suites; L1D and LLC misses on the
+mimalloc-bench workloads within Q's run-to-run spread; private bytes within
+Q's spread; Miri as option 1.
 
-**Main under TB.** `global_alloc_tests` at `58e1aee2` under TB, seeds 1–4,
-and TB with strict provenance, seed 1, abort before any test runs, while
-libtest drops its parsed-options `Vec`: `thread_free_classified` reads
-`page.alloc_count` (`free/classified.rs:101`) through the page pointer masked
-from the caller's pointer, whose tag the allocator's own write to that field
-(`local_alloc/page/allocation.rs:57`) had disabled. Region 1 fails TB on an
-ordinary drop, so quarantine is not main unchanged: it needs the registry too,
-and the bounds above, which measure the registry, cannot separate the options.
+| Path | Q | Option 1 | Delta | Bound |
+|---|---|---|---|---|
+| Standard in-place free | 143 | 159 | +16 | +2 |
+| Secure in-place free | 153 | 173 | +20 | +2 |
+| Standard remote push | 185 (117 + 68) | 195 | +10 | +2 |
+| `realloc` within class | 69 | 88 | +19 | +15 |
+| `usable_size`, small | 35 | 35 | +0 | +0 |
+| alloc (Standard, Secure) | identical code | | +0 | +0 |
 
-**Unmeasured.** Dynamic instructions and cache misses have no counter source on
-the measuring host: PMC needs admin rights, the WSL image is missing, there is
-no valgrind, and the mimalloc-bench workloads need Linux.
+Decisions were carried from main to Q by aligning the two disassemblies; the
+walker reproduced main's 130 and option 1's 159. Private bytes: Q 7,672,832
+(spread 49,152), option 1 7,667,712; holds. Dynamic instructions and cache
+misses were not measured (no counter source on the host); the rule below does
+not need them.
 
-## Re-based thresholds (fixed 2026-10-03, before measuring the baseline)
-
-The figures above stay as recorded. The baseline becomes **Q**, the minimal
-TB-clean tree: `origin/main` plus the registry for regions 1 and 3
-(`locate_segment`, `huge_back_pointer`, arena registration), with the link,
-canary, poison and `realloc`'s in-place result taken from the caller's pointer
-as on main. Q serves as the baseline only after `global_alloc_tests` passes
-under TB on seeds 1–4; any further code TB needs joins Q. Option 1 is chosen over quarantine (Q plus the CI exclusion)
-only if every bound holds against Q, for `StandardPolicy` and `SecurePolicy`:
-
-- **Static path length:** at most +2 instructions on local in-place free,
-  local last-block free and remote push. The covered-size compare and branch
-  are the only work option 1 adds over Q; `FreedBlock`'s fields are budgeted
-  register-resident, so spills count against the bound. +0 on `usable_size`
-  and alloc, where both trees run the same code. On `realloc` within class, at
-  most +15 (option 1's one registry lookup for the in-place result, measured
-  above), or +0 if TB makes Q rebuild that result too.
-- **Dynamic instructions:** at most +2 per alloc+free pair on the criterion
-  `allocation`, `cross_thread`, `realloc` and `throughput` suites, by the same
-  derivation.
-- **Cache misses:** L1D and LLC per alloc+free on the mimalloc-bench workloads
-  within Q's run-to-run spread; the split write touches the bytes Q's single
-  write touches.
-- **Memory:** steady-state private bytes after 10^8 `latency` cycles, mean of
-  four runs, within Q's spread (max minus min of its four runs); option 1 holds
-  no state Q lacks.
-- **Miri:** as above; Q's own TB and strict results are recorded beside it.
+**Q under Miri** (#218, #219). TB: `global_alloc_tests` seeds 1–4, 28/28 each
+with the `leak::` exclusion (MN-PROF-MIRI-FRAMES) and #216's retention guard;
+`counting_allocator` 11/11; with strict provenance, seed 1, 27/28, the
+failure the test's own integer-to-pointer cast (`basic.rs:85`), which PR #217
+rewrites. Core 36/36 and heap 57/57 pass SB and TB; local 92/92 TB and
+91/91 SB with the sub-link probe excluded; arena 142/142 SB with CI's
+concurrency filter. SB: both facade harnesses abort while nextest lists them, when a `String`
+grown in place within its size class writes past its old 56 bytes through the
+caller's tag that `realloc` returned; the `mnemosyne-local` probe of a free
+narrower than the link fails SB at the link write. Runs on the Windows host;
+interpreted for `x86_64-unknown-linux-gnu` as well, the facade TB filter
+passes 38/38 (excluding `policy::test_cuda_backends`, whose `dlopen` Miri does
+not support), local passes SB 91/91 and TB 92/92, and facade SB aborts alike.
 
 ## Decision
 
-Pending: Q is not built yet. The re-based bounds decide; the static path and
-memory bounds are measurable on this host, the dynamic and cache bounds need a
-counter source.
+Quarantine (option 2). Option 1 breaches four static bounds against Q, so the
+pre-registered rule decides without the counter-gated bounds. The metadata
+reads go through the registry (#218, #219); CI runs the facade harnesses under
+TB (#216) and excludes from SB the facade's `Mnemosyne`-backed harnesses and
+the sub-link `mnemosyne-local` probe. Option 1's prototype stays on PR #217's
+head ref.
 
 ## Consequences
 
-The registry replaces PR #210's exposed-provenance entry points under either
-option. Under option 1 the free functions and `AtomicFreeList::push_dynamic`
-take a `FreedBlock`; under option 2 CI drops SB for the facade's allocator
-harnesses, naming miri#2686 as the re-open trigger.
-MN-LOCAL-MIRI-UB stays open until one option lands.
+The registry replaces PR #210's exposed-provenance entry points, and #210
+closes. A free through a pointer narrower than the 8-byte link, and a write
+past the old size through an in-place `realloc` result, are outside SB
+coverage. Every free pays one 15-instruction lookup; the registry holds the
+leaves it maps (64 KiB per 16 GiB span).
 
 ## Overturning evidence
 
-A threshold breach; the protected-reuse scenario becoming reachable from std;
-miri#2686 landing fresh allocator provenance, which would make the split write
-unnecessary.
+rust-lang/miri#2686 landing fresh allocator provenance: the SB exclusions
+lift, and option 1 is re-measured against Q under the re-based bounds. The
+protected-reuse scenario becoming reachable from std.
