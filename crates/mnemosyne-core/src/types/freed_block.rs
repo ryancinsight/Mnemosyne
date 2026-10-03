@@ -10,7 +10,8 @@
 //! mapping-derived block pointer otherwise (ADR 0012, option 1). Free lists
 //! store only the mapping-derived pointer.
 
-use super::Block;
+use super::{Block, Segment};
+use crate::constants::{PAGE_SHIFT, PAGES_PER_SEGMENT, SEGMENT_SIZE};
 use core::ptr::NonNull;
 
 /// The block a free is returning, with the caller's covered prefix.
@@ -53,6 +54,24 @@ impl FreedBlock {
     #[must_use]
     pub fn block(self) -> NonNull<Block> {
         self.block
+    }
+
+    /// The block's segment header and page index.
+    ///
+    /// Masks the mapping-derived block pointer, whose provenance covers the
+    /// whole mapping and so the header, instead of consulting the registry
+    /// again.
+    #[inline(always)]
+    #[must_use]
+    pub fn segment(self) -> (*mut Segment, usize) {
+        let block = self.block.as_ptr().cast::<u8>();
+        let segment = block
+            .map_addr(|addr| addr & !(SEGMENT_SIZE - 1))
+            .cast::<Segment>();
+        (
+            segment,
+            (block.addr() >> PAGE_SHIFT) & (PAGES_PER_SEGMENT - 1),
+        )
     }
 
     /// Writes `len` bytes from `src` at `offset`, splitting at `covered`.

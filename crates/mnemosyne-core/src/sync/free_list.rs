@@ -221,11 +221,9 @@ impl AtomicFreeList {
     #[inline]
     fn push_dynamic_with<C: HeadCodec>(&self, block: FreedBlock, encrypted: bool) {
         let block_ptr = block.block().as_ptr();
-        // SAFETY: `block` is a live allocation of this allocator, so the
-        // segment it lies in is mapped; `locate_segment` only masks its
-        // address down to the segment base.
-        let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
-        // SAFETY: `segment` is the live mapping just located.
+        let (segment, page_index) = block.segment();
+        // SAFETY: `block` is a live allocation of this allocator, so its
+        // segment header is live.
         if !unsafe { Segment::free_list_mode_matches(segment.cast_const(), encrypted) } {
             crate::abort::abort_on_corruption(
                 "free-list mode mismatch: AtomicFreeList push path does not match the segment",
@@ -238,13 +236,11 @@ impl AtomicFreeList {
 
         C::assert_packable(block_ptr);
 
-        // SAFETY: `block` is a live allocation, so `locate_segment` on its
-        // pointer recovers the valid parent segment header and its in-range page
-        // index, satisfying `cookie_for`'s contract.
-        let cookie = unsafe {
-            let (segment, page_index) = crate::types::locate_segment(block_ptr.cast::<u8>());
-            Segment::cookie_for_dynamic(segment.cast_const(), encrypted, page_index)
-        };
+        // SAFETY: `segment` is the block's live parent segment header and
+        // `page_index` its in-range page index, satisfying `cookie_for`'s
+        // contract.
+        let cookie =
+            unsafe { Segment::cookie_for_dynamic(segment.cast_const(), encrypted, page_index) };
 
         self.assert_not_in_queue::<C>(block_ptr);
         self.push_loop::<C>(block_ptr, |current_ptr| {
@@ -258,11 +254,9 @@ impl AtomicFreeList {
     #[inline]
     fn push_raw_with<C: HeadCodec>(&self, block: FreedBlock) {
         let block_ptr = block.block().as_ptr();
-        // SAFETY: `block` is a live allocation of this allocator, so the
-        // segment it lies in is mapped; `locate_segment` only masks its
-        // address down to the segment base.
-        let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
-        // SAFETY: `segment` is the live mapping just located.
+        let (segment, _) = block.segment();
+        // SAFETY: `block` is a live allocation of this allocator, so its
+        // segment header is live.
         if unsafe { Segment::free_list_encrypted(segment.cast_const()) } {
             crate::abort::abort_on_corruption(
                 "raw AtomicFreeList push used while segment free-list links are encrypted",
