@@ -110,6 +110,9 @@ fn purge_retains_segment_when_backend_release_fails() {
 
     unsafe {
         Segment::initialize(segment_ptr, segment_ptr.cast(), 0);
+        // The purge unregisters the mapping first, as for any mapping `map`
+        // produced.
+        crate::mapping::register_fixture_mapping(segment_ptr.cast(), crate::SEGMENT_MAPPING_SIZE);
         FailingReleaseBackend::global_segment_pool().push_unbounded(segment_ptr);
     }
 

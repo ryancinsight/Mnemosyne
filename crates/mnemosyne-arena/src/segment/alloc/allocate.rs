@@ -218,7 +218,7 @@ pub unsafe fn acquire_segment<B: HasSegmentPool>() -> Option<AcquiredSegment> {
 unsafe fn map_fresh_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
     // We allocate twice the segment size to ensure we can find an aligned boundary.
     // SAFETY: SEGMENT_MAPPING_SIZE is non-zero and aligned. We call B::allocate.
-    let mut raw_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
+    let mut raw_ptr = unsafe { crate::mapping::map::<B>(SEGMENT_MAPPING_SIZE) };
     if raw_ptr.is_null() {
         // First OS allocation failed: release every retained free segment
         // back to the OS to reclaim the address space / commit charge a
@@ -232,7 +232,7 @@ unsafe fn map_fresh_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
         // invalidates no live pointer, and the retried `B::allocate` call
         // follows the same contract as the first.
         unsafe { super::release::purge_segment_pool::<B>() };
-        raw_ptr = unsafe { B::allocate(SEGMENT_MAPPING_SIZE) };
+        raw_ptr = unsafe { crate::mapping::map::<B>(SEGMENT_MAPPING_SIZE) };
         // Surfaces the recovery attempt and its outcome as a stats counter
         // (`ArenaMemoryStats::oom_retries` / `oom_retry_successes`) — the
         // crate has no tracing dependency, so telemetry follows the
@@ -247,15 +247,16 @@ unsafe fn map_fresh_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
     // SAFETY: `raw_ptr` is the non-null `SEGMENT_MAPPING_SIZE` mapping just
     // returned by `B::allocate`, which is exclusively owned and writable —
     // exactly `initialize_allocated_segment`'s contract.
-    let (aligned_ptr, aligned_addr, tail_slack_start, mapping_end) =
-        match unsafe { initialize_allocated_segment(raw_ptr, numa_node) } {
-            Some(val) => val,
-            None => {
-                // SAFETY: Releasing raw memory back to the backend because alignment check overflowed.
-                let _released = unsafe { B::deallocate(raw_ptr, SEGMENT_MAPPING_SIZE) };
-                return None;
-            }
-        };
+    let (aligned_ptr, aligned_addr, tail_slack_start, mapping_end) = match unsafe {
+        initialize_allocated_segment(raw_ptr, numa_node)
+    } {
+        Some(val) => val,
+        None => {
+            // SAFETY: Releasing raw memory back to the backend because alignment check overflowed.
+            let _released = unsafe { crate::mapping::unmap::<B>(raw_ptr, SEGMENT_MAPPING_SIZE) };
+            return None;
+        }
+    };
 
     // Bind the aligned segment mapping to the allocating thread's NUMA node.
     // `mbind(MPOL_BIND)` enforces first-touch locality so pages are allocated
