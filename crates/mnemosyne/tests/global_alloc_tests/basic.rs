@@ -77,12 +77,19 @@ fn test_cross_thread_free_is_reclaimed_by_owner_page_drain() {
         "owner allocation for cross-thread free test failed"
     );
 
-    let ptr_addr = ptr as usize;
+    // Read before the free: the page's capacity bounds the drain probe below.
+    // SAFETY: `ptr` is a live Mnemosyne allocation.
+    let max_blocks = unsafe {
+        let (segment, page_index) = mnemosyne_core::types::locate_segment(ptr);
+        (*mnemosyne_core::types::locate_page(segment, page_index)).max_blocks()
+    };
+
+    let block = ForeignFree(ptr);
     let handle = thread::spawn(move || {
         // SAFETY: this pointer was allocated by the owning thread, and the
         // non-owner thread is only enqueueing it for owner-side reclaim.
         unsafe {
-            ALLOCATOR.dealloc(ptr_addr as *mut u8, layout);
+            ALLOCATOR.dealloc(block.into_ptr(), layout);
         }
     });
     handle.join().expect("cross-thread free worker panicked");
@@ -90,11 +97,6 @@ fn test_cross_thread_free_is_reclaimed_by_owner_page_drain() {
     // The owning thread must reclaim the queued block only when it re-drains the
     // page; the original pointer should reappear in the normal allocation stream
     // after enough probe allocations to force the page drain.
-    let segment_addr = ptr as usize & !(mnemosyne_core::constants::SEGMENT_SIZE - 1);
-    let segment = segment_addr as *mut mnemosyne_local::internal::Segment;
-    let page_index = (ptr as usize >> mnemosyne_core::constants::PAGE_SHIFT)
-        & (mnemosyne_core::constants::PAGES_PER_SEGMENT - 1);
-    let max_blocks = unsafe { (*segment).pages[page_index].max_blocks() };
 
     let mut probe_allocations = std::vec::Vec::with_capacity(max_blocks);
     let mut reclaimed = false;
@@ -201,5 +203,18 @@ fn test_small_aligned_allocations_are_aligned() {
                 ALLOCATOR.dealloc(p, layout);
             }
         }
+    }
+}
+
+/// An allocation handed to another thread to free, keeping its provenance.
+struct ForeignFree(*mut u8);
+
+// SAFETY: the owning thread gives the pointer up; only the receiving thread
+// uses it, and only to free it.
+unsafe impl Send for ForeignFree {}
+
+impl ForeignFree {
+    fn into_ptr(self) -> *mut u8 {
+        self.0
     }
 }
