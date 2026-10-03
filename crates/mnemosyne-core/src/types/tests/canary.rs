@@ -79,7 +79,7 @@ fn free_canary_is_address_bound() {
 #[test]
 fn segment_cookie_for_hardened_policy_uses_page_key() {
     let layout = segment_layout();
-    let segment = unsafe { alloc_zeroed(layout) as *mut Segment };
+    let segment = unsafe { alloc_registered_segment(layout) };
     assert!(!segment.is_null());
 
     unsafe { Segment::initialize(segment, segment as *mut u8, 0) };
@@ -94,5 +94,5 @@ fn segment_cookie_for_hardened_policy_uses_page_key() {
         "HardenedPolicy must derive the free-list cookie from the page key"
     );
 
-    unsafe { dealloc(segment as *mut u8, layout) };
+    unsafe { dealloc_registered_segment(segment, layout) };
 }

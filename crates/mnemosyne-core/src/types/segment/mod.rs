@@ -19,5 +19,5 @@ pub mod registry;
 
 pub use access::OccupiedPageBits;
 pub use header::Segment;
-pub use location::{locate_page, locate_segment};
+pub use location::{huge_back_pointer, locate_page, locate_segment};
 pub use ownership::SegmentOwnership;

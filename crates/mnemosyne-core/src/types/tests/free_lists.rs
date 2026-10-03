@@ -3,13 +3,12 @@
 
 use super::*;
 use crate::types::{Block, Page, Segment};
-use ::std::alloc::{alloc_zeroed, dealloc};
 use core::ptr::NonNull;
 
 #[test]
 fn test_page_reclaim_thread_free() {
     let layout = segment_layout();
-    let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+    let segment_ptr = unsafe { alloc_registered_segment(layout) };
     assert!(
         !segment_ptr.is_null(),
         "alloc_zeroed failed to allocate segment"
@@ -56,13 +55,13 @@ fn test_page_reclaim_thread_free() {
     );
 
     unsafe {
-        dealloc(segment_ptr as *mut u8, layout);
+        dealloc_registered_segment(segment_ptr, layout);
     }
 }
 #[test]
 fn test_page_reclaim_thread_free_hot_path() {
     let layout = segment_layout();
-    let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+    let segment_ptr = unsafe { alloc_registered_segment(layout) };
     assert!(
         !segment_ptr.is_null(),
         "alloc_zeroed failed to allocate segment"
@@ -122,7 +121,7 @@ fn test_page_reclaim_thread_free_hot_path() {
     );
 
     unsafe {
-        dealloc(segment_ptr as *mut u8, layout);
+        dealloc_registered_segment(segment_ptr, layout);
     }
 }
 #[test]
@@ -147,7 +146,7 @@ fn page_wake_hysteresis_uses_single_threshold_source() {
 #[test]
 fn randomized_page_free_list_uses_seeded_permutation() {
     let layout = segment_layout();
-    let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+    let segment_ptr = unsafe { alloc_registered_segment(layout) };
     assert!(
         !segment_ptr.is_null(),
         "alloc_zeroed failed to allocate segment"
@@ -215,13 +214,13 @@ fn randomized_page_free_list_uses_seeded_permutation() {
             "the second pop must follow the active list's next link"
         );
 
-        dealloc(segment_ptr as *mut u8, layout);
+        dealloc_registered_segment(segment_ptr, layout);
     }
 }
 #[test]
 fn reclaim_if_present_for_policy_keeps_randomized_head_selection() {
     let layout = segment_layout();
-    let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+    let segment_ptr = unsafe { alloc_registered_segment(layout) };
     assert!(
         !segment_ptr.is_null(),
         "alloc_zeroed failed to allocate segment"
@@ -276,13 +275,13 @@ fn reclaim_if_present_for_policy_keeps_randomized_head_selection() {
     );
 
     unsafe {
-        dealloc(segment_ptr as *mut u8, layout);
+        dealloc_registered_segment(segment_ptr, layout);
     }
 }
 #[test]
 fn standard_policy_keeps_secondary_free_list_active_when_present() {
     let layout = segment_layout();
-    let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+    let segment_ptr = unsafe { alloc_registered_segment(layout) };
     assert!(
         !segment_ptr.is_null(),
         "alloc_zeroed failed to allocate segment"
@@ -322,6 +321,6 @@ fn standard_policy_keeps_secondary_free_list_active_when_present() {
     );
 
     unsafe {
-        dealloc(segment_ptr as *mut u8, layout);
+        dealloc_registered_segment(segment_ptr, layout);
     }
 }

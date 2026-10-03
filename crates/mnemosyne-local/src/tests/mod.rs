@@ -18,5 +18,6 @@ use mnemosyne_core::types::{Block, Segment};
 mod allocation;
 mod corruption;
 mod double_free;
+mod provenance;
 mod usable_size;
 mod validation;

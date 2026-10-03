@@ -432,6 +432,11 @@ jobs:
       # mappings after each test-owned allocator has been dropped. It preserves
       # orphan segments with live blocks, so a real allocator leak remains a
       # failing Miri leak report.
+      # Stacked Borrows excludes one case: a free through a pointer narrower
+      # than the 8-byte free-list link, which the free path writes through the
+      # caller's pointer (ADR 0012 quarantine; Tree Borrows accepts it).
+      # Removal trigger: rust-lang/miri#2686 gives allocator results fresh
+      # provenance; then delete the `-E` filter below.
       - name: Miri — local (Stacked Borrows)
         if: github.event_name != 'pull_request' || contains(steps.scope.outputs.groups, 'local')
         env:
@@ -439,6 +444,7 @@ jobs:
         run: >-
           cargo +nightly miri nextest run -p mnemosyne-local --locked
           --profile miri
+          -E 'not test(/provenance::blocks_freed_through_pointers_narrower_than_the_link/)'
 
       - name: Miri — local (Tree Borrows)
         if: github.event_name != 'pull_request' || contains(steps.scope.outputs.groups, 'local')
