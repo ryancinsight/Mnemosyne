@@ -11,6 +11,13 @@ use mnemosyne_core::policy::AllocPolicy;
 /// The ptr must be valid and must have been returned by a previous allocation.
 /// A null pointer is ignored, matching `free(NULL)`.
 ///
+/// `ptr` must carry provenance over the whole block the allocating call
+/// returned (at least [`usable_size(ptr)`](crate::usable_size) bytes), as the
+/// returned pointer does: the free path writes the free-list link, the
+/// hardened canary and the poison fill into the block through `ptr`. A pointer
+/// narrowed to fewer bytes, for example through a reference or a `Box` of a
+/// smaller request, does not qualify (ADR 0012).
+///
 /// # Examples
 ///
 /// ```
@@ -50,8 +57,9 @@ pub unsafe fn thread_free<
 ///
 /// # Safety
 ///
-/// Same contract as [`thread_free`], and `size`/`align` must come from the
-/// original allocation layout.
+/// Same contract as [`thread_free`], including its provenance requirement
+/// over the whole block, and `size`/`align` must come from the original
+/// allocation layout.
 /// # Examples
 ///
 /// ```

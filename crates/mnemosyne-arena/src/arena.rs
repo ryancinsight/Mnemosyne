@@ -229,7 +229,7 @@ fn resolve_huge_dealloc_segment(
         // SAFETY: the large/huge allocation path writes the owning `Segment`
         // pointer into the pointer-aligned metadata slot immediately preceding
         // `ptr`; this read recovers that candidate pointer for validation.
-        let resolved = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+        let resolved = unsafe { mnemosyne_core::types::huge_back_pointer(ptr) };
         if resolved.is_null() || (resolved as usize) & (SEGMENT_ALIGN - 1) != 0 {
             #[cfg(any(feature = "std", test))]
             {

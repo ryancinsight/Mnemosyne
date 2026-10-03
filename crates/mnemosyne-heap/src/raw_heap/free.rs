@@ -25,9 +25,9 @@ impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> RawHeap<P, B
         }
 
         // SAFETY: `ptr` was returned by this allocator, so it points into a
-        // live segment mapping; `locate_segment` derives the header pointer by
-        // `map_addr`, keeping the mapping's provenance rather than synthesizing
-        // it from an integer (MN-456), and returns the mask-bounded page index.
+        // live, registered segment mapping; `locate_segment` rebuilds the header
+        // pointer from the registry's copy of the mapping pointer, never from
+        // `ptr`'s provenance (ADR 0012), and returns the mask-bounded page index.
         let (segment, page_index) = unsafe { mnemosyne_core::types::locate_segment(ptr) };
         // SAFETY: `segment` is that live header and `page_index` is bounded by
         // the `(PAGES_PER_SEGMENT - 1)` mask, so it indexes the `pages` array.
@@ -168,8 +168,8 @@ unsafe fn allocation_size(
     if page_index == 0 || unsafe { (*page).block_size } == 0 {
         // SAFETY: large/huge classification — the owning `*mut Segment` lives
         // in the slot directly preceding the user payload (written at alloc
-        // time), so this read recovers the live segment pointer.
-        let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+        // time); `huge_back_pointer` reads it through the registered mapping.
+        let segment = unsafe { mnemosyne_core::types::huge_back_pointer(ptr) };
         // SAFETY: `ptr`/`segment` are the live block and its owning segment;
         // `huge_or_large_size` reads only metadata inside that mapping.
         unsafe { huge_or_large_size(ptr, segment) }

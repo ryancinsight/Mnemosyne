@@ -220,8 +220,8 @@ impl AtomicFreeList {
     fn push_dynamic_with<C: HeadCodec>(&self, block: NonNull<Block>, encrypted: bool) {
         let block_ptr = block.as_ptr();
         // SAFETY: `block` is a live allocation of this allocator, so the
-        // segment it lies in is mapped; `locate_segment` only masks its
-        // address down to the segment base.
+        // segment it lies in is mapped and registered; `locate_segment`
+        // rebuilds the header pointer from the registered mapping (ADR 0012).
         let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
         // SAFETY: `segment` is the live mapping just located.
         if !unsafe { Segment::free_list_mode_matches(segment.cast_const(), encrypted) } {
@@ -259,8 +259,8 @@ impl AtomicFreeList {
     fn push_raw_with<C: HeadCodec>(&self, block: NonNull<Block>) {
         let block_ptr = block.as_ptr();
         // SAFETY: `block` is a live allocation of this allocator, so the
-        // segment it lies in is mapped; `locate_segment` only masks its
-        // address down to the segment base.
+        // segment it lies in is mapped and registered; `locate_segment`
+        // rebuilds the header pointer from the registered mapping (ADR 0012).
         let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
         // SAFETY: `segment` is the live mapping just located.
         if unsafe { Segment::free_list_encrypted(segment.cast_const()) } {
