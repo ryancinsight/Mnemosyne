@@ -201,6 +201,9 @@ fn huge_deallocation_returns_backend_release_status() {
     unsafe {
         Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0);
         (*segment_ptr).pages[0].block_size = (SEGMENT_SIZE * 10) as _;
+        // The release unregisters the mapping first, as for any mapping `map`
+        // produced.
+        crate::mapping::register_fixture_mapping(segment_ptr.cast(), SEGMENT_SIZE * 10);
     }
 
     let released = unsafe {
