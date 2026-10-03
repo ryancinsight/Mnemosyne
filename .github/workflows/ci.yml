@@ -467,10 +467,10 @@ jobs:
       # Heap joins under MN-459 after its own test helpers pass both borrow
       # models. Decay and backend join under MN-436, which records this job's
       # exclusions so none is silent and shrinks them as crates come clean.
-      # Measured rather than assumed: prof, c-shim and the top-level crate
-      # still report Undefined Behavior from pointers reconstructed out of
-      # exposed provenance, and stay out until that is migrated; hardened has
-      # no tests.
+      # Measured rather than assumed: prof and c-shim still report Undefined
+      # Behavior from pointers reconstructed out of integers, and stay out until
+      # that is migrated; the top-level crate joins with the harnesses below;
+      # hardened has no tests.
       #
       # backend was reverted once (MN-454): it passed Miri on a Windows
       # development host and failed here, because that host compiles the
@@ -498,10 +498,9 @@ jobs:
       # The facade crate joins for one harness only: `counting_allocator`, which
       # under Miri wraps `System` (the harness selects it with `cfg(miri)`) so
       # the per-thread counting wrapper is checked for aliasing, provenance and
-      # thread-teardown behavior in isolation. The rest of the facade's tests
-      # run `Mnemosyne` itself and stay out until MN-LOCAL-MIRI-UB is fixed:
-      # Miri reports undefined behavior in `mnemosyne-local` under Stacked
-      # Borrows and Tree Borrows for any program that allocates through it.
+      # thread-teardown behavior in isolation. The `Mnemosyne`-backed harnesses
+      # run under Tree Borrows only (next step) until MN-LOCAL-MIRI-UB's
+      # Stacked Borrows remainder lifts; then this harness wraps `Mnemosyne`.
       # The host is Linux, the target the harness was verified on; a Windows-host
       # run reports a violation inside the standard library's own `System`
       # allocator, unrelated to the wrapper.
@@ -520,6 +519,39 @@ jobs:
         run: >-
           cargo +nightly miri nextest run -p mnemosyne-memory --locked
           --profile miri -E 'binary(counting_allocator)'
+
+      # `global_alloc_tests` runs a program on `Mnemosyne` as its global
+      # allocator, so std itself frees through `Box`-narrowed pointers. Tree
+      # Borrows only: under Stacked Borrows the harness aborts while nextest
+      # lists it, when a `String` grown in place within its size class writes
+      # past its old size through the caller's tag, which the in-place
+      # `realloc` result carries (ADR 0012 quarantine). Removal trigger:
+      # rust-lang/miri#2686 gives allocator results fresh provenance
+      # (MN-LOCAL-MIRI-UB); then add a Stacked Borrows step with this filter.
+      # `leak::` is excluded because the profiler stores captured frames as
+      # integers, so Miri cannot symbolize a frame whose provenance was
+      # dropped. Removal trigger: MN-PROF-MIRI-FRAMES merges; then delete
+      # `& not test(/^leak::/)`.
+      # `policy::test_cuda_backends` probes for a CUDA driver with `dlopen`,
+      # which Miri does not support on Linux: an unsupported operation, not
+      # Undefined Behavior. It stays out while Miri has no `dlopen`.
+      # The harness exercises every crate under the facade, so a PR touching
+      # any of them runs it.
+      - name: Miri — facade allocator harness (Tree Borrows)
+        if: >-
+          github.event_name != 'pull_request'
+          || contains(steps.scope.outputs.groups, 'facade')
+          || contains(steps.scope.outputs.groups, 'local')
+          || contains(steps.scope.outputs.groups, 'core')
+          || contains(steps.scope.outputs.groups, 'arena')
+          || contains(steps.scope.outputs.groups, 'heap')
+          || contains(steps.scope.outputs.groups, 'decaybackend')
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-tree-borrows
+        run: >-
+          cargo +nightly miri nextest run -p mnemosyne-memory --locked
+          --profile miri
+          -E 'binary(global_alloc_tests) & not test(/^leak::/) & not test(=policy::test_cuda_backends)'
 
   test-aarch64:
     name: Native tests (aarch64)
