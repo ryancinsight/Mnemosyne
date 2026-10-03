@@ -2,13 +2,13 @@
 
 use super::cold::thread_free_cold;
 use super::internal::do_local_free_internal_policy;
+use crate::LocalAllocatorSelector;
 use crate::free_helpers::{commit_in_place_free, free_large_or_huge_raw, resolve_owner_slot};
-use crate::{LocalAllocatorSelector, poison_freed_bytes};
 use core::ptr::NonNull;
 use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_core::constants::PAGE_SIZE;
 use mnemosyne_core::policy::AllocPolicy;
-use mnemosyne_core::types::{Block, Page, Segment, locate_page, locate_segment};
+use mnemosyne_core::types::{Block, FreedBlock, Page, Segment, locate_page, locate_segment};
 #[inline(always)]
 pub(super) unsafe fn thread_free_classified<
     P: AllocPolicy + crate::tls_slot::PolicySlotSelection<B>,
@@ -16,12 +16,13 @@ pub(super) unsafe fn thread_free_classified<
     const LAYOUT_PROVES_SMALL: bool,
 >(
     ptr: *mut u8,
+    covered: usize,
 ) {
     if ptr.is_null() {
         return;
     }
 
-    let ptr_val = ptr as usize;
+    let ptr_val = ptr.addr();
     // SAFETY: `ptr` was previously returned by this allocator, satisfying
     // `locate_segment`'s contract; it recovers the live segment header and the
     // bounded page index.
@@ -44,7 +45,7 @@ pub(super) unsafe fn thread_free_classified<
         // SAFETY: huge-allocation metadata layout — segment pointer stored one
         // slot before the payload; `free_large_or_huge_raw` reads and releases it.
         unsafe {
-            free_large_or_huge_raw::<B>(ptr, P::ENABLE_POISONING, P::POISON_FREE_BYTE);
+            free_large_or_huge_raw::<B>(ptr, covered, P::ENABLE_POISONING, P::POISON_FREE_BYTE);
         }
         #[cfg(feature = "dealloc-probe")]
         crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::HugeClassifier);
@@ -71,14 +72,23 @@ pub(super) unsafe fn thread_free_classified<
         }
     }
 
-    // SAFETY: `ptr` is the block being freed — `block_size` bytes this free owns
-    // exclusively until the block re-enters a free list — so the poison write
-    // stays inside the block.
-    if P::ENABLE_POISONING {
-        unsafe { poison_freed_bytes::<P>(ptr, (*page_ptr).block_size as usize) };
-    }
+    // The block pointer a free list stores carries the segment mapping's
+    // provenance; `ptr` keeps only the bytes its caller's provenance covers
+    // (ADR 0012).
+    // SAFETY: `segment` carries its mapping's provenance (`locate_segment`) and
+    // `ptr` lies inside that mapping, so the rebased pointer is the same
+    // non-null block.
+    let block =
+        unsafe { NonNull::new_unchecked(segment.cast::<u8>().with_addr(ptr_val).cast::<Block>()) };
+    // SAFETY: `block` and `ptr` address the same live block; `covered` is the
+    // caller's request size or `usize::MAX` when no layout is known.
+    let freed = unsafe { FreedBlock::new(block, ptr, covered) };
 
-    let block = ptr as *mut Block;
+    // SAFETY: the poison stays inside the request, which this free owns
+    // exclusively until the block re-enters a free list.
+    if P::ENABLE_POISONING {
+        unsafe { freed.poison(P::POISON_FREE_BYTE, (*page_ptr).block_size as usize) };
+    }
     // SAFETY: `segment` is the live mapping `locate_segment` recovered for `ptr`;
     // `owner` reads its ownership token, which is immutable while the segment
     // is mapped.
@@ -105,10 +115,8 @@ pub(super) unsafe fn thread_free_classified<
         // SAFETY: `block` is a user pointer previously returned by the
         // allocator; non-nullness is the allocator invariant. Equality
         // with `page.free` is the double-free guard.
-        if Some(unsafe { NonNull::new_unchecked(block) }) == unsafe { (*page_ptr).free }
-            || (randomized
-                && Some(unsafe { NonNull::new_unchecked(block) })
-                    == unsafe { (*page_ptr).secondary_free })
+        if Some(block) == unsafe { (*page_ptr).free }
+            || (randomized && Some(block) == unsafe { (*page_ptr).secondary_free })
         {
             std::process::abort();
         }
@@ -142,7 +150,7 @@ pub(super) unsafe fn thread_free_classified<
                 // owning count; the shared commit stays inside this owned page.
                 unsafe {
                     commit_in_place_free(
-                        block,
+                        freed,
                         page_ptr,
                         page_free,
                         cookie,
@@ -178,7 +186,7 @@ pub(super) unsafe fn thread_free_classified<
                 // allocator — exactly `do_local_free_internal`'s contract.
                 let _became_empty = unsafe {
                     do_local_free_internal_policy::<P, B>(
-                        alloc, block, page_ptr, segment, page_index,
+                        alloc, freed, page_ptr, segment, page_index,
                     )
                 };
                 // SAFETY: `alloc` is the exclusively-borrowed owning allocator
@@ -204,7 +212,7 @@ pub(super) unsafe fn thread_free_classified<
             // SAFETY: as above — validated free-path inputs and the owning
             // `alloc`, satisfying `do_local_free_internal`'s contract.
             let _became_empty = unsafe {
-                do_local_free_internal_policy::<P, B>(alloc, block, page_ptr, segment, page_index)
+                do_local_free_internal_policy::<P, B>(alloc, freed, page_ptr, segment, page_index)
             };
             #[cfg(feature = "dealloc-probe")]
             crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::FullToActive);
@@ -216,7 +224,7 @@ pub(super) unsafe fn thread_free_classified<
     // contract inputs from the embodiment of `thread_free`'s `// # Safety`
     // rustdoc; the `#[cold]` helper handles the cross-thread / re-entrant
     // push path.
-    unsafe { thread_free_cold::<B>(ptr, page_ptr, block) };
+    unsafe { thread_free_cold::<B>(freed, page_ptr) };
 }
 
 #[cold]

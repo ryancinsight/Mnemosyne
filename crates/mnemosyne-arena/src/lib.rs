@@ -9,6 +9,7 @@ extern crate std;
 extern crate alloc;
 
 pub mod arena;
+mod mapping;
 pub mod numa;
 pub mod scratch;
 pub mod segment;

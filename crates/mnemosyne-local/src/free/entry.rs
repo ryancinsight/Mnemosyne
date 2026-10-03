@@ -38,8 +38,9 @@ pub unsafe fn thread_free<
     ptr: *mut u8,
 ) {
     // SAFETY: forwarded under `thread_free`'s own contract — `ptr` came from this
-    // allocator and is freed once; `false` keeps the unclassified path.
-    unsafe { thread_free_classified::<P, B, false>(ptr) }
+    // allocator and is freed once; `false` keeps the unclassified path. With no
+    // layout, the caller's provenance is taken to cover the whole block.
+    unsafe { thread_free_classified::<P, B, false>(ptr, usize::MAX) }
 }
 
 /// Frees a memory block when the caller has a valid Rust `Layout`.
@@ -89,8 +90,8 @@ pub unsafe fn thread_free_layout<
     // the one `alloc` made and the chosen arm frees the block on the path that
     // produced it.
     if size != 0 && crate::alloc::small_path_class(size, align).is_some() {
-        unsafe { thread_free_classified::<P, B, true>(ptr) };
+        unsafe { thread_free_classified::<P, B, true>(ptr, size) };
     } else {
-        unsafe { thread_free_classified::<P, B, false>(ptr) };
+        unsafe { thread_free_classified::<P, B, false>(ptr, size) };
     }
 }

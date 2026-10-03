@@ -168,7 +168,7 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(
             // SAFETY: `total_alloc_size <= MAX_ALLOC_SIZE` is non-zero (validated
             // by `derive_large_or_huge_layout`); `B::allocate` is the backend's
             // raw mapping primitive and the null result is handled below.
-            let ptr = unsafe { B::allocate(total_alloc_size) };
+            let ptr = unsafe { crate::mapping::map::<B>(total_alloc_size) };
             if ptr.is_null() {
                 return core::ptr::null_mut();
             }
@@ -188,7 +188,7 @@ pub unsafe fn allocate_large_or_huge<B: HasSegmentPool>(
             // SAFETY: `raw_ptr`/`block_size` name the mapping just acquired above;
             // releasing it on the initialization-failure path matches the
             // allocating backend `B`.
-            let _released = unsafe { B::deallocate(raw_ptr, block_size) };
+            let _released = unsafe { crate::mapping::unmap::<B>(raw_ptr, block_size) };
             return core::ptr::null_mut();
         }
     };
@@ -229,7 +229,7 @@ fn resolve_huge_dealloc_segment(
         // SAFETY: the large/huge allocation path writes the owning `Segment`
         // pointer into the pointer-aligned metadata slot immediately preceding
         // `ptr`; this read recovers that candidate pointer for validation.
-        let resolved = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+        let resolved = unsafe { mnemosyne_core::types::huge_back_pointer(ptr) };
         if resolved.is_null() || (resolved as usize) & (SEGMENT_ALIGN - 1) != 0 {
             #[cfg(any(feature = "std", test))]
             {
@@ -307,7 +307,7 @@ pub unsafe fn deallocate_large_or_huge<B: HasSegmentPool>(
         // SAFETY: the pool declined to cache this huge segment, so `raw_ptr`/
         // `huge_size` name its still-live OS mapping, released here through the
         // allocating backend `B`.
-        unsafe { B::deallocate(raw_ptr, huge_size) }
+        unsafe { crate::mapping::unmap::<B>(raw_ptr, huge_size) }
     } else {
         // It is a standard segment containing page allocations.
         // Return it to the global segment pool.

@@ -18,15 +18,15 @@ fn free_canary_write_check_clear_roundtrip() {
     // contract is exercised on every supported target.
     let page_cookie: usize = 0x1234_5678;
 
-    // Initially no canary -- check_double_free should return false.
-    let has_canary = unsafe { Block::check_double_free(ptr, page_cookie) };
+    // Initially no canary.
+    let has_canary = unsafe { whole(ptr).has_free_canary(page_cookie) };
     assert!(!has_canary, "fresh allocation must not carry a canary");
 
     // Write the canary.
-    unsafe { Block::write_free_canary(ptr, page_cookie) };
+    unsafe { whole(ptr).write_free_canary(page_cookie) };
 
-    // Now check_double_free should return true.
-    let has_canary = unsafe { Block::check_double_free(ptr, page_cookie) };
+    // Now the canary is detected.
+    let has_canary = unsafe { whole(ptr).has_free_canary(page_cookie) };
     assert!(
         has_canary,
         "canary must be detected after write_free_canary"
@@ -34,7 +34,7 @@ fn free_canary_write_check_clear_roundtrip() {
 
     // A different cookie must NOT match -- the canary is address+cookie bound.
     let wrong_cookie: usize = 0x3333_4444;
-    let wrong_match = unsafe { Block::check_double_free(ptr, wrong_cookie) };
+    let wrong_match = unsafe { whole(ptr).has_free_canary(wrong_cookie) };
     assert!(
         !wrong_match,
         "canary must not match a different page cookie"
@@ -42,7 +42,7 @@ fn free_canary_write_check_clear_roundtrip() {
 
     // Clear the canary.
     unsafe { Block::clear_free_canary(ptr) };
-    let has_canary = unsafe { Block::check_double_free(ptr, page_cookie) };
+    let has_canary = unsafe { whole(ptr).has_free_canary(page_cookie) };
     assert!(!has_canary, "canary must be gone after clear_free_canary");
 
     unsafe { dealloc(ptr as *mut u8, layout) };
@@ -63,8 +63,8 @@ fn free_canary_is_address_bound() {
 
     let cookie: usize = 0xCAFE_0001;
 
-    unsafe { Block::write_free_canary(block_a, cookie) };
-    unsafe { Block::write_free_canary(block_b, cookie) };
+    unsafe { whole(block_a).write_free_canary(cookie) };
+    unsafe { whole(block_b).write_free_canary(cookie) };
 
     // block_b's canary must not match block_a's slot.
     let a_canary = unsafe { block_a.cast::<usize>().add(1).read() };
@@ -79,7 +79,7 @@ fn free_canary_is_address_bound() {
 #[test]
 fn segment_cookie_for_hardened_policy_uses_page_key() {
     let layout = segment_layout();
-    let segment = unsafe { alloc_zeroed(layout) as *mut Segment };
+    let segment = unsafe { alloc_registered_segment(layout) };
     assert!(!segment.is_null());
 
     unsafe { Segment::initialize(segment, segment as *mut u8, 0) };
@@ -94,5 +94,5 @@ fn segment_cookie_for_hardened_policy_uses_page_key() {
         "HardenedPolicy must derive the free-list cookie from the page key"
     );
 
-    unsafe { dealloc(segment as *mut u8, layout) };
+    unsafe { dealloc_registered_segment(segment, layout) };
 }

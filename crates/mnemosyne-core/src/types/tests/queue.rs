@@ -3,15 +3,12 @@
 
 use super::*;
 use crate::types::{Page, Segment};
-use ::std::{
-    alloc::{alloc_zeroed, dealloc},
-    string::String,
-};
+use ::std::string::String;
 
 #[test]
 fn atomic_free_list_standard_mode_keeps_lifo_order_and_exact_count() {
     let layout = segment_layout();
-    let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+    let segment_ptr = unsafe { alloc_registered_segment(layout) };
     assert!(!segment_ptr.is_null(), "segment allocation failed");
     unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
 
@@ -52,13 +49,13 @@ fn atomic_free_list_standard_mode_keeps_lifo_order_and_exact_count() {
     assert_eq!(unsafe { (*block_a.as_ptr()).get_next_raw() }, None);
 
     unsafe {
-        dealloc(segment_ptr as *mut u8, layout);
+        dealloc_registered_segment(segment_ptr, layout);
     }
 }
 #[test]
 fn atomic_free_list_encrypted_mode_keeps_lifo_order_and_exact_count() {
     let layout = segment_layout();
-    let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+    let segment_ptr = unsafe { alloc_registered_segment(layout) };
     assert!(!segment_ptr.is_null(), "segment allocation failed");
     unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
     unsafe { (*segment_ptr).free_list_encrypted = true };
@@ -86,8 +83,8 @@ fn atomic_free_list_encrypted_mode_keeps_lifo_order_and_exact_count() {
         unsafe { Segment::cookie_for::<crate::policy::HardenedPolicy>(segment_ptr, PAGE_INDEX) };
     let queue = unsafe { &(*page).thread_free };
 
-    queue.push_dynamic(block_a, true);
-    queue.push_dynamic(block_b, true);
+    queue.push_dynamic(whole(block_a.as_ptr()), true);
+    queue.push_dynamic(whole(block_b.as_ptr()), true);
 
     let (head, count) = queue
         .pop_all(true, cookie)
@@ -107,7 +104,7 @@ fn atomic_free_list_encrypted_mode_keeps_lifo_order_and_exact_count() {
     );
 
     unsafe {
-        dealloc(segment_ptr as *mut u8, layout);
+        dealloc_registered_segment(segment_ptr, layout);
     }
 }
 #[test]
@@ -117,7 +114,7 @@ fn atomic_free_list_encrypted_mode_keeps_lifo_order_and_exact_count() {
 fn atomic_free_list_rejects_duplicate_push_in_standard_mode() {
     if std::env::var_os("MNEMOSYNE_ATOMIC_FREE_LIST_DUPLICATE_GUARD").is_some() {
         let layout = segment_layout();
-        let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+        let segment_ptr = unsafe { alloc_registered_segment(layout) };
         assert!(!segment_ptr.is_null(), "segment allocation failed");
         unsafe { Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0) };
 
@@ -167,7 +164,7 @@ fn atomic_free_list_rejects_duplicate_push_in_standard_mode() {
 fn atomic_free_list_rejects_duplicate_push_in_encrypted_mode() {
     if std::env::var_os("MNEMOSYNE_ATOMIC_FREE_LIST_DUPLICATE_GUARD").is_some() {
         let layout = segment_layout();
-        let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+        let segment_ptr = unsafe { alloc_registered_segment(layout) };
         assert!(!segment_ptr.is_null(), "segment allocation failed");
         unsafe {
             Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0);
@@ -193,8 +190,8 @@ fn atomic_free_list_rejects_duplicate_push_in_encrypted_mode() {
 
         let block = unsafe { Page::pop_block::<crate::policy::HardenedPolicy>(page) };
         let queue = unsafe { &(*page).thread_free };
-        queue.push_dynamic(block, true);
-        queue.push_dynamic(block, true);
+        queue.push_dynamic(whole(block.as_ptr()), true);
+        queue.push_dynamic(whole(block.as_ptr()), true);
         panic!("encrypted-mode duplicate push should abort after the second enqueue");
     }
 

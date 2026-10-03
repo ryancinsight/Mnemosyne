@@ -44,7 +44,10 @@ impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> RawHeap<P, B
         // `# Safety` contract; `can_reuse_allocation` only reads metadata of
         // the existing allocation.
         if unsafe { self.can_reuse_allocation(ptr, layout, new_size) } {
-            return ptr;
+            // SAFETY: `ptr` is a live block of this heap. The in-place result
+            // is the new allocation, so it carries the mapping's provenance
+            // rather than the caller's, which may cover only `layout.size()`.
+            return unsafe { mnemosyne_core::types::locate_block(ptr) };
         }
 
         let new_ptr = self.alloc(new_layout);

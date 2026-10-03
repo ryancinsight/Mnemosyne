@@ -5,6 +5,7 @@ use crate::segment::pool::BackendPools;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::MemoryBackend;
 use mnemosyne_core::constants::SEGMENT_SIZE;
+use mnemosyne_core::types::segment::registry::installed_leaf_bytes;
 
 struct FailingHugeReleaseBackend;
 
@@ -124,6 +125,7 @@ fn huge_allocation_consumes_tight_mapping_size() {
     let expected = size + SEGMENT_ALIGN + core::cmp::max(align, PAGE_SIZE);
 
     let before = backend_memory_stats();
+    let leaves_before = installed_leaf_bytes();
     // SAFETY: power-of-two alignment, non-zero size.
     let user_ptr = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align, true) };
     assert!(
@@ -132,10 +134,14 @@ fn huge_allocation_consumes_tight_mapping_size() {
     );
     let during = backend_memory_stats();
 
+    // A registry leaf installed for this mapping's address span is mapped
+    // through the same backend and lives for the process (ADR 0012).
+    let leaves = installed_leaf_bytes() - leaves_before;
     let mapped = during.current_mapped_bytes - before.current_mapped_bytes;
     assert_eq!(
-        mapped, expected,
-        "huge allocation slack regressed: mapped {mapped} bytes vs expected {expected}"
+        mapped,
+        expected + leaves,
+        "huge allocation slack regressed: mapped {mapped} bytes vs expected {expected} plus {leaves} registry-leaf bytes"
     );
 
     // Round-trip release; the safety contract is preserved.
@@ -201,6 +207,9 @@ fn huge_deallocation_returns_backend_release_status() {
     unsafe {
         Segment::initialize(segment_ptr, segment_ptr as *mut u8, 0);
         (*segment_ptr).pages[0].block_size = (SEGMENT_SIZE * 10) as _;
+        // The release unregisters the mapping first, as for any mapping `map`
+        // produced.
+        crate::mapping::register_fixture_mapping(segment_ptr.cast(), SEGMENT_SIZE * 10);
     }
 
     let released = unsafe {
@@ -314,6 +323,7 @@ fn test_huge_allocation_caching_and_purging() {
     let align = 8;
 
     let stats_start = backend_memory_stats();
+    let leaves_start = installed_leaf_bytes();
 
     // 1. First allocation: OS-backed
     let ptr1 = unsafe { allocate_large_or_huge::<MemoryBackendWrapper>(size, align, false) };
@@ -362,10 +372,11 @@ fn test_huge_allocation_caching_and_purging() {
         crate::segment::purge_segment_pool::<MemoryBackendWrapper>();
     }
 
+    // Registry leaves installed by the first mapping stay for the process.
     let stats_purged = backend_memory_stats();
     assert_eq!(
         stats_purged.current_mapped_bytes,
-        stats_start.current_mapped_bytes
+        stats_start.current_mapped_bytes + (installed_leaf_bytes() - leaves_start)
     );
 
     // 4. Third allocation: should be a fresh OS allocation

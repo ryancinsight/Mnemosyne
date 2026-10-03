@@ -1,6 +1,7 @@
 //! Core memory layout types: Block, Page, and Segment.
 
 pub mod block;
+pub mod freed_block;
 pub mod owner;
 pub mod page;
 pub mod segment;
@@ -8,9 +9,13 @@ pub mod segment;
 mod tests;
 
 pub use block::Block;
+pub use freed_block::FreedBlock;
 pub use owner::SegmentOwner;
 #[cfg(all(windows, target_arch = "x86_64", not(miri)))]
 pub use owner::current_thread_id;
 pub use page::Page;
 pub use page::try_pop_bump_block;
-pub use segment::{OccupiedPageBits, Segment, SegmentOwnership, locate_page, locate_segment};
+pub use segment::{
+    OccupiedPageBits, Segment, SegmentOwnership, huge_back_pointer, locate_block, locate_page,
+    locate_segment,
+};

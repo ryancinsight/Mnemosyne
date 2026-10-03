@@ -11,6 +11,55 @@ impl crate::policy::AllocPolicy for RandomizedTestPolicy {
     const RANDOMIZE_ALLOCATION: bool = true;
 }
 
+/// Allocates a zeroed test segment and registers it as a mapping, as the arena
+/// registers every backend mapping.
+///
+/// # Safety
+///
+/// `layout` must be [`segment_layout`]; the segment is released only through
+/// [`dealloc_registered_segment`].
+unsafe fn alloc_registered_segment(layout: Layout) -> *mut Segment {
+    let mapping = unsafe { alloc_zeroed(layout) };
+    assert!(!mapping.is_null(), "segment allocation failed");
+    let leaf_layout = Layout::from_size_align(
+        crate::types::segment::registry::LEAF_BYTES,
+        core::mem::align_of::<usize>(),
+    )
+    .expect("leaf layout is a positive multiple of the pointer size");
+    // SAFETY: `mapping` is a fresh, unregistered allocation of `layout.size()`
+    // bytes; leaves come from the global allocator and live as long as the
+    // registry's static root references them.
+    unsafe {
+        crate::types::segment::registry::register_mapping(
+            mapping,
+            layout.size(),
+            || ::std::alloc::alloc(leaf_layout),
+            |leaf| dealloc(leaf, leaf_layout),
+        )
+    }
+    .expect("a test segment lies inside the registry's address range");
+    mapping.cast()
+}
+
+/// Unregisters and frees a segment from [`alloc_registered_segment`].
+///
+/// # Safety
+///
+/// `segment` must come from [`alloc_registered_segment`] with this `layout`.
+unsafe fn dealloc_registered_segment(segment: *mut Segment, layout: Layout) {
+    unsafe {
+        crate::types::segment::registry::unregister_mapping(segment.cast(), layout.size());
+        dealloc(segment.cast(), layout);
+    }
+}
+
+/// A test block freed by a caller whose provenance covers the whole block.
+fn whole(block: *mut crate::types::Block) -> crate::types::FreedBlock {
+    let block = core::ptr::NonNull::new(block).expect("test block is non-null");
+    // SAFETY: the test owns the whole block through this one pointer.
+    unsafe { crate::types::FreedBlock::new(block, block.as_ptr().cast(), usize::MAX) }
+}
+
 fn segment_layout() -> Layout {
     Layout::from_size_align(
         crate::constants::SEGMENT_SIZE,
@@ -44,7 +93,7 @@ fn segment_default_free_list_mode_matches_standard_runtime_state() {
 #[test]
 fn free_list_mode_matches_segment_state() {
     let layout = segment_layout();
-    let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+    let segment_ptr = unsafe { alloc_registered_segment(layout) };
     assert!(
         !segment_ptr.is_null(),
         "alloc_zeroed failed to allocate segment"
@@ -59,7 +108,7 @@ fn free_list_mode_matches_segment_state() {
     assert!(!unsafe { Segment::free_list_mode_matches(segment_ptr, false) });
 
     unsafe {
-        dealloc(segment_ptr as *mut u8, layout);
+        dealloc_registered_segment(segment_ptr, layout);
     }
 }
 
@@ -70,7 +119,7 @@ fn free_list_mode_matches_segment_state() {
 fn reclaim_thread_free_if_present_rejects_mismatched_mode() {
     if std::env::var_os("MNEMOSYNE_RECLAIM_MODE_GUARD").is_some() {
         let layout = segment_layout();
-        let segment_ptr = unsafe { alloc_zeroed(layout) as *mut Segment };
+        let segment_ptr = unsafe { alloc_registered_segment(layout) };
         assert!(
             !segment_ptr.is_null(),
             "alloc_zeroed failed to allocate segment"

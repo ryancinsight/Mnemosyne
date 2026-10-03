@@ -5,17 +5,17 @@ use crate::free_helpers::is_sole_active_page;
 use crate::local_alloc::page::{move_page_raw, push_page_front_raw, unlink_page_from_list_raw};
 use core::ptr::NonNull;
 use mnemosyne_arena::HasSegmentPool;
-use mnemosyne_core::types::{Block, Page, Segment};
+use mnemosyne_core::types::{FreedBlock, Page, Segment};
 
 /// Internal implementation of local deallocation.
 ///
 /// # Safety
 ///
-/// The block pointer must point to a valid block allocated in the target page and segment.
+/// `block` must be a valid block allocated in the target page and segment.
 #[inline(always)]
 pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
     alloc: &mut ThreadAllocator<B>,
-    block: *mut Block,
+    block: FreedBlock,
     page: *mut Page,
     segment: *mut Segment,
     page_index: usize,
@@ -47,7 +47,7 @@ pub unsafe fn do_local_free_internal_policy<
     B: HasSegmentPool,
 >(
     alloc: &mut ThreadAllocator<B>,
-    block: *mut Block,
+    block: FreedBlock,
     page: *mut Page,
     segment: *mut Segment,
     page_index: usize,
@@ -84,7 +84,7 @@ pub unsafe fn do_local_free_internal_policy<
 )]
 unsafe fn do_local_free_internal_raw<B: HasSegmentPool>(
     alloc: &mut ThreadAllocator<B>,
-    block: *mut Block,
+    block: FreedBlock,
     page: *mut Page,
     segment: *mut Segment,
     page_index: usize,
@@ -102,7 +102,7 @@ unsafe fn do_local_free_internal_raw<B: HasSegmentPool>(
     // returned by a prior allocation in `page`/`segment`; non-nullness is the
     // allocator invariant, so `new_unchecked` is sound. Equality with
     // `page.free` is the double-free guard (the head was just freed).
-    if Some(unsafe { NonNull::new_unchecked(block) }) == unsafe { (*page).free } {
+    if Some(block.block()) == unsafe { (*page).free } {
         std::process::abort();
     }
     let was_full = unsafe { (*page).list_state } == 2;
@@ -115,21 +115,19 @@ unsafe fn do_local_free_internal_raw<B: HasSegmentPool>(
     // encryption (HardenedPolicy). Dead code for StandardPolicy/SecurePolicy.
     if enable_encryption {
         // SAFETY: `block` is a live, MIN_BLOCK_SIZE-aligned block per the
-        // caller's contract; the canary slot is within the allocation.
-        if unsafe { mnemosyne_core::types::Block::check_double_free(block, cookie) } {
+        // caller's contract; the canary slot is its second word.
+        if unsafe { block.has_free_canary(cookie) } {
             std::process::abort();
         }
         // SAFETY: same slot bounds as the read above.
-        unsafe { mnemosyne_core::types::Block::write_free_canary(block, cookie) };
+        unsafe { block.write_free_canary(cookie) };
     }
 
-    // SAFETY: `block` points to a valid block in `page`; writing its embedded
-    // next pointer reinitializes the free-list link.
-    unsafe {
-        (*block).set_next_dynamic((*page).free, encrypted, cookie);
-    }
-    // SAFETY: `block` is non-null (allocator invariant confirmed above).
-    unsafe { (*page).free = Some(NonNull::new_unchecked(block)) };
+    // SAFETY: `block` is a valid block in `page`; writing its embedded next
+    // pointer reinitializes the free-list link.
+    unsafe { block.set_next_dynamic((*page).free, encrypted, cookie) };
+    // SAFETY: `page` is the live page this thread owns.
+    unsafe { (*page).free = Some(block.block()) };
 
     // SAFETY: same triple contract as above; the decrement updates occupancy.
     let becomes_empty = unsafe {

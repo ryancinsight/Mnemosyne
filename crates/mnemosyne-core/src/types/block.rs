@@ -159,14 +159,22 @@ impl Block {
         next: Option<NonNull<Block>>,
         page_cookie: usize,
     ) {
-        self.next_encoded = next.map(|ptr| {
+        self.next_encoded = Self::encode_link(next, page_cookie);
+    }
+
+    /// Encodes a free-list link with `page_cookie`, as stored in the block.
+    #[inline(always)]
+    pub(crate) fn encode_link(
+        next: Option<NonNull<Block>>,
+        page_cookie: usize,
+    ) -> Option<NonNull<Block>> {
+        next.map(|ptr| {
             let cookie = page_cookie | 1;
             let encoded_ptr = ptr.as_ptr().map_addr(|addr| addr ^ cookie);
-            // SAFETY: same argument as `set_next` — `ptr` is non-null and
-            // aligned, the odd `cookie` flips its low bit, so the encoded
-            // address is non-null.
+            // SAFETY: `ptr` is non-null and aligned, the odd `cookie` flips its
+            // low bit, so the encoded address is non-null.
             unsafe { NonNull::new_unchecked(encoded_ptr) }
-        });
+        })
     }
 }
 
@@ -245,63 +253,19 @@ impl Block {
 
     /// Computes the multiplicative backward-edge canary value for `block`.
     #[inline(always)]
-    fn canary_value(block: *const Block, page_cookie: usize) -> usize {
+    pub(crate) fn canary_value(block: *const Block, page_cookie: usize) -> usize {
         Self::validate_canary_slot(block);
         let addr = block.addr();
         addr.wrapping_add(FREE_CANARY_MAGIC)
             .wrapping_mul(page_cookie ^ (addr >> 4))
     }
 
-    /// Writes the backward-edge canary at `block + size_of::<Block>()`.
-    ///
-    /// Called on the free path under `HardenedPolicy`.
-    ///
-    /// # Safety
-    ///
-    /// `block` must point to a live block whose allocation is at least
-    /// `2 * size_of::<Block>()` bytes; the canary slot must lie within it.
-    #[inline(always)]
-    pub unsafe fn write_free_canary(block: *mut Block, page_cookie: usize) {
-        // canary_value validates the pointer; no separate validate_canary_slot
-        // call needed here.
-        let value = Self::canary_value(block, page_cookie);
-        // SAFETY: canary_slot_ptr is within the block per the caller's contract.
-        unsafe { Self::canary_slot_ptr(block).write(value) };
-    }
-
-    /// Returns `true` if the backward-edge canary is present (likely double-free).
-    ///
-    /// # Safety
-    ///
-    /// Same requirements as [`write_free_canary`][Block::write_free_canary],
-    /// **and** the canary slot must already be initialized.
-    #[inline(always)]
-    pub unsafe fn check_double_free(block: *const Block, page_cookie: usize) -> bool {
-        Self::validate_canary_slot(block);
-        // SAFETY: the canary slot is within the block by the caller's contract.
-        let observed = unsafe {
-            Self::canary_slot_ptr(block as *mut Block)
-                .cast::<usize>()
-                .read()
-        };
-        // `0` is the canonical cleared-slot sentinel.
-        if observed == 0 {
-            return false;
-        }
-        // Compute the expected value without calling canary_value (which
-        // would re-validate the pointer we already validated above).
-        let addr = block.addr();
-        let expected = addr
-            .wrapping_add(FREE_CANARY_MAGIC)
-            .wrapping_mul(page_cookie ^ (addr >> 4));
-        observed == expected
-    }
-
     /// Clears the canary when a block is taken off the free list.
     ///
     /// # Safety
     ///
-    /// Same requirements as [`write_free_canary`][Block::write_free_canary].
+    /// Same requirements as
+    /// [`FreedBlock::write_free_canary`](crate::types::FreedBlock::write_free_canary).
     #[inline(always)]
     pub unsafe fn clear_free_canary(block: *mut Block) {
         Self::validate_canary_slot(block);

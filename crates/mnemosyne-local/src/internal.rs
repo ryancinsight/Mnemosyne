@@ -11,7 +11,7 @@ pub use crate::free_helpers::free_large_or_huge_raw;
 pub use crate::options::{mark_options_initialized, reset_options_for_testing};
 pub use crate::{
     do_local_free_internal, do_local_free_internal_policy, initialize_allocated_bytes,
-    poison_freed_bytes, small_realloc_fits_existing_class, thread_free_layout,
+    small_realloc_fits_existing_class, thread_free_layout,
 };
 pub use core::alloc::Layout;
 pub use core::ptr::NonNull;

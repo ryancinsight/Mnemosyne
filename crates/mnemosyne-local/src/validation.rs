@@ -59,15 +59,3 @@ pub unsafe fn initialize_allocated_bytes<P: AllocPolicy>(ptr: *mut u8, size: usi
         )
     }
 }
-
-/// Applies free-time poisoning required by `P`.
-///
-/// # Safety
-///
-/// `ptr` must be valid for writes of `size` bytes until the surrounding free
-/// operation completes.
-#[inline(always)]
-pub unsafe fn poison_freed_bytes<P: AllocPolicy>(ptr: *mut u8, size: usize) {
-    // SAFETY: forwarded — same contract.
-    unsafe { poison_bytes(ptr, size, P::ENABLE_POISONING, P::POISON_FREE_BYTE) }
-}

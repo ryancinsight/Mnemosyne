@@ -5,12 +5,9 @@
 //! only its own thread's counts, so the cases are independent under both the
 //! threaded libtest harness and one-process-per-test runners.
 //!
-//! Natively the wrapper counts `Mnemosyne`, the allocator a program ships
-//! with. Under Miri it counts `System`: Miri reports undefined behavior inside
-//! `mnemosyne-local` itself, independent of the wrapper (MN-LOCAL-MIRI-UB), so
-//! a Mnemosyne-backed run could not tell a wrapper defect from that one. The
-//! wrapper only forwards, so its aliasing, provenance and thread-teardown
-//! behavior is the same for either inner allocator.
+//! The wrapper counts `Mnemosyne`, the allocator a program ships with, under
+//! Miri as natively, so the Miri job checks the wrapper's aliasing, provenance
+//! and thread-teardown behavior over the allocator it actually wraps.
 
 use core::alloc::{GlobalAlloc, Layout};
 use std::alloc::System;
@@ -20,18 +17,12 @@ use std::thread;
 
 use mnemosyne::counting::{AllocationDelta, CountingAllocator, measure};
 
-#[cfg(miri)]
-#[global_allocator]
-static ALLOCATOR: CountingAllocator<System> = CountingAllocator::new(System);
-
-#[cfg(not(miri))]
 #[global_allocator]
 static ALLOCATOR: CountingAllocator<mnemosyne::Mnemosyne> =
     CountingAllocator::new(mnemosyne::Mnemosyne);
 
 /// Moves the allocator's per-thread initialization out of the window.
 fn warm() {
-    #[cfg(not(miri))]
     mnemosyne::warm_current_thread();
 }
 

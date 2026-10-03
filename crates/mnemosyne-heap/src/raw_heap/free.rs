@@ -4,10 +4,11 @@
 use super::RawHeap;
 use core::ptr::NonNull;
 use mnemosyne_core::AllocPolicy;
+use mnemosyne_core::types::FreedBlock;
 use mnemosyne_local::LocalAllocatorSelector;
 use mnemosyne_local::internal::{
     Block, HasSegmentPool, Segment, do_local_free_internal, ensure_options_initialized,
-    free_large_or_huge_raw, poison_freed_bytes,
+    free_large_or_huge_raw,
 };
 
 impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> RawHeap<P, B> {
@@ -53,22 +54,34 @@ impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> RawHeap<P, B
             // large/huge allocation, whose deallocation path `ptr` was routed
             // through at alloc time; the `# Safety` contract guarantees `ptr`
             // is live and owned.
-            unsafe { free_large_or_huge_raw::<B>(ptr, P::ENABLE_POISONING, P::POISON_FREE_BYTE) };
+            unsafe {
+                free_large_or_huge_raw::<B>(
+                    ptr,
+                    usize::MAX,
+                    P::ENABLE_POISONING,
+                    P::POISON_FREE_BYTE,
+                );
+            };
             return;
         }
 
+        // The heap free has no layout, so the caller's provenance is taken to
+        // cover the whole block; free lists store the mapping-derived pointer
+        // (ADR 0012).
+        // SAFETY: `segment` carries its mapping's provenance and `ptr` lies in
+        // it, so the rebased pointer is the same non-null block.
+        let block = unsafe {
+            NonNull::new_unchecked(segment.cast::<u8>().with_addr(ptr.addr()).cast::<Block>())
+        };
+        // SAFETY: `block` and `ptr` address the same live block.
+        let freed = unsafe { FreedBlock::new(block, ptr, usize::MAX) };
         if P::ENABLE_POISONING {
-            // SAFETY: small-page free — `(*page).block_size` is the exact block
-            // stride of `page`, and `ptr` is a live block of that page, so
-            // poisoning `block_size` bytes stays within the block.
-            unsafe { poison_freed_bytes::<P>(ptr, (*page).block_size as usize) };
+            // SAFETY: the block is owned by this free until it re-enters a list.
+            unsafe { freed.poison(P::POISON_FREE_BYTE, (*page).block_size as usize) };
         }
 
-        // SAFETY: `ptr` is a small-page block (`page_index != 0`,
-        // `block_size != 0`) of the recovered `page`/`segment` at
-        // `page_index`; `free_owned` consumes the matching block/page/segment
-        // triple under the heap's exclusive access.
-        unsafe { self.free_owned(ptr as *mut Block, page, segment, page_index) };
+        // SAFETY: `freed` is a live block of `page` in `segment` at `page_index`.
+        unsafe { self.free_owned(freed, page, segment, page_index) };
     }
 
     /// # Safety
@@ -79,7 +92,7 @@ impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> RawHeap<P, B
     #[inline(always)]
     unsafe fn free_owned(
         &self,
-        block: *mut Block,
+        block: FreedBlock,
         page: *mut mnemosyne_core::types::Page,
         segment: *mut Segment,
         page_index: usize,
@@ -91,14 +104,9 @@ impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> RawHeap<P, B
         // Gate before borrowing, as in `alloc_small`.
         if self.is_allocating.get() {
             // SAFETY: re-entrant free while the allocator is mid-operation;
-            // `block` is a non-null live block of `page` (allocator
-            // invariant), so `new_unchecked` is sound and the page-local
-            // atomic free list takes ownership of it.
-            unsafe {
-                (*page)
-                    .thread_free
-                    .push_dynamic(NonNull::new_unchecked(block), encrypted);
-            }
+            // `block` is a live block of `page`, and the page-local atomic free
+            // list takes ownership of it.
+            unsafe { (*page).thread_free.push_dynamic(block, encrypted) };
             return;
         }
 
@@ -122,8 +130,8 @@ impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> RawHeap<P, B
             // published through the raw page pointer rather than a live
             // `&mut Page` held across it (MN-438/MN-443).
             unsafe {
-                (*block).set_next_dynamic(page_free, encrypted, cookie);
-                (*page).free = Some(NonNull::new_unchecked(block));
+                block.set_next_dynamic(page_free, encrypted, cookie);
+                (*page).free = Some(block.block());
                 mnemosyne_core::types::Page::decrement_alloc_count_in_segment(segment, page_index);
             }
             return;
@@ -169,7 +177,7 @@ unsafe fn allocation_size(
         // SAFETY: large/huge classification — the owning `*mut Segment` lives
         // in the slot directly preceding the user payload (written at alloc
         // time), so this read recovers the live segment pointer.
-        let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+        let segment = unsafe { mnemosyne_core::types::huge_back_pointer(ptr) };
         // SAFETY: `ptr`/`segment` are the live block and its owning segment;
         // `huge_or_large_size` reads only metadata inside that mapping.
         unsafe { huge_or_large_size(ptr, segment) }

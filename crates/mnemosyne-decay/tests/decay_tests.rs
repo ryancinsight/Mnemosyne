@@ -3,6 +3,7 @@ use mnemosyne_arena::HasSegmentPool;
 use mnemosyne_backend::MemoryBackendWrapper as Backend;
 use mnemosyne_core::StandardPolicy as Policy;
 use mnemosyne_core::options::PURGE_CADENCE_MS;
+use mnemosyne_core::types::segment::registry::installed_leaf_bytes;
 use mnemosyne_local::internal::reset_options_for_testing;
 use mnemosyne_local::{thread_alloc, thread_allocator_stats, thread_free};
 use std::thread;
@@ -348,6 +349,9 @@ fn alternating_size_classes_converge_with_pinned_survivors() {
     mnemosyne_decay::decay_step();
 
     let baseline_mapped = mnemosyne_backend::backend_memory_stats().current_mapped_bytes;
+    // Registry leaves are mapped through the backend and live for the process
+    // (ADR 0012), so they are subtracted from every mapped-bytes reading.
+    let baseline_leaves = installed_leaf_bytes();
     let worker = thread::spawn(move || {
         let patterns = [0x11, 0x33, 0x55, 0x77];
         let pinned: [(*mut u8, usize, u8); FRAGMENTATION_SIZES.len()] =
@@ -388,7 +392,8 @@ fn alternating_size_classes_converge_with_pinned_survivors() {
                 "round {round} escaped the one-segment working-set bound"
             );
 
-            let mapped = mnemosyne_backend::backend_memory_stats().current_mapped_bytes;
+            let mapped = mnemosyne_backend::backend_memory_stats().current_mapped_bytes
+                - (installed_leaf_bytes() - baseline_leaves);
             let mapped_delta = mapped
                 .checked_sub(baseline_mapped)
                 .expect("invariant: this workload cannot unmap the pre-test baseline");
@@ -423,7 +428,7 @@ fn alternating_size_classes_converge_with_pinned_survivors() {
     mnemosyne_decay::decay_step();
     assert_eq!(
         mnemosyne_backend::backend_memory_stats().current_mapped_bytes,
-        baseline_mapped,
+        baseline_mapped + (installed_leaf_bytes() - baseline_leaves),
         "the completed workload must return to its pre-test mapping baseline"
     );
 }

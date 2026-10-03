@@ -7,7 +7,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use mnemosyne_core::types::{Block, Page, Segment, SegmentOwner};
+use mnemosyne_core::types::{Block, FreedBlock, Page, Segment, SegmentOwner, huge_back_pointer};
 
 /// Returns true when `page` is the single page linked in the active list rooted
 /// at `active_head` (it is the head and has no successor).
@@ -53,7 +53,7 @@ pub(crate) unsafe fn is_sole_active_page(
 /// `page_alloc_count` must be `page.alloc_count` (`>= 1`).
 #[inline(always)]
 pub(crate) unsafe fn commit_in_place_free(
-    block: *mut Block,
+    block: FreedBlock,
     page: *mut Page,
     _page_free: Option<NonNull<Block>>,
     cookie: usize,
@@ -66,11 +66,11 @@ pub(crate) unsafe fn commit_in_place_free(
     unsafe {
         let (current_head, use_secondary) =
             Page::choose_free_head(page, page_alloc_count, randomized);
-        (*block).set_next_dynamic(current_head, encrypted, cookie);
+        block.set_next_dynamic(current_head, encrypted, cookie);
         if use_secondary {
-            (*page).secondary_free = Some(NonNull::new_unchecked(block));
+            (*page).secondary_free = Some(block.block());
         } else {
-            (*page).free = Some(NonNull::new_unchecked(block));
+            (*page).free = Some(block.block());
         }
         (*page).alloc_count = (page_alloc_count - 1) as u32;
     }
@@ -149,24 +149,28 @@ pub(crate) unsafe fn resolve_owner_slot(
 ///
 /// # Safety
 ///
-/// `ptr` must be a live large/huge block previously returned by backend `B`.
-/// The owning `*mut Segment` is stored in the pointer-sized slot directly
-/// preceding the user payload (written at allocation time).
+/// `ptr` must be a live large/huge block previously returned by backend `B`,
+/// whose provenance covers its first `min(covered, suffix)` bytes (`covered`
+/// is the request size, or `usize::MAX` when no layout is known). The owning
+/// `*mut Segment` is stored in the pointer-sized slot directly preceding the
+/// user payload (written at allocation time).
 #[inline(always)]
 pub unsafe fn free_large_or_huge_raw<B: mnemosyne_arena::HasSegmentPool>(
     ptr: *mut u8,
+    covered: usize,
     enable_poisoning: bool,
     poison_free_byte: u8,
 ) {
-    // SAFETY: per the caller's contract, `(ptr as *mut *mut Segment) - 1` is
-    // the metadata slot written at `allocate_large_or_huge` time.
-    let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+    // SAFETY: per the caller's contract, the slot before `ptr` is the metadata
+    // slot written at `allocate_large_or_huge` time.
+    let segment = unsafe { huge_back_pointer(ptr) };
     if enable_poisoning {
         // SAFETY: `segment` is the live owning header; `huge_mapping_suffix_from`
         // reads only metadata within that mapping.
         let size = unsafe { (*segment).huge_mapping_suffix_from(ptr) };
-        // SAFETY: `ptr` is valid for `size` bytes within the live mapping.
-        unsafe { core::ptr::write_bytes(ptr, poison_free_byte, size) };
+        // SAFETY: the caller's provenance covers `min(covered, size)` bytes;
+        // bytes past the request never held user data.
+        unsafe { core::ptr::write_bytes(ptr, poison_free_byte, covered.min(size)) };
     }
     // SAFETY: `ptr`/`segment` are the matching pair for `deallocate_large_or_huge`.
     let _ = unsafe { mnemosyne_arena::deallocate_large_or_huge::<B>(ptr, segment) };

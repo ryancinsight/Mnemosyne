@@ -3,8 +3,8 @@ use crate::free_helpers::resolve_owner_slot;
 use crate::usable_size;
 use crate::validation::{init_bytes, poison_bytes};
 use crate::{
-    LocalAllocatorSelector, ThreadAllocator, initialize_allocated_bytes, poison_freed_bytes,
-    thread_alloc_layout, thread_free,
+    LocalAllocatorSelector, ThreadAllocator, initialize_allocated_bytes, thread_alloc_layout,
+    thread_free,
 };
 use core::alloc::Layout;
 use core::ptr::NonNull;
@@ -13,7 +13,7 @@ use mnemosyne_core::constants::{MAX_SMALL_ALLOC_SIZE, MIN_BLOCK_SIZE};
 use mnemosyne_core::policy::AllocPolicy;
 use mnemosyne_core::size_class::round_up_size;
 use mnemosyne_core::types::Segment;
-use mnemosyne_core::types::{Block, locate_segment};
+use mnemosyne_core::types::{Block, FreedBlock, locate_block, locate_segment};
 
 /// Non-generic SSOT for the in-place realloc byte-mutation step.
 ///
@@ -181,6 +181,11 @@ pub unsafe fn thread_realloc<
         let can_reuse = unsafe { realloc_can_reuse(ptr, layout, new_size) };
 
         if can_reuse {
+            // SAFETY: `ptr` is a live allocation of this allocator. The block is
+            // returned as the new allocation, so it carries the mapping's
+            // provenance rather than the caller's, which may cover only the
+            // old `layout.size()` bytes.
+            let ptr = unsafe { locate_block(ptr) };
             // SAFETY: `ptr` is non-null and its backing block covers `new_size`
             // (proven by `can_reuse`).
             unsafe {
@@ -291,12 +296,18 @@ pub unsafe fn thread_realloc<
                         // owning the old block; reborrowing yields the sole
                         // live `&mut` for the free bookkeeping below.
                         let page_ref = &mut *page;
+                        // SAFETY: `segment` carries its mapping's provenance
+                        // and `ptr` lies inside it, so the rebased pointer is
+                        // the same non-null old block; the caller's provenance
+                        // covers the old request (ADR 0012).
+                        let block = NonNull::new_unchecked(
+                            segment.cast::<u8>().with_addr(ptr.addr()).cast::<Block>(),
+                        );
+                        let freed = FreedBlock::new(block, ptr, layout.size());
                         if P::ENABLE_POISONING {
-                            // SAFETY: `ptr` is the old block, valid for the
-                            // page's `block_size` bytes being poisoned.
-                            poison_freed_bytes::<P>(ptr, page_ref.block_size as usize);
+                            // SAFETY: the poison stays inside the old request.
+                            freed.poison(P::POISON_FREE_BYTE, page_ref.block_size as usize);
                         }
-                        let block = ptr as *mut Block;
                         let page_free = page_ref.free;
                         let page_alloc_count = page_ref.alloc_count as usize;
                         let randomized = (P::RANDOMIZE_ALLOCATION && encrypted)
@@ -304,13 +315,10 @@ pub unsafe fn thread_realloc<
                         if page_ref.alloc_count == 0 {
                             std::process::abort();
                         }
-                        // SAFETY: `block` is the old user pointer, non-null
-                        // by the allocator invariant; `new_unchecked` is
-                        // sound and equality with `page_free` is the
-                        // double-free guard.
-                        if Some(NonNull::new_unchecked(block)) == page_free
-                            || (randomized
-                                && Some(NonNull::new_unchecked(block)) == page_ref.secondary_free)
+                        // Equality with a free-list head is the double-free
+                        // guard.
+                        if Some(block) == page_free
+                            || (randomized && Some(block) == page_ref.secondary_free)
                         {
                             std::process::abort();
                         }
@@ -323,7 +331,7 @@ pub unsafe fn thread_realloc<
                             // is its live count (`>= 1`), so the shared commit
                             // stays inside this owned page.
                             crate::free_helpers::commit_in_place_free(
-                                block,
+                                freed,
                                 page_ref,
                                 page_free,
                                 cookie,
@@ -341,11 +349,11 @@ pub unsafe fn thread_realloc<
                                     mnemosyne_core::policy::HardenedPolicy,
                                     B,
                                 >(
-                                    alloc, block, page_ref, segment, page_index
+                                    alloc, freed, page_ref, segment, page_index
                                 )
                             } else {
                                 crate::do_local_free_internal_policy::<P, B>(
-                                    alloc, block, page_ref, segment, page_index,
+                                    alloc, freed, page_ref, segment, page_index,
                                 )
                             };
                         }

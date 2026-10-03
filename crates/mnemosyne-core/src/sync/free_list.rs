@@ -7,7 +7,7 @@
 //! cannot drift apart.
 
 use crate::loom_shim::{AtomicPtr, Ordering};
-use crate::types::{Block, Segment};
+use crate::types::{Block, FreedBlock, Segment};
 use core::ptr::NonNull;
 
 #[cfg(target_pointer_width = "64")]
@@ -105,7 +105,7 @@ impl AtomicFreeList {
     ///
     /// This is used for cross-thread deallocation.
     #[inline]
-    pub fn push<P: crate::policy::AllocPolicy>(&self, block: NonNull<Block>) {
+    pub fn push<P: crate::policy::AllocPolicy>(&self, block: FreedBlock) {
         self.push_dynamic(block, P::ENABLE_FREE_LIST_ENCRYPTION);
     }
 
@@ -117,7 +117,7 @@ impl AtomicFreeList {
     /// for this operation; selecting from the freeing caller's `P` would
     /// recreate the mixed-chain corruption AR-1 prevents.
     #[inline]
-    pub fn push_dynamic(&self, block: NonNull<Block>, encrypted: bool) {
+    pub fn push_dynamic(&self, block: FreedBlock, encrypted: bool) {
         self.push_dynamic_with::<SelectedHead>(block, encrypted);
     }
 
@@ -134,6 +134,8 @@ impl AtomicFreeList {
     #[cfg(test)]
     #[inline]
     pub(crate) fn push_raw(&self, block: NonNull<Block>) {
+        // SAFETY: test blocks are owned whole through their mapping pointer.
+        let block = unsafe { FreedBlock::new(block, block.as_ptr().cast(), usize::MAX) };
         self.push_raw_with::<SelectedHead>(block);
     }
 
@@ -173,7 +175,7 @@ impl AtomicFreeList {
     /// the second push of a block sees the first still on top. A block pushed
     /// twice with other pushes interleaved escapes this guard, and no
     /// race-free O(1) check catches that case -- the free-canary check on the
-    /// block itself is the mechanism that does (`Block::check_double_free`).
+    /// block itself is the mechanism that does (`FreedBlock::has_free_canary`).
     ///
     /// It is also the only form that keeps a cross-thread free O(1); the walk
     /// made every push cost the length of the queue.
@@ -217,8 +219,8 @@ impl AtomicFreeList {
 
     /// Body of [`Self::push_dynamic`] for head codec `C`.
     #[inline]
-    fn push_dynamic_with<C: HeadCodec>(&self, block: NonNull<Block>, encrypted: bool) {
-        let block_ptr = block.as_ptr();
+    fn push_dynamic_with<C: HeadCodec>(&self, block: FreedBlock, encrypted: bool) {
+        let block_ptr = block.block().as_ptr();
         // SAFETY: `block` is a live allocation of this allocator, so the
         // segment it lies in is mapped; `locate_segment` only masks its
         // address down to the segment base.
@@ -246,18 +248,16 @@ impl AtomicFreeList {
 
         self.assert_not_in_queue::<C>(block_ptr);
         self.push_loop::<C>(block_ptr, |current_ptr| {
-            // SAFETY: block_ptr is valid, writeable, aligned memory, exclusive
-            // to the pushing thread until the CAS publishes it.
-            unsafe {
-                (*block_ptr).set_next_dynamic(NonNull::new(current_ptr), encrypted, cookie);
-            }
+            // SAFETY: the block is exclusive to the pushing thread until the
+            // CAS publishes it; `cookie` is its segment's key for this mode.
+            unsafe { block.set_next_dynamic(NonNull::new(current_ptr), encrypted, cookie) };
         });
     }
 
     /// Body of [`Self::push_raw`] for head codec `C`.
     #[inline]
-    fn push_raw_with<C: HeadCodec>(&self, block: NonNull<Block>) {
-        let block_ptr = block.as_ptr();
+    fn push_raw_with<C: HeadCodec>(&self, block: FreedBlock) {
+        let block_ptr = block.block().as_ptr();
         // SAFETY: `block` is a live allocation of this allocator, so the
         // segment it lies in is mapped; `locate_segment` only masks its
         // address down to the segment base.
@@ -273,12 +273,10 @@ impl AtomicFreeList {
 
         self.assert_not_in_queue::<C>(block_ptr);
         self.push_loop::<C>(block_ptr, |current_ptr| {
-            // SAFETY: `block_ptr` is the caller's own block, not yet
-            // published to the list, so no other thread can observe it; the
-            // raw form matches the segment mode checked on entry.
-            unsafe {
-                (*block_ptr).set_next_raw(NonNull::new(current_ptr));
-            }
+            // SAFETY: the block is the caller's own, not yet published, so no
+            // other thread can observe it; the raw form matches the segment
+            // mode checked on entry.
+            unsafe { block.set_next_dynamic(NonNull::new(current_ptr), false, 0) };
         });
     }
 

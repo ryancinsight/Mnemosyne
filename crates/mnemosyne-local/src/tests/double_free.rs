@@ -65,7 +65,11 @@ fn test_reclaim_overflow_aborts_process() {
             // Push the block directly to the thread_free queue.
             let block = ptr as *mut Block;
             page.thread_free
-                .push::<StandardPolicy>(NonNull::new_unchecked(block));
+                .push::<StandardPolicy>(mnemosyne_core::types::FreedBlock::new(
+                    NonNull::new_unchecked(block),
+                    block.cast(),
+                    usize::MAX,
+                ));
 
             // Run reclaim, which should detect count (1) > alloc_count (0) and abort.
             mnemosyne_core::types::Page::reclaim_thread_free_for_policy(segment, page_index);
@@ -253,9 +257,17 @@ fn test_thread_free_cycle_aborts_process() {
 
             // Push block2 then block1 to build list block1 -> block2 -> None
             page.thread_free
-                .push::<StandardPolicy>(NonNull::new_unchecked(block2));
+                .push::<StandardPolicy>(mnemosyne_core::types::FreedBlock::new(
+                    NonNull::new_unchecked(block2),
+                    block2.cast(),
+                    usize::MAX,
+                ));
             page.thread_free
-                .push::<StandardPolicy>(NonNull::new_unchecked(block1));
+                .push::<StandardPolicy>(mnemosyne_core::types::FreedBlock::new(
+                    NonNull::new_unchecked(block1),
+                    block1.cast(),
+                    usize::MAX,
+                ));
 
             // Manually link block2 to block1 to form cycle block1 -> block2 -> block1
             (*block2).set_next::<StandardPolicy>(NonNull::new(block1), cookie);
