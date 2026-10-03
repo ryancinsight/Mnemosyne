@@ -95,9 +95,12 @@ impl<P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelector<B>> RawHeap<P, B
             // invariant), so `new_unchecked` is sound and the page-local
             // atomic free list takes ownership of it.
             unsafe {
-                (*page)
-                    .thread_free
-                    .push_dynamic(NonNull::new_unchecked(block), encrypted);
+                (*page).thread_free.push_located(
+                    NonNull::new_unchecked(block),
+                    segment,
+                    page_index,
+                    encrypted,
+                );
             }
             return;
         }
