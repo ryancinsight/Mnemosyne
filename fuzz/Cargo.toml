@@ -13,7 +13,7 @@ libfuzzer = ["dep:libfuzzer-sys"]
 
 [dependencies]
 libfuzzer-sys = { version = "0.4.13", optional = true }
-mnemosyne-c-shim = { path = "../crates/mnemosyne-c-shim", version = "0.3.1" }
+mnemosyne-c-shim = { path = "../crates/mnemosyne-c-shim", version = "0.3.2" }
 mnemosyne-core = { package = "mnemosyne-memory-core", path = "../crates/mnemosyne-core", version = "0.3.0" }
 
 [[bin]]

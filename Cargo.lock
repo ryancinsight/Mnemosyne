@@ -459,7 +459,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-arena"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bytemuck",
  "eunomia",
@@ -503,7 +503,7 @@ version = "0.2.1"
 
 [[package]]
 name = "mnemosyne-c-shim"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "mnemosyne-backend",
  "mnemosyne-local",
@@ -513,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-decay"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "mnemosyne-arena",
  "mnemosyne-backend",
@@ -530,7 +530,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-heap"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "libc",
  "melinoe",
@@ -545,7 +545,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-local"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "melinoe",
  "mnemosyne-arena",
@@ -560,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-memory"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "eunomia",
  "mnemosyne-arena",

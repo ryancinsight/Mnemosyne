@@ -5,7 +5,7 @@ Segment arenas, page slicing, and orphan pools for the
 
 ```toml
 [dependencies]
-mnemosyne-arena = "0.5"
+mnemosyne-arena = "0.6"
 ```
 
 ## Geometry
