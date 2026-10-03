@@ -1,4 +1,36 @@
 use super::*;
+use mnemosyne::{MnemosyneOptions, configure, get_options};
+
+/// Holds segment retention at one or more for a test that asserts the free
+/// pool caches a returned segment, restoring the prior options on drop.
+///
+/// Retention is configuration, not an invariant: Miri builds default it to
+/// zero (`mnemosyne_core::options`), so a test that asserts a cached segment
+/// establishes that precondition instead of inheriting the build's default.
+struct RetentionGuard(MnemosyneOptions);
+
+impl RetentionGuard {
+    fn retaining() -> Self {
+        let prior = get_options();
+        let MnemosyneOptions {
+            max_retained_segments,
+            purge_cadence_ms,
+            enable_hugepage_hint,
+        } = prior;
+        configure(MnemosyneOptions {
+            max_retained_segments: max_retained_segments.max(1),
+            purge_cadence_ms,
+            enable_hugepage_hint,
+        });
+        Self(prior)
+    }
+}
+
+impl Drop for RetentionGuard {
+    fn drop(&mut self) {
+        configure(self.0);
+    }
+}
 
 #[test]
 fn test_segment_reclamation() {
@@ -95,6 +127,7 @@ fn test_memory_stats_retention_bound() {
 #[test]
 fn test_purge() {
     let _guard = lock_test();
+    let _retention = RetentionGuard::retaining();
     // Clear any existing segments in the pool.
     purge();
 
@@ -138,6 +171,7 @@ fn test_purge() {
 #[test]
 fn test_reset_keeps_segments_cached_and_records_telemetry() {
     let _guard = lock_test();
+    let _retention = RetentionGuard::retaining();
     // Start from a clean pool so the retention count is deterministic.
     purge();
 

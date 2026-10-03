@@ -19,26 +19,25 @@
     `backlog.md`/`checklist.md` content (stale against current main).
 
 <a id="MN-LOCAL-MIRI-UB"></a>
-- [ ] [correctness] **MN-LOCAL-MIRI-UB — remove the undefined behavior Miri reports in `mnemosyne-local`.**
-  priority: correctness; status: todo; needs: none; scope:
-  `crates/mnemosyne-local/src/free/classified.rs`,
-  `crates/mnemosyne-local/src/local_alloc/page/allocation.rs`,
-  `crates/mnemosyne/tests/global_alloc_tests/`, `.github/workflows/ci.yml`.
-  **Outcome:** any program that allocates through `Mnemosyne` is Miri-clean. Stacked Borrows rejects the page-metadata read at `free/classified.rs:58`; Tree Borrows rejects it at `free/classified.rs:101` and the `alloc_count` update at `local_alloc/page/allocation.rs:57`. Both reproduce on the Windows host and on `x86_64-unknown-linux-gnu`, and the `-p mnemosyne-local` unit-test job does not reach them.
-  **Reproduce:** `MIRIFLAGS="-Zmiri-disable-isolation [-Zmiri-tree-borrows]" cargo +nightly miri test -p mnemosyne-memory --test global_alloc_tests -- basic::test_basic_allocation`.
-  **Acceptance:** Miri clean on `global_alloc_tests` under Stacked Borrows and Tree Borrows, both added to the CI `miri` job; then `counting_allocator` drops its `cfg(miri)` `System` inner and wraps `Mnemosyne` under Miri too.
-  **Next step:** read the borrow-stack report at each of the three sites for the retag that invalidated the tag, then derive the access from the segment, as the reclamation seam does (MN-437).
-  basis: origin/main 66a5a86899cb73fd8296b4a6858351bc3baf0398.
+- [ ] [correctness] **MN-LOCAL-MIRI-UB — make `Mnemosyne`-backed programs Miri-clean under Stacked Borrows.**
+  priority: correctness; status: blocked; needs: none; scope:
+  `crates/mnemosyne/src/allocator.rs`, `crates/mnemosyne/tests/counting_allocator.rs`,
+  `.github/workflows/ci.yml`.
+  **Outcome:** `global_alloc_tests` is Tree Borrows-clean on the free-path registry, and CI runs it (ADR 0012). Stacked Borrows still rejects the facade's writes through std's narrowed pointer, the quarantine ADR 0012 records: `realloc`'s in-place result written past the old size, and `dealloc`'s free-list link, canary and poison beyond `layout.size()`.
+  **Blocker:** rust-lang/miri#2686 (fresh provenance for allocator results). **Re-open trigger:** miri#2686 merges and reaches the nightly CI installs.
+  **Reproduce:** `MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri nextest run -p mnemosyne-memory -E 'binary(global_alloc_tests)'` aborts while nextest lists the harness.
+  **Acceptance:** Miri clean on `global_alloc_tests` under Stacked Borrows, added to the CI `miri` job beside the Tree Borrows step; then `counting_allocator` drops its `cfg(miri)` `System` inner and wraps `Mnemosyne` under Miri too.
+  **Next step:** on the trigger, rerun the reproduce command on the new nightly.
+  basis: origin/main 58e1aee2a8d37656b097652435e32668e2de8ac6 with the ADR 0012 stack (PR #216).
 
 <a id="MN-PROF-MIRI-FRAMES"></a>
 - [ ] [correctness] **MN-PROF-MIRI-FRAMES — keep captured frame provenance in `mnemosyne-prof`.**
   priority: correctness; status: todo; needs: MN-LOCAL-MIRI-UB; scope:
   `crates/mnemosyne-prof/src/sampler/`, `.github/workflows/ci.yml`.
   **Outcome:** the sampler stores captured frames as pointers rather than `usize`,
-  so `backtrace::resolve` receives the provenance `frame.ip()` carried. With the
-  MN-LOCAL-MIRI-UB fix applied (PR #210),
-  `leak::test_leak_detector_integration` reaches Undefined Behavior under Miri
-  (Stacked and Tree Borrows) in `backtrace`'s `miri_resolve_frame`, called from
+  so `backtrace::resolve` receives the provenance `frame.ip()` carried. On the
+  free-path registry (ADR 0012), `leak::test_leak_detector_integration` reaches
+  Undefined Behavior under Tree Borrows in `backtrace`'s `miri_resolve_frame`, called from
   `sampler/report.rs:133` with an address that has no provenance.
   **Acceptance:** `global_alloc_tests` Miri-clean under both models with no test
   filter, and the CI facade Miri steps drop `not test(/^leak::/)`. That run also

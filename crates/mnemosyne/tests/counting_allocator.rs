@@ -6,9 +6,10 @@
 //! threaded libtest harness and one-process-per-test runners.
 //!
 //! Natively the wrapper counts `Mnemosyne`, the allocator a program ships
-//! with. Under Miri it counts `System`: Miri reports undefined behavior inside
-//! `mnemosyne-local` itself, independent of the wrapper (MN-LOCAL-MIRI-UB), so
-//! a Mnemosyne-backed run could not tell a wrapper defect from that one. The
+//! with. Under Miri it counts `System`: under Stacked Borrows a
+//! Mnemosyne-backed program still reaches the facade's quarantined writes
+//! (ADR 0012, MN-LOCAL-MIRI-UB), so a Mnemosyne-backed run could not tell a
+//! wrapper defect from those. The
 //! wrapper only forwards, so its aliasing, provenance and thread-teardown
 //! behavior is the same for either inner allocator.
 
