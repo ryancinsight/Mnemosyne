@@ -5,7 +5,7 @@ Explicit heap handles, tiered placement, and lifetime-branded allocation for the
 
 ```toml
 [dependencies]
-mnemosyne-heap = "0.5"
+mnemosyne-heap = "0.6"
 ```
 
 Use the global allocator for process-wide allocation; reach for this crate when

@@ -5,7 +5,7 @@ Thread-local allocation engine for the
 
 ```toml
 [dependencies]
-mnemosyne-local = "0.5"
+mnemosyne-local = "0.6"
 ```
 
 `ThreadAllocator` owns the per-thread fast path: size-class routing, the
