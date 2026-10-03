@@ -4,7 +4,9 @@ Status: Proposed
 
 Revised 2026-10-03: corrected the root cause (wildcard provenance), added the
 split write and quarantine options, fixed thresholds before measuring, and
-recorded the option-1 prototype's measurements against them.
+recorded the option-1 prototype's measurements against them. Revised again the
+same day: main fails TB without the registry, so the bounds are re-based on the
+minimal TB-clean tree, fixed before that tree is measured.
 
 ## Context
 
@@ -47,7 +49,7 @@ consult it.
 | Option | Link | SB | TB | Strict | Security |
 |---|---|---|---|---|---|
 | 1. Registry + split write | in-band | pass (measured) | pass (measured) | pass (measured) | unchanged |
-| 2. Registry + quarantine | in-band, caller's ptr | excluded | expected | expected | unchanged |
+| 2. Registry + quarantine | in-band, caller's ptr | excluded | expected; fails without the registry (measured) | expected | unchanged |
 | 3. Registry + bitmap | out-of-band | expected | expected | expected | weaker |
 | 4. Registry + `u16` index array | out-of-band | expected | expected | expected | unchanged |
 | 5. Exposed provenance (#210) | either | wildcard | wildcard | unsupported | unchanged |
@@ -59,7 +61,8 @@ consult it.
   request. The layout-free paths (`thread_free`, the heap free, C `free`) treat
   the whole block as covered.
 - **2. Quarantine.** Links go through the caller's pointer; CI runs TB and
-  drops SB for the allocator crates until miri#2686 lands.
+  drops SB for the allocator crates until miri#2686 lands. It still needs the
+  registry for regions 1 and 3 (Evidence: main under TB).
 - **3. Bitmap.** First-free-by-address allocation defeats the randomized
   `secondary_free` list and drops free-list encryption (ADR 0001). Rejected.
 - **4. Index array.** 12.5% of class-0 page capacity, and poisoning and the
@@ -128,25 +131,59 @@ flag and filter above); `mnemosyne-local` and `mnemosyne-heap` pass under SB
 and TB, and `mnemosyne-arena` under SB with CI's concurrency filter. The bound
 holds.
 
+**Main under TB.** `global_alloc_tests` at `58e1aee2` under TB, seeds 1–4,
+and TB with strict provenance, seed 1, abort before any test runs, while
+libtest drops its parsed-options `Vec`: `thread_free_classified` reads
+`page.alloc_count` (`free/classified.rs:101`) through the page pointer masked
+from the caller's pointer, whose tag the allocator's own write to that field
+(`local_alloc/page/allocation.rs:57`) had disabled. Region 1 fails TB on an
+ordinary drop, so quarantine is not main unchanged: it needs the registry too,
+and the bounds above, which measure the registry, cannot separate the options.
+
 **Unmeasured.** Dynamic instructions and cache misses have no counter source on
 the measuring host: PMC needs admin rights, the WSL image is missing, there is
 no valgrind, and the mimalloc-bench workloads need Linux.
 
+## Re-based thresholds (fixed 2026-10-03, before measuring the baseline)
+
+The figures above stay as recorded. The baseline becomes **Q**, the minimal
+TB-clean tree: `origin/main` plus the registry for regions 1 and 3
+(`locate_segment`, `huge_back_pointer`, arena registration), with the link,
+canary, poison and `realloc`'s in-place result taken from the caller's pointer
+as on main. Q serves as the baseline only after `global_alloc_tests` passes
+under TB on seeds 1–4; any further code TB needs joins Q. Option 1 is chosen over quarantine (Q plus the CI exclusion)
+only if every bound holds against Q, for `StandardPolicy` and `SecurePolicy`:
+
+- **Static path length:** at most +2 instructions on local in-place free,
+  local last-block free and remote push. The covered-size compare and branch
+  are the only work option 1 adds over Q; `FreedBlock`'s fields are budgeted
+  register-resident, so spills count against the bound. +0 on `usable_size`
+  and alloc, where both trees run the same code. On `realloc` within class, at
+  most +15 (option 1's one registry lookup for the in-place result, measured
+  above), or +0 if TB makes Q rebuild that result too.
+- **Dynamic instructions:** at most +2 per alloc+free pair on the criterion
+  `allocation`, `cross_thread`, `realloc` and `throughput` suites, by the same
+  derivation.
+- **Cache misses:** L1D and LLC per alloc+free on the mimalloc-bench workloads
+  within Q's run-to-run spread; the split write touches the bytes Q's single
+  write touches.
+- **Memory:** steady-state private bytes after 10^8 `latency` cycles, mean of
+  four runs, within Q's spread (max minus min of its four runs); option 1 holds
+  no state Q lacks.
+- **Miri:** as above; Q's own TB and strict results are recorded beside it.
+
 ## Decision
 
-Pending. Option 1 breaches the static path and RSS bounds, so the rule above
-selects option 2. But option 2 performs the same registry lookup on the same
-paths and holds the same registry memory; its expected cost is the lookup plus
-the block rebuild, which still exceeds +12. The thresholds measure the
-registry, which both options carry, so they cannot separate the options.
-Choosing requires re-specifying the bounds as either option 1's marginal cost
-over option 2, or the registry's cost against its own absolute budget.
+Pending: Q is not built yet. The re-based bounds decide; the static path and
+memory bounds are measurable on this host, the dynamic and cache bounds need a
+counter source.
 
 ## Consequences
 
 The registry replaces PR #210's exposed-provenance entry points under either
 option. Under option 1 the free functions and `AtomicFreeList::push_dynamic`
-take a `FreedBlock`; under option 2 CI drops SB for the allocator crates.
+take a `FreedBlock`; under option 2 CI drops SB for the facade's allocator
+harnesses, naming miri#2686 as the re-open trigger.
 MN-LOCAL-MIRI-UB stays open until one option lands.
 
 ## Overturning evidence
