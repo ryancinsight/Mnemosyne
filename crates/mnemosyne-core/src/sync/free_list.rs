@@ -118,7 +118,32 @@ impl AtomicFreeList {
     /// recreate the mixed-chain corruption AR-1 prevents.
     #[inline]
     pub fn push_dynamic(&self, block: NonNull<Block>, encrypted: bool) {
-        self.push_dynamic_with::<SelectedHead>(block, encrypted);
+        // SAFETY: `block` is a live allocation of this allocator, so the
+        // registry maps its chunk and `locate_segment` returns its header and
+        // page index with the mapping's provenance.
+        let (segment, page_index) = unsafe { crate::types::locate_segment(block.as_ptr().cast()) };
+        // SAFETY: the pair was just located for `block`.
+        unsafe { self.push_located(block, segment, page_index, encrypted) };
+    }
+
+    /// [`Self::push_dynamic`] for a caller that has already located `block`,
+    /// so the free path pays one registry lookup rather than one per step.
+    ///
+    /// # Safety
+    ///
+    /// `segment` and `page_index` must be what
+    /// [`locate_segment`](crate::types::locate_segment) returns for `block`, or
+    /// a segment pointer derived from it that keeps the mapping's provenance.
+    #[inline]
+    pub unsafe fn push_located(
+        &self,
+        block: NonNull<Block>,
+        segment: *mut Segment,
+        page_index: usize,
+        encrypted: bool,
+    ) {
+        // SAFETY: forwarded from this function's contract.
+        unsafe { self.push_dynamic_with::<SelectedHead>(block, segment, page_index, encrypted) };
     }
 
     /// Raw push used by the free-list unit tests to exercise the non-encrypted
@@ -134,7 +159,10 @@ impl AtomicFreeList {
     #[cfg(test)]
     #[inline]
     pub(crate) fn push_raw(&self, block: NonNull<Block>) {
-        self.push_raw_with::<SelectedHead>(block);
+        // SAFETY: the tests push live blocks of registered segments.
+        let (segment, _) = unsafe { crate::types::locate_segment(block.as_ptr().cast()) };
+        // SAFETY: `segment` was just located for `block`.
+        unsafe { self.push_raw_with::<SelectedHead>(block, segment) };
     }
 
     /// Atomically removes all blocks from the list and returns the head and the
@@ -215,34 +243,39 @@ impl AtomicFreeList {
         }
     }
 
-    /// Body of [`Self::push_dynamic`] for head codec `C`.
+    /// Body of [`Self::push_located`] for head codec `C`.
+    ///
+    /// # Safety
+    ///
+    /// As [`Self::push_located`].
     #[inline]
-    fn push_dynamic_with<C: HeadCodec>(&self, block: NonNull<Block>, encrypted: bool) {
+    unsafe fn push_dynamic_with<C: HeadCodec>(
+        &self,
+        block: NonNull<Block>,
+        segment: *mut Segment,
+        page_index: usize,
+        encrypted: bool,
+    ) {
         let block_ptr = block.as_ptr();
-        // SAFETY: `block` is a live allocation of this allocator, so the
-        // segment it lies in is mapped and registered; `locate_segment`
-        // rebuilds the header pointer from the registered mapping (ADR 0012).
-        let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
-        // SAFETY: `segment` is the live mapping just located.
+        // SAFETY: `segment` is `block`'s live header (the caller's contract).
         if !unsafe { Segment::free_list_mode_matches(segment.cast_const(), encrypted) } {
             crate::abort::abort_on_corruption(
                 "free-list mode mismatch: AtomicFreeList push path does not match the segment",
             );
         }
         if !encrypted {
-            self.push_raw_with::<C>(block);
+            // SAFETY: as above.
+            unsafe { self.push_raw_with::<C>(block, segment) };
             return;
         }
 
         C::assert_packable(block_ptr);
 
-        // SAFETY: `block` is a live allocation, so `locate_segment` on its
-        // pointer recovers the valid parent segment header and its in-range page
-        // index, satisfying `cookie_for`'s contract.
-        let cookie = unsafe {
-            let (segment, page_index) = crate::types::locate_segment(block_ptr.cast::<u8>());
-            Segment::cookie_for_dynamic(segment.cast_const(), encrypted, page_index)
-        };
+        // SAFETY: `segment` and `page_index` are `block`'s located header and
+        // in-range page index (the caller's contract), satisfying
+        // `cookie_for`'s contract.
+        let cookie =
+            unsafe { Segment::cookie_for_dynamic(segment.cast_const(), encrypted, page_index) };
 
         self.assert_not_in_queue::<C>(block_ptr);
         self.push_loop::<C>(block_ptr, |current_ptr| {
@@ -254,15 +287,16 @@ impl AtomicFreeList {
         });
     }
 
-    /// Body of [`Self::push_raw`] for head codec `C`.
+    /// Unencrypted push body for head codec `C`.
+    ///
+    /// # Safety
+    ///
+    /// `segment` must be `block`'s live header, carrying the mapping's
+    /// provenance.
     #[inline]
-    fn push_raw_with<C: HeadCodec>(&self, block: NonNull<Block>) {
+    unsafe fn push_raw_with<C: HeadCodec>(&self, block: NonNull<Block>, segment: *mut Segment) {
         let block_ptr = block.as_ptr();
-        // SAFETY: `block` is a live allocation of this allocator, so the
-        // segment it lies in is mapped and registered; `locate_segment`
-        // rebuilds the header pointer from the registered mapping (ADR 0012).
-        let (segment, _) = unsafe { crate::types::locate_segment(block_ptr.cast::<u8>()) };
-        // SAFETY: `segment` is the live mapping just located.
+        // SAFETY: `segment` is `block`'s live header (the caller's contract).
         if unsafe { Segment::free_list_encrypted(segment.cast_const()) } {
             crate::abort::abort_on_corruption(
                 "raw AtomicFreeList push used while segment free-list links are encrypted",
