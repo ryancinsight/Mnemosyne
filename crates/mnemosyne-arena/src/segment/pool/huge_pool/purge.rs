@@ -42,7 +42,7 @@ impl GlobalHugePool {
                                 .load(core::sync::atomic::Ordering::Relaxed);
                             let raw_ptr = (*head).raw_alloc_ptr;
                             let block_size = (*head).pages[0].block_size as usize;
-                            let _ = B::deallocate(raw_ptr, block_size);
+                            let _released = crate::mapping::unmap::<B>(raw_ptr, block_size);
                             next
                         };
                         head = next;

@@ -110,6 +110,9 @@ fn purge_retains_segment_when_backend_release_fails() {
 
     unsafe {
         Segment::initialize(segment_ptr, segment_ptr.cast(), 0);
+        // The purge unregisters the mapping first, as for any mapping `map`
+        // produced.
+        crate::mapping::register_fixture_mapping(segment_ptr.cast(), crate::SEGMENT_MAPPING_SIZE);
         FailingReleaseBackend::global_segment_pool().push_unbounded(segment_ptr);
     }
 
@@ -865,6 +868,7 @@ impl HasSegmentPool for FirstAllocationFailsBackend {
 fn first_os_allocation_failure_purges_and_retries() {
     FIRST_ALLOCATION_FAILS_CALLS.store(0, Ordering::Relaxed);
     let before = arena_memory_stats::<FirstAllocationFailsBackend>();
+    let leaves_before = mnemosyne_core::types::segment::registry::installed_leaf_bytes();
 
     // SAFETY: FirstAllocationFailsBackend is a valid HasSegmentPool
     // implementor with its own private pools; this exercises the OOM
@@ -879,9 +883,13 @@ fn first_os_allocation_failure_purges_and_retries() {
         0,
         "the retried mapping must yield a SEGMENT_ALIGN-aligned segment"
     );
+    // Each registry leaf the mapping's span needed is one more backend call.
+    let leaf_calls = (mnemosyne_core::types::segment::registry::installed_leaf_bytes()
+        - leaves_before)
+        / mnemosyne_core::types::segment::registry::LEAF_BYTES;
     assert_eq!(
         FIRST_ALLOCATION_FAILS_CALLS.load(Ordering::Relaxed),
-        2,
+        2 + leaf_calls,
         "bounded to one retry: the first B::allocate call fails, the second succeeds"
     );
 

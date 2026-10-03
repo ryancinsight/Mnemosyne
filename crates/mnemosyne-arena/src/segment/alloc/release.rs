@@ -130,7 +130,7 @@ pub unsafe fn release_segment_mapping<B: HasSegmentPool>(segment: *mut Segment) 
     // and deallocate the original OS mapping.
     let released = unsafe {
         let raw_ptr = (*segment).raw_alloc_ptr;
-        B::deallocate(raw_ptr, SEGMENT_MAPPING_SIZE)
+        crate::mapping::unmap::<B>(raw_ptr, SEGMENT_MAPPING_SIZE)
     };
 
     if released {
