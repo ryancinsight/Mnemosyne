@@ -36,8 +36,13 @@ unsafe impl GlobalAlloc for Mnemosyne {
     // thread_free determines the owner segment/page and returns blocks safely.
     #[inline(always)]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: thread_free is safe because ptr is guaranteed by the GlobalAlloc
-        // contract to be a valid pointer allocated by this allocator.
+        // SAFETY: the `GlobalAlloc` contract makes `ptr` a live block of this
+        // allocator, allocated with `layout`. std may narrow `ptr` to
+        // `layout.size()` bytes (a `Box` retag), short of the whole block
+        // `thread_free_layout` asks for; the free-list link, canary and poison
+        // writes beyond those bytes are accepted by Tree Borrows and rejected by
+        // Stacked Borrows until rust-lang/miri#2686 gives `dealloc`'s argument
+        // fresh provenance (ADR 0012, quarantine).
         unsafe {
             thread_free_layout::<StandardPolicy, mnemosyne_backend::MemoryBackendWrapper>(
                 ptr,
@@ -134,8 +139,13 @@ unsafe impl<
     // thread_free determines the owner segment/page and returns blocks safely.
     #[inline(always)]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: thread_free is safe because ptr is guaranteed by the GlobalAlloc
-        // contract to be a valid pointer allocated by this allocator.
+        // SAFETY: the `GlobalAlloc` contract makes `ptr` a live block of this
+        // allocator, allocated with `layout`. std may narrow `ptr` to
+        // `layout.size()` bytes (a `Box` retag), short of the whole block
+        // `thread_free_layout` asks for; the free-list link, canary and poison
+        // writes beyond those bytes are accepted by Tree Borrows and rejected by
+        // Stacked Borrows until rust-lang/miri#2686 gives `dealloc`'s argument
+        // fresh provenance (ADR 0012, quarantine).
         unsafe { thread_free_layout::<P, B>(ptr, layout.size(), layout.align()) }
     }
 

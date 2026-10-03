@@ -213,10 +213,10 @@ pub(super) unsafe fn thread_free_classified<
     }
 
     // SAFETY: `ptr`/`page_ptr`/`block` are the function's validated
-    // contract inputs from the embodiment of `thread_free`'s `// # Safety`
-    // rustdoc; the `#[cold]` helper handles the cross-thread / re-entrant
-    // push path.
-    unsafe { thread_free_cold::<B>(ptr, page_ptr, block) };
+    // contract inputs from `thread_free`'s `# Safety` rustdoc, and
+    // `segment`/`page_index` the pair located for `ptr` above; the `#[cold]`
+    // helper handles the cross-thread / re-entrant push path.
+    unsafe { thread_free_cold::<B>(ptr, page_ptr, block, segment, page_index) };
 }
 
 #[cold]

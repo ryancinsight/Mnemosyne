@@ -149,18 +149,21 @@ pub(crate) unsafe fn resolve_owner_slot(
 ///
 /// # Safety
 ///
-/// `ptr` must be a live large/huge block previously returned by backend `B`.
-/// The owning `*mut Segment` is stored in the pointer-sized slot directly
-/// preceding the user payload (written at allocation time).
+/// `ptr` must be a live large/huge block previously returned by backend `B`,
+/// carrying provenance over the whole block that allocation returned, as the
+/// returned pointer does: poisoning writes the block through `ptr`. The owning
+/// `*mut Segment` is stored in the pointer-sized slot directly preceding the
+/// user payload (written at allocation time).
 #[inline(always)]
 pub unsafe fn free_large_or_huge_raw<B: mnemosyne_arena::HasSegmentPool>(
     ptr: *mut u8,
     enable_poisoning: bool,
     poison_free_byte: u8,
 ) {
-    // SAFETY: per the caller's contract, `(ptr as *mut *mut Segment) - 1` is
-    // the metadata slot written at `allocate_large_or_huge` time.
-    let segment = unsafe { *((ptr as *mut *mut Segment).sub(1)) };
+    // SAFETY: per the caller's contract, the slot before `ptr` is the metadata
+    // slot written at `allocate_large_or_huge` time, inside the live mapping
+    // registered for `ptr`'s chunk.
+    let segment = unsafe { mnemosyne_core::types::huge_back_pointer(ptr) };
     if enable_poisoning {
         // SAFETY: `segment` is the live owning header; `huge_mapping_suffix_from`
         // reads only metadata within that mapping.

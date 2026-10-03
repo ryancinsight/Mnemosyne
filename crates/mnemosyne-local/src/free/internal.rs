@@ -11,7 +11,10 @@ use mnemosyne_core::types::{Block, Page, Segment};
 ///
 /// # Safety
 ///
-/// The block pointer must point to a valid block allocated in the target page and segment.
+/// The block pointer must point to a valid block allocated in the target page
+/// and segment, and carry provenance over that whole block, as the pointer the
+/// allocating call returned does: the free writes the free-list link into the
+/// block through it (ADR 0012).
 #[inline(always)]
 pub unsafe fn do_local_free_internal<B: HasSegmentPool>(
     alloc: &mut ThreadAllocator<B>,

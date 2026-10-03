@@ -12,11 +12,12 @@ pub(super) unsafe fn thread_free_cold<B: HasSegmentPool + LocalAllocatorSelector
     ptr: *mut u8,
     page: *mut Page,
     block: *mut Block,
+    segment: *mut Segment,
+    page_index: usize,
 ) {
-    // SAFETY: `page` is the live page metadata the caller located for a block of
-    // this allocator, and `parent_segment_of` masks it to its live segment header;
-    // both reads are of initialization-time fields.
-    let encrypted = unsafe { Segment::free_list_encrypted(Page::parent_segment_of(page)) };
+    // SAFETY: `segment` is the live header the caller located for `block`; the
+    // encryption flag is an initialization-time field.
+    let encrypted = unsafe { Segment::free_list_encrypted(segment) };
     if B::ENABLE_CPU_CACHE
         && per_cpu::try_free_cpu(ptr, unsafe { (*page).size_class } as usize, encrypted)
     {
@@ -27,11 +28,15 @@ pub(super) unsafe fn thread_free_cold<B: HasSegmentPool + LocalAllocatorSelector
 
     // SAFETY: `block` came from this allocator under the same
     // backend; non-nullness is the allocator invariant. The page-
-    // local atomic free list takes ownership of the pointer.
+    // local atomic free list takes ownership of the pointer, and
+    // `segment`/`page_index` are the pair the caller located for it.
     unsafe {
-        (*page)
-            .thread_free
-            .push_dynamic(NonNull::new_unchecked(block), encrypted);
+        (*page).thread_free.push_located(
+            NonNull::new_unchecked(block),
+            segment,
+            page_index,
+            encrypted,
+        );
     }
     #[cfg(feature = "dealloc-probe")]
     crate::dealloc_counters::record(crate::dealloc_counters::DeallocPath::ColdOrRecursing);

@@ -2,14 +2,12 @@
 //! allocation.
 //!
 //! A program reaches its allocations through references and `Box`es, which
-//! retag the pointer to the allocation's bytes alone; `Box<[T]>::into_vec`
-//! hands exactly such a pointer to `dealloc`. The allocator's metadata lies
-//! outside those bytes, so the free path reaches it through the registered
-//! mapping, never the caller's provenance (ADR 0012). Both cases fail Tree
+//! retag the pointer to the allocation's bytes alone. The allocator's metadata
+//! lies outside those bytes, so the free path reaches it through the registered
+//! mapping, never the caller's provenance (ADR 0012); the case fails Tree
 //! Borrows on a tree that reads page metadata through the caller's pointer.
-//! The free-list link is still written through the caller's pointer, which
-//! Stacked Borrows rejects when the request is narrower than the link, so the
-//! Stacked Borrows job excludes that case until rust-lang/miri#2686 lands.
+//! The narrowed pointer still covers its whole block, which `thread_free`
+//! requires: the free-list link is written through it.
 
 use super::*;
 
@@ -58,6 +56,8 @@ fn small_blocks_freed_through_narrowed_pointers_are_reused_without_aliasing() {
         let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(SMALL_SIZE, 8) };
         assert!(!ptr.is_null(), "small allocation {byte} failed");
         // SAFETY: `ptr` is a fresh, exclusively owned `SMALL_SIZE`-byte block.
+        // `SMALL_SIZE` is a size class, so the narrowed pointer still covers
+        // the whole block, as `thread_free` requires.
         let ptr = unsafe { narrowed(ptr, SMALL_SIZE) };
         // SAFETY: as above.
         unsafe { fill(ptr, SMALL_SIZE, byte) };
@@ -93,65 +93,38 @@ fn small_blocks_freed_through_narrowed_pointers_are_reused_without_aliasing() {
     }
 }
 
-/// A request narrower than the 8-byte free-list link (ADR 0012).
-const TINY_SIZE: usize = 4;
-
-/// Blocks in one smallest-class page: a fresh page is bump-allocated before
-/// its free list is read, so reuse needs a page's worth of frees.
-const TINY_BLOCKS: usize =
-    mnemosyne_core::constants::PAGE_SIZE / mnemosyne_core::constants::MIN_BLOCK_SIZE;
+/// A request served by its own mapping, so the free reads the owning segment
+/// from the slot before the payload, outside the caller's bytes (ADR 0012).
+const HUGE_SIZE: usize = 4 * 1024 * 1024;
 
 #[test]
-fn blocks_freed_through_pointers_narrower_than_the_link_are_reused_without_aliasing() {
-    // Each free covers only `TINY_SIZE` bytes of its 16-byte block, less than
-    // the 8-byte link written through the caller's pointer; reuse then reads
-    // the link back while the page fills again.
-    let alloc_tiny = |round: &str| {
-        let mut blocks = ::std::vec::Vec::with_capacity(TINY_BLOCKS);
-        for index in 0..TINY_BLOCKS {
-            // SAFETY: non-zero size, power-of-two alignment.
-            let ptr = unsafe {
-                thread_alloc_layout::<StandardPolicy, MemoryBackendWrapper>(TINY_SIZE, TINY_SIZE)
-            };
-            assert!(!ptr.is_null(), "{round} tiny allocation {index} failed");
-            // SAFETY: `ptr` is a fresh, exclusively owned `TINY_SIZE`-byte block.
-            let ptr = unsafe { narrowed(ptr, TINY_SIZE) };
-            // SAFETY: as above. The byte pattern is the index modulo 256.
-            unsafe { fill(ptr, TINY_SIZE, index.to_le_bytes()[0]) };
-            blocks.push(ptr);
-        }
-        blocks
-    };
-    let free_tiny = |blocks: &[*mut u8]| {
-        for &ptr in blocks {
-            // SAFETY: each pointer is a live block allocated with this layout
-            // and freed once.
-            unsafe {
-                thread_free_layout::<StandardPolicy, MemoryBackendWrapper>(
-                    ptr, TINY_SIZE, TINY_SIZE,
-                );
-            };
-        }
-    };
-
-    let first = alloc_tiny("first");
-    free_tiny(&first);
-    let second = alloc_tiny("second");
-    for (index, &ptr) in second.iter().enumerate() {
-        // SAFETY: every block is live and `TINY_SIZE` bytes long.
-        assert!(
-            unsafe { holds(ptr, TINY_SIZE, index.to_le_bytes()[0]) },
-            "block {index} at {ptr:?} was overwritten by another live allocation"
-        );
-    }
-    let freed: ::std::collections::BTreeSet<usize> = first.iter().map(|ptr| ptr.addr()).collect();
-    let reused = second
-        .iter()
-        .filter(|ptr| freed.contains(&ptr.addr()))
-        .count();
+fn huge_blocks_freed_through_narrowed_pointers_resolve_their_segment() {
+    let _guard = crate::local_alloc::TEST_LOCK
+        .lock()
+        .expect("invariant: a panicking test does not hold the lock");
+    // SAFETY: non-zero size, power-of-two alignment.
+    let ptr = unsafe { thread_alloc::<StandardPolicy, MemoryBackendWrapper>(HUGE_SIZE, 8) };
+    assert!(!ptr.is_null(), "huge allocation failed");
+    // SAFETY: `ptr` is the live huge allocation just returned.
+    let block_len = unsafe { usable_size(ptr) };
     assert!(
-        reused > 0,
-        "no block freed through a narrowed pointer was handed out again"
+        block_len >= HUGE_SIZE,
+        "usable_size = {block_len} is below the huge request {HUGE_SIZE}"
     );
-    free_tiny(&second);
+    // SAFETY: `ptr` is exclusively owned and valid for `block_len` bytes; the
+    // narrowed pointer covers the whole block, as `thread_free` requires, and
+    // excludes the back-pointer slot before it.
+    let ptr = unsafe { narrowed(ptr, block_len) };
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe { usable_size(ptr) },
+        block_len,
+        "the narrowed pointer resolved a different segment"
+    );
+    // SAFETY: a live block of this allocator, freed once.
+    unsafe { thread_free::<StandardPolicy, MemoryBackendWrapper>(ptr) };
+    // The huge pool retains the mapping by design; drain it so the run ends
+    // with no mapping Miri reports as leaked.
+    // SAFETY: the test lock is held, so no other test mutates the pool.
+    unsafe { mnemosyne_arena::purge_segment_pool::<MemoryBackendWrapper>() };
 }
