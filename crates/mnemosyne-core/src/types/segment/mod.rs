@@ -15,6 +15,7 @@ mod freelist;
 mod header;
 mod location;
 mod ownership;
+pub mod registry;
 
 pub use access::OccupiedPageBits;
 pub use header::Segment;
