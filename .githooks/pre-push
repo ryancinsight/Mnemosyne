@@ -78,13 +78,30 @@ fi
 # (both disable conversion), so it is genuinely unset here.
 unset MSYS_NO_PATHCONV
 
+# Capture the one-command prepared-tools selection before replacing inherited
+# command configuration with the safe-directory setting child Git calls need.
+prepared_tools_config="$(git -c safe.directory="$PWD" config --show-scope --get-all atlas.preparedTools 2>/dev/null || true)"
+prepared_tools=""
+prepared_tools_selected=0
+if [ -n "$prepared_tools_config" ]; then
+  if [[ "$prepared_tools_config" == *$'\n'* ]] \
+    || [ "${prepared_tools_config%%$'\t'*}" != "command" ]; then
+    echo "pre-push: BLOCKED -- atlas.preparedTools must be set once with git -c for this push." >&2
+    exit 1
+  fi
+  prepared_tools_selected=1
+  prepared_tools="${prepared_tools_config#*$'\t'}"
+fi
+
 # A managed worktree may be owned by a different filesystem account than the
-# process pushing from it, and git does not propagate command-line config into
-# hooks. Re-inject the checkout path so child git calls stay valid.
+# process pushing from it. Re-inject the checkout path so child Git calls stay
+# valid without retaining other command-scoped configuration.
 repo_root="$(git -c safe.directory="$PWD" rev-parse --show-toplevel)"
 export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0=safe.directory
 export GIT_CONFIG_VALUE_0="$repo_root"
+repo_git_dir="$(git rev-parse --absolute-git-dir)"
+repo_store="$(git rev-parse --path-format=absolute --git-common-dir)"
 
 # Every temporary directory this run creates is registered here and removed
 # on any exit. The trap is set before the first one exists: the lock export
@@ -121,35 +138,27 @@ outside_checkout() {
 # stack does not register). The cost of a hit is therefore constant,
 # wherever the member sits in `.gitmodules`.
 #
-# Exit status: 0 with the stack on stdout, or with nothing for a clone with
-# no stack above it; 2 with a message when the stack cannot be established
-# (git cannot read a stack or one of its members, or cannot identify this
-# checkout): the caller refuses; 3 with the nearest readable stack on stdout
-# when a stack sits above this clone but registers none of this clone's
+# Exit status: 0 after setting the stack root and common directory, or with
+# both empty for a clone with no stack above it; 2 with a message when the
+# stack cannot be established (git cannot read a stack or one of its members,
+# or cannot identify this checkout): the caller refuses; 3 after setting the
+# nearest readable stack root and common directory when a stack sits above
+# this clone but registers none of this clone's
 # store (a `--shared` or `--reference` clone, a copy): the stack does not
 # claim it, so the caller passes with a message that names the stack.
 # Identical to the function in the other hook, which a test holds so.
 locate_stack() {
-  local probe="$1" hook="${BASH_SOURCE[0]##*/}" line section name top path store own_store unreadable
-  local index stack_common superproject facts outer unmatched=""
+  local probe="$1" own_store="$2" hook="${BASH_SOURCE[0]##*/}" line section name top path store unreadable
+  local index stack_common superproject facts outer parent prefix unmatched="" unmatched_store=""
   local path_pattern='^[[:space:]]*path[[:space:]]*=[[:space:]]*(repos/[^[:space:]]+)[[:space:]]*$'
   local section_pattern='^[[:space:]]*\[submodule[[:space:]]+"(.*)"\][[:space:]]*$'
   local -a registered names order rest
-  own_store="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
   if [ -z "$own_store" ]; then
     echo "$hook: git cannot identify this checkout's object store, so the Atlas stack cannot be located; refusing" >&2
     return 2
   fi
   while :; do
-    probe="${probe%/*}"
-    if [ -z "$probe" ]; then
-      if [ -n "$unmatched" ]; then
-        printf '%s\n' "$unmatched"
-        return 3
-      fi
-      return 0
-    fi
-    [ -f "$probe/.gitmodules" ] || continue
+    if [ -f "$probe/.gitmodules" ] && [ -e "$probe/.git" ]; then
     registered=()
     names=()
     section=""
@@ -161,14 +170,14 @@ locate_stack() {
         names+=("$section")
       fi
     done < "$probe/.gitmodules"
-    [ "${#registered[@]}" -gt 0 ] || continue
-    [ -e "$probe/.git" ] || continue
+    if [ "${#registered[@]}" -gt 0 ]; then
     top=""
     stack_common=""
     superproject=""
     facts="$(outside_checkout git -C "$probe" rev-parse --path-format=absolute --show-toplevel --git-common-dir --show-superproject-working-tree 2>/dev/null || true)"
     { IFS= read -r top; IFS= read -r stack_common; IFS= read -r superproject; } <<<"$facts" || true
-    if [ -z "$top" ] || [ "$(cd "$top" && pwd)" != "$probe" ]; then
+    prefix="$(outside_checkout git -C "$probe" rev-parse --show-prefix 2>/dev/null || true)"
+    if [ -z "$top" ] || [ -n "$prefix" ]; then
       echo "$hook: the Atlas stack at $probe registers members but git cannot read it, so its lockfile checker cannot be used; refusing. If git reports dubious ownership and you trust that checkout: git config --global --add safe.directory $probe" >&2
       return 2
     fi
@@ -179,13 +188,29 @@ locate_stack() {
     # stack is.
     outer="${probe%/*}"
     while [ -n "$outer" ] && [ ! -e "$outer/.git" ]; do
-      outer="${outer%/*}"
+      parent="${outer%/*}"
+      if [ "$parent" = "$outer" ]; then
+        outer=""
+      else
+        outer="$parent"
+      fi
     done
     if [ -n "$outer" ] && ! outside_checkout git -C "$outer" rev-parse --show-toplevel >/dev/null 2>&1; then
       echo "$hook: the candidate Atlas stack at $probe sits inside a repository at $outer that git cannot read, so it cannot be told apart from a submodule; refusing. If git reports dubious ownership and you trust that checkout: git config --global --add safe.directory $outer" >&2
       return 2
     fi
-    [ -z "$superproject" ] || continue
+    if [ -z "$superproject" ] && [ -z "$outer" ]; then
+    # A checkout whose own object store is the candidate stack's is the stack
+    # root itself, so it matches the same way a registered member does.
+    if [ "$own_store" = "$stack_common" ]; then
+      stack_root="$probe"
+      if ! stack_store="$(cd "$stack_common" && pwd)"; then
+        echo "$hook: git identified the Atlas stack store at $stack_common but it cannot be opened; refusing" >&2
+        return 2
+      fi
+      stack_member="<meta>"
+      return 0
+    fi
     order=()
     rest=()
     for index in "${!registered[@]}"; do
@@ -206,7 +231,12 @@ locate_stack() {
         continue
       fi
       if [ "$store" = "$own_store" ]; then
-        printf '%s\n' "$probe"
+        stack_root="$probe"
+        if ! stack_store="$(cd "$stack_common" && pwd)"; then
+          echo "$hook: git identified the Atlas stack store at $stack_common but it cannot be opened; refusing" >&2
+          return 2
+        fi
+        stack_member="${path##*/}"
         return 0
       fi
     done
@@ -214,7 +244,27 @@ locate_stack() {
       echo "$hook: a member registered by the Atlas stack at $probe cannot be read by git, so this checkout cannot be matched to the stack; refusing. If git reports dubious ownership and you trust it: git config --global --add safe.directory $probe/<member>" >&2
       return 2
     fi
-    [ -n "$unmatched" ] || unmatched="$probe"
+    if [ -z "$unmatched" ]; then
+      unmatched="$probe"
+      unmatched_store="$stack_common"
+    fi
+    fi
+    fi
+    fi
+    parent="${probe%/*}"
+    if [ "$parent" = "$probe" ]; then
+      probe=""
+    else
+      probe="$parent"
+    fi
+    if [ -z "$probe" ]; then
+      if [ -n "$unmatched" ]; then
+        stack_root="$unmatched"
+        stack_store="$unmatched_store"
+        return 3
+      fi
+      return 0
+    fi
   done
 }
 
@@ -247,11 +297,9 @@ new_run_temp() {
 # Echoes the merge-base of `$1` with that branch, or nothing when neither
 # ref resolves.
 default_branch_base() {
-  local tip="$1" ref ref_sha base
+  local tip="$1" ref base
   for ref in origin/HEAD origin/main; do
-    ref_sha="$(git rev-parse --verify --quiet "$ref" 2>/dev/null || true)"
-    [ -n "$ref_sha" ] || continue
-    base="$(git merge-base "$ref_sha" "$tip" 2>/dev/null || true)"
+    base="$(git merge-base "$ref" "$tip" 2>/dev/null || true)"
     if [ -n "$base" ]; then
       printf '%s' "$base"
       return 0
@@ -320,10 +368,13 @@ fi
 # checker (see locate_stack).
 located=0
 unmatched_stack=""
-stack_root="$(locate_stack "$(cd "$repo_root" && pwd)")" || located=$?
+stack_root=""
+stack_store=""
+stack_member=""
+locate_stack "$repo_root" "$repo_store" || located=$?
 case "$located" in
   0) ;;
-  3) unmatched_stack="$stack_root"; stack_root="" ;;
+  3) unmatched_stack="$stack_root"; stack_root=""; stack_store=""; stack_member="" ;;
   *) exit 1 ;;
 esac
 
@@ -481,25 +532,24 @@ fi
 # gc and maintenance are off for the member-side read and the fetches it
 # starts: a push must not repack the member it reads (moirai's auto-gc
 # fails on a foreign ref), and the export reads the member's objects.
-export_revision() {
-  local sha="$1" directory="$2" member_git objects
-  member_git="$(git rev-parse --absolute-git-dir)" || return 1
-  objects="$(git rev-parse --path-format=absolute --git-common-dir)/objects" || return 1
+export_revision() (
+  local sha="$1" directory="$2"
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR
   # `git init` creates the directory: the lock export runs before a PATH
   # without an interpreter is refused, and such a PATH need not carry mkdir.
   if [ ! -d "$directory/.git" ]; then
-    outside_checkout git init -q "$directory" || return 1
+    git init -q "$directory" || return 1
   fi
-  printf '%s\n' "$objects" > "$directory/.git/objects/info/alternates" \
-    && outside_checkout git -C "$directory" config core.longpaths true \
-    && outside_checkout git -C "$directory" config gc.auto 0 \
-    && outside_checkout git -C "$directory" config maintenance.auto false \
-    && GIT_DIR="$member_git" GIT_WORK_TREE="$directory" GIT_INDEX_FILE="$directory/.git/index" \
+  printf '%s\n' "$repo_store/objects" > "$directory/.git/objects/info/alternates" \
+    && git -C "$directory" config core.longpaths true \
+    && git -C "$directory" config gc.auto 0 \
+    && git -C "$directory" config maintenance.auto false \
+    && GIT_DIR="$repo_git_dir" GIT_WORK_TREE="$directory" GIT_INDEX_FILE="$directory/.git/index" \
       git -c core.longpaths=true -c core.sparseCheckout=false -c gc.auto=0 -c maintenance.auto=false \
         read-tree -u --reset "$sha" \
-    && outside_checkout git -C "$directory" update-ref HEAD "$sha" \
-    && outside_checkout git -C "$directory" clean -ffdxq
-}
+    && git -C "$directory" update-ref HEAD "$sha" \
+    && git -C "$directory" clean -ffdxq
+)
 
 # Exports a killed push left behind (ritk's reached 1.5 GB each). A directory
 # naming its owner (`.pre-push-owner`) goes only once that pid is gone. One
@@ -515,7 +565,7 @@ export_revision() {
 new_run_temp age_marks pl
 touch -d '1 day ago' "$age_marks/day" 2>/dev/null || true
 touch -d '7 days ago' "$age_marks/week" 2>/dev/null || true
-for stale in "$tmp_base"/pre-push-lock.* "$tmp_base"/pre-push-gate.* "$tmp_base"/pl.* "$tmp_base"/pg.* "$tmp_base"/pg-log.*; do
+for stale in "$tmp_base"/pre-push-lock.* "$tmp_base"/pre-push-gate.* "$tmp_base"/pl.* "$tmp_base"/pg.* "$tmp_base"/pg-log.* "$tmp_base"/pg-casts.*; do
   [ -e "$stale" ] || continue
   stale_owner=""
   { read -r stale_owner < "$stale/.pre-push-owner"; } 2>/dev/null || true
@@ -542,17 +592,15 @@ done
 
 
 # ---------------------------------------------------------------------------
-# Stack tools: the artifact-budget checker, the secret scanner, the debt
-# ratchet, and the source identity checker are owned by the stack and run
-# from its fetched default branch (`origin/HEAD`, else `origin/main`), never
-# from the stack checkout. That checkout sits on whatever branch a peer left
-# there -- often one cut before a tool existed, or holding a dirty copy of
-# it -- and resolving tools from it skipped the secret scan as "not
-# reachable" and blocked registered members on a "missing" identity checker
-# that the default branch carried. The default's `scripts/` is extracted
-# once per revision into the stack's git directory. A standalone clone
-# outside the stack has no baseline, and each tool reports itself
-# unreachable.
+# Stack tools are owned by the stack and run from committed revisions, never
+# from the stack checkout. The artifact-budget checker, secret scanner, and
+# lock checker always come from the fetched default (`origin/HEAD`, else
+# `origin/main`). The conformance and source-identity checkers also default to
+# that revision. A provider-preparation push may select one immutable Atlas
+# commit for those two tools only with `git -c atlas.preparedTools=<full-sha>`.
+# The selected revision's `scripts/` is extracted once into the stack's git
+# directory. A standalone clone outside the stack has no baseline, and each
+# tool reports itself unreachable.
 #
 # Git exports GIT_DIR to hooks -- an absolute path in a lane -- and a git or
 # checker process aimed at another repository inherits it and answers about
@@ -560,7 +608,6 @@ done
 # resolved to hephaestus's own and the ratchet was skipped as unreachable.
 # Every such process runs through `outside_checkout` (defined at the top).
 stack_baseline=""
-conformance_member=""
 if [ -n "$stack_root" ]; then
   for ref in origin/HEAD origin/main; do
     stack_baseline="$(outside_checkout git -C "$stack_root" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null || true)"
@@ -572,11 +619,17 @@ for ref in origin/HEAD origin/main; do
   member_baseline="$(outside_checkout git -C "$repo_root" rev-parse --verify --quiet "$ref^{commit}" 2>/dev/null || true)"
   [ -n "$member_baseline" ] && break
 done
-stack_scripts=""
-if [ -n "$stack_baseline" ] \
-  && outside_checkout git -C "$stack_root" cat-file -e "$stack_baseline:scripts" 2>/dev/null; then
-  checker_cache="$(cd "$stack_root" && cd "$(outside_checkout git rev-parse --git-common-dir)" && pwd)/atlas-checker"
-  checker_dir="$checker_cache/$stack_baseline"
+extract_stack_scripts() {
+  local revision="$1"
+  local checker_cache checker_dir staging checker_users checker_marker
+  local copy copy_in_use user
+  extracted_stack_scripts=""
+  if [ -z "$revision" ] \
+    || ! outside_checkout git -C "$stack_root" cat-file -e "$revision:scripts" 2>/dev/null; then
+    return
+  fi
+  checker_cache="$stack_store/atlas-checker"
+  checker_dir="$checker_cache/$revision"
   if [ ! -d "$checker_dir/scripts" ]; then
     mkdir -p "$checker_cache"
     staging="$(mktemp -d "$checker_cache/.staging.XXXXXX")"
@@ -621,12 +674,46 @@ if [ -n "$stack_baseline" ] \
     done
   fi
   if [ -d "$checker_dir/scripts" ]; then
-    stack_scripts="$checker_dir/scripts"
+    extracted_stack_scripts="$checker_dir/scripts"
   fi
+}
+
+stack_scripts=""
+if [ -n "$stack_baseline" ]; then
+  extract_stack_scripts "$stack_baseline"
+  stack_scripts="$extracted_stack_scripts"
+fi
+prepared_stack_scripts=""
+if [ "$prepared_tools_selected" -eq 1 ]; then
+  if [[ ! "$prepared_tools" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "pre-push: BLOCKED -- atlas.preparedTools must name one full 40-character commit ID." >&2
+    exit 1
+  elif [ -z "$stack_root" ] || [ -n "$unmatched_stack" ]; then
+    echo "pre-push: BLOCKED -- atlas.preparedTools is valid only in the registered Atlas stack." >&2
+    exit 1
+  elif ! outside_checkout git -C "$stack_root" cat-file -e "$prepared_tools^{commit}" 2>/dev/null; then
+    echo "pre-push: BLOCKED -- atlas.preparedTools commit $prepared_tools is unavailable in the Atlas object store." >&2
+    exit 1
+  fi
+  new_run_temp prepared_root apt
+  if ! outside_checkout git -C "$stack_root" archive "$prepared_tools" scripts \
+    | tar -x -C "$prepared_root"; then
+    echo "pre-push: BLOCKED -- atlas.preparedTools commit $prepared_tools could not be extracted." >&2
+    exit 1
+  fi
+  prepared_stack_scripts="$prepared_root/scripts"
+  if [ ! -f "$prepared_stack_scripts/atlas-conformance.py" ] \
+    || [ ! -f "$prepared_stack_scripts/atlas-build-identity.py" ] \
+    || [ ! -f "$prepared_stack_scripts/atlas_stack.py" ]; then
+    echo "pre-push: BLOCKED -- atlas.preparedTools commit $prepared_tools lacks a required prepared tool." >&2
+    exit 1
+  fi
+  echo "pre-push: conformance and source identity use prepared Atlas tools $prepared_tools" >&2
 fi
 
 # The skips above fall through to the code gate, so this whole section runs
 # only when the lock still wants verifying.
+checker="${stack_scripts:+$stack_scripts/lockfile.py}"
 if [ "$skip_lockfile" = "0" ]; then
 # The lock is checked on an export of the pushed revision, outside the stack,
 # by the stack's own `scripts/lockfile.py` from the fetched default (Stack
@@ -644,8 +731,6 @@ if ! export_revision "$(git rev-parse --verify "$lock_rev^{commit}")" "$lock_exp
   echo "pre-push: could not export $lock_rev for the lockfile check" >&2
   exit 1
 fi
-checker="${stack_scripts:+$stack_scripts/lockfile.py}"
-
 if [ -n "$unmatched_stack" ]; then
   # No lockfile checker is owed to a clone the stack does not register, and a
   # lock that gets through here meets the `--locked` CI jobs and is repaired by
@@ -669,6 +754,8 @@ elif [ ! -f "$checker" ]; then
 elif [ -z "$python_bin" ]; then
   echo "pre-push: no python interpreter found; lockfile not verified" >&2
   exit 1
+elif [ "$stack_member" = "<meta>" ]; then
+  echo "pre-push: nested Cargo lock checks follow Atlas meta-root owner selection" >&2
 elif ! (cd "$lock_export" && "$python_bin" "$checker" --check --manifest-path "$lock_export/Cargo.toml"); then
   cat >&2 <<MESSAGE
 
@@ -803,52 +890,51 @@ fi
 #
 # Every input is a committed revision. The content is the pushed tip
 # (`--member-revision`), never the working tree a peer may hold on another
-# branch or dirty. The checker and its baseline both come from the stack's
-# fetched default branch: the stack checkout sits on whatever branch a peer
-# left there, often one cut before this check existed, and its scripts would
-# then decide the verdict (Stack tools, above). The checker runs with
-# `ATLAS_STACK_ROOT` naming the live stack, since cited hashes resolve
-# against every member's object store and only the stack holds them all.
+# branch or dirty. The checker defaults to the stack's fetched revision. An
+# explicit prepared-tools selection changes the checker code, while the
+# comparison baseline remains the fetched default. The checker runs with
+# `ATLAS_STACK_ROOT` naming the live stack, since cited hashes resolve against
+# every member's object store and only the stack holds them all.
 # Citations resolve through default branches and tags only, so a branch
 # deleted elsewhere cannot refuse a push that cites nothing new.
 if [ -n "$stack_baseline" ] && [ -n "$python_bin" ] \
   && outside_checkout git -C "$stack_root" cat-file -e "$stack_baseline:scripts/atlas-conformance.py" 2>/dev/null; then
-  # The member is the registered directory sharing this checkout's object
-  # store, so a lane (`worktrees/<repo>-<branch>`) resolves to its repository.
-  own_store="$(outside_checkout git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir)"
-  conformance_member=""
-  for candidate in "$stack_root/repos/${repo_root##*/}" "$stack_root"/repos/*; do
-    [ -d "$candidate" ] || continue
-    candidate_store="$(outside_checkout git -C "$candidate" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || continue
-    if [ "$candidate_store" = "$own_store" ]; then
-      conformance_member="${candidate##*/}"
-      break
-    fi
-  done
-  if [ -z "$conformance_member" ]; then
+  # The root's pushed revision carries the meta row and every recorded
+  # gitlink, so it takes the stack scan. A member is the registered directory
+  # sharing this checkout's object store; a lane therefore resolves to its
+  # repository rather than to its worktree directory.
+  if [ -z "$stack_member" ]; then
     echo "pre-push: not a registered stack member; debt ratchet not run" >&2
   else
-    conformance_checker="${stack_scripts:+$stack_scripts/atlas-conformance.py}"
+    conformance_scripts="${prepared_stack_scripts:-$stack_scripts}"
+    conformance_checker="${conformance_scripts:+$conformance_scripts/atlas-conformance.py}"
     if [ ! -f "$conformance_checker" ]; then
-      echo "pre-push: BLOCKED -- could not extract the stack's checker at ${stack_baseline:0:12}." >&2
+      echo "pre-push: BLOCKED -- could not extract the stack's checker for $stack_member." >&2
       exit 1
-    elif ! grep -q ATLAS_STACK_ROOT "$stack_scripts/atlas_stack.py"; then
-      # The stack's fetched default predates revision scans: fetch it.
-      echo "pre-push: the stack's checker at ${stack_baseline:0:12} predates revision scans;" >&2
+    elif ! grep -q ATLAS_STACK_ROOT "$conformance_scripts/atlas_stack.py"; then
+      # The selected checker predates revision scans and cannot judge a
+      # committed revision without falling back to mutable checkout state.
+      echo "pre-push: the stack's checker for $stack_member predates revision scans;" >&2
       echo "debt ratchet not run. Run: git -C $stack_root fetch origin" >&2
     else
+      conformance_args=(check --baseline-rev "$stack_baseline")
+      if [ "$stack_member" = "<meta>" ]; then
+        conformance_args+=(--revision "$range_rev")
+      else
+        conformance_args+=(--repo "$stack_member" --member-path "$repo_root" \
+          --member-revision "$range_rev")
+      fi
       set +e
-      ATLAS_STACK_ROOT="$stack_root" outside_checkout "$python_bin" "$conformance_checker" check \
-        --repo "$conformance_member" --member-path "$repo_root" \
-        --member-revision "$range_rev" --baseline-rev "$stack_baseline" \
+      ATLAS_STACK_ROOT="$stack_root" outside_checkout "$python_bin" "$conformance_checker" \
+        "${conformance_args[@]}" \
         >&2
       conformance_status=$?
       set -e
       if [ "$conformance_status" -eq 1 ]; then
         echo "pre-push: BLOCKED -- the pushed revision raises a debt class above the" >&2
-        echo "baseline atlas ${stack_baseline:0:12} records for $conformance_member." >&2
+        echo "baseline atlas ${stack_baseline:0:12} records for $stack_member." >&2
         echo "Fix the debt; never regenerate the baseline over it. Reproduce:" >&2
-        echo "  ATLAS_STACK_ROOT=$stack_root python $conformance_checker check --repo $conformance_member --member-path $repo_root --member-revision $range_rev --baseline-rev $stack_baseline" >&2
+        echo "  ATLAS_STACK_ROOT=$stack_root python $conformance_checker ${conformance_args[*]}" >&2
         exit 1
       elif [ "$conformance_status" -ne 0 ]; then
         echo "pre-push: BLOCKED -- the debt ratchet could not run (exit $conformance_status)." >&2
@@ -934,10 +1020,16 @@ else
 fi
 
 if [ -n "$gate_base" ]; then
-  gate_changed="$(git diff --name-only "$gate_base" "$gate_sha" 2>/dev/null || true)"
+  if ! gate_changed="$(git diff --name-only "$gate_base" "$gate_sha")"; then
+    echo "pre-push: BLOCKED -- could not discover changed paths between $gate_base and $gate_sha." >&2
+    exit 1
+  fi
 else
   # No history shared with the default branch: every file is new.
-  gate_changed="$(git ls-tree -r --name-only "$gate_sha")"
+  if ! gate_changed="$(git ls-tree -r --name-only "$gate_sha")"; then
+    echo "pre-push: BLOCKED -- could not discover paths from $gate_sha." >&2
+    exit 1
+  fi
 fi
 
 if [ -z "$python_bin" ]; then
@@ -1083,9 +1175,31 @@ if ! export_revision "$gate_sha" "$gate_export"; then
   fi
 fi
 
-# Leading space: the steps render as `cargo doc --no-deps$gate_specs`, and
-# without it the flag joins the subcommand ("--no-deps--manifest-path").
-gate_manifest=" --manifest-path $gate_export/Cargo.toml"
+run_cargo_workspace_gate() {
+  local workspace_manifest="$1"
+  local gate_changed="$2"
+  local gate_manifest_path="$gate_export/$workspace_manifest"
+  local gate_command_cwd
+  gate_command_cwd="$(dirname "$gate_manifest_path")"
+  if [ ! -f "$gate_manifest_path" ]; then
+    echo "pre-push: BLOCKED -- selected Cargo workspace manifest $workspace_manifest is missing from $gate_sha" >&2
+    exit 1
+  fi
+  # Leading space: the steps render as `cargo doc --no-deps$gate_specs`, and
+  # without it the flag joins the subcommand ("--no-deps--manifest-path").
+  gate_manifest=" --manifest-path $gate_manifest_path"
+
+  if [ "$stack_member" = "<meta>" ] \
+    && printf '%s\n' "$gate_changed" | grep -qE '(^|/)Cargo\.(lock|toml)$'; then
+    if [ ! -f "$checker" ]; then
+      echo "pre-push: BLOCKED -- the stack lockfile checker is missing for $workspace_manifest" >&2
+      exit 1
+    elif ! (cd "$gate_command_cwd" \
+      && "$python_bin" "$checker" --check --manifest-path "$gate_manifest_path"); then
+      echo "pre-push: the lock for $workspace_manifest does not resolve under --locked on $gate_sha" >&2
+      exit 1
+    fi
+  fi
 
 # Packages with no target nextest can run (a `test = false` cdylib such as a
 # PyO3 extension) produce no test artifact, so the source-identity checker would
@@ -1093,7 +1207,7 @@ gate_manifest=" --manifest-path $gate_export/Cargo.toml"
 # Cargo metadata marks each target with `test`; a package none of whose targets
 # has it is skipped by the tests stage only. Its clippy and rustdoc stages stay.
 if ! untestable_packages="$(
-  cd "$gate_export" && cargo metadata --no-deps --format-version 1 $gate_manifest |
+  cd "$gate_command_cwd" && cargo metadata --no-deps --format-version 1 $gate_manifest |
     "$python_bin" -c 'import json, sys
 sys.stdout.reconfigure(newline="\n")
 metadata = json.load(sys.stdin)
@@ -1114,7 +1228,7 @@ fi
 # `--no-deps` reads membership without resolving dependencies or changing the
 # lockfile. Each output record is `<repo-relative manifest><tab><package name>`.
 if ! workspace_members="$(
-  cd "$gate_export" && cargo metadata --no-deps --format-version 1 $gate_manifest |
+  cd "$gate_command_cwd" && cargo metadata --no-deps --format-version 1 $gate_manifest |
     "$python_bin" -c 'import json, os, sys
 # LF records: text-mode stdout on Windows writes CRLF, and bash keeps the CR
 # in the package name, so a new-member push gated `helios-core<CR>` beside
@@ -1128,7 +1242,7 @@ for package in metadata["packages"]:
         continue
     manifest = os.path.realpath(package["manifest_path"])
     relative = os.path.relpath(manifest, root).replace(os.sep, "/")
-    print(f"{relative}\t{package['"'"'name'"'"']}")' "$gate_export"
+    print(f"{relative}\t{package['"'"'name'"'"']}")' "$gate_command_cwd"
 )"; then
   echo "pre-push: cargo metadata could not establish workspace membership" >&2
   echo "pre-push: push anyway with SKIP_LOCAL_GATE=1 git push" >&2
@@ -1154,7 +1268,7 @@ while IFS= read -r changed_path; do
   package_dir=""
   excluded_manifest=""
   while [ "$owner_dir" != "." ] && [ "$owner_dir" != "/" ]; do
-    manifest="$gate_export/$owner_dir/Cargo.toml"
+    manifest="$gate_command_cwd/$owner_dir/Cargo.toml"
     if [ -f "$manifest" ]; then
       if grep -qE '^\[package\]' "$manifest" 2>/dev/null; then
         package_dir="$owner_dir"
@@ -1173,8 +1287,8 @@ while IFS= read -r changed_path; do
     continue
   fi
   if [ -z "$package_dir" ] && [ "$changed_path" = "Cargo.toml" ] \
-    && [ -f "$gate_export/Cargo.toml" ] \
-    && grep -qE '^\[workspace\]' "$gate_export/Cargo.toml" 2>/dev/null; then
+    && [ -f "$gate_manifest_path" ] \
+    && grep -qE '^\[workspace\]' "$gate_manifest_path" 2>/dev/null; then
     while IFS=$'\t' read -r _workspace_manifest workspace_package; do
       [ -n "$workspace_package" ] || continue
       case " $gate_packages " in
@@ -1185,14 +1299,14 @@ while IFS= read -r changed_path; do
     continue
   fi
   if [ -z "$package_dir" ]; then
-    if [ -f "$gate_export/Cargo.toml" ] && grep -qE '^\[package\]' "$gate_export/Cargo.toml" 2>/dev/null; then
+    if [ -f "$gate_manifest_path" ] && grep -qE '^\[package\]' "$gate_manifest_path" 2>/dev/null; then
       package_dir="."
     else
       continue
     fi
   fi
-  manifest="$gate_export/$package_dir/Cargo.toml"
-  relative_manifest="${manifest#"$gate_export"/}"
+  manifest="$gate_command_cwd/$package_dir/Cargo.toml"
+  relative_manifest="${manifest#"$gate_command_cwd"/}"
   relative_manifest="${relative_manifest#./}"
   package_name="$(printf '%s\n' "$workspace_members" | awk -F '\t' -v manifest="$relative_manifest" '$1 == manifest { print $2; exit }')"
   if [ -z "$package_name" ]; then
@@ -1223,6 +1337,55 @@ MESSAGE
   exit 1
 fi
 
+# Bare `as` casts are the one debt the lint table allows while the cast family
+# burns down, so no other step fails on a new one. A registered member runs the
+# stack's cast gate (scripts/atlas_cast_gate.py): the clippy runs below go
+# through it, which adds `--force-warn clippy::as_conversions` with JSON output
+# and records the cast sites, and `check` refuses a cast on a line the push
+# adds, or a package count above its row in scripts/cast-baseline.json or above
+# its count at the pushed range's base, measured with the same selection. A
+# member reaches the stack scripts -- the conformance checker refuses the push
+# above otherwise -- so a stack copy without the gate is refused like a missing
+# identity checker: a gate that cannot judge never passes a push.
+#
+# This gate runs once per workspace, so the rows it records are globals
+# (cast_check_packages, cast_check_sites, cast_base_sites): each workspace
+# appends to them, and run_cast_check judges them once, in the tail, after
+# every workspace has contributed.
+if [ -n "$stack_member" ]; then
+  cast_gate="${stack_scripts:+$stack_scripts/atlas_cast_gate.py}"
+  if [ ! -f "$cast_gate" ] || [ -z "$python_bin" ]; then
+    echo "pre-push: BLOCKED -- the stack's cast gate is missing at ${stack_baseline:0:12}." >&2
+    exit 1
+  fi
+fi
+
+# run_cast_check: judge the recorded sites against the pushed range.
+run_cast_check() {
+  [ -n "$cast_gate" ] && [ "${#cast_check_sites[@]}" -gt 0 ] || return 0
+  local cast_status
+  set +e
+  "$python_bin" "$cast_gate" check --member "$stack_member" --repo "$repo_root" \
+    --base "$gate_base" --tip "$gate_sha" "${cast_check_packages[@]}" "${cast_check_sites[@]}" \
+    ${cast_base_sites[@]+"${cast_base_sites[@]}"} >&2
+  cast_status=$?
+  set -e
+  if [ "$cast_status" -eq 1 ]; then
+    cat >&2 <<MESSAGE
+
+pre-push: BLOCKED -- a bare \`as\` cast. Convert through std's form where one
+exists (From/TryFrom, cast_signed/cast_unsigned, to_bits/from_bits) or
+through eunomia's conversion module (FloatElement::from_count/from_integer,
+TryFromCount); never annotate the cast. Rows of scripts/cast-baseline.json
+in atlas only fall.
+MESSAGE
+    exit 1
+  elif [ "$cast_status" -ne 0 ]; then
+    echo "pre-push: BLOCKED -- the cast gate could not run (exit $cast_status)." >&2
+    exit 1
+  fi
+}
+
 # A standalone crate outside the parent workspace (cargo-fuzz is the common
 # case) cannot be named by a parent-workspace `-p`, and its targets need a
 # toolchain this host may lack (nightly, sanitizers), so its compile and run
@@ -1232,8 +1395,8 @@ fi
 # target at all. A nested virtual workspace, whose members deserve a real
 # gate, is still refused above.
 for standalone_manifest in $standalone_manifests; do
-  if ! (cd "$gate_export" && cargo metadata --locked --no-deps --format-version 1 \
-    --manifest-path "$gate_export/$standalone_manifest" >/dev/null 2>&1); then
+  if ! (cd "$gate_command_cwd" && cargo metadata --locked --no-deps --format-version 1 \
+    --manifest-path "$gate_command_cwd/$standalone_manifest" >/dev/null 2>&1); then
     cat >&2 <<MESSAGE
 
 pre-push: the lockfile of the standalone crate $standalone_manifest does not
@@ -1247,7 +1410,7 @@ To push anyway: SKIP_LOCAL_GATE=1 git push
 MESSAGE
     exit 1
   fi
-  if ! (cd "$gate_export" && cargo fmt --manifest-path "$gate_export/$standalone_manifest" -- --check >/dev/null); then
+  if ! (cd "$gate_command_cwd" && cargo fmt --manifest-path "$gate_command_cwd/$standalone_manifest" -- --check >/dev/null); then
     cat >&2 <<MESSAGE
 
 pre-push: \`cargo fmt --check\` fails for the standalone crate $standalone_manifest on $gate_sha.
@@ -1259,9 +1422,11 @@ MESSAGE
   echo "pre-push: standalone crate $standalone_manifest: lockfile and formatting checked; CI builds it" >&2
 done
 
-if [ -z "${gate_packages// /}" ]; then
-  echo "pre-push: no package owns the changed files; local gate not needed" >&2
-  exit 0
+# A push changing only standalone crates still has their casts to judge,
+# below, under the identity leases; one changing nothing cargo builds ends here.
+if [ -z "${gate_packages// /}" ] && { [ -z "$cast_gate" ] || [ -z "${standalone_manifests// /}" ]; }; then
+  echo "pre-push: no package owns the changed files in $workspace_manifest; local gate not needed" >&2
+  return 0
 fi
 
 # Run one gate step and say whose failure it was.
@@ -1306,7 +1471,12 @@ normalise_diagnostic_path() {
 classify_gate_step() {
   local log="$1"
   shift
-  if (cd "$gate_export" && "$@" >"$log" 2>&1); then
+  # A step over another tree -- the pushed range's base, or a standalone
+  # crate's own workspace -- names its directory and package selection;
+  # the defaults are this workspace's export and its gate packages.
+  local step_directory="${step_root:-$gate_export}"
+  local step_names="${step_selection-$gate_packages}"
+  if (cd "$step_directory" && "$@" >"$log" 2>&1); then
     echo ok
     return 0
   fi
@@ -1331,7 +1501,7 @@ classify_gate_step() {
   fi
 
   local root_normalised inside=0 outside=0 location foreign_crate=0
-  root_normalised="$(normalise_diagnostic_path "$gate_export")"
+  root_normalised="$(normalise_diagnostic_path "$step_directory")"
 
   # Only locations under an `error` header count. A crate that fails to compile
   # still emits warnings for whatever did compile, and counting those made the
@@ -1362,7 +1532,7 @@ DIAGNOSTICS
   local failed_crate
   while IFS= read -r failed_crate; do
     [ -n "$failed_crate" ] || continue
-    case " $gate_packages " in
+    case " $step_names " in
       *" $failed_crate "*) ;;
       *) foreign_crate=$((foreign_crate + 1)) ;;
     esac
@@ -1403,18 +1573,18 @@ done
 gate_specs="$gate_manifest$gate_package_specs --locked"
 gate_reproduce="From a checkout of $gate_sha outside the stack overlay:"
 
-identity_checker="${stack_scripts:+$stack_scripts/atlas-build-identity.py}"
+identity_scripts="${prepared_stack_scripts:-$stack_scripts}"
+identity_checker="${identity_scripts:+$identity_scripts/atlas-build-identity.py}"
 identity_target_dir=""
 identity_target="${CARGO_BUILD_TARGET:-host}"
 identity_enabled=0
-identity_cargo_manifest_args=(--manifest-path "$gate_export/Cargo.toml")
 if [ -f "$identity_checker" ]; then
   if [ -z "$python_bin" ]; then
     echo "pre-push: source identity checker is present but no python interpreter found" >&2
     exit 1
   fi
   if ! identity_target_dir="$(
-    cd "$gate_export" && cargo metadata --no-deps --format-version 1 $gate_manifest |
+    cd "$gate_command_cwd" && cargo metadata --no-deps --format-version 1 $gate_manifest |
       "$python_bin" -c 'import json, sys
 value = json.load(sys.stdin).get("target_directory")
 if not isinstance(value, str) or not value:
@@ -1425,47 +1595,187 @@ print(value)'
     exit 1
   fi
   identity_enabled=1
-elif [ -n "$conformance_member" ]; then
+elif [ -n "$stack_member" ]; then
   echo "pre-push: BLOCKED -- the stack source identity checker is missing" >&2
   exit 1
 else
   echo "pre-push: source identity checker not reachable from this clone; CI enforces it" >&2
 fi
 
-# run_identity_step <step> <packages> <command...>: one source-identity run
-# for the whole step. The command gets `-p <package>` for every gated
-# package, so cargo builds them in one invocation, and the checker keeps one
-# record for each of <packages>, those that write an artifact in this step.
-# A run per package read the snapshot, took the leases and queued behind every
-# peer gate's cargo for each of them: a 12-package metis push was 36 runs, and
-# its leases were held across all 36 queues. Every step names the same `-p`
-# set, whatever it records: cargo unifies features across one invocation's
-# packages, so a record belongs to its set, and steps naming different sets
-# would each clean the artifacts the next one's record names.
-run_identity_step() {
-  local step_name="$1" packages="$2"
-  shift 2
+# The source-identity checker executes this complete sequence as one command,
+# so its package leases stay held from clippy through rustdoc and the final
+# source/dependency checks. Releasing them between stages allowed a peer to
+# replace the shared artifacts after clippy or tests had accepted them.
+#
+# A step over another tree -- normally this workspace's export -- sets
+# step_root, step_manifest, step_selection and step_key for its call, and
+# step_ours=return makes a failure of its own a status of 3 for the caller to
+# handle instead of a refusal; the defaults are this workspace's values.
+# With the cast gate in play the clippy stage runs through it, which records
+# this selection's cast sites beside the build.
+run_identity_sequence() {
+  local run_tests="$1" run_rustdoc="$2" stage_file="$3"
+  local root="${step_root:-$gate_export}"
+  local manifest="${step_manifest:-$gate_manifest_path}"
+  local chosen="${step_selection-$gate_packages}"
+  local manifest_relative="${manifest#"$root"/}"
+  local command_cwd
+  command_cwd="$(dirname "$manifest")"
   local package_name package_arguments=() selection_arguments=() selection=()
-  for package_name in $packages; do
+  for package_name in $chosen; do
     package_arguments+=(--package "$package_name")
-  done
-  [ "${#package_arguments[@]}" -gt 0 ] || return 0
-  for package_name in $gate_packages; do
     selection_arguments+=(--selection "$package_name")
     selection+=(-p "$package_name")
   done
   local identity_command
   identity_command=(
     "$python_bin" "$identity_checker" run
-    --root "$gate_export"
+    --root "$root"
     "${package_arguments[@]}"
     "${selection_arguments[@]}"
     --target-dir "$identity_target_dir"
     --profile debug
     --target "$identity_target"
-    --manifest "$gate_export/Cargo.toml"
-    --command-cwd "$gate_export"
-    --command-key "atlas-pre-push"
+    --manifest "$manifest"
+    --command-cwd "$command_cwd"
+    --command-key "${step_key:-atlas-pre-push}"
+    --
+    bash -c '
+stage_file="$1"
+manifest="$2"
+run_tests="$3"
+run_rustdoc="$4"
+command_root="$5"
+cast_python="$6"
+cast_gate="$7"
+cast_sites="$8"
+manifest_relative="$9"
+shift 9
+cargo_command="${CARGO:-cargo}"
+printf "%s\n" clippy >"$stage_file"
+if [ -n "$cast_gate" ]; then
+  "$cast_python" "$cast_gate" clippy --export "$command_root" --manifest "$manifest_relative" --sites "$cast_sites" "$@" || exit $?
+else
+  "$cargo_command" clippy --manifest-path "$manifest" --all-targets --locked "$@" || exit $?
+fi
+if [ "$run_tests" = 1 ]; then
+  printf "%s\n" tests >"$stage_file"
+  "$cargo_command" nextest run --manifest-path "$manifest" --locked --no-tests=pass "$@" || exit $?
+fi
+if [ "$run_rustdoc" = 1 ]; then
+  printf "%s\n" rustdoc >"$stage_file"
+  env RUSTDOCFLAGS="-D warnings" "$cargo_command" doc --no-deps --manifest-path "$manifest" --locked "$@" || exit $?
+fi
+printf "%s\n" verification >"$stage_file"
+' atlas-pre-push-sequence "$stage_file" "$manifest" "$run_tests" "$run_rustdoc" \
+    "$root" "$python_bin" "${cast_gate:-}" "${cast_sites:-}" "$manifest_relative"
+    "${selection[@]}"
+  )
+  local verdict step_name
+  verdict="$(classify_gate_step "$gate_log" "${identity_command[@]}")"
+  step_name="$(cat "$stage_file" 2>/dev/null || true)"
+  [ -n "$step_name" ] || step_name="source identity sequence"
+  case "$verdict" in
+    ok) ;;
+    identity)
+      cat >&2 <<MESSAGE
+
+pre-push: source identity blocked $step_name for$gate_packages; no artifact was accepted.
+MESSAGE
+      grep -m 1 'atlas-build-identity:' "$gate_log" >&2 || true
+      exit 1
+      ;;
+    ours)
+      [ "${step_ours:-}" = return ] && return 3
+      cat >&2 <<MESSAGE
+
+pre-push: $step_name fails for$gate_packages, so the source-identity build did not complete.
+MESSAGE
+      grep -m 1 '^error' "$gate_log" >&2 || true
+      exit 1
+      ;;
+    environment)
+      report_broken_graph "source identity $step_name" "$gate_log"
+      echo "pre-push: source identity did not verify the pushed revision" >&2
+      exit 1
+      ;;
+  esac
+}
+
+# Cast sites for the count against the base, which runs first: base and tip
+# share unit hashes, so whichever builds last owns those artifacts, and the
+# tip's steps then reuse its own. The base costs one more build of the pushed
+# packages, so it runs only when the range can bring existing casts into a
+# pushed package without adding their lines (`base-triggers`: a rename, or a
+# manifest, package-root build script, cargo config or toolchain pin change).
+# A manifest whose base fails to compile leaves its own packages to their
+# rows, said on the push: a push must still be able to fix a broken default
+# branch. Any other base failure refuses, since the gate could not judge. A
+# package the base lacks counts zero; new history has no base and is held to
+# the rows.
+
+# package_names <manifest>: the workspace package names of <manifest>.
+package_names() {
+  (cd "$(dirname "$1")" && cargo metadata --no-deps --format-version 1 --manifest-path "$1") |
+    "$python_bin" -c 'import json, sys
+sys.stdout.reconfigure(newline="\n")
+print("\n".join(sorted(p["name"] for p in json.load(sys.stdin)["packages"])))'
+}
+
+# base_does_not_compile <log> <packages>: cargo reports one of the base's own
+# packages failing on diagnostics rustc emitted (`due to N previous error`: a
+# rustc error or a denied lint), and nothing else: no gate error; no compiler
+# that exited abnormally -- killed (exit 1 under `taskkill`, a signal), out of
+# memory, crashed, silent (exit 101 on a full disk), or panicked (an internal
+# compiler error), each of which cargo reports with `Caused by: process didn't
+# exit successfully`; and no unreadable or mismatched crate metadata
+# (E0460-E0464, E0514, E0519, E0786), which is a broken artifact in the shared
+# target rather than the base's source.
+base_does_not_compile() {
+  local log="$1" package_name compiled=1
+  for package_name in $2; do
+    grep -q -E "^error: could not compile \`$package_name\` .*due to [0-9]+ previous error" "$log" \
+      && compiled=0
+  done
+  [ "$compiled" -eq 0 ] \
+    && ! grep -q -E "^cast gate:|memory allocation of|exit code: 0xc|didn't exit successfully|panicked|internal compiler error" "$log" \
+    && ! grep -q -E '^error\[E(046[0-4]|0514|0519|0786)\]' "$log"
+}
+
+# run_identity_clippy <step name> <packages> <command...>: one leased clippy
+# run over step_root (default: this export) with step_manifest, step_selection
+# and step_key naming its tree and selection -- the base's clippy and a
+# standalone crate's, each under the source-identity checker's lease. A failure
+# classified as this machine's own returns 3 when step_ours=return, for
+# cast_base_step to judge against cargo's summary; anything else refuses here,
+# since a cast gate that cannot judge never passes a push.
+run_identity_clippy() {
+  local step_name="$1" packages="$2"
+  shift 2
+  local root="${step_root:-$gate_export}"
+  local manifest="${step_manifest:-$root/Cargo.toml}"
+  local chosen="${step_selection-$gate_packages}"
+  local package_name package_arguments=() selection_arguments=() selection=()
+  for package_name in $packages; do
+    package_arguments+=(--package "$package_name")
+  done
+  [ "${#package_arguments[@]}" -gt 0 ] || return 0
+  for package_name in $chosen; do
+    selection_arguments+=(--selection "$package_name")
+    selection+=(-p "$package_name")
+  done
+  local identity_command
+  identity_command=(
+    "$python_bin" "$identity_checker" run
+    --root "$root"
+    "${package_arguments[@]}"
+    "${selection_arguments[@]}"
+    --target-dir "$identity_target_dir"
+    --profile debug
+    --target "$identity_target"
+    --manifest "$manifest"
+    --command-cwd "$root"
+    --command-key "${step_key:-atlas-pre-push}"
     --
     "$@"
     "${selection[@]}"
@@ -1483,11 +1793,12 @@ MESSAGE
       exit 1
       ;;
     ours)
+      [ "${step_ours:-}" = return ] && return 3
       cat >&2 <<MESSAGE
 
 pre-push: $step_name fails for$packages, so the source-identity build did not complete.
 MESSAGE
-      grep -m 1 '^error' "$gate_log" >&2 || true
+      grep -m 1 -E '^(error|cast gate:)' "$gate_log" >&2 || true
       exit 1
       ;;
     environment)
@@ -1498,11 +1809,126 @@ MESSAGE
   esac
 }
 
+# cast_base_step <manifest-relative> <packages>: the base's sites for those
+# packages, which then join the base comparison.
+cast_base_step() {
+  local relative="$1" wanted="$2" present="" package_name names sites
+  [ -n "$base_export" ] || return 0
+  sites="$(mktemp "$tmp_base/pg-casts.XXXXXX")"
+  run_temps+=("$sites")
+  printf '[]' > "$sites"
+  if [ -f "$base_export/$relative" ]; then
+    names="$(package_names "$base_export/$relative" | tr -d '\r')" || {
+      echo "pre-push: BLOCKED -- cargo metadata fails for $relative at the pushed base ${gate_base:0:12}, so the cast gate cannot judge it." >&2
+      exit 1
+    }
+    for package_name in $wanted; do
+      case $'\n'"$names"$'\n' in
+        *$'\n'"$package_name"$'\n'*) present="$present $package_name" ;;
+      esac
+    done
+  fi
+  if [ -n "${present// /}" ]; then
+    local status=0
+    step_root="$base_export" step_manifest="$base_export/$relative" step_selection="$present" \
+      step_key="atlas-pre-push-casts-base" step_ours=return \
+      run_identity_clippy "base clippy" "$present" "$python_bin" "$cast_gate" clippy \
+        --export "$base_export" --manifest "$relative" --sites "$sites" --present-only \
+      || status=$?
+    if [ "$status" -ne 0 ]; then
+      if base_does_not_compile "$gate_log" "$present"; then
+        echo "pre-push: $relative does not compile at the pushed base ${gate_base:0:12}, so its packages' cast counts are held to their rows alone" >&2
+        return 0
+      fi
+      cat >&2 <<MESSAGE
+
+pre-push: BLOCKED -- the cast gate's clippy run fails for $relative at the
+pushed base ${gate_base:0:12} for a reason other than a compile error, so the
+cast gate cannot judge it.
+MESSAGE
+      grep -m 3 -E '^(error|cast gate:)' "$gate_log" >&2 || true
+      exit 1
+    fi
+  fi
+  cast_base_sites+=(--base-sites "$sites")
+  for package_name in $wanted; do
+    cast_base_sites+=(--base-package "$package_name")
+  done
+}
+
+if [ -n "$cast_gate" ]; then
+  # The cast steps classify against their own log, taken before the workspace
+  # steps take theirs below.
+  gate_log="$(mktemp "$tmp_base/pg-log.XXXXXX")"
+  run_temps+=("$gate_log")
+  base_reasons=""
+  if [ -n "$gate_base" ]; then
+    base_reasons="$("$python_bin" "$cast_gate" base-triggers --repo "$repo_root" \
+      --base "$gate_base" --tip "$gate_sha" | tr -d '\r')" || {
+      echo "pre-push: BLOCKED -- the cast gate could not read the pushed range ${gate_base:0:12}..${gate_sha:0:12}" >&2
+      exit 1
+    }
+  fi
+  # One base export serves every workspace of this push.
+  if [ -n "$base_reasons" ] && [ -z "$base_export" ]; then
+    echo "pre-push: cast counts are compared with the pushed base (${base_reasons%%$'\n'*})" >&2
+    base_export="$gate_parent/base-${repo_root##*/}"
+    mkdir -p "$base_export"
+    base_export="$(cd "$base_export" && { pwd -W 2>/dev/null || pwd; })"
+    if ! export_revision "$gate_base" "$base_export"; then
+      rm -rf "$base_export" && mkdir -p "$base_export"
+      if ! export_revision "$gate_base" "$base_export"; then
+        echo "pre-push: BLOCKED -- could not export the pushed base $gate_base for the cast gate" >&2
+        exit 1
+      fi
+    fi
+  fi
+  if [ -n "${gate_packages// /}" ]; then
+    cast_base_step Cargo.toml "$gate_packages"
+  fi
+  for standalone_manifest in $standalone_manifests; do
+    standalone_names="$(package_names "$gate_export/$standalone_manifest" | tr -d '\r')" || {
+      echo "pre-push: BLOCKED -- cargo metadata fails for the standalone crate $standalone_manifest, so the cast gate cannot judge it." >&2
+      exit 1
+    }
+    cast_base_step "$standalone_manifest" "$standalone_names"
+    standalone_sites="$(mktemp "$tmp_base/pg-casts.XXXXXX")"
+    run_temps+=("$standalone_sites")
+    standalone_status=0
+    step_manifest="$gate_export/$standalone_manifest" step_selection="$standalone_names" \
+      step_key="atlas-pre-push-casts-standalone" step_ours=return \
+      run_identity_clippy "standalone clippy" "$standalone_names" "$python_bin" "$cast_gate" clippy \
+        --export "$gate_export" --manifest "$standalone_manifest" --sites "$standalone_sites" \
+      || standalone_status=$?
+    if [ "$standalone_status" -ne 0 ]; then
+      cat >&2 <<MESSAGE
+
+pre-push: BLOCKED -- clippy does not complete for the standalone crate
+$standalone_manifest on $gate_sha, so the cast gate cannot judge it.
+MESSAGE
+      grep -m 3 -E '^(error|cast gate:)' "$gate_log" >&2 || true
+      exit 1
+    fi
+    for package_name in $standalone_names; do
+      cast_check_packages+=(--package "$package_name")
+    done
+    cast_check_sites+=(--sites "$standalone_sites")
+  done
+fi
+
+# A push whose changed files belong only to standalone crates has judged their
+# casts; the workspace steps below have nothing to build. run_cast_check runs
+# once, in the tail, over every row this push recorded.
+if [ -z "${gate_packages// /}" ]; then
+  echo "pre-push: no workspace package owns the changed files; standalone crates checked" >&2
+  return 0
+fi
+
 echo "pre-push: gating${gate_packages}" >&2
 
 # Formatting is workspace-wide and near-instant, and its failure is the
 # cheapest one to find here rather than on a runner.
-if ! (cd "$gate_export" && cargo fmt --all $gate_manifest -- --check >/dev/null); then
+if ! (cd "$gate_command_cwd" && cargo fmt --all $gate_manifest -- --check >/dev/null); then
   cat >&2 <<MESSAGE
 
 pre-push: \`cargo fmt --check\` fails on $gate_sha, so the architecture validation would.
@@ -1517,14 +1943,14 @@ fi
 # then failed CI on a `// SAFETY:` comment two lines above its block, because
 # nothing here ran the ratchet. It is text-only and fast, so it runs before the
 # compile steps; a member without the script has no ratchet to run.
-safety_ratchet="$gate_export/scripts/safety_ratchet.py"
+safety_ratchet="$gate_command_cwd/scripts/safety_ratchet.py"
 if [ -f "$safety_ratchet" ]; then
   if [ -z "$python_bin" ]; then
     echo "pre-push: scripts/safety_ratchet.py present but no python interpreter found" >&2
     echo "pre-push: push anyway with SKIP_LOCAL_GATE=1 git push" >&2
     exit 1
   fi
-  if ! (cd "$gate_export" && "$python_bin" scripts/safety_ratchet.py check >&2); then
+  if ! (cd "$gate_command_cwd" && "$python_bin" "$safety_ratchet" check >&2); then
     cat >&2 <<'MESSAGE'
 
 pre-push: the SAFETY ratchet fails, so CI's workspace job would. Put a
@@ -1549,31 +1975,8 @@ gate_log="$(mktemp "$tmp_base/pg-log.XXXXXX")"
 run_temps+=("$gate_log")
 
 if [ "$identity_enabled" -eq 1 ]; then
-  run_identity_step clippy "$gate_packages" cargo clippy "${identity_cargo_manifest_args[@]}" --all-targets --locked
-else
-  case "$(classify_gate_step "$gate_log" cargo clippy $gate_specs --all-targets)" in
-    ours)
-      cat >&2 <<MESSAGE
-
-pre-push: clippy fails for$gate_packages, so the CI ratchet would.
-
-$gate_reproduce
-
-    cargo clippy$gate_package_specs --all-targets --locked
-
-To push anyway: SKIP_LOCAL_GATE=1 git push
-MESSAGE
-      exit 1
-      ;;
-    environment)
-      report_broken_graph clippy "$gate_log"
-      exit 0
-      ;;
-  esac
-fi
-
-if command -v cargo-nextest >/dev/null 2>&1; then
-  if [ "$identity_enabled" -eq 1 ]; then
+  run_tests=0
+  if command -v cargo-nextest >/dev/null 2>&1; then
     testable_packages=""
     for package_name in $gate_packages; do
       case $'\n'"$untestable_packages"$'\n' in
@@ -1581,43 +1984,17 @@ if command -v cargo-nextest >/dev/null 2>&1; then
       esac
       testable_packages="$testable_packages $package_name"
     done
-    run_identity_step tests "$testable_packages" cargo nextest run "${identity_cargo_manifest_args[@]}" --locked --no-tests=pass
+    [ -z "${testable_packages// /}" ] || run_tests=1
   else
-    case "$(classify_gate_step "$gate_log" cargo nextest run $gate_specs --no-tests=pass)" in
-      ours)
-        cat >&2 <<MESSAGE
-
-pre-push: tests fail for$gate_packages.
-
-$gate_reproduce
-
-    cargo nextest run$gate_package_specs --locked --no-tests=pass
-
-To push anyway: SKIP_LOCAL_GATE=1 git push
-MESSAGE
-        exit 1
-        ;;
-      environment)
-        report_broken_graph test "$gate_log"
-        exit 0
-        ;;
-    esac
+    echo "pre-push: cargo-nextest not installed; tests not run" >&2
   fi
-else
-  echo "pre-push: cargo-nextest not installed; tests not run" >&2
-fi
 
-# CI documents every package with `RUSTDOCFLAGS=-D warnings`, so a broken or
-# redundant intra-doc link that clippy and the tests never see turns main red
-# after the merge (a redundant link target from apollo#508 did). The changed
-# packages are documented here the same way.
-if [ "$identity_enabled" -eq 1 ]; then
   # `cargo doc` writes an artifact only for a package with a documented lib or
   # bin target. A bench-only package (moirai-benchmarks) or a `[lib] doc =
-  # false` one (consus-python) writes none, so the identity step would refuse
-  # every push touching it; cargo's own target list is the authority.
+  # false` one (consus-python) writes none, so an all-undocumented selection
+  # skips the stage; cargo's own target list is the authority.
   if ! documented_packages="$(
-    cd "$gate_export" && cargo metadata --no-deps --format-version 1 $gate_manifest |
+    cd "$gate_command_cwd" && cargo metadata --no-deps --format-version 1 $gate_manifest |
       "$python_bin" -c 'import json, sys
 sys.stdout.reconfigure(newline="\n")
 documented = {"lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro", "bin"}
@@ -1643,8 +2020,79 @@ $package_name
       *) echo "pre-push: rustdoc skipped for $package_name; it has no documented lib or bin target" >&2 ;;
     esac
   done
-  run_identity_step rustdoc "$rustdoc_packages" env RUSTDOCFLAGS="-D warnings" cargo doc --no-deps "${identity_cargo_manifest_args[@]}" --locked
+  run_rustdoc=0
+  [ -z "${rustdoc_packages// /}" ] || run_rustdoc=1
+
+  gate_stage="$(mktemp "$tmp_base/pg-stage.XXXXXX")"
+  run_temps+=("$gate_stage")
+  # With the cast gate in play, the sequence's clippy stage records this
+  # workspace's tip sites; they join the rows run_cast_check judges once,
+  # after every workspace has contributed.
+  cast_sites=""
+  if [ -n "$cast_gate" ]; then
+    cast_sites="$(mktemp "$tmp_base/pg-casts.XXXXXX")"
+    run_temps+=("$cast_sites")
+  fi
+  run_identity_sequence "$run_tests" "$run_rustdoc" "$gate_stage"
+  if [ -n "$cast_gate" ]; then
+    cast_check_sites+=(--sites "$cast_sites")
+    for package_name in $gate_packages; do
+      cast_check_packages+=(--package "$package_name")
+    done
+  fi
 else
+  case "$(classify_gate_step "$gate_log" cargo clippy $gate_specs --all-targets)" in
+    ours)
+      cat >&2 <<MESSAGE
+
+pre-push: clippy fails for$gate_packages, so the CI ratchet would.
+
+$gate_reproduce
+
+    cargo clippy$gate_package_specs --all-targets --locked
+
+To push anyway: SKIP_LOCAL_GATE=1 git push
+MESSAGE
+      exit 1
+      ;;
+    environment)
+      report_broken_graph clippy "$gate_log"
+      exit 0
+      ;;
+  esac
+fi
+
+if [ "$identity_enabled" -eq 0 ]; then
+  if command -v cargo-nextest >/dev/null 2>&1; then
+    case "$(classify_gate_step "$gate_log" cargo nextest run $gate_specs --no-tests=pass)" in
+      ours)
+        cat >&2 <<MESSAGE
+
+pre-push: tests fail for$gate_packages.
+
+$gate_reproduce
+
+    cargo nextest run$gate_package_specs --locked --no-tests=pass
+
+To push anyway: SKIP_LOCAL_GATE=1 git push
+MESSAGE
+        exit 1
+        ;;
+      environment)
+        report_broken_graph test "$gate_log"
+        exit 0
+        ;;
+    esac
+  else
+    echo "pre-push: cargo-nextest not installed; tests not run" >&2
+  fi
+fi
+
+# CI documents every package with `RUSTDOCFLAGS=-D warnings`, so a broken or
+# redundant intra-doc link that clippy and the tests never see turns main red
+# after the merge (a redundant link target from apollo#508 did). The changed
+# packages are documented here the same way.
+if [ "$identity_enabled" -eq 0 ]; then
   case "$(classify_gate_step "$gate_log" env RUSTDOCFLAGS="-D warnings" cargo doc --no-deps $gate_specs)" in
     ours)
       cat >&2 <<MESSAGE
@@ -1667,3 +2115,106 @@ MESSAGE
 fi
 
 echo "pre-push: local gate passed" >&2
+}
+
+select_meta_cargo_owners() {
+  local changed_file="$1" base_manifests="$2" candidate_manifests="$3" output="$4"
+  "$python_bin" - "$changed_file" "$base_manifests" "$candidate_manifests" "$output" <<'PY'
+import pathlib
+import sys
+
+changed = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+base = set(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8").splitlines())
+candidate = set(pathlib.Path(sys.argv[3]).read_text(encoding="utf-8").splitlines())
+all_manifests = base | candidate
+selected = {}
+
+def owner(path):
+    directory = pathlib.PurePosixPath(path).parent
+    while directory != pathlib.PurePosixPath("."):
+        manifest = (directory / "Cargo.toml").as_posix()
+        if manifest in all_manifests:
+            return manifest
+        directory = directory.parent
+    return None
+
+global_inputs = {
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    ".config/nextest.toml",
+}
+for path in changed:
+    if not path:
+        continue
+    if path in {"Cargo.toml", "Cargo.lock"}:
+        raise SystemExit(f"the Atlas meta root cannot own {path}; Cargo workspaces live below tools/")
+    if path in global_inputs or path.startswith(".cargo/"):
+        for manifest in candidate:
+            selected.setdefault(manifest, set()).add("Cargo.toml")
+        continue
+    manifest = owner(path)
+    if manifest is None:
+        continue
+    if manifest not in candidate:
+        raise SystemExit(f"selected Cargo workspace manifest {manifest} is missing from the pushed revision")
+    root = pathlib.PurePosixPath(manifest).parent
+    relative = pathlib.PurePosixPath(path).relative_to(root).as_posix()
+    selected.setdefault(manifest, set()).add(relative)
+
+with pathlib.Path(sys.argv[4]).open("w", encoding="utf-8", newline="\n") as stream:
+    for manifest in sorted(selected):
+        for path in sorted(selected[manifest]):
+            stream.write(f"{manifest}\t{path}\n")
+PY
+}
+
+# The per-workspace cast rows are globals: they accumulate across the calls
+# below, and run_cast_check judges them once, after every workspace has
+# contributed. base_export is one base tree for the whole push.
+cast_gate=""
+base_export=""
+cast_check_packages=()
+cast_check_sites=()
+cast_base_sites=()
+if [ "$stack_member" = "<meta>" ]; then
+  meta_changed="$(mktemp "$tmp_base/pg-meta-changed.XXXXXX")"
+  meta_base_manifests="$(mktemp "$tmp_base/pg-meta-base.XXXXXX")"
+  meta_candidate_manifests="$(mktemp "$tmp_base/pg-meta-candidate.XXXXXX")"
+  meta_owners="$(mktemp "$tmp_base/pg-meta-owners.XXXXXX")"
+  run_temps+=("$meta_changed" "$meta_base_manifests" "$meta_candidate_manifests" "$meta_owners")
+  printf '%s\n' "$gate_changed" > "$meta_changed"
+  : > "$meta_base_manifests"
+  if [ -n "$gate_base" ]; then
+    if ! git ls-tree -r --name-only "$gate_base" -- tools \
+      | awk '/^tools\/.+\/Cargo\.toml$/ { print }' > "$meta_base_manifests"; then
+      echo "pre-push: BLOCKED -- could not inspect the base Cargo workspace owners" >&2
+      exit 1
+    fi
+  fi
+  if ! git ls-tree -r --name-only "$gate_sha" -- tools \
+    | awk '/^tools\/.+\/Cargo\.toml$/ { print }' > "$meta_candidate_manifests"; then
+    echo "pre-push: BLOCKED -- could not inspect the pushed Cargo workspace owners" >&2
+    exit 1
+  fi
+  if ! select_meta_cargo_owners \
+    "$meta_changed" "$meta_base_manifests" "$meta_candidate_manifests" "$meta_owners"; then
+    echo "pre-push: BLOCKED -- could not select the Atlas meta root's Cargo workspace owners" >&2
+    exit 1
+  fi
+  if [ ! -s "$meta_owners" ]; then
+    echo "pre-push: no nested Cargo workspace owns the changed files; native gate not applicable" >&2
+    exit 0
+  fi
+  while IFS= read -r workspace_manifest; do
+    [ -n "$workspace_manifest" ] || continue
+    workspace_changed="$(awk -F '\t' -v manifest="$workspace_manifest" '$1 == manifest { print $2 }' "$meta_owners")"
+    run_cargo_workspace_gate "$workspace_manifest" "$workspace_changed"
+  done < <(awk -F '\t' '!seen[$1]++ { print $1 }' "$meta_owners")
+else
+  run_cargo_workspace_gate "Cargo.toml" "$gate_changed"
+fi
+
+# The gate ran every workspace; the recorded cast sites are judged as one
+# range, once, whether the push carried workspace packages, standalone crates,
+# or both.
+run_cast_check
