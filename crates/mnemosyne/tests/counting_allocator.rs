@@ -83,6 +83,22 @@ unsafe impl GlobalAlloc for RefusesRealloc {
 }
 
 #[test]
+fn wrapper_adds_no_size_to_the_allocator_it_wraps() {
+    assert_eq!(
+        core::mem::size_of::<CountingAllocator<System>>(),
+        core::mem::size_of::<System>()
+    );
+    assert_eq!(
+        core::mem::size_of::<CountingAllocator<mnemosyne::Mnemosyne>>(),
+        core::mem::size_of::<mnemosyne::Mnemosyne>()
+    );
+    assert_eq!(
+        core::mem::size_of::<AllocationDelta>(),
+        5 * core::mem::size_of::<usize>()
+    );
+}
+
+#[test]
 fn window_without_heap_traffic_reads_empty() {
     warm();
 
