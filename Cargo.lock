@@ -249,8 +249,8 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
 name = "eunomia"
-version = "0.9.1"
-source = "git+https://github.com/ryancinsight/eunomia#8639a8706abb49c596559f58bf2592dbbc14ed7c"
+version = "0.10.0"
+source = "git+https://github.com/ryancinsight/eunomia#a231e54dd3311bc916e78c91d994b00d651c1646"
 dependencies = [
  "bytemuck",
  "eunomia-derive",
@@ -259,8 +259,8 @@ dependencies = [
 
 [[package]]
 name = "eunomia-derive"
-version = "0.9.1"
-source = "git+https://github.com/ryancinsight/eunomia#8639a8706abb49c596559f58bf2592dbbc14ed7c"
+version = "0.10.0"
+source = "git+https://github.com/ryancinsight/eunomia#a231e54dd3311bc916e78c91d994b00d651c1646"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -431,7 +431,7 @@ dependencies = [
 [[package]]
 name = "melinoe"
 version = "0.10.0"
-source = "git+https://github.com/ryancinsight/melinoe.git#a045434294ce41d28ca2c0b773f2314168999e6a"
+source = "git+https://github.com/ryancinsight/melinoe.git#681c550efa385ade0dd1e4697451e80ac26b7ab5"
 
 [[package]]
 name = "memchr"
@@ -459,7 +459,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-arena"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "bytemuck",
  "eunomia",
@@ -468,6 +468,7 @@ dependencies = [
  "mnemosyne-backend",
  "mnemosyne-memory-core",
  "themis-topology",
+ "windows-sys",
 ]
 
 [[package]]
@@ -503,7 +504,7 @@ version = "0.2.1"
 
 [[package]]
 name = "mnemosyne-c-shim"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "mnemosyne-backend",
  "mnemosyne-local",
@@ -513,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-decay"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "mnemosyne-arena",
  "mnemosyne-backend",
@@ -530,7 +531,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-heap"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "libc",
  "melinoe",
@@ -545,7 +546,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-local"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "melinoe",
  "mnemosyne-arena",
@@ -560,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-memory"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "eunomia",
  "mnemosyne-arena",
@@ -898,7 +899,7 @@ dependencies = [
 [[package]]
 name = "themis-topology"
 version = "0.11.1"
-source = "git+https://github.com/ryancinsight/themis#562d4142385df88ad111cb1a564d76dfb4918bc2"
+source = "git+https://github.com/ryancinsight/themis#63c544108fc0e8408bf2096ddaf8e99dfa49f90c"
 dependencies = [
  "libc",
  "melinoe",

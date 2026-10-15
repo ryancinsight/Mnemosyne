@@ -2,6 +2,72 @@
 
 ## Ready
 
+<a id="mn-eunomia-010-cohort"></a>
+- [ ] [major] **MN-EUNOMIA-010-COHORT — adopt the current datatype provider.**
+  priority: verification; status: blocked; owner: coordinated Coeus release integrator.
+  **Scope:** manifest/lock versions, the native allocation-counting test's
+  synchronization, private optional-guard page geometry, a feature-gated macro,
+  a platform-specific doc link, canonical foundation locks and planning records.
+  **Outcome:** Eunomia 0.10 uses one canonical provider identity; arena/local/heap
+  advance to 0.7.0 and the memory facade to 0.10.0 for public marker/pool trait
+  identities. Decay and the C shim use 0.3.3 dependency patches; the C ABI stays
+  unchanged. Unaffected core/backend/profiler/hardening/build-util versions stay.
+  **Acceptance:** ordinary native, strict lint, docs, package/API and exact-head
+  required CI gates; preserve default allocation/registry behavior, fixtures,
+  numeric payloads and timeouts. Optional guards now honor native page geometry.
+  **Evidence:** all 481 default native cases pass, zero skips, after replacing
+  lazy-allocating Barrier waits in the isolation test with atomic coordination.
+  Strict all-target/all-feature Clippy, warning-denied docs, 26 doctests (one
+  existing ignore), six standard packages and locked-source API classification
+  pass. The four minor boundaries skip major-sensitive API rules by design;
+  the two dependency-only patches each compare 196 rules.
+  **Native repair:** the original combined-guard telemetry assertion now passes
+  on 16-KiB macOS pages. Tail/header/both confirm 1/16384, 1/16384 and 2/32768
+  calls/bytes; before repair they recorded 1/4096, 0/0 and 1/4096. Private OS
+  geometry preserves metadata and reserves the complete guard before slack
+  decommit. Address tests now also enforce page alignment; the slack assertion
+  is exact rather than a lower bound. Native suites pass 481 default, 149 per
+  individual guard and 151 all-feature arena cases, all zero skips. Strict
+  Clippy/docs and Windows/Linux cross checks pass. Final-head CI remains pending.
+  **Required CI:** the user authorizes the existing required Miri checks.
+  Their actual exact-head results remain pending; no gate, filter or timeout
+  changes are permitted. The user also authorizes publication after all exact-head
+  gates/reviews pass; the native guard blocker still prevents release acceptance.
+  **Decision:** [ADR 0013](docs/adr/0013-eunomia-010-cohort.md). Existing held
+  provenance, sampler and performance owner branches remain untouched.
+
+<a id="mn-native-guard-geometry"></a>
+## MN-NATIVE-GUARD-GEOMETRY — reconcile native guard request geometry [patch]
+
+- Status: blocked; priority: correctness; owner: allocator provider coordination.
+- Finding: `fresh_segment_install_increments_guard_telemetry_and_round_trips`
+  fails on unchanged main and the datatype candidate with both guard features.
+  Native macOS has 16384-byte pages. Header offset `65536 - 4096 = 61440`
+  has page remainder 12288; both requests use 4096-byte lengths. These do not
+  meet `MemoryBackend::make_guard`'s system-page preconditions. The backend
+  records confirmed outcomes only; observed combined delta is one call/4096
+  bytes, compared with the test's 8192-byte expectation. Header-only's test
+  passes with zero installs because its counter assertion is conditional.
+- Repair: query native OS page size, validate power-of-two geometry, and round
+  the unchanged 4096-byte public minima to whole native pages. Reject header
+  ranges overlapping live metadata; omit tail guards that cannot fit the
+  reservation. Slack decommit begins after the complete reserved guard. The
+  public backend trait, mapping/registration prefix and held branches stay.
+- Ownership: active held PR #218 changes mapping/registration before the guard
+  block; that complete function prefix is byte-identical to main. PR #190 moves
+  existing test code; no owner branch or held implementation is integrated.
+- Evidence: original telemetry/mapping/release assertions stay byte-identical.
+  Real native macOS now confirms two 16384-byte guards; 151 all-feature arena
+  tests pass, zero skips. Three added geometry cases cover 4/16/64-KiB pages,
+  metadata overlap and invalid geometry. Existing address fixtures enforce page
+  alignment and exact extents; the decommit assertion now requires every
+  unprotected slack byte. No ignore, platform exclusion or timeout increase.
+- Remaining: final exact-head Linux (4-KiB), Miri, sanitizer, lint/docs/package/API
+  and review acceptance. Windows/Linux cross checks compile; Windows runtime
+  remains unverified. No public backend API or compatibility shim is introduced.
+
+
+
 <a id="MN-RESCUE-QUEUE"></a>
 - [ ] [correctness] **MN-RESCUE-QUEUE — complete or close the open rescue PR.**
   priority: correctness; status: todo; needs: none; scope: the head ref of the

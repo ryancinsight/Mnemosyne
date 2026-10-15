@@ -8,6 +8,8 @@ use mnemosyne_core::constants::{
 };
 
 mod allocate;
+#[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
+pub(super) mod guard;
 mod release;
 
 pub(crate) use allocate::decommit_mapping_slack;
@@ -31,19 +33,17 @@ pub const MAX_RETAINED_SEGMENTS: usize = MAX_RETAINED_SEGMENTS_LIMIT;
 /// arena reserves to satisfy `SEGMENT_ALIGN` rounding. Worst-case
 /// available slack-after = `OS_PAGE_SIZE` (when the raw OS mapping
 /// happened to be aligned to `SEGMENT_ALIGN - OS_PAGE_SIZE`), so the
-/// guard size must not exceed the smallest supported OS page size. We
-/// fix the value at 4 KiB, which is the system page size on every
-/// supported Mnemosyne target (Linux/Windows/macOS-x86_64). On
-/// platforms with a larger OS page size (macOS-arm64 at 16 KiB) the
-/// underlying `mprotect`/`VirtualProtect` request will fail and the
-/// guard install is silently skipped - the backend telemetry surfaces
-/// the actual install count.
+/// minimum is 4 KiB. The actual request covers at least one whole native OS
+/// page, and never exceeds the reserved mapping. On 16-KiB-page systems this
+/// requests 16 KiB. Unsupported geometry or a kernel-declined request leaves
+/// this best-effort guard inactive; telemetry records confirmed requests only.
 pub const SEGMENT_TAIL_GUARD_SIZE: usize = 4096;
 
 const _: () = assert!(SEGMENT_TAIL_GUARD_SIZE.is_power_of_two());
 const _: () = assert!(SEGMENT_TAIL_GUARD_SIZE <= SEGMENT_ALIGN);
 
-/// Size of the guard region installed at the end of Page 0.
+/// Minimum guard size at the end of Page 0, rounded to whole native OS pages.
+/// A header guard is omitted if it would overlap the live Segment metadata.
 pub const SEGMENT_HEADER_GUARD_SIZE: usize = 4096;
 
 const _: () = assert!(SEGMENT_HEADER_GUARD_SIZE.is_power_of_two());

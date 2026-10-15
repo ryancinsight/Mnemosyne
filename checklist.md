@@ -1,5 +1,36 @@
 # Checklist
 
+## MN-EUNOMIA-010-COHORT [major] — current slice
+
+- [x] Inspect current main, open owner PRs and reserved ADR numbers; isolate work.
+- [x] Record the datatype/public pool boundary and align the affected versions.
+- [x] Reproduce the native counting-test failure on unchanged main; preserve
+      its payload/assertions and pass the focused atomic-coordination regression.
+- [x] Pass all 481 default native cases with zero skips and the original deadline.
+- [x] Pass strict all-target/all-feature Clippy and warning-denied docs;
+      26 doctests pass with one existing ignore.
+- [x] Verify all six standard package archives and locked-source API release
+      classification; minor boundaries do not claim backward compatibility.
+- [x] Repair native optional-guard geometry; preserve the original telemetry and
+      mapping/release assertions. Default 481, individual guards149 each, and
+      all-feature arena 151 pass, zero skips. Windows/Linux cross checks pass.
+- [x] Obtain authorization for the existing required Miri CI without changing gates.
+- [ ] Collect all exact-head required CI results, including Miri.
+- [x] Select Eunomia 0.10.0 published source a231e54d with verified registry receipts.
+- [ ] Verify this cohort's package registry receipts after required integration.
+
+## MN-NATIVE-GUARD-GEOMETRY [patch]
+
+- [x] Check current owner file/hunk metadata without reading held implementation.
+- [x] Reproduce the exact failing combined-feature case on unchanged main.
+- [x] Record real OS page size and tail/header/both confirmed-call/byte matrix.
+- [x] Preserve the original telemetry/mapping/release assertions and native deadline.
+- [x] Repair only optional native guard geometry outside held registry hunks;
+      validate real 16-KiB outcomes, metadata exclusion and full slack decommit.
+- [ ] Collect final Linux (4-KiB) and required Miri/CI results and review before
+      publication; Windows cross compilation does not establish native execution.
+
+
 ## MN-WASM-ENV-2026-09-11 (owner: codex)
 
 - [x] Gate the environment reader away from host-only `getenv` on wasm32.

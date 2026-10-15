@@ -1,5 +1,42 @@
 # Gap Audit
 
+## MN-EUNOMIA-010-COHORT [major] — blocked provider increment
+
+Eunomia/derive 0.10.0 are published and registry-verified at a231e54d. The
+coordinated candidate selects that source, advances public arena/local/heap
+identities to 0.7.0 and the facade to 0.10.0, and uses private dependency
+patches 0.3.3 for decay/the C shim. Production allocation behavior is unchanged.
+
+The native counting isolation test fails on unchanged main because platform
+Barrier waits allocate inside its zero-allocation measurement. Atomic
+acquire/release coordination repairs that boundary with the worker payload,
+assertions, held Miri configuration and 60-second deadline preserved. All 481
+default native cases then pass, zero skips. Strict all-feature Clippy,
+warning-denied docs, 26 doctests (one existing ignore), six standard packages
+and automatic locked-source API release classification pass. Four minor
+boundaries skip major-sensitive rules by tool design; two patches each compare
+196 rules. A feature-only macro predicate and a Windows-only documentation
+reference fix diagnostics without changing runtime behavior.
+
+The optional-guard failure is repaired through private OS page geometry. Before:
+4-KiB requests on a 16-KiB host produced tail1/4096, header0/0 and both1/4096,
+violating documented backend preconditions and the original 8192-byte assertion.
+After: native tail/header/both confirm 1/16384,1/16384 and 2/32768. The original
+telemetry, mapped-byte and release assertions remain byte-identical. Guards
+cover whole OS pages, header requests exclude live metadata, and tail slack
+starts after the complete guard within the existing reservation. The decommit
+fixture now enforces exact unprotected slack and page-aligned calls. Default
+481, single-guard 149 each and all-feature arena 151 native cases pass, zero skips.
+Three new pure geometry cases cover 4/16/64-KiB pages and safe rejection. Strict
+lint/docs and Windows/Linux cross compilation pass. The held mapping/registry
+function prefix is byte-identical to main; no held work or public backend API
+is changed. Final Linux/Miri/package/API acceptance remains pending.
+The user now authorizes required Miri CI. Its actual exact-head results are
+pending. The user also authorizes publication after all applicable exact-head
+checks/reviews pass. Gate/filter/timeout changes remain prohibited; held
+safety/performance branches remain untouched.
+
+
 <!-- Compacted 2026-09-21 under the 1,000-line board budget: a board is a queue, not a ledger, so closed sections and closed item bodies are gone -- their record is the PR that closed them and its `Item:` trailer. Open items, anchors and live-marked residuals are kept. Recover any removed narrative with `git log -p -- <this file>`. -->
 ## Finding 2026-08-20: mnemosyne scope-vs-delivery audit
 

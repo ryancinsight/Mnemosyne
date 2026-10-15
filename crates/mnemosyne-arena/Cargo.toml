@@ -1,7 +1,7 @@
 [package]
 name = "mnemosyne-arena"
 license = "MIT OR Apache-2.0"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 rust-version.workspace = true
 repository.workspace = true
@@ -13,8 +13,8 @@ categories.workspace = true
 
 [features]
 default = ["std"]
-segment-tail-guards = []
-segment-header-guards = []
+segment-tail-guards = ["dep:windows-sys"]
+segment-header-guards = ["dep:windows-sys"]
 eunomia = ["dep:eunomia"]
 std = ["mnemosyne-core/std"]
 ## Blanket `ScratchElement` impl for any `bytemuck::Zeroable + Copy + Send + Sync + 'static` type.
@@ -34,6 +34,9 @@ libc = { version = "0.2", default-features = false }
 
 [lints]
 workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", optional = true, features = ["Win32_System_SystemInformation"] }
 
 # Loom is pulled in only under `cfg(loom)`, which is set exclusively by the
 # dedicated model runs (`RUSTFLAGS="--cfg loom"`). A cargo feature would be
