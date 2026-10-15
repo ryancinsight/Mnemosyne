@@ -5,17 +5,25 @@
 <a id="mn-eunomia-010-cohort"></a>
 - [ ] [major] **MN-EUNOMIA-010-COHORT — adopt the current datatype provider.**
   priority: verification; status: blocked; owner: coordinated Coeus release integrator.
-  **Scope:** manifest/lock versions, changelog, ADR 0013 and this checklist only.
+  **Scope:** manifest/lock versions, the native allocation-counting test's
+  synchronization, a feature-gated macro declaration, a platform-specific doc
+  link, changelog, ADR 0013 and this checklist.
   **Outcome:** Eunomia 0.10 uses one canonical provider identity; arena/local/heap
   advance to 0.7.0 and the memory facade to 0.10.0 for public marker/pool trait
   identities. Decay and the C shim use 0.3.3 dependency patches; the C ABI stays
   unchanged. Unaffected core/backend/profiler/hardening/build-util versions stay.
   **Acceptance:** ordinary native, strict lint, docs, package/API and exact-head
-  required CI gates; preserve every source, fixture, test and timeout.
-  **Native evidence:** all-feature workspace check and strict all-target Clippy
-  pass. The fail-fast native suite executes 394/481 cases: 393 pass and the
-  existing allocation-counting isolation case fails; 87 remain unexecuted.
-  The same case fails on untouched main, independently of this provider update.
+  required CI gates; preserve production behavior, fixtures, test payloads,
+  assertions and timeouts.
+  **Evidence:** all 481 default native cases pass, zero skips, after replacing
+  lazy-allocating Barrier waits in the isolation test with atomic coordination.
+  Strict all-target/all-feature Clippy, warning-denied docs, 26 doctests (one
+  existing ignore), six standard packages and locked-source API classification
+  pass. The four minor boundaries skip major-sensitive API rules by design;
+  the two dependency-only patches each compare 196 rules.
+  **Native blocker:** the optional Eunomia/both-guard suite passes 147/148 cases.
+  Its telemetry case fails identically on unchanged macOS main. Do not weaken
+  that assertion or investigate the held allocator work as part of this update.
   **Blocker:** root manifest/lock changes select the existing Miri job, and the
   required CI aggregate depends on it. Miri remains deferred and unverified;
   no PR/merge that starts it or gate weakening is authorized in this increment.

@@ -14,7 +14,7 @@
 //!
 //! # Failure policy (single source of truth)
 //!
-//! A failed OS-slot write is fatal: [`write_value`] and [`write_teb_slot`]
+//! A failed OS-slot write is fatal: [`write_value`] and Windows-only `write_teb_slot`
 //! route to [`crate::abort::abort_on_corruption`] (abort under `std`, panic
 //! otherwise). This adopts `mnemosyne-local`'s original policy over
 //! `mnemosyne-prof`'s silent ignore, because a dropped write leaves the slot

@@ -4,9 +4,18 @@
 
 - [x] Inspect current main, open owner PRs and reserved ADR numbers; isolate work.
 - [x] Record the datatype/public pool boundary and align the affected versions.
-- [ ] Pass unchanged ordinary native, strict Clippy, docs and package/API gates.
+- [x] Reproduce the native counting-test failure on unchanged main; preserve
+      its payload/assertions and pass the focused atomic-coordination regression.
+- [x] Pass all 481 default native cases with zero skips and the original deadline.
+- [x] Pass strict all-target/all-feature Clippy and warning-denied docs;
+      26 doctests pass with one existing ignore.
+- [x] Verify all six standard package archives and locked-source API release
+      classification; minor boundaries do not claim backward compatibility.
+- [ ] Resolve the optional guard telemetry case: 147/148 pass; the same failure
+      reproduces on unchanged macOS main. Assertions and guard code stay intact.
 - [ ] Collect exact-head required CI after the deferred-Miri conflict is resolved.
-- [ ] Integrate the final published provider source and verify registry receipts.
+- [x] Select Eunomia 0.10.0 published source a231e54d with verified registry receipts.
+- [ ] Verify this cohort's package registry receipts after required integration.
 
 
 ## MN-WASM-ENV-2026-09-11 (owner: codex)

@@ -14,8 +14,9 @@
 
 use core::alloc::{GlobalAlloc, Layout};
 use std::alloc::System;
-use std::hint::black_box;
-use std::sync::{Arc, Barrier};
+use std::hint::{black_box, spin_loop};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use mnemosyne::counting::{AllocationDelta, CountingAllocator, measure};
@@ -214,24 +215,29 @@ fn balanced_window_retains_nothing() {
 #[test]
 fn allocations_on_another_thread_are_not_counted() {
     warm();
-    // `thread::spawn` allocates on the spawning thread, so the worker starts
-    // before the window and the two barriers, built before it too, bracket the
-    // worker's allocation without allocating themselves.
-    let start = Arc::new(Barrier::new(2));
-    let done = Arc::new(Barrier::new(2));
+    // Spawn and synchronization storage precede the caller's window. Barrier
+    // waits can lazily allocate platform state, so only allocation-free atomic
+    // coordination runs inside it. Acquire/release ordering keeps the complete
+    // worker allocation between the caller's start and finish snapshots.
+    let start = Arc::new(AtomicBool::new(false));
+    let done = Arc::new(AtomicBool::new(false));
     let worker = {
         let (start, done) = (Arc::clone(&start), Arc::clone(&done));
         thread::spawn(move || {
-            start.wait();
+            while !start.load(Ordering::Acquire) {
+                spin_loop();
+            }
             let ((), own) = measure(|| drop(black_box(Vec::<u8>::with_capacity(1024))));
-            done.wait();
+            done.store(true, Ordering::Release);
             own
         })
     };
 
     let ((), observed) = measure(|| {
-        start.wait();
-        done.wait();
+        start.store(true, Ordering::Release);
+        while !done.load(Ordering::Acquire) {
+            spin_loop();
+        }
     });
     let worker_delta = worker.join().expect("invariant: the worker does not panic");
 
