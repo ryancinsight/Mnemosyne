@@ -78,7 +78,7 @@ unsafe fn initialize_allocated_segment(
         Segment::initialize(aligned_ptr, raw_ptr, numa_node);
     }
 
-    let mapping_end = (raw_ptr as usize).checked_add(SEGMENT_MAPPING_SIZE)?;
+    let mapping_end = raw_ptr.addr().checked_add(SEGMENT_MAPPING_SIZE)?;
     let tail_slack_start = aligned_addr.checked_add(SEGMENT_SIZE)?;
     if tail_slack_start > mapping_end {
         return None;
