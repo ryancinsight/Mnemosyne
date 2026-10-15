@@ -12,7 +12,7 @@
 - Target: arena 0.7.1 / memory 0.10.1. Existing implementation, tests, features, native deadlines
   and every external locked package remain unchanged. No adapter is added.
 - Evidence: the unmodified Coeus resolver rejects the 0.11 candidate against
-  current `^0.10` requirements. Source-head [a9f2717](https://github.com/ryancinsight/Mnemosyne/commit/a9f271726232a6fc59cc2e78c95c124fa8a7bfc9) passes
+  current `^0.10` requirements. Source-head [validated source](https://github.com/ryancinsight/Mnemosyne/commit/a9f271726232a6fc59cc2e78c95c124fa8a7bfc9) passes
   481 default native and 151 all-feature guard cases, zero skips, strict lint/docs/doctests, standard packages and API checks.
   Final-head hosted CI/review and publication remain pending.
 - Acceptance: exact-source native, strict lint/docs, standard packages and API
