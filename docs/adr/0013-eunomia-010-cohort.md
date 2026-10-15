@@ -61,7 +61,7 @@ does not establish backward compatibility across the minor boundaries.
 
 [Reviewed head](https://github.com/ryancinsight/Mnemosyne/commit/f36febc82edfc1a1fbc7df92b6847fc894f5b859)
 and [published merge](https://github.com/ryancinsight/Mnemosyne/commit/b7e0e1e37130b0a317859b168cca16b5172d08d8)
-share tree `9c05a3011ca7d3a15e5e1f21d60bd96a74c5fc83`. All required exact-head
+share an [identical tree](https://github.com/ryancinsight/Mnemosyne/tree/9c05a3011ca7d3a15e5e1f21d60bd96a74c5fc83). All required exact-head
 checks pass, including actual Miri, Loom, ThreadSanitizer, Linux native guard
 matrix and CI aggregate. The blocking [release validation](https://github.com/ryancinsight/Mnemosyne/actions/runs/38749847652)
 builds and compares all ten selected library baselines and verifies the arena

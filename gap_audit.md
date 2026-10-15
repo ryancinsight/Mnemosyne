@@ -35,7 +35,7 @@ Loom, ThreadSanitizer, Linux guard matrix and aggregate. Blocking release
 validation 38749847652 builds/compares all ten selected library baselines and
 verifies the arena package; the unchanged build-only utility remains outside
 the existing library caller. All six clean final-head standard packages verify.
-PR #237 merges normally as b7e0e1e with tree 9c05a301, identical to reviewed
+PR #237 merges normally as b7e0e1e with an [identical tree](https://github.com/ryancinsight/Mnemosyne/tree/9c05a3011ca7d3a15e5e1f21d60bd96a74c5fc83), identical to reviewed
 f36febc8. Publisher 38752721843 succeeds; all six not-yanked registry archives
 match their independent checksums and that source identity (ADR 0013).
 Required pipeline Miri covers its declared scope only. Existing free-path and
