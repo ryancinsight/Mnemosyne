@@ -1,5 +1,20 @@
 # Checklist
 
+Target for this slice: arena 0.7.1 / memory 0.10.1.
+
+## MN-EUNOMIA-011-RANGE [patch]
+
+- [x] Inspect current default, open PR ownership and repository instructions.
+- [x] Widen only the provider range; preserve all Rust/test/workflow bytes and
+      every external lock record. Record the compatible patch package targets.
+- [x] Pass source-head [validated source](https://github.com/ryancinsight/Mnemosyne/commit/a9f271726232a6fc59cc2e78c95c124fa8a7bfc9) native (481 default native and 151 all-feature guard cases, zero skips),
+      strict lint/docs/doctests, standard-package and API gates.
+      All external locked records and implementation bytes remain unchanged.
+- [ ] Pass applicable hosted checks and review; verify merge side effects.
+- [ ] Merge normally and verify actual registry archives; revalidate Coeus on
+      one canonical published Eunomia 0.11 source before closing this item.
+
+
 ## MN-EUNOMIA-010-COHORT [major] — current slice
 
 - [x] Inspect current main, open owner PRs and reserved ADR numbers; isolate work.
