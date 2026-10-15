@@ -15,7 +15,7 @@
 - `mnemosyne-decay` and `mnemosyne-c-shim` advance to 0.3.3 for their updated
   internal arena/local dependency edges. Their public non-arena interfaces and
   the C ABI remain unchanged. Other package versions, production behavior,
-  fixtures, allocator behavior and verification limits are preserved.
+  fixtures, default allocator behavior and verification limits are preserved.
 - The ordinary native allocation-counting isolation test uses allocation-free
   atomic coordination instead of platform Barrier waits that can allocate in
   its measured window. Its worker payload and every assertion are preserved;
@@ -23,9 +23,15 @@
 - Compile the scratch-implementation macro only when its non-bytemuck invocation
   is selected, and render a Windows-only TLS function name without a broken
   macOS rustdoc link. No allocator implementation changes.
-- See [ADR 0013](docs/adr/0013-eunomia-010-cohort.md). Required Miri remains
-  deferred and unverified; publication/default integration is not complete.
-  The existing optional guard telemetry test also fails on unchanged macOS main.
+- [patch] Correct optional segment guards for native OS pages: requests cover
+  whole pages, header guards exclude live metadata, and slack decommit excludes
+  the complete tail guard. The public 4096-byte minima and backend trait stay.
+  Real 16-KiB macOS now confirms two guards; the original telemetry assertion
+  passes. Address/decommit fixtures enforce alignment and exact remaining slack.
+- Select current Themis/Melinoe sources without older-version fallbacks. See
+  [ADR 0013](docs/adr/0013-eunomia-010-cohort.md). Required Miri/publication are
+  authorized after exact-head gates/reviews; current final-head acceptance is
+  pending, and no held safety/performance work is resumed.
 
 
 ## Unreleased

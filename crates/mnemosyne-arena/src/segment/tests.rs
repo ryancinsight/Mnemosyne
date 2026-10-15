@@ -82,6 +82,15 @@ impl MemoryBackend for GuardRecordingBackend {
     }
 
     unsafe fn make_guard(ptr: *mut u8, size: usize) -> bool {
+        let page = super::alloc::guard::native_guard_size(1).expect("native page geometry");
+        assert!(
+            ptr.addr().is_multiple_of(page),
+            "guard address must be page aligned"
+        );
+        assert!(
+            size != 0 && size.is_multiple_of(page),
+            "guard length must cover whole pages"
+        );
         let idx = GUARD_CALLS.fetch_add(1, Ordering::Relaxed);
         if idx < 2 {
             GUARD_PTRS[idx].store(ptr as usize, Ordering::Relaxed);
@@ -242,6 +251,8 @@ fn fresh_segment_installs_tail_guard_in_alignment_slack() {
     let segment =
         unsafe { allocate_segment::<GuardRecordingBackend>() }.expect("segment allocation");
     let expected_guard = segment as usize + SEGMENT_SIZE;
+    let expected_size = super::alloc::guard::native_guard_size(SEGMENT_TAIL_GUARD_SIZE)
+        .expect("native tail guard geometry");
 
     // Find the tail guard in the recorded guard calls.
     let mut found = false;
@@ -249,7 +260,7 @@ fn fresh_segment_installs_tail_guard_in_alignment_slack() {
     for idx in 0..limit {
         let ptr = GUARD_PTRS[idx].load(Ordering::Relaxed);
         let size = GUARD_SIZES[idx].load(Ordering::Relaxed);
-        if ptr == expected_guard && size == SEGMENT_TAIL_GUARD_SIZE {
+        if ptr == expected_guard && size == expected_size {
             found = true;
             break;
         }
@@ -276,7 +287,11 @@ fn fresh_segment_installs_header_guard_in_page_0() {
 
     let segment =
         unsafe { allocate_segment::<GuardRecordingBackend>() }.expect("segment allocation");
-    let expected_guard = segment as usize + PAGE_SIZE - super::alloc::SEGMENT_HEADER_GUARD_SIZE;
+    let expected_size =
+        super::alloc::guard::native_guard_size(super::alloc::SEGMENT_HEADER_GUARD_SIZE)
+            .expect("native header guard geometry");
+    let expected_guard = super::alloc::guard::header_guard_offset(expected_size)
+        .map(|offset| segment.addr() + offset);
 
     // Find the header guard in the recorded guard calls.
     let mut found = false;
@@ -284,13 +299,19 @@ fn fresh_segment_installs_header_guard_in_page_0() {
     for idx in 0..limit {
         let ptr = GUARD_PTRS[idx].load(Ordering::Relaxed);
         let size = GUARD_SIZES[idx].load(Ordering::Relaxed);
-        if ptr == expected_guard && size == super::alloc::SEGMENT_HEADER_GUARD_SIZE {
+        if Some(ptr) == expected_guard && size == expected_size {
             found = true;
             break;
         }
     }
 
-    assert!(found, "header guard was not placed at the end of Page 0");
+    if expected_guard.is_some() {
+        assert!(found, "header guard was not placed at the end of Page 0");
+    } else {
+        for ptr in GUARD_PTRS.iter().take(limit) {
+            assert!(ptr.load(Ordering::Relaxed) >= segment.addr() + PAGE_SIZE);
+        }
+    }
 
     let released = unsafe { release_segment_mapping::<GuardRecordingBackend>(segment) };
     assert_eq!(released, SegmentRelease::Released);
@@ -371,6 +392,19 @@ impl MemoryBackend for DecommitRecordingBackend {
     }
 
     unsafe fn decommit(ptr: *mut u8, size: usize) -> bool {
+        #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
+        {
+            let page = super::alloc::guard::native_guard_size(1).expect("native page geometry");
+            assert!(
+                ptr.addr().is_multiple_of(page),
+                "decommit address must be page aligned"
+            );
+            assert!(
+                size.is_multiple_of(page),
+                "decommit length must cover whole pages"
+            );
+        }
+        #[cfg(not(any(feature = "segment-tail-guards", feature = "segment-header-guards")))]
         let _ = ptr;
         DECOMMIT_CALLS.fetch_add(1, Ordering::Relaxed);
         DECOMMIT_BYTES.fetch_add(size, Ordering::Relaxed);
@@ -405,11 +439,14 @@ fn test_segment_tail_slack_decommit() {
         "Expected at least 1 decommit call for slack memory, got {}",
         calls
     );
-    assert!(
-        bytes >= SEGMENT_SIZE - 4096,
-        "Expected at least {} bytes decommitted, got {}",
-        SEGMENT_SIZE - 4096,
-        bytes
+    #[cfg(not(feature = "segment-tail-guards"))]
+    let guard_bytes = 0;
+    #[cfg(feature = "segment-tail-guards")]
+    let guard_bytes = super::alloc::guard::native_guard_size(SEGMENT_TAIL_GUARD_SIZE).unwrap_or(0);
+    assert_eq!(
+        bytes,
+        SEGMENT_SIZE - guard_bytes,
+        "all alignment slack outside the complete guard must be decommitted"
     );
 
     let released = unsafe { release_segment_mapping::<DecommitRecordingBackend>(segment) };

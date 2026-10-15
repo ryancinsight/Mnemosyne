@@ -11,11 +11,9 @@
       26 doctests pass with one existing ignore.
 - [x] Verify all six standard package archives and locked-source API release
       classification; minor boundaries do not claim backward compatibility.
-- [ ] Resolve the optional guard telemetry case: 147/148 pass; the same failure
-      reproduces on unchanged macOS main. Assertions and guard code stay intact.
-      See MN-NATIVE-GUARD-GEOMETRY: native 16-KiB pages produce one confirmed
-      4096-byte request, and fixed guard requests violate documented page
-      preconditions. An expected-count-only change does not resolve that issue.
+- [x] Repair native optional-guard geometry; preserve the original telemetry and
+      mapping/release assertions. Default 481, individual guards149 each, and
+      all-feature arena 151 pass, zero skips. Windows/Linux cross checks pass.
 - [x] Obtain authorization for the existing required Miri CI without changing gates.
 - [ ] Collect all exact-head required CI results, including Miri.
 - [x] Select Eunomia 0.10.0 published source a231e54d with verified registry receipts.
@@ -26,9 +24,11 @@
 - [x] Check current owner file/hunk metadata without reading held implementation.
 - [x] Reproduce the exact failing combined-feature case on unchanged main.
 - [x] Record real OS page size and tail/header/both confirmed-call/byte matrix.
-- [x] Preserve the original assertions, guard implementation and native deadline.
-- [ ] Coordinate the backend/arena page contract and repair protection geometry
-      separately from held registry/Miri work; validate 4-KiB and 16-KiB hosts.
+- [x] Preserve the original telemetry/mapping/release assertions and native deadline.
+- [x] Repair only optional native guard geometry outside held registry hunks;
+      validate real 16-KiB outcomes, metadata exclusion and full slack decommit.
+- [ ] Collect final Linux (4-KiB) and required Miri/CI results and review before
+      publication; Windows cross compilation does not establish native execution.
 
 
 ## MN-WASM-ENV-2026-09-11 (owner: codex)

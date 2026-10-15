@@ -8,10 +8,10 @@ use super::super::alignment::checked_align_up;
 use super::super::pool::HasSegmentPool;
 #[cfg(feature = "segment-header-guards")]
 use super::SEGMENT_HEADER_GUARD_SIZE;
-use super::{SEGMENT_MAPPING_SIZE, SEGMENT_TAIL_GUARD_SIZE};
+use super::SEGMENT_MAPPING_SIZE;
+#[cfg(feature = "segment-tail-guards")]
+use super::SEGMENT_TAIL_GUARD_SIZE;
 use crate::numa::current_numa_node;
-#[cfg(feature = "segment-header-guards")]
-use mnemosyne_core::constants::PAGE_SIZE;
 use mnemosyne_core::constants::{SEGMENT_ALIGN, SEGMENT_SIZE};
 use mnemosyne_core::types::Segment;
 
@@ -78,12 +78,16 @@ unsafe fn initialize_allocated_segment(
         Segment::initialize(aligned_ptr, raw_ptr, numa_node);
     }
 
-    let tail_slack_start = if cfg!(feature = "segment-tail-guards") {
-        aligned_addr + SEGMENT_SIZE + SEGMENT_TAIL_GUARD_SIZE
-    } else {
-        aligned_addr + SEGMENT_SIZE
-    };
-    let mapping_end = raw_ptr as usize + SEGMENT_MAPPING_SIZE;
+    let mapping_end = (raw_ptr as usize).checked_add(SEGMENT_MAPPING_SIZE)?;
+    let tail_slack_start = aligned_addr.checked_add(SEGMENT_SIZE)?;
+    if tail_slack_start > mapping_end {
+        return None;
+    }
+    #[cfg(feature = "segment-tail-guards")]
+    let tail_slack_start = super::guard::native_guard_size(SEGMENT_TAIL_GUARD_SIZE)
+        .and_then(|size| tail_slack_start.checked_add(size))
+        .filter(|end| *end <= mapping_end)
+        .unwrap_or(tail_slack_start);
 
     Some((aligned_ptr, aligned_addr, tail_slack_start, mapping_end))
 }
@@ -279,22 +283,26 @@ unsafe fn map_fresh_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
 
     #[cfg(feature = "segment-header-guards")]
     {
-        if B::SUPPORTS_MAKE_GUARD {
+        if B::SUPPORTS_MAKE_GUARD
+            && let Some(size) = super::guard::native_guard_size(SEGMENT_HEADER_GUARD_SIZE)
+            && let Some(offset) = super::guard::header_guard_offset(size)
+        {
             // Install a header guard at the end of Page 0.
             // Underflows (backward OOB writes) from Page 1 land in this guard region
             // instead of overwriting the segment metadata at the start of Page 0.
             //
-            // SAFETY: aligned_addr + PAGE_SIZE - SEGMENT_HEADER_GUARD_SIZE is inside the mapping
-            // and Page 0 is reserved strictly for Segment metadata (ending far before the guard).
-            let header_guard_addr = aligned_addr + PAGE_SIZE - SEGMENT_HEADER_GUARD_SIZE;
+            // SAFETY: size is a whole system page and offset is aligned to it.
+            // The range ends at Page 0's boundary and follows all live metadata.
+            let header_guard_addr = aligned_addr + offset;
             let header_guard = raw_ptr.map_addr(|_| header_guard_addr);
-            let _guarded = unsafe { B::make_guard(header_guard, SEGMENT_HEADER_GUARD_SIZE) };
+            let _guarded = unsafe { B::make_guard(header_guard, size) };
         }
     }
 
     #[cfg(feature = "segment-tail-guards")]
     {
-        if B::SUPPORTS_MAKE_GUARD {
+        let tail_guard_size = tail_slack_start - (aligned_addr + SEGMENT_SIZE);
+        if B::SUPPORTS_MAKE_GUARD && tail_guard_size != 0 {
             // Install a tail guard immediately after the segment's user-page
             // region. Forward OOB writes that walk past Page 31 land in this
             // guard region instead of an unrelated mapping. The address lives
@@ -304,16 +312,16 @@ unsafe fn map_fresh_segment<B: HasSegmentPool>() -> Option<*mut Segment> {
             // with the segment by `B::deallocate(raw_ptr, SEGMENT_MAPPING_SIZE)`.
             // The install is best-effort: a backend without a `make_guard`
             // implementation (default `false`) or a kernel that declines the
-            // request (e.g. macOS-arm64 where the OS page size exceeds 4 KiB)
+            // request
             // silently skips, leaving the slack accessible. Backend telemetry
             // (`guard_install_calls`) surfaces the actual install count.
             //
-            // SAFETY: aligned_addr + SEGMENT_SIZE is inside the raw mapping
-            // because slack-after >= OS_PAGE_SIZE >= SEGMENT_TAIL_GUARD_SIZE on
-            // supported targets. `make_guard` never invalidates the mapping.
+            // SAFETY: the start and size are system-page aligned; initialization
+            // checked the reserved guard end against the complete raw mapping.
+            // `make_guard` never invalidates the reservation.
             let tail_guard_addr = aligned_addr + SEGMENT_SIZE;
             let tail_guard = raw_ptr.map_addr(|_| tail_guard_addr);
-            let _guarded = unsafe { B::make_guard(tail_guard, SEGMENT_TAIL_GUARD_SIZE) };
+            let _guarded = unsafe { B::make_guard(tail_guard, tail_guard_size) };
         }
     }
 

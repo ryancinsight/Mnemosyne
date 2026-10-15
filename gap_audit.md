@@ -18,19 +18,23 @@ boundaries skip major-sensitive rules by tool design; two patches each compare
 196 rules. A feature-only macro predicate and a Windows-only documentation
 reference fix diagnostics without changing runtime behavior.
 
-The optional Eunomia/both-guard suite passes 147/148. Its telemetry case also
-fails on unchanged macOS main. A real native matrix on 16384-byte OS pages
-records tail-only 1 call/4096 bytes, header-only 0/0, and both 1/4096 against an
-8192-byte test expectation. Header-only's conditional assertion passes without
-an installed guard. The fixed 4096-byte requests do not meet the public
-`MemoryBackend::make_guard` system-page geometry preconditions; changing only
-the expected telemetry would leave this mismatch unresolved. No assertion or
-production protection behavior changes. MN-NATIVE-GUARD-GEOMETRY records
-ownership and native acceptance needed for a separate repair; held #218 maps
-and registers memory in the same function outside the guard hunks.
+The optional-guard failure is repaired through private OS page geometry. Before:
+4-KiB requests on a 16-KiB host produced tail1/4096, header0/0 and both1/4096,
+violating documented backend preconditions and the original 8192-byte assertion.
+After: native tail/header/both confirm 1/16384,1/16384 and 2/32768. The original
+telemetry, mapped-byte and release assertions remain byte-identical. Guards
+cover whole OS pages, header requests exclude live metadata, and tail slack
+starts after the complete guard within the existing reservation. The decommit
+fixture now enforces exact unprotected slack and page-aligned calls. Default
+481, single-guard 149 each and all-feature arena 151 native cases pass, zero skips.
+Three new pure geometry cases cover 4/16/64-KiB pages and safe rejection. Strict
+lint/docs and Windows/Linux cross compilation pass. The held mapping/registry
+function prefix is byte-identical to main; no held work or public backend API
+is changed. Final Linux/Miri/package/API acceptance remains pending.
 The user now authorizes required Miri CI. Its actual exact-head results are
-pending; gate/filter/timeout changes and package publication are prohibited in
-this resumed turn. Held safety/performance branches remain untouched.
+pending. The user also authorizes publication after all applicable exact-head
+checks/reviews pass. Gate/filter/timeout changes remain prohibited; held
+safety/performance branches remain untouched.
 
 
 <!-- Compacted 2026-09-21 under the 1,000-line board budget: a board is a queue, not a ledger, so closed sections and closed item bodies are gone -- their record is the PR that closed them and its `Item:` trailer. Open items, anchors and live-marked residuals are kept. Recover any removed narrative with `git log -p -- <this file>`. -->
