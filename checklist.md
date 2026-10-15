@@ -16,7 +16,8 @@
       See MN-NATIVE-GUARD-GEOMETRY: native 16-KiB pages produce one confirmed
       4096-byte request, and fixed guard requests violate documented page
       preconditions. An expected-count-only change does not resolve that issue.
-- [ ] Collect exact-head required CI after the deferred-Miri conflict is resolved.
+- [x] Obtain authorization for the existing required Miri CI without changing gates.
+- [ ] Collect all exact-head required CI results, including Miri.
 - [x] Select Eunomia 0.10.0 published source a231e54d with verified registry receipts.
 - [ ] Verify this cohort's package registry receipts after required integration.
 

@@ -28,8 +28,9 @@ the expected telemetry would leave this mismatch unresolved. No assertion or
 production protection behavior changes. MN-NATIVE-GUARD-GEOMETRY records
 ownership and native acceptance needed for a separate repair; held #218 maps
 and registers memory in the same function outside the guard hunks.
-Required CI would run explicitly deferred Miri, so no PR/default integration or
-publication is attempted. Held safety/performance branches remain untouched.
+The user now authorizes required Miri CI. Its actual exact-head results are
+pending; gate/filter/timeout changes and package publication are prohibited in
+this resumed turn. Held safety/performance branches remain untouched.
 
 
 <!-- Compacted 2026-09-21 under the 1,000-line board budget: a board is a queue, not a ledger, so closed sections and closed item bodies are gone -- their record is the PR that closed them and its `Item:` trailer. Open items, anchors and live-marked residuals are kept. Recover any removed narrative with `git log -p -- <this file>`. -->

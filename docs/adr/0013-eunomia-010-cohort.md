@@ -46,8 +46,9 @@ does not establish backward compatibility across the minor boundaries.
 Run the existing ordinary native, lint, docs, package and API gates. Those
 checks do not establish Miri coverage. Root Cargo manifest/lock changes set
 code=true in the existing CI classifier, selecting Miri; the required CI
-aggregate includes that job. Miri is explicitly deferred and unverified.
-Do not create a PR/merge that starts it or change the classifier/gate to obtain
-a passing status. Keep this provider increment blocked until the task owner
-resolves that scope conflict. Existing held safety/performance PRs and their
-reserved ADR 0012 remain untouched; no safety investigation is resumed.
+aggregate includes that job. The user now authorizes these existing required
+Miri checks; actual exact-head results remain pending. Do not change the
+classifier, gate, filters or timeouts to obtain a passing status. This resumed
+turn does not authorize package publication. Existing held safety/performance
+PRs and reserved ADR 0012 remain untouched; their implementation work is not
+resumed by running the current required CI.

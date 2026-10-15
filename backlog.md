@@ -29,9 +29,9 @@
   system-page address/length preconditions. Correcting only the expected
   counter would leave that contract issue unresolved. Keep the assertion and
   production guard code intact pending provider ownership/scope resolution.
-  **Blocker:** root manifest/lock changes select the existing Miri job, and the
-  required CI aggregate depends on it. Miri remains deferred and unverified;
-  no PR/merge that starts it or gate weakening is authorized in this increment.
+  **Required CI:** the user authorizes the existing required Miri checks.
+  Their actual exact-head results remain pending; no gate, filter or timeout
+  changes are permitted. Package publication remains outside this resumed turn.
   **Decision:** [ADR 0013](docs/adr/0013-eunomia-010-cohort.md). Existing held
   provenance, sampler and performance owner branches remain untouched.
 
