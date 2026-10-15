@@ -1,5 +1,18 @@
 # Checklist
 
+Target for this slice: arena 0.7.1 / memory 0.10.1.
+
+## MN-EUNOMIA-011-RANGE [patch]
+
+- [x] Inspect current default, open PR ownership and repository instructions.
+- [x] Widen only the provider range; preserve all Rust/test/workflow bytes and
+      every external lock record. Record the compatible patch package targets.
+- [ ] Pass exact-head native, lint/docs, standard-package and API gates.
+- [ ] Pass applicable hosted checks and review; verify merge side effects.
+- [ ] Merge normally and verify actual registry archives; revalidate Coeus on
+      one canonical published Eunomia 0.11 source before closing this item.
+
+
 ## MN-EUNOMIA-010-COHORT [major] — current slice
 
 - [x] Inspect current main, open owner PRs and reserved ADR numbers; isolate work.

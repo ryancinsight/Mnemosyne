@@ -1,5 +1,16 @@
 # Changelog
 
+## Eunomia 0.11 compatibility — Unreleased
+
+### Changed
+
+- [patch] arena 0.7.1 / memory 0.10.1: admit Eunomia `>=0.10.0, <0.12.0` without
+  removing current-provider support. The 0.11 addition is a const constructor;
+  existing numeric APIs and implementation behavior remain unchanged.
+- Preserve all Rust sources, tests, features, deadlines and external lock
+  records. No compatibility adapter or provider-source override is introduced.
+  Final CI, publication and the actual 0.11 consumer gate remain pending.
+
 ## Eunomia 0.10 cohort - 2026-10-15
 
 ### Breaking

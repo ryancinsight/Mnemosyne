@@ -1,5 +1,23 @@
 # Backlog
 
+<a id="MN-EUNOMIA-011-RANGE"></a>
+## MN-EUNOMIA-011-RANGE — Admit the additive Eunomia provider line [patch] — todo
+
+- priority: correctness; status: todo; owner: Codex.
+- Scope: canonical Eunomia requirement and affected package versions only;
+  prerequisite for [Eunomia #182](https://github.com/ryancinsight/eunomia/pull/182)
+  and [Coeus #528](https://github.com/ryancinsight/Coeus/pull/528).
+- Outcome: accept `>=0.10.0, <0.12.0`, retaining the current 0.10 provider
+  and admitting its additive 0.11 const-construction API with one Git identity.
+- Target: arena 0.7.1 / memory 0.10.1. Existing implementation, tests, features, native deadlines
+  and every external locked package remain unchanged. No adapter is added.
+- Evidence: the unmodified Coeus resolver rejects the 0.11 candidate against
+  current `^0.10` requirements. Local and hosted final-head gates remain pending.
+- Acceptance: exact-source native, strict lint/docs, standard packages and API
+  comparisons pass; existing applicable CI/reviews pass before normal merge.
+  Revalidate the actual 0.11 consumer after that provider is published.
+
+
 ## Ready
 
 <a id="MN-RESCUE-QUEUE"></a>
