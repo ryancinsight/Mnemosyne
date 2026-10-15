@@ -15,9 +15,12 @@
       mapping/release assertions. Default 481, individual guards149 each, and
       all-feature arena 151 pass, zero skips. Windows/Linux cross checks pass.
 - [x] Obtain authorization for the existing required Miri CI without changing gates.
-- [ ] Collect all exact-head required CI results, including Miri.
+- [x] Collect all exact-head required CI results at f36febc8: Miri, Loom,
+      ThreadSanitizer, native verification and CI aggregate all pass.
 - [x] Select Eunomia 0.10.0 published source a231e54d with verified registry receipts.
-- [ ] Verify this cohort's package registry receipts after required integration.
+- [x] Merge PR #237 normally as b7e0e1e with an identical reviewed source tree;
+      publisher 38752721843 succeeds. All six registry archive checksums and VCS
+      source identities are independently verified, not yanked (ADR 0013).
 
 ## MN-NATIVE-GUARD-GEOMETRY [patch]
 
@@ -27,8 +30,9 @@
 - [x] Preserve the original telemetry/mapping/release assertions and native deadline.
 - [x] Repair only optional native guard geometry outside held registry hunks;
       validate real 16-KiB outcomes, metadata exclusion and full slack decommit.
-- [ ] Collect final Linux (4-KiB) and required Miri/CI results and review before
-      publication; Windows cross compilation does not establish native execution.
+- [x] Collect final Linux guard matrix, required Miri/Loom/TSan/CI and blocking
+      API/package acceptance before publication. Windows runtime is unverified;
+      cross compilation does not establish native execution.
 
 
 ## MN-WASM-ENV-2026-09-11 (owner: codex)
