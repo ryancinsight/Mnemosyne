@@ -2,6 +2,27 @@
 
 ## Ready
 
+<a id="mn-eunomia-010-cohort"></a>
+- [ ] [major] **MN-EUNOMIA-010-COHORT — adopt the current datatype provider.**
+  priority: verification; status: blocked; owner: coordinated Coeus release integrator.
+  **Scope:** manifest/lock versions, changelog, ADR 0013 and this checklist only.
+  **Outcome:** Eunomia 0.10 uses one canonical provider identity; arena/local/heap
+  advance to 0.7.0 and the memory facade to 0.10.0 for public marker/pool trait
+  identities. Decay and the C shim use 0.3.3 dependency patches; the C ABI stays
+  unchanged. Unaffected core/backend/profiler/hardening/build-util versions stay.
+  **Acceptance:** ordinary native, strict lint, docs, package/API and exact-head
+  required CI gates; preserve every source, fixture, test and timeout.
+  **Native evidence:** all-feature workspace check and strict all-target Clippy
+  pass. The fail-fast native suite executes 394/481 cases: 393 pass and the
+  existing allocation-counting isolation case fails; 87 remain unexecuted.
+  The same case fails on untouched main, independently of this provider update.
+  **Blocker:** root manifest/lock changes select the existing Miri job, and the
+  required CI aggregate depends on it. Miri remains deferred and unverified;
+  no PR/merge that starts it or gate weakening is authorized in this increment.
+  **Decision:** [ADR 0013](docs/adr/0013-eunomia-010-cohort.md). Existing held
+  provenance, sampler and performance owner branches remain untouched.
+
+
 <a id="MN-RESCUE-QUEUE"></a>
 - [ ] [correctness] **MN-RESCUE-QUEUE — complete or close the open rescue PR.**
   priority: correctness; status: todo; needs: none; scope: the head ref of the

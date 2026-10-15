@@ -1,5 +1,25 @@
 # Changelog
 
+## Eunomia 0.10 cohort - unreleased
+
+### Breaking
+
+- `mnemosyne-arena`, `mnemosyne-local` and `mnemosyne-heap` advance to 0.7.0;
+  `mnemosyne-memory` advances to 0.10.0. Eunomia marker types and the public
+  arena `HasSegmentPool` bounds share the 0.10 datatype provider identity.
+- Consumers advance those minor lines together. Enable the existing `eunomia`
+  feature where typed buffers are required; no compatibility aliases are added.
+
+### Changed
+
+- `mnemosyne-decay` and `mnemosyne-c-shim` advance to 0.3.3 for their updated
+  internal arena/local dependency edges. Their public non-arena interfaces and
+  the C ABI remain unchanged. Other package versions and all Rust source,
+  tests, fixtures, allocator behavior and verification limits are preserved.
+- See [ADR 0013](docs/adr/0013-eunomia-010-cohort.md). Required Miri remains
+  deferred and unverified; publication/default integration is not complete.
+
+
 ## Unreleased
 
 ### Added

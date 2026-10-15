@@ -1,5 +1,14 @@
 # Checklist
 
+## MN-EUNOMIA-010-COHORT [major] — current slice
+
+- [x] Inspect current main, open owner PRs and reserved ADR numbers; isolate work.
+- [x] Record the datatype/public pool boundary and align the affected versions.
+- [ ] Pass unchanged ordinary native, strict Clippy, docs and package/API gates.
+- [ ] Collect exact-head required CI after the deferred-Miri conflict is resolved.
+- [ ] Integrate the final published provider source and verify registry receipts.
+
+
 ## MN-WASM-ENV-2026-09-11 (owner: codex)
 
 - [x] Gate the environment reader away from host-only `getenv` on wasm32.
