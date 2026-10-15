@@ -1,6 +1,6 @@
 # Changelog
 
-## Eunomia 0.10 cohort - unreleased
+## Eunomia 0.10 cohort - 2026-10-15
 
 ### Breaking
 
@@ -30,8 +30,9 @@
   passes. Address/decommit fixtures enforce alignment and exact remaining slack.
 - Select current Themis/Melinoe sources without older-version fallbacks. See
   [ADR 0013](docs/adr/0013-eunomia-010-cohort.md). Required Miri/publication are
-  authorized after exact-head gates/reviews; current final-head acceptance is
-  pending, and no held safety/performance work is resumed.
+  authorized after exact-head gates/reviews; PR #237 publishes from b7e0e1e
+  after all final-head required CI/API/package checks pass. All six registry
+  archive checksums/source identities are verified. Held work remains untouched.
 
 
 ## Unreleased

@@ -48,7 +48,8 @@ address fixtures also check page preconditions, and slack decommit requires the
 exact unprotected remainder. Default 481, individual guards 149 each and all-feature
 arena 151 cases pass with zero skips. Three geometry cases cover 4/16/64-KiB
 pages, invalid geometry and metadata exclusion. Windows/Linux cross checks
-compile; native Windows and final Linux/Miri results remain separate evidence.
+compile; native Windows runtime remains unverified. Final Linux guard-matrix
+and required Miri evidence are recorded below.
 Strict all-target/all-feature Clippy,
 warning-denied docs, 26 doctests (one existing ignore) and all six standard
 package verifications pass. Locked-source API classification accepts the four
@@ -56,15 +57,34 @@ minor boundaries (253 rules skipped by the tool for each major-compatible
 release class) and compares 196 rules for each dependency-only patch. This
 does not establish backward compatibility across the minor boundaries.
 
-## Verification and current blocker
+## Final acceptance and immutable receipts
 
-Run the existing ordinary native, lint, docs, package and API gates. Those
-checks do not establish Miri coverage. Root Cargo manifest/lock changes set
-code=true in the existing CI classifier, selecting Miri; the required CI
-aggregate includes that job. The user now authorizes these existing required
-Miri checks; actual exact-head results remain pending. Do not change the
-classifier, gate, filters or timeouts to obtain a passing status. This resumed
-turn now authorizes publication after all applicable exact-head gates and
-reviews pass; unresolved native guard acceptance still blocks release. Existing held safety/performance
-PRs and reserved ADR 0012 remain untouched; their implementation work is not
-resumed by running the current required CI.
+[Reviewed head](https://github.com/ryancinsight/Mnemosyne/commit/f36febc82edfc1a1fbc7df92b6847fc894f5b859)
+and [published merge](https://github.com/ryancinsight/Mnemosyne/commit/b7e0e1e37130b0a317859b168cca16b5172d08d8)
+share tree `9c05a3011ca7d3a15e5e1f21d60bd96a74c5fc83`. All required exact-head
+checks pass, including actual Miri, Loom, ThreadSanitizer, Linux native guard
+matrix and CI aggregate. The blocking [release validation](https://github.com/ryancinsight/Mnemosyne/actions/runs/38749847652)
+builds and compares all ten selected library baselines and verifies the arena
+archive. The existing caller excludes the unchanged build-only utility; no
+workflow, baseline fallback, release-type override, coverage or deadline change
+supplies acceptance. All six clean final-head standard packages also verify.
+
+The normal guarded merge triggers the existing [publisher](https://github.com/ryancinsight/Mnemosyne/actions/runs/38752721843),
+which succeeds. All six downloaded archives independently match their registry
+SHA-256 and `.cargo_vcs_info.json` source b7e0e1e; all are present and not yanked.
+
+| Crate | Version | Registry SHA-256 |
+| --- | --- | --- |
+| `mnemosyne-arena` | 0.7.0 | `581052478bcdb6749e17a3648ce938814468a56a242feec22363614c3c79b414` |
+| `mnemosyne-local` | 0.7.0 | `9e2e5729346946d80bf14523d707e3dc3f7e347b09895d6cfb98ba0174702406` |
+| `mnemosyne-heap` | 0.7.0 | `baaf13fcadc5d699ee71d5bc157e45c739cf2ed7c713a120667dc803ab1e31dc` |
+| `mnemosyne-memory` | 0.10.0 | `4b442affb7cf56fee5446facc7dcdb15ec7a14a7038f0646727ec0736479ff74` |
+| `mnemosyne-decay` | 0.3.3 | `5123cfd9231741d692b3860f0498577962a81aac8b33018a431587ab5c6e9b2c` |
+| `mnemosyne-c-shim` | 0.3.3 | `c9db92dd714df63c275ca9e1359b4d14c9d3d069d95d2ec6b6395c97add71489` |
+
+The user explicitly authorizes required Miri and publication after all gates
+pass. Required-pipeline Miri establishes only its unchanged declared scope;
+held free-path/sampler safety and performance work and reserved ADR 0012 remain
+untouched. Their existing backlog items stay open, and native Windows runtime
+is unverified. This receipt-only closure changes no Rust, version, lock, workflow
+or native deadline and requests no additional package version or deployment.

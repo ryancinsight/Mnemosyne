@@ -1,9 +1,9 @@
 # Gap Audit
 
-## MN-EUNOMIA-010-COHORT [major] — blocked provider increment
+## MN-EUNOMIA-010-COHORT [major] — published, receipts verified
 
 Eunomia/derive 0.10.0 are published and registry-verified at a231e54d. The
-coordinated candidate selects that source, advances public arena/local/heap
+published cohort selects that source, advances public arena/local/heap
 identities to 0.7.0 and the facade to 0.10.0, and uses private dependency
 patches 0.3.3 for decay/the C shim. Production allocation behavior is unchanged.
 
@@ -30,11 +30,18 @@ fixture now enforces exact unprotected slack and page-aligned calls. Default
 Three new pure geometry cases cover 4/16/64-KiB pages and safe rejection. Strict
 lint/docs and Windows/Linux cross compilation pass. The held mapping/registry
 function prefix is byte-identical to main; no held work or public backend API
-is changed. Final Linux/Miri/package/API acceptance remains pending.
-The user now authorizes required Miri CI. Its actual exact-head results are
-pending. The user also authorizes publication after all applicable exact-head
-checks/reviews pass. Gate/filter/timeout changes remain prohibited; held
-safety/performance branches remain untouched.
+is changed. Final f36febc8 required CI passes, including actual Miri,
+Loom, ThreadSanitizer, Linux guard matrix and aggregate. Blocking release
+validation 38749847652 builds/compares all ten selected library baselines and
+verifies the arena package; the unchanged build-only utility remains outside
+the existing library caller. All six clean final-head standard packages verify.
+PR #237 merges normally as b7e0e1e with tree 9c05a301, identical to reviewed
+f36febc8. Publisher 38752721843 succeeds; all six not-yanked registry archives
+match their independent checksums and that source identity (ADR 0013).
+Required pipeline Miri covers its declared scope only. Existing free-path and
+sampler Miri backlog items and held branches remain unresolved; no broad safety
+completion or native Windows runtime result is claimed. Gates, coverage and
+timeouts stay unchanged.
 
 
 <!-- Compacted 2026-09-21 under the 1,000-line board budget: a board is a queue, not a ledger, so closed sections and closed item bodies are gone -- their record is the PR that closed them and its `Item:` trailer. Open items, anchors and live-marked residuals are kept. Recover any removed narrative with `git log -p -- <this file>`. -->
