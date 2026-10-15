@@ -13,9 +13,21 @@
       classification; minor boundaries do not claim backward compatibility.
 - [ ] Resolve the optional guard telemetry case: 147/148 pass; the same failure
       reproduces on unchanged macOS main. Assertions and guard code stay intact.
+      See MN-NATIVE-GUARD-GEOMETRY: native 16-KiB pages produce one confirmed
+      4096-byte request, and fixed guard requests violate documented page
+      preconditions. An expected-count-only change does not resolve that issue.
 - [ ] Collect exact-head required CI after the deferred-Miri conflict is resolved.
 - [x] Select Eunomia 0.10.0 published source a231e54d with verified registry receipts.
 - [ ] Verify this cohort's package registry receipts after required integration.
+
+## MN-NATIVE-GUARD-GEOMETRY [patch]
+
+- [x] Check current owner file/hunk metadata without reading held implementation.
+- [x] Reproduce the exact failing combined-feature case on unchanged main.
+- [x] Record real OS page size and tail/header/both confirmed-call/byte matrix.
+- [x] Preserve the original assertions, guard implementation and native deadline.
+- [ ] Coordinate the backend/arena page contract and repair protection geometry
+      separately from held registry/Miri work; validate 4-KiB and 16-KiB hosts.
 
 
 ## MN-WASM-ENV-2026-09-11 (owner: codex)

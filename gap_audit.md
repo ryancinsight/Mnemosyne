@@ -19,7 +19,15 @@ boundaries skip major-sensitive rules by tool design; two patches each compare
 reference fix diagnostics without changing runtime behavior.
 
 The optional Eunomia/both-guard suite passes 147/148. Its telemetry case also
-fails on unchanged macOS main; keep that separate prerequisite unresolved.
+fails on unchanged macOS main. A real native matrix on 16384-byte OS pages
+records tail-only 1 call/4096 bytes, header-only 0/0, and both 1/4096 against an
+8192-byte test expectation. Header-only's conditional assertion passes without
+an installed guard. The fixed 4096-byte requests do not meet the public
+`MemoryBackend::make_guard` system-page geometry preconditions; changing only
+the expected telemetry would leave this mismatch unresolved. No assertion or
+production protection behavior changes. MN-NATIVE-GUARD-GEOMETRY records
+ownership and native acceptance needed for a separate repair; held #218 maps
+and registers memory in the same function outside the guard hunks.
 Required CI would run explicitly deferred Miri, so no PR/default integration or
 publication is attempted. Held safety/performance branches remain untouched.
 

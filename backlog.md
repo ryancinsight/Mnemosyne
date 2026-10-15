@@ -22,13 +22,46 @@
   pass. The four minor boundaries skip major-sensitive API rules by design;
   the two dependency-only patches each compare 196 rules.
   **Native blocker:** the optional Eunomia/both-guard suite passes 147/148 cases.
-  Its telemetry case fails identically on unchanged macOS main. Do not weaken
-  that assertion or investigate the held allocator work as part of this update.
+  Its telemetry case fails identically on unchanged macOS main. On 16-KiB OS
+  pages, tail-only confirms one 4096-byte request; header-only confirms none;
+  both confirm one 4096-byte request while the assertion expects 8192 bytes.
+  The fixed 4-KiB request geometry also violates the backend's documented
+  system-page address/length preconditions. Correcting only the expected
+  counter would leave that contract issue unresolved. Keep the assertion and
+  production guard code intact pending provider ownership/scope resolution.
   **Blocker:** root manifest/lock changes select the existing Miri job, and the
   required CI aggregate depends on it. Miri remains deferred and unverified;
   no PR/merge that starts it or gate weakening is authorized in this increment.
   **Decision:** [ADR 0013](docs/adr/0013-eunomia-010-cohort.md). Existing held
   provenance, sampler and performance owner branches remain untouched.
+
+<a id="mn-native-guard-geometry"></a>
+## MN-NATIVE-GUARD-GEOMETRY — reconcile native guard request geometry [patch]
+
+- Status: blocked; priority: correctness; owner: allocator provider coordination.
+- Finding: `fresh_segment_install_increments_guard_telemetry_and_round_trips`
+  fails on unchanged main and the datatype candidate with both guard features.
+  Native macOS has 16384-byte pages. Header offset `65536 - 4096 = 61440`
+  has page remainder 12288; both requests use 4096-byte lengths. These do not
+  meet `MemoryBackend::make_guard`'s system-page preconditions. The backend
+  records confirmed outcomes only; observed combined delta is one call/4096
+  bytes, compared with the test's 8192-byte expectation. Header-only's test
+  passes with zero installs because its counter assertion is conditional.
+- Scope: establish a backend/arena page-geometry contract before changing
+  protection behavior. No test-ignore, expected-count-only repair, platform
+  exclusion, safety-contract relaxation or timeout change constitutes closure.
+- Ownership: active held PR #218 changes mapping/registration in the same
+  `map_fresh_segment` function, outside the guard hunks; PR #190 also touches
+  the test file outside this case. Only file/hunk metadata was compared.
+  Neither owner branch nor its implementation is changed or resumed.
+- Acceptance: preserve guard-address tests and mapping/release assertions;
+  validate real native guard outcomes and telemetry on 4-KiB and 16-KiB page
+  hosts, plus all applicable feature/native/lint/docs gates. Reclassify the
+  version if the repair requires a public backend API change.
+- Evidence: the native tail/header/both matrix reproduces 1/4096, 0/0 and
+  1/4096 calls/bytes respectively. The combined case fails; the unchanged-main
+  reproduction fails at the same assertion. Diagnostic output is retained
+  outside the repository; test and production source remain unchanged.
 
 
 <a id="MN-RESCUE-QUEUE"></a>
