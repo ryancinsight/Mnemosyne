@@ -4,12 +4,14 @@
 
 ### Changed
 
-- [patch] arena 0.7.1 / memory 0.10.1: admit Eunomia `>=0.10.0, <0.12.0` without
-  removing current-provider support. The 0.11 addition is a const constructor;
-  existing numeric APIs and implementation behavior remain unchanged.
-- Preserve all Rust sources, tests, features, deadlines and external lock
-  records. No compatibility adapter or provider-source override is introduced.
-  Final CI, publication and the actual 0.11 consumer gate remain pending.
+- [patch] arena 0.7.1 / memory 0.10.1: admit Eunomia `>=0.10.0, <0.12.0`
+  through one canonical Git edge while retaining the published 0.10 source lock.
+- Validate the provider boundary against published 0.10 and reviewed combined
+  0.11 sources. This workspace does not activate the provider's optional
+  NumPy/PyO3 0.30 boundary and does not claim 0.29 Python compatibility.
+- Preserve all Rust implementations, tests, features, workflows, native deadlines
+  and external committed lock records. Final-head required Miri/CI, review,
+  package/API gates and publication receipts remain required before closure.
 
 ## Eunomia 0.10 cohort - 2026-10-15
 

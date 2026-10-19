@@ -1,23 +1,26 @@
 # Backlog
 
 <a id="MN-EUNOMIA-011-RANGE"></a>
-## MN-EUNOMIA-011-RANGE — Admit the additive Eunomia provider line [patch] — todo
+## MN-EUNOMIA-011-RANGE — Admit the approved Eunomia provider bundle [patch] — in-progress
 
-- priority: correctness; status: todo; owner: Codex.
-- Scope: canonical Eunomia requirement and affected package versions only;
-  prerequisite for [Eunomia #182](https://github.com/ryancinsight/eunomia/pull/182)
-  and [Coeus #528](https://github.com/ryancinsight/Coeus/pull/528).
-- Outcome: accept `>=0.10.0, <0.12.0`, retaining the current 0.10 provider
-  and admitting its additive 0.11 const-construction API with one Git identity.
-- Target: arena 0.7.1 / memory 0.10.1. Existing implementation, tests, features, native deadlines
-  and every external locked package remain unchanged. No adapter is added.
-- Evidence: the unmodified Coeus resolver rejects the 0.11 candidate against
-  current `^0.10` requirements. Source-head [validated source](https://github.com/ryancinsight/Mnemosyne/commit/a9f271726232a6fc59cc2e78c95c124fa8a7bfc9) passes
-  481 default native and 151 all-feature guard cases, zero skips, strict lint/docs/doctests, standard packages and API checks.
-  Final-head hosted CI/review and publication remain pending.
-- Acceptance: exact-source native, strict lint/docs, standard packages and API
-  comparisons pass; existing applicable CI/reviews pass before normal merge.
-  Revalidate the actual 0.11 consumer after that provider is published.
+- priority: correctness; status: in-progress; owner: Codex; PR #239.
+- Scope: accept `>=0.10.0, <0.12.0` through the existing canonical Git edge,
+  retaining current 0.10 support while admitting the approved 0.11 bundle.
+  Target: arena 0.7.1 / memory 0.10.1. No runtime source, test, feature,
+  workflow, deadline or external committed lock record changes.
+- Contract: the provider's optional NumPy/PyO3 0.30 migration is breaking for
+  Python consumers. This workspace does not activate that boundary; this range
+  makes no compatibility claim for it. The committed lock stays on published
+  Eunomia 0.10 source `a231e54d` until the coordinated provider-default advance.
+- Evidence, 2026-10-19: both canonical Git sources `a231e54d` (0.10) and
+  independently reviewed `22daa6c` (combined 0.11) pass 483 Eunomia-enabled workspace tests plus 151 all-feature arena tests,
+  zero skips. The 0.11 probe changes only provider lock records in an isolated
+  checkout; no path patch, adapter or manifest source pin is used. Strict lint,
+  warning-denied docs and doctests pass. Other owners' held work is untouched.
+- Acceptance: exact final-head required CI, including Miri, independent review,
+  MSRV, strict patch API and standard package verification pass before ordinary
+  merge/publication. Then verify registry archives and canonical downstream
+  resolution before closing this item. Prior-head CI is revision-scoped evidence.
 
 
 ## Ready

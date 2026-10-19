@@ -4,15 +4,21 @@ Target for this slice: arena 0.7.1 / memory 0.10.1.
 
 ## MN-EUNOMIA-011-RANGE [patch]
 
-- [x] Inspect current default, open PR ownership and repository instructions.
-- [x] Widen only the provider range; preserve all Rust/test/workflow bytes and
-      every external lock record. Record the compatible patch package targets.
-- [x] Pass source-head [validated source](https://github.com/ryancinsight/Mnemosyne/commit/a9f271726232a6fc59cc2e78c95c124fa8a7bfc9) native (481 default native and 151 all-feature guard cases, zero skips),
-      strict lint/docs/doctests, standard-package and API gates.
-      All external locked records and implementation bytes remain unchanged.
-- [ ] Pass applicable hosted checks and review; verify merge side effects.
-- [ ] Merge normally and verify actual registry archives; revalidate Coeus on
-      one canonical published Eunomia 0.11 source before closing this item.
+- [x] Recheck current defaults, existing PR ownership, instructions and active
+      required checks; reuse this isolated draft branch.
+- [x] Preserve all Rust/test/workflow bytes and committed external lock records;
+      retain the existing compatible patch targets and 0.10 provider lock.
+- [x] Validate both actual canonical provider sources `a231e54d` and `22daa6c`:
+      483 Eunomia-enabled workspace tests plus 151 all-feature arena tests, zero skips. Activate the optional
+      Eunomia boundary where applicable; keep NumPy/PyO3 migration claims separate.
+- [x] Pass 0.11 strict lint, warning-denied docs/doctests and applicable minimal builds.
+- [x] Pass reviewed-source MSRV, strict patch API and standard package verification.
+- [ ] Verify clean final-head package source identity after the status update.
+- [ ] Pass unchanged required hosted checks, including Miri, and independent review.
+- [ ] Merge normally; verify automatic publication, registry checksum/VCS/source
+      contents and any selected documentation deployment.
+- [ ] Revalidate canonical downstream resolution on the published 0.11 provider
+      before closing this coordinated prerequisite.
 
 
 ## MN-EUNOMIA-010-COHORT [major] — current slice
