@@ -1,9 +1,9 @@
 # Backlog
 
 <a id="MN-EUNOMIA-011-RANGE"></a>
-## MN-EUNOMIA-011-RANGE — Admit the approved Eunomia provider bundle [patch] — in-progress
+## MN-EUNOMIA-011-RANGE — Admit the approved Eunomia provider bundle [patch] — todo
 
-- priority: correctness; status: in-progress; owner: Codex; PR #239.
+- priority: correctness; status: todo; owner: Codex; PR #239.
 - Scope: accept `>=0.10.0, <0.12.0` through the existing canonical Git edge,
   retaining current 0.10 support while admitting the approved 0.11 bundle.
   Target: arena 0.7.1 / memory 0.10.1. No runtime source, test, feature,
@@ -11,9 +11,9 @@
 - Contract: the provider's optional NumPy/PyO3 0.30 migration is breaking for
   Python consumers. This workspace does not activate that boundary; this range
   makes no compatibility claim for it. The committed lock stays on published
-  Eunomia 0.10 source `a231e54d` until the coordinated provider-default advance.
-- Evidence, 2026-10-19: both canonical Git sources `a231e54d` (0.10) and
-  independently reviewed `22daa6c` (combined 0.11) pass 483 Eunomia-enabled workspace tests plus 151 all-feature arena tests,
+  Eunomia 0.10 source [0.10 source](https://github.com/ryancinsight/eunomia/commit/a231e54dd3311bc916e78c91d994b00d651c1646) until the coordinated provider-default advance.
+- Evidence, 2026-10-19: both canonical Git sources [0.10 source](https://github.com/ryancinsight/eunomia/commit/a231e54dd3311bc916e78c91d994b00d651c1646) (0.10) and
+  independently reviewed [0.11 source](https://github.com/ryancinsight/eunomia/commit/22daa6c67e3d0f16d346a312b6835ccbf351a708) (combined 0.11) pass 483 Eunomia-enabled workspace tests plus 151 all-feature arena tests,
   zero skips. The 0.11 probe changes only provider lock records in an isolated
   checkout; no path patch, adapter or manifest source pin is used. Strict lint,
   warning-denied docs and doctests pass. Other owners' held work is untouched.

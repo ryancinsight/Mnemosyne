@@ -8,7 +8,7 @@ Target for this slice: arena 0.7.1 / memory 0.10.1.
       required checks; reuse this isolated draft branch.
 - [x] Preserve all Rust/test/workflow bytes and committed external lock records;
       retain the existing compatible patch targets and 0.10 provider lock.
-- [x] Validate both actual canonical provider sources `a231e54d` and `22daa6c`:
+- [x] Validate both actual canonical provider sources [0.10 source](https://github.com/ryancinsight/eunomia/commit/a231e54dd3311bc916e78c91d994b00d651c1646) and [0.11 source](https://github.com/ryancinsight/eunomia/commit/22daa6c67e3d0f16d346a312b6835ccbf351a708):
       483 Eunomia-enabled workspace tests plus 151 all-feature arena tests, zero skips. Activate the optional
       Eunomia boundary where applicable; keep NumPy/PyO3 migration claims separate.
 - [x] Pass 0.11 strict lint, warning-denied docs/doctests and applicable minimal builds.

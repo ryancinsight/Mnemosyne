@@ -4,8 +4,8 @@
 
 The default `^0.10` requirement excludes approved Eunomia 0.11. Existing PR
 #239 admits `>=0.10.0, <0.12.0` without changing implementation or dropping
-current-version support. The committed canonical lock remains `a231e54d`.
-An isolated ordinary Git lock selection of reviewed combined source `22daa6c`
+current-version support. The committed canonical lock remains [0.10 source](https://github.com/ryancinsight/eunomia/commit/a231e54dd3311bc916e78c91d994b00d651c1646).
+An isolated ordinary Git lock selection of reviewed combined source [0.11 source](https://github.com/ryancinsight/eunomia/commit/22daa6c67e3d0f16d346a312b6835ccbf351a708)
 passes 483 Eunomia-enabled workspace tests plus 151 all-feature arena tests, zero skips, plus strict lint,
 docs/doctests and applicable minimal builds. The feature-enabled metadata
 contains one canonical Eunomia identity and does not enable NumPy. The optional
