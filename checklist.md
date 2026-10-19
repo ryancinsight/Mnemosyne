@@ -1,5 +1,29 @@
 # Checklist
 
+Target for this slice: arena 0.7.1 / memory 0.10.1.
+
+## MN-EUNOMIA-011-RANGE [patch]
+
+- [x] Recheck current defaults, existing PR ownership, instructions and active
+      required checks; reuse this isolated draft branch.
+- [x] Preserve all Rust/test/workflow bytes and committed external lock records;
+      retain the existing compatible patch targets and 0.10 provider lock.
+- [x] Validate both actual canonical provider sources [0.10 source](https://github.com/ryancinsight/eunomia/commit/a231e54dd3311bc916e78c91d994b00d651c1646) and [0.11 source](https://github.com/ryancinsight/eunomia/commit/22daa6c67e3d0f16d346a312b6835ccbf351a708):
+      483 Eunomia-enabled workspace tests plus 151 all-feature arena tests, zero skips. Activate the optional
+      Eunomia boundary where applicable; keep NumPy/PyO3 migration claims separate.
+- [x] Pass 0.11 strict lint, warning-denied docs/doctests and applicable minimal builds.
+- [x] Pass reviewed-source MSRV, strict patch API and standard package verification.
+- [x] Reproduce old-internal normalized-package trait/type failures against0.11.
+- [x] Raise affected internal minimums and pass actual normalized-package value
+      consumers on0.10/0.11; reject old explicit internal pins at resolution.
+- [ ] Verify clean final-head package source identity after the status update.
+- [ ] Pass unchanged required hosted checks, including Miri, and independent review.
+- [ ] Merge normally; verify automatic publication, registry checksum/VCS/source
+      contents and any selected documentation deployment.
+- [ ] Revalidate canonical downstream resolution on the published 0.11 provider
+      before closing this coordinated prerequisite.
+
+
 ## MN-EUNOMIA-010-COHORT [major] — current slice
 
 - [x] Inspect current main, open owner PRs and reserved ADR numbers; isolate work.

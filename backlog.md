@@ -1,5 +1,39 @@
 # Backlog
 
+<a id="MN-EUNOMIA-011-RANGE"></a>
+## MN-EUNOMIA-011-RANGE — Admit the approved Eunomia provider bundle [patch] — todo
+
+- priority: correctness; status: todo; owner: Codex; PR #239.
+- Scope: accept `>=0.10.0, <0.12.0` through the existing canonical Git edge,
+  retaining current 0.10 support while admitting the approved 0.11 bundle.
+  Target: arena 0.7.1 / memory 0.10.1. No runtime source, test, feature,
+  workflow, deadline or external committed lock record changes.
+- Contract: the provider's optional NumPy/PyO3 0.30 migration is breaking for
+  Python consumers. This workspace does not activate that boundary; this range
+  makes no compatibility claim for it. The committed lock stays on published
+  Eunomia 0.10 source [0.10 source](https://github.com/ryancinsight/eunomia/commit/a231e54dd3311bc916e78c91d994b00d651c1646) until the coordinated provider-default advance.
+- Evidence, 2026-10-19: both canonical Git sources [0.10 source](https://github.com/ryancinsight/eunomia/commit/a231e54dd3311bc916e78c91d994b00d651c1646) (0.10) and
+  independently reviewed [0.11 source](https://github.com/ryancinsight/eunomia/commit/22daa6c67e3d0f16d346a312b6835ccbf351a708) (combined 0.11) pass 483 Eunomia-enabled workspace tests plus 151 all-feature arena tests,
+  zero skips. The 0.11 probe changes only provider lock records in an isolated
+  checkout; no path patch, adapter or manifest source pin is used. Strict lint,
+  warning-denied docs and doctests pass. Other owners' held work is untouched.
+- Normalized-package finding: admitting old internal packages leaves two
+  Eunomia identities and fails real typed value consumers before execution.
+  Raise affected internal minimums to arena0.7.1. This preserves
+  current0.10 support through the compatible new libraries. Workspace path
+  verification alone masked this legal published-package composition.
+- Regression acceptance: the old admitted minimum fails the scratch/scalar
+  contract; the repaired normalized cohort passes the unchanged value oracles
+  on both providers and rejects incompatible old explicit pins at resolution.
+  Executed: two pre-fix E0277 failures, four passing value consumers, two
+  expected resolver rejections; normal grouped packaging verifies all six
+  repaired library archives without disabling verification or allowing dirt.
+- Acceptance: exact final-head required CI, including Miri, independent review,
+  MSRV, strict patch API and standard package verification pass before ordinary
+  merge/publication. Then verify registry archives and canonical downstream
+  resolution before closing this item. Prior-head CI is revision-scoped evidence.
+
+
 ## Ready
 
 <a id="MN-RESCUE-QUEUE"></a>

@@ -459,7 +459,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-arena"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "bytemuck",
  "eunomia",
@@ -561,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "mnemosyne-memory"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "eunomia",
  "mnemosyne-arena",
