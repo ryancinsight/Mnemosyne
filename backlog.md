@@ -17,6 +17,14 @@
   zero skips. The 0.11 probe changes only provider lock records in an isolated
   checkout; no path patch, adapter or manifest source pin is used. Strict lint,
   warning-denied docs and doctests pass. Other owners' held work is untouched.
+- Normalized-package finding: admitting old internal packages leaves two
+  Eunomia identities and fails real typed value consumers before execution.
+  Raise affected internal minimums to arena0.7.1. This preserves
+  current0.10 support through the compatible new libraries. Workspace path
+  verification alone masked this legal published-package composition.
+- Regression acceptance: the old admitted minimum fails the scratch/scalar
+  contract; the repaired normalized cohort passes the unchanged value oracles
+  on both providers and rejects incompatible old explicit pins at resolution.
 - Acceptance: exact final-head required CI, including Miri, independent review,
   MSRV, strict patch API and standard package verification pass before ordinary
   merge/publication. Then verify registry archives and canonical downstream

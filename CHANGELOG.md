@@ -9,6 +9,8 @@
 - Validate the provider boundary against published 0.10 and reviewed combined
   0.11 sources. This workspace does not activate the provider's optional
   NumPy/PyO3 0.30 boundary and does not claim 0.29 Python compatibility.
+- Require the compatible internal libraries (arena0.7.1) so normalized
+  packages cannot admit old components with a conflicting public scalar identity.
 - Preserve all Rust implementations, tests, features, workflows, native deadlines
   and external committed lock records. Final-head required Miri/CI, review,
   package/API gates and publication receipts remain required before closure.

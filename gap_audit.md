@@ -12,6 +12,14 @@ contains one canonical Eunomia identity and does not enable NumPy. The optional
 Python identity break is outside this workspace's bridge claim. This is source
 compatibility evidence, not a receipt for unpublished Eunomia 0.11 packages.
 
+Normalized-package probes expose a separate gap hidden by workspace paths:
+old admitted internal libraries retain the0.10 scalar identity while the new
+facade selects0.11. Mnemosyne fails the existing complex scratch-value test;
+Hermes fails typed tile/scalar trait bounds during compilation. Require
+arena0.7.1 through the affected internal edges, then validate both
+provider lines using normalized package exports. Probe provider patches stay
+outside the repository and do not establish registry publication acceptance.
+
 All Rust/test/workflow bytes, existing test domains and time limits are preserved.
 Final-head Miri/required CI, independent review, MSRV/API/package gates, ordinary
 merge and registry acceptance remain explicit prerequisites. Held safety and
