@@ -25,6 +25,9 @@
 - Regression acceptance: the old admitted minimum fails the scratch/scalar
   contract; the repaired normalized cohort passes the unchanged value oracles
   on both providers and rejects incompatible old explicit pins at resolution.
+  Executed: two pre-fix E0277 failures, four passing value consumers, two
+  expected resolver rejections; normal grouped packaging verifies all six
+  repaired library archives without disabling verification or allowing dirt.
 - Acceptance: exact final-head required CI, including Miri, independent review,
   MSRV, strict patch API and standard package verification pass before ordinary
   merge/publication. Then verify registry archives and canonical downstream

@@ -14,7 +14,7 @@ Target for this slice: arena 0.7.1 / memory 0.10.1.
 - [x] Pass 0.11 strict lint, warning-denied docs/doctests and applicable minimal builds.
 - [x] Pass reviewed-source MSRV, strict patch API and standard package verification.
 - [x] Reproduce old-internal normalized-package trait/type failures against0.11.
-- [ ] Raise affected internal minimums and pass actual normalized-package value
+- [x] Raise affected internal minimums and pass actual normalized-package value
       consumers on0.10/0.11; reject old explicit internal pins at resolution.
 - [ ] Verify clean final-head package source identity after the status update.
 - [ ] Pass unchanged required hosted checks, including Miri, and independent review.

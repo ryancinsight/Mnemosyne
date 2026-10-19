@@ -19,6 +19,9 @@ Hermes fails typed tile/scalar trait bounds during compilation. Require
 arena0.7.1 through the affected internal edges, then validate both
 provider lines using normalized package exports. Probe provider patches stay
 outside the repository and do not establish registry publication acceptance.
+Both pre-fix consumers fail with E0277; all four repaired value consumers
+pass with one Eunomia identity, and both incompatible old pins are rejected
+at resolution. Standard grouped Cargo packaging verifies all six libraries.
 
 All Rust/test/workflow bytes, existing test domains and time limits are preserved.
 Final-head Miri/required CI, independent review, MSRV/API/package gates, ordinary
