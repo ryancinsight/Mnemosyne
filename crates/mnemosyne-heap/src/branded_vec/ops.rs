@@ -157,7 +157,38 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         }
     }
 
+    /// Push without a capacity check: caller guarantees `len < cap` (non-ZST)
+    /// or unconditional success (ZST, where `cap == usize::MAX`).
+    ///
+    /// SSOT for the unchecked tail of every bulk-append path, so the
+    /// reserve-once/append-many policy cannot drift between them. Zero-cost:
+    /// monomorphizes away for each `T`; no branch on growth, no error path.
+    #[inline(always)]
+    fn push_unchecked(&mut self, val: T) {
+        if core::mem::size_of::<T>() == 0 {
+            self.len = self
+                .len
+                .checked_add(1)
+                .expect("invariant: a ZST append cannot exhaust usize::MAX elements");
+            // Ownership transfer without storage; see `push` for why `forget`
+            // (not drop) is the correct realization here.
+            core::mem::forget(val);
+            return;
+        }
+        // SAFETY: caller guarantees `self.len < self.cap` for non-ZST `T`
+        // (every caller reserves `additional` up front), so the slot at
+        // `self.len` is in-bounds, aligned, and uninitialized; `write` moves
+        // `val` in without touching prior contents, and the increment claims it.
+        unsafe {
+            self.ptr.as_ptr().add(self.len).write(val);
+        }
+        self.len += 1;
+    }
+
     /// Clones and appends all elements in a slice to the vector.
+    ///
+    /// Reserve-once/append-many: a single `reserve` up front, then unchecked
+    /// pushes with no per-item growth branch (zero-cost after monomorphization).
     ///
     /// # Errors
     /// Returns `Err(())` if capacity overflow or allocation fails.
@@ -169,8 +200,10 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         T: Clone,
     {
         self.reserve(token, other.len())?;
+        // `reserve` guarantees `len + other.len() <= cap` (or ZST infinity),
+        // so every push below is in-bounds: no growth check per item.
         for item in other {
-            self.push(token, item.clone()).map_err(|_| ())?;
+            self.push_unchecked(item.clone());
         }
         Ok(())
     }
@@ -193,7 +226,7 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         if new_len > self.len {
             self.reserve(token, new_len - self.len)?;
             while self.len < new_len {
-                self.push(token, value.clone()).map_err(|_| ())?;
+                self.push_unchecked(value.clone());
             }
         } else {
             self.truncate(new_len);
@@ -212,13 +245,22 @@ impl<'brand, 'heap, T, P: AllocPolicy, B: HasSegmentPool + LocalAllocatorSelecto
         for<'token> &'token mut Permit: WritePermit<'brand>,
         I: IntoIterator<Item = T>,
     {
-        let iterator = iter.into_iter();
+        let mut iterator = iter.into_iter();
         let (lower, _) = iterator.size_hint();
         if lower > 0 {
             self.reserve(token, lower)?;
         }
-        for item in iterator {
-            self.push(token, item).map_err(|_| ())?;
+        // Fast path: items within the pre-reserved `lower` bound skip the
+        // growth check entirely; only the unpredictable tail pays per-item
+        // checks (iterator may yield more than its lower bound).
+        let mut remaining_hint = lower;
+        for item in iterator.by_ref() {
+            if remaining_hint > 0 {
+                self.push_unchecked(item);
+                remaining_hint -= 1;
+            } else {
+                self.push(token, item).map_err(|_| ())?;
+            }
         }
         Ok(())
     }
@@ -310,10 +352,9 @@ impl<'brand, 'heap, T: Clone, P: AllocPolicy, B: HasSegmentPool + LocalAllocator
         for<'token> &'token mut Permit: WritePermit<'brand>,
     {
         let mut new_vec = Self::with_capacity(self.heap, &mut *token, self.len())?;
+        // `with_capacity(len)` guarantees the full slice fits: unchecked path.
         for item in self.as_slice() {
-            if new_vec.push(token, item.clone()).is_err() {
-                return None;
-            }
+            new_vec.push_unchecked(item.clone());
         }
         Some(new_vec)
     }
