@@ -304,7 +304,7 @@ fn op_aligned_alloc(table: &mut SlotTable, hint: usize, cursor: &mut Cursor<'_>)
         return true;
     }
     assert_eq!(
-        ptr as usize % alignment,
+        ptr.addr() % alignment,
         0,
         "aligned_alloc returned a misaligned pointer"
     );
@@ -563,8 +563,11 @@ mod tests {
         // Deterministic pseudo-random stream: exercises every opcode family,
         // slot exhaustion, the live-byte budget, and end-of-input cleanup.
         let data: Vec<u8> = (0..4096_u32)
-            .map(|i| (i as u8).wrapping_mul(31).wrapping_add(7))
+            .map(|i| i.to_le_bytes()[0].wrapping_mul(31).wrapping_add(7))
             .collect();
+        assert_eq!(data[255], 232);
+        assert_eq!(data[256], 7);
+        assert_eq!(data[4095], 232);
         run_sequence(&data);
     }
 }
