@@ -110,7 +110,7 @@ fn fuzz_calloc(raw_nmemb: usize, raw_size: usize) {
 fn fuzz_realloc(raw_old_size: usize, raw_new_size: usize) {
     let old_size = shaped_size(raw_old_size).min(MAX_FUZZ_ALLOC);
     let new_size = shaped_size(raw_new_size);
-    let ptr = unsafe { mnemosyne_c_shim::malloc(malloc_request(old_size)) } as *mut u8;
+    let ptr = unsafe { mnemosyne_c_shim::malloc(malloc_request(old_size)) }.cast::<u8>();
     if ptr.is_null() {
         return;
     }
@@ -120,7 +120,7 @@ fn fuzz_realloc(raw_old_size: usize, raw_new_size: usize) {
         unsafe { ptr.add(index).write(pattern(SINGLE_OP_SEED, index)) };
     }
 
-    let resized = unsafe { mnemosyne_c_shim::realloc(ptr.cast::<c_void>(), new_size) } as *mut u8;
+    let resized = unsafe { mnemosyne_c_shim::realloc(ptr.cast::<c_void>(), new_size) }.cast::<u8>();
     if new_size == 0 {
         assert!(resized.is_null(), "realloc(_, 0) must return null");
         return;
@@ -160,7 +160,7 @@ fn fuzz_aligned_alloc(raw_alignment: usize, raw_size: usize) {
         return;
     }
     assert_eq!(
-        ptr as usize % alignment,
+        ptr.addr() % alignment,
         0,
         "aligned_alloc returned a misaligned pointer"
     );
@@ -199,7 +199,7 @@ fn fuzz_posix_memalign(raw_alignment: usize, raw_size: usize) {
 
     assert!(!out.is_null(), "posix_memalign success returned null");
     assert_eq!(
-        out as usize % alignment,
+        out.addr() % alignment,
         0,
         "posix_memalign returned a misaligned pointer"
     );
@@ -338,7 +338,7 @@ const SINGLE_OP_SEED: u8 = 0x31;
 /// Position-dependent byte pattern; distinct seeds distinguish neighboring
 /// allocations in the clobber oracle. Shared by both executor modes.
 pub(crate) fn pattern(seed: u8, index: usize) -> u8 {
-    (index as u8).wrapping_mul(17).wrapping_add(seed)
+    index.to_le_bytes()[0].wrapping_mul(17).wrapping_add(seed)
 }
 
 fn usize_from_le(bytes: &[u8]) -> usize {
@@ -352,6 +352,13 @@ fn usize_from_le(bytes: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pattern_uses_the_low_index_byte() {
+        assert_eq!(pattern(SINGLE_OP_SEED, 255), 32);
+        assert_eq!(pattern(SINGLE_OP_SEED, 256), SINGLE_OP_SEED);
+        assert_eq!(pattern(SINGLE_OP_SEED, usize::MAX), 32);
+    }
 
     #[test]
     fn executor_accepts_short_inputs_without_work() {
