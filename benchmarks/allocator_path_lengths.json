@@ -1,0 +1,64 @@
+{
+ "toolchain": "1.97.0",
+ "target": "x86_64-pc-windows-msvc",
+ "builds": {
+  "main": {"revision": "58e1aee2a8d37656b097652435e32668e2de8ac6", "paths": {
+   "standard_in_place_free": [
+    {"function": "probe_dealloc", "fingerprint": "4c4d462215fc6767", "decisions": "21=F,35=F,3e=F,53=T,185=F,1b8=F,1c7=F,1e5=F,20f=T,729=F,736=T,7e1=F,7e9=F,7ee=F,817=F,823=F,82c=T,83b=F,845=F,856=F,864=T,87a=T,8aa=T,8bd=T,a4f=T,a64=F"}
+   ],
+   "secure_in_place_free": [
+    {"function": "probe_secure_dealloc", "fingerprint": "30ee1a366ac6d1da", "decisions": "21=F,35=F,3e=F,53=T,1b2=F,1e5=F,1f4=F,215=F,23f=T,7ab=F,7b8=T,847=F,87f=F,887=F,88c=F,8b5=F,8c1=F,8ca=T,8d9=F,8e3=F,8f4=F,902=T,918=T,948=T,95b=T,aed=T,b02=F"}
+   ],
+   "standard_remote_push": [
+    {"function": "probe_dealloc", "fingerprint": "4c4d462215fc6767", "decisions": "21=F,35=F,3e=F,53=T,185=F,1b8=F,1c7=F,1e5=F,20f=T,729=F,736=T,7e1=F,7e9=F,7ee=T,801=F"},
+    {"function": "thread_free_cold", "fingerprint": "ca97ead9c3b1f587", "decisions": "c=F,29=F,31=T,ed=F,fa=F,124=F,159=F,170=F"}
+   ],
+   "realloc_within_class": [
+    {"function": "probe_realloc", "fingerprint": "3c34b7fe55a1f3ab", "decisions": "2a=F,32=F,4f=F"},
+    {"function": "realloc_can_reuse", "fingerprint": "f20fadd4ad671f2a", "decisions": "b=F,10=F,1a=F,3d=F,45=F"}
+   ],
+   "usable_size_small": [
+    {"function": "probe_usable_size", "fingerprint": "027ff8f63a617da3", "decisions": "15=F,1f=F,39=F"}
+   ]
+  }},
+  "q": {"revision": "7015312c82081139a7b8dac738a9d73b6e356e45", "paths": {
+   "standard_in_place_free": [
+    {"function": "probe_dealloc", "fingerprint": "261fa5c79a3f143f", "decisions": "23=F,37=F,40=F,55=T,1eb=F,1f4=F,20f=F,229=F,25c=F,26b=F,289=F,2b3=T,7cb=F,7d8=T,883=F,88b=F,890=F,8b9=F,8c5=F,8ce=T,8dd=F,8ee=F,8fc=T,912=T,942=T,955=T,aef=T,b04=F"}
+   ],
+   "secure_in_place_free": [
+    {"function": "probe_secure_dealloc", "fingerprint": "c8f0e499160737cd", "decisions": "23=F,37=F,40=F,55=T,219=F,222=F,23d=F,257=F,28a=F,299=F,2ba=F,2e4=T,84e=F,85b=T,8ea=F,922=F,92a=F,92f=F,958=F,964=F,96d=T,97c=F,98d=F,99b=T,9b1=T,9e1=T,9f4=T,b8e=T,ba3=F"}
+   ],
+   "standard_remote_push": [
+    {"function": "probe_dealloc", "fingerprint": "261fa5c79a3f143f", "decisions": "23=F,37=F,40=F,55=T,1eb=F,1f4=F,20f=F,229=F,25c=F,26b=F,289=F,2b3=T,7cb=F,7d8=T,883=F,88b=F,890=T,8a3=F"},
+    {"function": "thread_free_cold", "fingerprint": "6df37c2a2b7ea729", "decisions": "7=F,15=T,cd=F,f7=F,129=F,140=F"}
+   ],
+   "realloc_within_class": [
+    {"function": "probe_realloc", "fingerprint": "4b233ceae0695e96", "decisions": "30=F,38=F,59=F"},
+    {"function": "realloc_can_reuse", "fingerprint": "fece830ff16456ab", "decisions": "b=F,10=F,1a=F,3d=F,45=F"}
+   ],
+   "usable_size_small": [
+    {"function": "probe_usable_size", "fingerprint": "18f94c29c0e14d05", "decisions": "15=F,22=F,3d=F,5b=F,69=F,84=F"}
+   ]
+  }},
+  "option1": {"revision": "743c330978acd87bef2f70c06ee77a334207f00c", "paths": {
+   "standard_in_place_free": [
+    {"function": "probe_dealloc", "fingerprint": "d00e73b8d1a3673c", "decisions": "23=F,36=F,43=F,5c=T,2f4=F,301=F,31c=F,336=F,369=F,378=F,396=F,3c0=T,aa7=F,ab4=T,b77=F,b7f=F,b84=F,bae=F,bba=F,bc3=T,bd2=F,be3=F,bf0=T,c06=T,c44=T,c57=T,d95=T,daf=F,def=T"}
+   ],
+   "secure_in_place_free": [
+    {"function": "probe_secure_dealloc", "fingerprint": "f78fa92a2c3ed35e", "decisions": "23=F,36=F,43=F,5c=T,32b=F,338=F,353=F,36d=F,3a0=F,3af=F,3d0=F,3fa=T,b90=F,b9d=T,c4b=F,c83=F,c8b=F,c90=F,cba=F,cc6=F,cce=T,cdd=F,cee=F,cfb=T,d11=T,d52=T,d64=T,edb=T,ef5=F,f35=T"}
+   ],
+   "standard_remote_push": [
+    {"function": "probe_dealloc", "fingerprint": "d00e73b8d1a3673c", "decisions": "23=F,36=F,43=F,5c=T,2f4=F,301=F,31c=F,336=F,369=F,378=F,396=F,3c0=T,aa7=F,ab4=T,b77=F,b7f=F,b84=T,b97=F"},
+    {"function": "thread_free_cold", "fingerprint": "c206fcad885b6961", "decisions": "1c=F,3e=F,47=T,120=F,12d=F,15d=F,18e=F,199=F,1b1=F"}
+   ],
+   "realloc_within_class": [
+    {"function": "probe_realloc", "fingerprint": "77b7fa2732e0a890", "decisions": ""},
+    {"function": "thread_realloc&14StandardPolicy", "fingerprint": "af56aa0eddc7f608", "decisions": "19=F,21=F,3c=F,49=F,64=F,7e=F"},
+    {"function": "realloc_can_reuse", "fingerprint": "fece830ff16456ab", "decisions": "b=F,10=F,1a=F,3d=F,45=F"}
+   ],
+   "usable_size_small": [
+    {"function": "probe_usable_size", "fingerprint": "18f94c29c0e14d05", "decisions": "15=F,22=F,3d=F,5b=F,69=F,84=F"}
+   ]
+  }}
+ }
+}
