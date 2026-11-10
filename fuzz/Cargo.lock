@@ -166,7 +166,7 @@ dependencies = [
 [[package]]
 name = "melinoe"
 version = "0.10.0"
-source = "git+https://github.com/ryancinsight/melinoe.git#067b8f4030345e75bfbd9f72f14ab54a8a9b9824"
+source = "git+https://github.com/ryancinsight/melinoe.git#7109f29192847ac1100290cbfa984a2fabf3d696"
 
 [[package]]
 name = "memchr"
@@ -358,7 +358,7 @@ checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 [[package]]
 name = "themis-topology"
 version = "0.11.5"
-source = "git+https://github.com/ryancinsight/themis#9198908c568879babfc839417226d11f1bbc3406"
+source = "git+https://github.com/ryancinsight/themis#93fcd134879a48eeda9f9e9b40d2ce71809eb5f7"
 dependencies = [
  "libc",
  "melinoe",
