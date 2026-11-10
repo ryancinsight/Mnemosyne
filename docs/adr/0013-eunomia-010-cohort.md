@@ -32,7 +32,7 @@ version requirements. The workspace lock selects
 and both the workspace and fuzz locks select
 [Melinoe 0.10.0](https://github.com/ryancinsight/melinoe/commit/7109f29192847ac1100290cbfa984a2fabf3d696)
 and
-[Themis 0.11.5](https://github.com/ryancinsight/themis/commit/93fcd134879a48eeda9f9e9b40d2ce71809eb5f7).
+[Themis 0.11.5](https://github.com/ryancinsight/themis/pull/121).
 Eunomia and Melinoe change no public source surface across the selected range;
 Themis changes Linux topology parsing behind its existing public contract.
 Locked workspace and fuzz native gates exercise those consumer contracts.
