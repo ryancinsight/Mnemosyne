@@ -20,3 +20,4 @@
 | [0010](0010-melinoe-permits-for-branded-heaps.md) | Use Melinoe permits for branded heap access | Accepted |
 | [0011](0011-wasm-memory-backend.md) | Provide a portable WebAssembly memory backend | Accepted |
 | [0013](0013-eunomia-010-cohort.md) | Adopt the Eunomia 0.10 datatype provider | Accepted |
+| [0014](0014-release-scope-1-0.md) | Mnemosyne release scope for 1.0 | Accepted |
