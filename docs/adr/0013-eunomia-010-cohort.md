@@ -4,6 +4,10 @@
 - Date: 2026-10-15
 - Item: MN-EUNOMIA-010-COHORT [major]
 
+Revision 2026-11-10: retain the Eunomia 0.10 compatibility floor while
+advancing both standalone lock owners to the selected immutable provider
+cohort; locked native gates and consumer comparisons establish compatibility.
+
 ## Contract and versioning
 
 The datatype provider's CastFrom/CastTo retirement requires Eunomia 0.10.
@@ -14,10 +18,24 @@ local and heap to 0.7.0, and the facade to 0.10.0, with matching internal edges.
 Decay and the C shim keep their public interfaces and use patch 0.3.3 for their
 updated private dependencies. Preserve the C ABI and all other package versions.
 
-Use the canonical Git URL and a Cargo-managed precise lock to the published
-Eunomia 0.10.0 source a231e54dd3311bc916e78c91d994b00d651c1646. The Cargo lock also
-selects current [Themis](https://github.com/ryancinsight/themis/commit/63c544108fc0e8408bf2096ddaf8e99dfa49f90c)
-and [Melinoe](https://github.com/ryancinsight/melinoe/commit/681c550efa385ade0dd1e4697451e80ac26b7ab5) without changing their version floors; all native suites are rerun on that graph.
+The initial delivery used the canonical Git URL and a Cargo-managed precise
+lock to the published Eunomia 0.10.0 source
+a231e54dd3311bc916e78c91d994b00d651c1646. Its lock also selected
+[Themis](https://github.com/ryancinsight/themis/commit/63c544108fc0e8408bf2096ddaf8e99dfa49f90c)
+and [Melinoe](https://github.com/ryancinsight/melinoe/commit/681c550efa385ade0dd1e4697451e80ac26b7ab5)
+without changing their version floors; the immutable release receipt remains
+below.
+
+The current standalone resolution keeps the canonical Git URLs and compatible
+version requirements. The workspace lock selects
+[Eunomia 0.12.0](https://github.com/ryancinsight/eunomia/commit/00ffd14a9e2791795ded32e3b4842e8eb79208ce),
+and both the workspace and fuzz locks select
+[Melinoe 0.10.0](https://github.com/ryancinsight/melinoe/commit/067b8f4030345e75bfbd9f72f14ab54a8a9b9824)
+and
+[Themis 0.11.5](https://github.com/ryancinsight/themis/commit/9198908c568879babfc839417226d11f1bbc3406).
+Eunomia and Melinoe change no public source surface across the selected range;
+Themis changes Linux topology parsing behind its existing public contract.
+Locked workspace and fuzz native gates exercise those consumer contracts.
 Default allocation/pool/registry behavior, fixtures and timeouts stay unchanged.
 The independent optional-guard correction below changes only protected extents. Gate the scratch-implementation macro with the same non-bytemuck
 predicate as its invocation, fixing an unused-macro diagnostic in the existing
