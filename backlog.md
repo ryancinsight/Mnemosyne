@@ -3,7 +3,7 @@
 <a id="MN-EUNOMIA-011-RANGE"></a>
 ## MN-EUNOMIA-011-RANGE — Admit the approved Eunomia provider bundle [patch] — todo
 
-- priority: correctness; status: todo; owner: Codex; PR #239.
+- priority: correctness; milestone: M-policies-backends; status: todo; owner: Codex; PR #239.
 - Scope: accept `>=0.10.0, <0.12.0` through the existing canonical Git edge,
   retaining current 0.10 support while admitting the approved 0.11 bundle.
   Target: arena 0.7.1 / memory 0.10.1. No runtime source, test, feature,
@@ -54,7 +54,7 @@
 
 <a id="MN-LOCAL-MIRI-UB"></a>
 - [ ] [correctness] **MN-LOCAL-MIRI-UB — remove the undefined behavior Miri reports in `mnemosyne-local`.**
-  priority: correctness; status: todo; needs: none; scope:
+  priority: correctness; milestone: M-core-allocation; status: todo; needs: none; scope:
   `crates/mnemosyne-local/src/free/classified.rs`,
   `crates/mnemosyne-local/src/local_alloc/page/allocation.rs`,
   `crates/mnemosyne/tests/global_alloc_tests/`, `.github/workflows/ci.yml`.
