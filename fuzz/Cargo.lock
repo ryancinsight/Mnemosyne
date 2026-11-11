@@ -358,7 +358,7 @@ checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 [[package]]
 name = "themis-topology"
 version = "0.11.5"
-source = "git+https://github.com/ryancinsight/themis#93fcd134879a48eeda9f9e9b40d2ce71809eb5f7"
+source = "git+https://github.com/ryancinsight/themis#db7c831168eba93744fd1497fd7feee4b9980c7b"
 dependencies = [
  "libc",
  "melinoe",
