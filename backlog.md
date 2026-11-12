@@ -38,7 +38,7 @@
 
 <a id="MN-RESCUE-QUEUE"></a>
 - [ ] [correctness] **MN-RESCUE-QUEUE — complete or close the open rescue PR.**
-  priority: correctness; status: todo; needs: none; scope: the head ref of the
+  priority: correctness; milestone: M-core-allocation; status: todo; needs: none; scope: the head ref of the
   PR below (`crates/`, `fuzz/`, `README.md`, `backlog.md`, `checklist.md`).
   **Outcome:** each listed rescue PR is completed onto current main (ported,
   verified, merged) or closed once its diff resolves empty against main.
@@ -66,7 +66,7 @@
 
 <a id="MN-PROF-MIRI-FRAMES"></a>
 - [ ] [correctness] **MN-PROF-MIRI-FRAMES — keep captured frame provenance in `mnemosyne-prof`.**
-  priority: correctness; status: todo; needs: MN-LOCAL-MIRI-UB; scope:
+  priority: correctness; milestone: M-policies-backends; status: todo; needs: MN-LOCAL-MIRI-UB; scope:
   `crates/mnemosyne-prof/src/sampler/`, `.github/workflows/ci.yml`.
   **Outcome:** the sampler stores captured frames as pointers rather than `usize`,
   so `backtrace::resolve` receives the provenance `frame.ip()` carried. With the
