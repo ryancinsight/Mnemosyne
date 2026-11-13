@@ -40,18 +40,29 @@
 - [ ] [correctness] **MN-RESCUE-QUEUE — port rescue PR #190 onto main in slices.**
   priority: correctness; milestone: M-core-allocation; status: todo; needs: none; scope: the work at
   `refs/pull/190/head` (released 2026-11-10).
-  **Outcome:** each hunk of #190 is ported to current main or proven obsolete,
-  then branch `rescue/mnemosyne-audit-20260928` is deleted.
-  **Acceptance:** each path listed by
-  `git diff --name-status refs/pull/190/head~1 refs/pull/190/head` is ported
-  to main or rejected with its reason in the closing PR.
-  **Next step:** one slice per PR, each at most 400 changed lines. Unported:
-  `segment/tests.rs` split into `tests_huge_pool.rs` and `tests_telemetry.rs`;
-  `mnemosyne-prof` and `mnemosyne-decay` `lib.rs` split into `control`, `hooks`,
-  `state`; `routing/cold.rs` split into `segment_acquisition.rs`; build-util
-  tests split; `mod.rs` to flat-module renames; rustfmt-only hunks; the
-  `DefaultBackend` leaf renames (public `UnixBackend`/`WindowsBackend` break,
-  needs a [major] ADR first).
+  **Outcome:** each #190 hunk is ported or proven obsolete; then delete `rescue/mnemosyne-audit-20260928`.
+  **Acceptance:** after `git fetch origin pull/190/head`, each path of `git diff --name-status
+  FETCH_HEAD~1 FETCH_HEAD` is ported to main or rejected with its reason in the closing PR.
+  **Next step:** one slice per PR, at most 400 changed lines. Unported: `segment/tests.rs` split
+  (`tests_huge_pool.rs`, `tests_telemetry.rs`); `mnemosyne-prof`/`mnemosyne-decay` `lib.rs` split
+  (`control`, `hooks`, `state`); `routing/cold.rs` split (`segment_acquisition.rs`); build-util tests
+  split with `emit_nightly_tls_cfg()` -> `nightly_tls_directives() -> Vec<&'static str>` and its three
+  `build.rs` callers (public break of published `mnemosyne-build-util` 0.2.1: [major] ADR first);
+  `warm_current_thread` into `allocator.rs` with reshaped `pub use`; `#![deny(missing_docs)]` on
+  `mnemosyne-benchmarks`; `mod.rs` to flat-module renames; rustfmt-only hunks; `DefaultBackend` leaf
+  renames and README text (public `UnixBackend`/`WindowsBackend` break: [major] ADR first); delete
+  `checklist.md` and the two done `MN-SCRATCH-*` blocks of `backlog.md`, still on main.
+
+<a id="MN-RESCUE-REFS"></a>
+- [ ] [correctness] **MN-RESCUE-REFS — dispose of rescue refs that have no PR or item.**
+  priority: correctness; milestone: M-core-allocation; status: todo; needs: none; scope: the refs below.
+  **Outcome:** each ref is ported to main, shown obsolete (its diff against main resolves empty), or
+  released with its branch deleted.
+  **Acceptance:** `git ls-remote origin 'refs/heads/rescue/*'` lists no mnemosyne ref without an open
+  PR or item; PRs #240 and #250 are each ported or rejected with a reason.
+  **Next step:** diff each against main: `rescue/mnemosyne-audit-round2-extension` (sibling commit of
+  #190 on the same parent; 3 files differ from it), `rescue/mnemosyne-219-whole-block-frees` (28 files,
+  +728/-121 against main), `rescue/mnemosyne-book-closure` (#240), `refs/pull/250/head` (#250).
 
 <a id="MN-LOCAL-MIRI-UB"></a>
 - [ ] [correctness] **MN-LOCAL-MIRI-UB — remove the undefined behavior Miri reports in `mnemosyne-local`.**
