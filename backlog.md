@@ -3,7 +3,7 @@
 <a id="MN-EUNOMIA-011-RANGE"></a>
 ## MN-EUNOMIA-011-RANGE — Admit the approved Eunomia provider bundle [patch] — todo
 
-- priority: correctness; milestone: M-policies-backends; status: todo; owner: Codex; PR #239.
+- priority: correctness; milestone: M-core-allocation; status: todo; owner: Codex; PR #239.
 - Scope: accept `>=0.10.0, <0.12.0` through the existing canonical Git edge,
   retaining current 0.10 support while admitting the approved 0.11 bundle.
   Target: arena 0.7.1 / memory 0.10.1. No runtime source, test, feature,
@@ -38,7 +38,7 @@
 
 <a id="MN-RESCUE-QUEUE"></a>
 - [ ] [correctness] **MN-RESCUE-QUEUE — complete or close the open rescue PR.**
-  priority: correctness; status: todo; needs: none; scope: the head ref of the
+  priority: correctness; milestone: M-core-allocation; status: todo; needs: none; scope: the head ref of the
   PR below (`crates/`, `fuzz/`, `README.md`, `backlog.md`, `checklist.md`).
   **Outcome:** each listed rescue PR is completed onto current main (ported,
   verified, merged) or closed once its diff resolves empty against main.
@@ -66,7 +66,7 @@
 
 <a id="MN-PROF-MIRI-FRAMES"></a>
 - [ ] [correctness] **MN-PROF-MIRI-FRAMES — keep captured frame provenance in `mnemosyne-prof`.**
-  priority: correctness; status: todo; needs: MN-LOCAL-MIRI-UB; scope:
+  priority: correctness; milestone: M-core-allocation; status: todo; needs: MN-LOCAL-MIRI-UB; scope:
   `crates/mnemosyne-prof/src/sampler/`, `.github/workflows/ci.yml`.
   **Outcome:** the sampler stores captured frames as pointers rather than `usize`,
   so `backtrace::resolve` receives the provenance `frame.ip()` carried. With the
@@ -148,23 +148,23 @@
 
 <a id="atlas-mnemosyne-stage-d1"></a>
 - [ ] [minor] **ATLAS-MNEMOSYNE-STAGE-D1 — branded device buffers.**
-  status=blocked; owner=external integration; last-update=2026-09-04.
+  status=blocked; milestone: M-policies-backends; owner=external integration; last-update=2026-09-04.
   Blocker: the Mnemosyne `MemoryBackend`, Melinoe lifetime brands, and
   Hephaestus device/stream completion contract do not yet share a branded
   asynchronous ownership boundary. Re-open when that provider seam and a
   concrete Coeus consumer target exist; no downstream adapter.
 <a id="mnem-provider-publish-1"></a>
 - [ ] [patch] **MNEM-PROVIDER-PUBLISH-1 — publish provider crates.**
-  status=blocked; owner=external; last-update=2026-09-04. Re-open when
+  status=blocked; milestone: M-core-allocation; owner=external; last-update=2026-09-04. Re-open when
   crates.io contains the required Eunomia and Melinoe versions and Themis has
   a released source-aligned dependency graph.
 <a id="mnem-tagged-pool-pack-1"></a>
 - [ ] [perf-experiment] **MNEM-TAGGED-POOL-PACK-1 — compare packed pool state.**
-  status=blocked; owner=codex; last-update=2026-09-04. Re-open on a coherent
+  status=blocked; milestone: M-core-allocation; owner=codex; last-update=2026-09-04. Re-open on a coherent
   native Windows toolchain and a quiet Criterion run; compare warm-pool,
   handoff, eviction, and retention rows before changing cache-line layout.
 <a id="ar-4"></a>
 - [ ] [patch] **AR-4 — strengthen benchmark gate statistics.**
-  status=blocked; owner=codex; last-update=2026-09-04. Re-open on a quiet
+  status=blocked; milestone: M-core-allocation; owner=codex; last-update=2026-09-04. Re-open on a quiet
   machine for the paired sampling change and threshold baseline refresh.
 
