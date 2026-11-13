@@ -43,26 +43,34 @@
   **Outcome:** each #190 hunk is ported or proven obsolete; then delete `rescue/mnemosyne-audit-20260928`.
   **Acceptance:** after `git fetch origin pull/190/head`, each path of `git diff --name-status
   FETCH_HEAD~1 FETCH_HEAD` is ported to main or rejected with its reason in the closing PR.
-  **Next step:** one slice per PR, at most 400 changed lines. Unported: `segment/tests.rs` split
-  (`tests_huge_pool.rs`, `tests_telemetry.rs`); `mnemosyne-prof`/`mnemosyne-decay` `lib.rs` split
-  (`control`, `hooks`, `state`); `routing/cold.rs` split (`segment_acquisition.rs`); build-util tests
-  split with `emit_nightly_tls_cfg()` -> `nightly_tls_directives() -> Vec<&'static str>` and its three
-  `build.rs` callers (public break of published `mnemosyne-build-util` 0.2.1: [major] ADR first);
-  `warm_current_thread` into `allocator.rs` with reshaped `pub use`; `#![deny(missing_docs)]` on
-  `mnemosyne-benchmarks`; `mod.rs` to flat-module renames; rustfmt-only hunks; `DefaultBackend` leaf
-  renames and README text (public `UnixBackend`/`WindowsBackend` break: [major] ADR first); delete
-  `checklist.md` and the two done `MN-SCRATCH-*` blocks of `backlog.md`, still on main.
+  **Next step:** one slice per PR, at most 400 changed lines; move main's files, never copy #190's older bodies.
+  Unported: `segment/tests.rs` split (`tests_huge_pool.rs`, `tests_telemetry.rs`); `mnemosyne-prof`/`mnemosyne-decay`
+  `lib.rs` split (`control`, `hooks`, `state`); `routing/cold.rs` split (`segment_acquisition.rs`); build-util tests split
+  with `emit_nightly_tls_cfg()` -> `nightly_tls_directives() -> Vec<&'static str>` and its three `build.rs` callers (public
+  break of published `mnemosyne-build-util` 0.2.1: [major] ADR first); `warm_current_thread` into `allocator.rs` with
+  reshaped `pub use`; `#![deny(missing_docs)]` on `mnemosyne-benchmarks`; `mod.rs` to flat-module renames (10 of 11; prof `tls.rs` is flat, 7a1723db); `DefaultBackend` leaf renames and README text (classify by cargo-semver-checks; the leaf modules are private, so no public path changes); delete `checklist.md` after folding its open entries (MN-SCRATCH-RELEASE-2026-09-03 :48-52, MN-436 :64, packed tagged pool :71) into item blocks, and the two done `MN-SCRATCH-*` blocks of `backlog.md`.
+  Obsolete, reject with this reason: #190's rustfmt-only hunks, already on main or in files main removed or rewrote (`tls/os_helpers.rs`, `tls/native.rs`).
 
 <a id="MN-RESCUE-REFS"></a>
-- [ ] [correctness] **MN-RESCUE-REFS — dispose of rescue refs that have no PR or item.**
+- [ ] [correctness] **MN-RESCUE-REFS — dispose of rescue refs that have no open PR or item.**
   priority: correctness; milestone: M-core-allocation; status: todo; needs: none; scope: the refs below.
-  **Outcome:** each ref is ported to main, shown obsolete (its diff against main resolves empty), or
-  released with its branch deleted.
-  **Acceptance:** `git ls-remote origin 'refs/heads/rescue/*'` lists no mnemosyne ref without an open
-  PR or item; PRs #240 and #250 are each ported or rejected with a reason.
-  **Next step:** diff each against main: `rescue/mnemosyne-audit-round2-extension` (sibling commit of
-  #190 on the same parent; 3 files differ from it), `rescue/mnemosyne-219-whole-block-frees` (28 files,
-  +728/-121 against main), `rescue/mnemosyne-book-closure` (#240), `refs/pull/250/head` (#250).
+  **Outcome:** each ref is ported to main, shown landed (`git merge-tree --write-tree origin/main <head>` prints main's tree),
+  or released with its branch deleted.
+  **Acceptance:** none of `rescue/mnemosyne-audit-round2-extension`, `rescue/mnemosyne-219-whole-block-frees` and
+  `rescue/mnemosyne-book-closure` remains on origin, and main or a pull ref reaches each; PRs #240 and #250 are each ported
+  or rejected with a reason.
+  **Next step:** diff each against main: `rescue/mnemosyne-audit-round2-extension` (sibling commit of #190 on the same parent;
+  3 files differ from it), `rescue/mnemosyne-219-whole-block-frees` (28 files, +728/-121 since its merge-base with main),
+  `rescue/mnemosyne-book-closure` (#240), `refs/pull/250/head` (#250).
+  basis: origin/main 75ee517b.
+
+<a id="MN-RESCUE-PRS"></a>
+- [ ] [correctness] **MN-RESCUE-PRS — classify released PRs #216, #218, #219, #220, #222 and #223.**
+  priority: correctness; milestone: M-core-allocation; status: todo; needs: none; scope: `refs/pull/<N>/head` of each listed PR.
+  **Outcome:** each pull ref is shown landed on main, ported, or rejected with a reason; no released PR lacks a citing item.
+  **Acceptance:** for each head, `git merge-tree --write-tree origin/main <head>` prints main's tree, or the closing PR cites its port or rejection.
+  **Next step:** compare `rescue/mnemosyne-219-whole-block-frees` with #218 and #219 (it holds a commit titled like #219 whose head is not its ancestor), then the rest.
+  basis: origin/main 75ee517b.
 
 <a id="MN-LOCAL-MIRI-UB"></a>
 - [ ] [correctness] **MN-LOCAL-MIRI-UB — remove the undefined behavior Miri reports in `mnemosyne-local`.**
