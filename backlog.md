@@ -50,6 +50,7 @@
   break of published `mnemosyne-build-util` 0.2.1: [major] ADR first); `warm_current_thread` into `allocator.rs` with
   reshaped `pub use`; `#![deny(missing_docs)]` on `mnemosyne-benchmarks`; `mod.rs` to flat-module renames (10 of 11; prof `tls.rs` is flat, 7a1723db); `DefaultBackend` leaf renames and README text (classify by cargo-semver-checks; the leaf modules are private, so no public path changes); delete `checklist.md` after folding its open entries (MN-SCRATCH-RELEASE-2026-09-03 :48-52, MN-436 :64, packed tagged pool :71) into item blocks, and the two done `MN-SCRATCH-*` blocks of `backlog.md`.
   Obsolete, reject with this reason: #190's rustfmt-only hunks, already on main or in files main removed or rewrote (`tls/os_helpers.rs`, `tls/native.rs`).
+  basis: origin/main 75ee517b.
 
 <a id="MN-RESCUE-REFS"></a>
 - [ ] [correctness] **MN-RESCUE-REFS — dispose of rescue refs that have no open PR or item.**
