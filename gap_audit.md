@@ -72,7 +72,7 @@ here asserts that any suite passes.
 | Production `unwrap()` | 0 (2 occurrences are inside doctests: `mnemosyne-heap/src/numa.rs:34`, `tiered_heap.rs:356`; the other 24 are under `#![cfg_attr(test, allow(clippy::unwrap_used))]`) | `grep -rn '\.unwrap()'` |
 | `#[allow(...)]` sites | 18 | `grep -rn '#\[allow(\|#!\[allow('` |
 | `#[expect(...)]` sites | 0 | `grep -rn '#\[expect(\|#!\[expect('` |
-| Files > 500 lines | 6 (4 are test files; production: `mnemosyne-arena/src/segment/pool/tagged_stack.rs` 622, `mnemosyne-core/src/types/segment.rs` 544) | `find ... -exec wc -l` |
+| Files > 500 lines | 2 (both test files: `mnemosyne-arena/src/scratch/tests.rs` 1188, `mnemosyne-arena/src/segment/tests.rs` 945) | `find crates fuzz -name '*.rs' -exec wc -l` |
 | Crates without `#![deny(missing_docs)]` | 2 published (`mnemosyne-core`, `mnemosyne-arena`) + `mnemosyne-benchmarks` (`publish = false`) | `grep 'missing_docs' crates/*/src/lib.rs` |
 | Per-crate READMEs | 11/11 published crates present | `find` |
 | Registry metadata (description/readme/keywords/categories/license) | complete on all 11 published crates | `grep` over each `Cargo.toml` |
