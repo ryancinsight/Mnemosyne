@@ -37,20 +37,21 @@
 ## Ready
 
 <a id="MN-RESCUE-QUEUE"></a>
-- [ ] [correctness] **MN-RESCUE-QUEUE — complete or close the open rescue PR.**
-  priority: correctness; milestone: M-core-allocation; status: todo; needs: none; scope: the head ref of the
-  PR below (`crates/`, `fuzz/`, `README.md`, `backlog.md`, `checklist.md`).
-  **Outcome:** each listed rescue PR is completed onto current main (ported,
-  verified, merged) or closed once its diff resolves empty against main.
-  **Acceptance:** no open `rescue/` PR for mnemosyne remains unaccounted for.
-  **Next step:** port the head onto current main (it is based on 76a32552e,
-  107 commits behind) and resolve its diff hunk by hunk against main.
-  - ryancinsight/mnemosyne#190 (`rescue/mnemosyne-audit-20260928`): one commit,
-    56 files, +1727/-1684; mostly behavior-preserving splits (tests extracted
-    from `segment/`, `tagged_stack`, `fuzz/op_sequence`; `mnemosyne-prof` and
-    `mnemosyne-decay` control/hook modules; `segment_acquisition.rs` out of
-    `routing/cold.rs`), plus backend and TLS edits and deletion of
-    `backlog.md`/`checklist.md` content (stale against current main).
+- [ ] [correctness] **MN-RESCUE-QUEUE — port rescue PR #190 onto main in slices.**
+  priority: correctness; milestone: M-core-allocation; status: todo; needs: none; scope: the work at
+  `refs/pull/190/head` (released 2026-11-10).
+  **Outcome:** each hunk of #190 is ported to current main or proven obsolete,
+  then branch `rescue/mnemosyne-audit-20260928` is deleted.
+  **Acceptance:** each path listed by
+  `git diff --name-status refs/pull/190/head~1 refs/pull/190/head` is ported
+  to main or rejected with its reason in the closing PR.
+  **Next step:** one slice per PR, each at most 400 changed lines. Unported:
+  `segment/tests.rs` split into `tests_huge_pool.rs` and `tests_telemetry.rs`;
+  `mnemosyne-prof` and `mnemosyne-decay` `lib.rs` split into `control`, `hooks`,
+  `state`; `routing/cold.rs` split into `segment_acquisition.rs`; build-util
+  tests split; `mod.rs` to flat-module renames; rustfmt-only hunks; the
+  `DefaultBackend` leaf renames (public `UnixBackend`/`WindowsBackend` break,
+  needs a [major] ADR first).
 
 <a id="MN-LOCAL-MIRI-UB"></a>
 - [ ] [correctness] **MN-LOCAL-MIRI-UB — remove the undefined behavior Miri reports in `mnemosyne-local`.**
