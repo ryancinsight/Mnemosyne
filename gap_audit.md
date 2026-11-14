@@ -78,7 +78,7 @@ here asserts that any suite passes.
 | Registry metadata (description/readme/keywords/categories/license) | complete on all 11 published crates | `grep` over each `Cargo.toml` |
 | Production `unsafe {}` blocks | 742 (inline `#[cfg(test)] mod` regions excluded) | script scan |
 | …with no `// SAFETY:`/`// Safety:` comment within 14 lines | 84 (11%) | same scan |
-| Implementation-bearing `lib.rs`/`mod.rs` | 8 (largest: `mnemosyne-local/src/lib.rs` 434 L, `mnemosyne-c-shim/src/lib.rs` 376 L, `mnemosyne-decay/src/lib.rs` 288 L) | `wc -l` + item grep |
+| Implementation-bearing `lib.rs`/`mod.rs` | 6 (scan class `manifest_implementation`; 7 before `mnemosyne-decay/src/lib.rs` went from 166 to 37 lines (`wc -l`)) | `atlas-conformance.py report --repo mnemosyne` |
 
 ### Verification infrastructure present (static inspection of `.github/workflows/`)
 
