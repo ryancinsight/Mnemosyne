@@ -1,6 +1,6 @@
 use core::sync::atomic::Ordering;
 
-use crate::SAMPLE_INTERVAL;
+use crate::control::SAMPLE_INTERVAL;
 
 use super::capture::{capture_stack, next_sample_interval};
 use super::stack_interner::{release_stack, reset_stack_interner_state};
