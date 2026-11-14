@@ -10,8 +10,8 @@
   **Acceptance:** after `git fetch origin pull/190/head`, each path of `git diff --name-status
   FETCH_HEAD~1 FETCH_HEAD` is ported to main or rejected with its reason in the closing PR.
   **Next step:** one slice per PR, at most 400 changed lines; move main's files, never copy #190's older bodies.
-  Unported: `segment/tests.rs` split (`tests_huge_pool.rs`, `tests_telemetry.rs`); `mnemosyne-prof`
-  `lib.rs` split (`control`, `hooks`); `routing/cold.rs` split (`segment_acquisition.rs`); build-util tests split
+  Unported: `segment/tests.rs` split (`tests_huge_pool.rs`, `tests_telemetry.rs`);
+  `routing/cold.rs` split (`segment_acquisition.rs`); build-util tests split
   with `emit_nightly_tls_cfg()` -> `nightly_tls_directives() -> Vec<&'static str>` and its three `build.rs` callers (public
   break of published `mnemosyne-build-util` 0.2.1: [major] ADR first); `warm_current_thread` into `allocator.rs` with
   reshaped `pub use`; `#![deny(missing_docs)]` on `mnemosyne-benchmarks`; `mod.rs` to flat-module renames (10 of 11; prof `tls.rs` is flat, 7a1723db); `DefaultBackend` leaf renames and README text (classify by cargo-semver-checks; the leaf modules are private, so no public path changes); delete `checklist.md` after folding its open entries (MN-SCRATCH-RELEASE-2026-09-03 :48-52, MN-436 :64, packed tagged pool :71) into item blocks, and the two done `MN-SCRATCH-*` blocks of `backlog.md`.
