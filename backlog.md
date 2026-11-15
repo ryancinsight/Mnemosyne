@@ -24,12 +24,12 @@
   **Outcome:** each ref is ported to main, shown landed (`git merge-tree --write-tree origin/main <head>` prints main's tree),
   or released with its branch deleted.
   **Acceptance:** none of `rescue/mnemosyne-audit-round2-extension`, `rescue/mnemosyne-219-whole-block-frees` and
-  `rescue/mnemosyne-book-closure` remains on origin, and main or a pull ref reaches each; PRs #240 and #250 are each ported
-  or rejected with a reason.
+  `rescue/mnemosyne-book-closure` remains on origin, and main or a pull ref reaches each; PR #240 is ported
+  or rejected with a reason (PR #250's benchmark budgets are ported).
   **Next step:** diff each against main: `rescue/mnemosyne-audit-round2-extension` (sibling commit of #190 on the same parent;
   3 files differ from it), `rescue/mnemosyne-219-whole-block-frees` (28 files, +728/-121 since its merge-base with main),
-  `rescue/mnemosyne-book-closure` (#240), `refs/pull/250/head` (#250).
-  basis: origin/main 75ee517b.
+  `rescue/mnemosyne-book-closure` (#240).
+  basis: origin/main d8480efd.
 
 <a id="MN-RESCUE-PRS"></a>
 - [ ] [correctness] **MN-RESCUE-PRS — classify released PRs #216, #218, #219, #220, #222 and #223.**

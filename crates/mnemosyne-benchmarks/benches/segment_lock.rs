@@ -173,5 +173,14 @@ pub fn bench_segment_lock(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_segment_lock);
+criterion_group! {
+    name = benches;
+    // Flat 10-sample budget matching branded_access: each row runs 0.1 s of warm-up and
+    // 0.5 s of measurement, keeping the binary inside its share of the suite wall bound.
+    config = Criterion::default()
+        .sample_size(10)
+        .warm_up_time(core::time::Duration::from_millis(100))
+        .measurement_time(core::time::Duration::from_millis(500));
+    targets = bench_segment_lock
+}
 criterion_main!(benches);
