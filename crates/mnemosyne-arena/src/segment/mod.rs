@@ -9,6 +9,8 @@ pub mod stats;
 #[cfg(test)]
 pub mod tests;
 #[cfg(test)]
+mod tests_huge_pool;
+#[cfg(test)]
 mod tests_telemetry;
 
 pub use alignment::checked_align_up;

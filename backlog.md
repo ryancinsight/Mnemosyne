@@ -10,7 +10,7 @@
   **Acceptance:** after `git fetch origin pull/190/head`, each path of `git diff --name-status
   FETCH_HEAD~1 FETCH_HEAD` is ported to main or rejected with its reason in the closing PR.
   **Next step:** one slice per PR, at most 400 changed lines; move main's files, never copy #190's older bodies.
-  Unported: `segment/tests.rs` split (`tests_huge_pool.rs`, `tests_telemetry.rs`); `mnemosyne-prof`
+  Unported: `segment/tests.rs` split (`tests_telemetry.rs`; into `tests_huge_pool.rs` the four tests `test_huge_pool_admission_uses_actual_bucket_bytes`, `test_huge_pool_pop_skips_over_provisioned_buckets`, `test_arena_stats_report_runtime_retained_cap`, `test_arena_stats_track_huge_pool_blocks_and_bytes`, then the `boxed_huge_segment` import in `tests.rs` goes); `mnemosyne-prof`
   `lib.rs` split (`control`, `hooks`); build-util tests split
   with `emit_nightly_tls_cfg()` -> `nightly_tls_directives() -> Vec<&'static str>` and its three `build.rs` callers (public
   break of published `mnemosyne-build-util` 0.2.1: [major] ADR first); `warm_current_thread` into `allocator.rs` with

@@ -12,6 +12,7 @@ use super::alloc::{
 };
 use super::pool::{BackendPools, GlobalHugePool, GlobalSegmentPool, HasSegmentPool};
 use super::stats::{SegmentRelease, arena_memory_stats};
+use super::tests_huge_pool::boxed_huge_segment;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::MemoryBackend;
 use mnemosyne_core::constants::{PAGE_SIZE, SEGMENT_ALIGN, SEGMENT_SIZE};
@@ -466,137 +467,6 @@ fn test_reset_segment_pool_propagates_correct_bounds() {
     // Restore the build's default so this test leaves no global option state
     // behind for anything sharing the process.
     set_options(MnemosyneOptions::default());
-}
-
-#[test]
-fn test_huge_pool_log2_bucketing() {
-    use super::pool::huge_pool::huge_bucket_index;
-
-    // Boundary at 16 KiB
-    assert_eq!(huge_bucket_index(0), 0);
-    assert_eq!(huge_bucket_index(16384), 0);
-    assert_eq!(huge_bucket_index(16385), 1);
-
-    // Power of two transitions
-    assert_eq!(huge_bucket_index(32768), 1); // 32 KiB
-    assert_eq!(huge_bucket_index(32769), 2);
-    assert_eq!(huge_bucket_index(65536), 2); // 64 KiB
-    assert_eq!(huge_bucket_index(65537), 3);
-    assert_eq!(huge_bucket_index(1048576), 6); // 1 MiB
-    assert_eq!(huge_bucket_index(1048577), 7);
-    assert_eq!(huge_bucket_index(16 * 1024 * 1024), 10); // 16 MiB
-    // Sizes beyond MAX_CACHED_HUGE_SIZE saturate to the last live bucket
-    // (they are never pushed; only over-sized pop requests reach here).
-    assert_eq!(huge_bucket_index(16 * 1024 * 1024 + 1), 10);
-    assert_eq!(huge_bucket_index(512 * 1024 * 1024), 10);
-}
-
-#[test]
-fn test_huge_pool_bucket_count_derived_from_max_cached_size() {
-    use super::pool::huge_pool::{HUGE_SIZE_BUCKETS, huge_bucket_index};
-
-    // SSOT pin: the bucket fan-out is exactly index(MAX_CACHED_HUGE_SIZE) + 1,
-    // so no bucket is unreachable dead state under `try_push`'s size gate.
-    assert_eq!(
-        HUGE_SIZE_BUCKETS,
-        huge_bucket_index(GlobalHugePool::MAX_CACHED_HUGE_SIZE) + 1
-    );
-    // 16 KiB (bucket 0) through 16 MiB (bucket 10) in log2 steps.
-    assert_eq!(HUGE_SIZE_BUCKETS, 11);
-}
-
-/// Boxes a minimal `Segment` carrying only the page-0 `block_size` metadata
-/// the huge-pool implementation reads.
-///
-/// The zeroed remainder is never exposed to allocator code that relies on the
-/// full production `Segment::initialize` invariant.
-fn boxed_huge_segment(raw: usize, block_size: usize) -> *mut Segment {
-    // SAFETY: an all-zero bit pattern is a valid starting value for the
-    // initializer to overwrite.
-    let segment: *mut Segment = Box::into_raw(Box::new(unsafe { core::mem::zeroed() }));
-    // SAFETY: `segment` is the live Box allocation just created.
-    unsafe { Segment::initialize(segment, raw as *mut u8, 0) };
-    // SAFETY: `segment` is the live Box allocation just created above, so
-    // mutating its page-0 size metadata through the raw pointer is exclusive.
-    unsafe {
-        (*segment).pages[0].block_size = block_size as _;
-    }
-    segment
-}
-
-#[test]
-fn test_huge_pool_exact_bucket_restores_rejected_head() {
-    let pool = GlobalHugePool::new();
-    // All four blocks land in bucket 1 ((16 KiB, 32 KiB]). Pushing the fitting
-    // block first buries it at the bottom of the LIFO stack under three
-    // undersized rejects (top-down order after the pushes: c, b, a, fitting).
-    let fitting = boxed_huge_segment(0x20000, 24 * 1024);
-    let small_a = boxed_huge_segment(0x30000, 17 * 1024);
-    let small_b = boxed_huge_segment(0x40000, 18 * 1024);
-    let small_c = boxed_huge_segment(0x50000, 19 * 1024);
-
-    unsafe {
-        assert!(pool.try_push(fitting, 0), "fitting segment must be cached");
-        for small in [small_a, small_b, small_c] {
-            assert!(
-                pool.try_push(small, 0),
-                "undersized same-bucket segment must be cached"
-            );
-        }
-    }
-    assert_eq!(pool.retained_blocks(), 4);
-    assert_eq!(pool.retained_bytes(), (24 + 17 + 18 + 19) * 1024);
-
-    let popped = unsafe { pool.pop(20 * 1024, 0) }
-        .expect("same-size bucket must scan past undersized heads");
-    assert_eq!(popped, fitting);
-    unsafe {
-        assert_eq!(
-            (*popped)
-                .next_free_segment
-                .load(core::sync::atomic::Ordering::Relaxed),
-            core::ptr::null_mut()
-        );
-    }
-
-    // Count and byte conservation: exactly the three rejects remain cached.
-    assert_eq!(pool.retained_blocks(), 3);
-    assert_eq!(pool.retained_bytes(), (17 + 18 + 19) * 1024);
-
-    // The rejected chain is spliced back in walk order, preserving the
-    // original LIFO order (c, b, a): a request every reject satisfies must
-    // pop them head-first in that exact order, proving each rejected segment
-    // is still retrievable with intact size metadata and cleared links.
-    for (expected, expected_size) in [
-        (small_c, 19 * 1024),
-        (small_b, 18 * 1024),
-        (small_a, 17 * 1024),
-    ] {
-        let restored = unsafe { pool.pop(16 * 1024 + 1, 0) }
-            .expect("rejected segment must be restored to the bucket");
-        assert_eq!(restored, expected);
-        unsafe {
-            assert_eq!((*restored).pages[0].block_size as usize, expected_size);
-            assert_eq!(
-                (*restored)
-                    .next_free_segment
-                    .load(core::sync::atomic::Ordering::Relaxed),
-                core::ptr::null_mut()
-            );
-        }
-    }
-    assert_eq!(pool.retained_blocks(), 0);
-    assert_eq!(pool.retained_bytes(), 0);
-    assert!(
-        unsafe { pool.pop(16 * 1024, 0) }.is_none(),
-        "no segment may remain after all rejects were drained"
-    );
-
-    for segment in [fitting, small_a, small_b, small_c] {
-        unsafe {
-            let _ = Box::from_raw(segment);
-        }
-    }
 }
 
 #[test]
