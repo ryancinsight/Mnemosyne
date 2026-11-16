@@ -157,6 +157,28 @@ fn take_all_detaches_chain_and_count() {
     }
 }
 
+/// Pop/push pairs each worker of
+/// [`concurrent_push_pop_conserves_every_segment`] performs.
+///
+/// Native runs use the full 20,000-pair stress. Miri interprets every
+/// operation, so its cost is linear in total pairs: 5.5 to 6.3 ms per pair at
+/// 4 workers across 2,000 to 80,000 total pairs, and 4.4 to 4.7 ms at 1 or 2
+/// workers. Contention adds a bounded factor of about 1.3 and the cost never
+/// grows faster than the work, so this is interpretation cost, not a livelock.
+/// The native size takes 474 s there, past the 300 s slow mark and within 1.3x
+/// of the 600 s termination bound.
+///
+/// What the test must prove is conservation under contention, and under Miri
+/// that needs enough preemptions inside critical sections, not volume. At 250
+/// pairs and 4 workers the run takes 2,012 lock acquisitions, about 45% of
+/// which found the lock held (850 to 947 over seeds 0 to 3). A stack with the
+/// lock and the head tag removed fails the conservation assertion on 12 of 12
+/// seeds at 100 pairs and at 250, but on 1 of 12 at 5 pairs, so 250 sits 2.5x
+/// above the point where detection saturates. Four workers stay: two detect
+/// it on 9 of 12 seeds at 250. Exhaustive interleavings are
+/// `tests/loom_tagged_stack.rs`'s job, not this test's.
+const STRESS_PAIRS_PER_WORKER: usize = if cfg!(miri) { 250 } else { 20_000 };
+
 #[test]
 fn concurrent_push_pop_conserves_every_segment() {
     use std::collections::HashSet;
@@ -165,7 +187,6 @@ fn concurrent_push_pop_conserves_every_segment() {
 
     const THREADS: usize = 4;
     const NODES: usize = 12;
-    const ITERS: usize = 20_000;
 
     let stack = Arc::new(TaggedSegmentStack::new());
     let originals: Vec<*mut Segment> = (0..NODES).map(|i| boxed(0x1_0000 + i * 0x100)).collect();
@@ -180,7 +201,7 @@ fn concurrent_push_pop_conserves_every_segment() {
         let barrier = Arc::clone(&barrier);
         handles.push(thread::spawn(move || {
             barrier.wait();
-            for _ in 0..ITERS {
+            for _ in 0..STRESS_PAIRS_PER_WORKER {
                 let p = stack.pop();
                 if !p.is_null() {
                     unsafe { stack.push(p) };
