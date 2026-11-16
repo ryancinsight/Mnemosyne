@@ -67,6 +67,46 @@
   **Next step:** replace the interner's `[usize]` frame type with a pointer
   newtype, keeping its hash and the shard selection unchanged.
 
+<a id="MN-SAFETY-RATCHET-HOOK"></a>
+- [ ] [verification] **MN-SAFETY-RATCHET-HOOK — give the SAFETY scan the name the local gate runs.**
+  priority: verification; milestone: M-core-allocation; status: todo; needs: none; scope:
+  `scripts/safety_comment_scan.py`, `.github/workflows/ci.yml`, `backlog.md`.
+  **Outcome:** a push that adds an `unsafe {` block without a `// SAFETY:` comment fails the local pre-push gate, as it fails CI.
+  The stack-owned gate (`.githooks/pre-push:2157-2164`, a copy of atlas `scripts/git-hooks/pre-push`) runs `scripts/safety_ratchet.py check`
+  when that file exists; this repository's scan is `scripts/safety_comment_scan.py`, run only by `.github/workflows/ci.yml:146`,
+  so the gate finds no ratchet and skips it.
+  **Acceptance:** `scripts/safety_ratchet.py check` prints `undocumented unsafe blocks: 0 (baseline 0)` and exits 0 at the basis,
+  and exits 1 on a tree with one uncommented `unsafe {` in a library source (run recorded in the closing PR);
+  `ci.yml` runs that path; `git grep -n safety_comment_scan` prints nothing.
+  **Next step:** `git mv` the script and keep its CLI (`check`, exit 1 above `BASELINE`); update the `ci.yml` step, the usage lines in its docstring and the `MNEM-UNSAFE-DOC-1` closure line in this file.
+  basis: origin/main 7f2d1b55130119790953a773b59a854b4f18c936.
+
+<a id="MN-LOOM-STACK-MODEL"></a>
+- [ ] [verification] **MN-LOOM-STACK-MODEL — make the loom model of `TaggedSegmentStack` match the locked pop.**
+  priority: verification; milestone: M-core-allocation; status: todo; needs: none; scope:
+  `crates/mnemosyne-arena/tests/loom_tagged_stack.rs`, `crates/mnemosyne-arena/src/segment/pool/tagged_stack.rs`,
+  `crates/mnemosyne-arena/src/segment/pool/tagged_stack/tests.rs`.
+  **Outcome:** the model explores only interleavings the shipped stack can reach. Shipped `pop` takes `mutation_lock`
+  (`tagged_stack.rs:178`), as `push_chain`, `try_push_chain` and `take_all` do, so no two mutators overlap. The model's doc calls pop "the lock-free part"
+  (`loom_tagged_stack.rs:10`), its `pop` takes no lock, and both tests (`a_popped_node_carries_the_link_its_pusher_published`,
+  `concurrent_pops_never_hand_out_the_same_node`) run unlocked popper against pusher or popper.
+  **Acceptance:** the module doc states which operations the shipped stack runs under `mutation_lock`; the model takes a loom lock around each
+  of them and keeps any shipped access outside the lock as its own interleaving, or the tests that need the unlocked pop are deleted with their reason;
+  `RUSTFLAGS="--cfg loom" cargo test -p mnemosyne-arena --test loom_tagged_stack --release` passes; `tagged_stack/tests.rs:178-179`, which defers exhaustive interleavings to the model, stays true.
+  **Next step:** read every `head` and `count` access in `tagged_stack.rs` to list what runs outside the lock before rewriting the model.
+  basis: origin/main 7f2d1b55130119790953a773b59a854b4f18c936.
+
+<a id="MN-MIRI-STRESS-BOUND"></a>
+- [ ] [verification] **MN-MIRI-STRESS-BOUND — state the miss rate the Miri stress size supports.**
+  priority: verification; milestone: M-core-allocation; status: todo; needs: none; scope:
+  `crates/mnemosyne-arena/src/segment/pool/tagged_stack/tests.rs`.
+  **Outcome:** the doc of `STRESS_PAIRS_PER_WORKER` (`tests.rs:160-180`) gives a one-sided upper bound on the probability that one Miri seed misses a stack with the lock and the head tag removed,
+  from a stated seed count and confidence, in place of "250 sits 2.5x above the point where detection saturates". It records 12 of 12 seeds detecting at 250 pairs and names the seeds.
+  With zero misses in `k` independent seeds the per-seed miss probability is below `1 - α^(1/k)` at confidence `1 - α` (`k = 12`, `α = 0.05` gives 0.22; `k = 299` gives 0.01).
+  **Acceptance:** the doc states `k`, `α`, the seeds and the bound; a Miri run of the same mutant over those seeds fails the conservation assertion (`tests.rs:224-227`) on every one, recorded in the closing PR; the constant changes only if the stated bound is unacceptable for a stated reason.
+  **Next step:** choose `k` and `α`, then run the mutant over that many `-Zmiri-seed` values.
+  basis: origin/main 7f2d1b55130119790953a773b59a854b4f18c936.
+
 <a id="MN-WASM-ENV-2026-09-11"></a>
 - [x] [patch] **MN-WASM-ENV-2026-09-11 — make allocator option discovery link-safe on WASM.**
   status=done; integrator=root; branch=`fix/mnemosyne-wasm-env-options-001`;
