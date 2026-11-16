@@ -93,7 +93,7 @@
   **Acceptance:** the module doc states which operations the shipped stack runs under `mutation_lock`; the model takes a loom lock around each
   of them and keeps any shipped access outside the lock as its own interleaving, or the tests that need the unlocked pop are deleted with their reason;
   `RUSTFLAGS="--cfg loom" cargo test -p mnemosyne-arena --test loom_tagged_stack --release` passes; `tagged_stack/tests.rs:178-179`, which defers exhaustive interleavings to the model, stays true.
-  **Next step:** read every `head` and `count` access in `tagged_stack.rs` to list what runs outside the lock before rewriting the model.
+  **Next step:** read every `head` and `count` access in `tagged_stack.rs` to list what runs outside the lock (`len`, line 53, reads `count` without it) before rewriting the model.
   basis: origin/main 7f2d1b55130119790953a773b59a854b4f18c936.
 
 <a id="MN-MIRI-STRESS-BOUND"></a>
