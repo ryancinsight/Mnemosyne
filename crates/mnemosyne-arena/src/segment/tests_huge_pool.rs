@@ -172,6 +172,9 @@ fn test_huge_pool_admission_uses_actual_bucket_bytes() {
     let mut small_segments = Vec::with_capacity(small_count);
     for index in 0..small_count {
         let segment = boxed_huge_segment(0x80000 + index * 0x1000, SMALL_BLOCK_SIZE);
+        // SAFETY: `segment` is the live, initialized Box allocation just returned by
+        // `boxed_huge_segment`; this test owns it exclusively and nothing else
+        // aliases it, which satisfies `try_push`'s exclusive-segment contract.
         unsafe {
             assert!(
                 pool.try_push(segment, 0),
@@ -185,6 +188,9 @@ fn test_huge_pool_admission_uses_actual_bucket_bytes() {
     // still admits the larger mapping. Partitioning the budget prevents a
     // common smaller mapping class from starving a neighboring reuse class.
     let large_segment = boxed_huge_segment(0x100000, LARGE_BLOCK_SIZE);
+    // SAFETY: `large_segment` is the live, initialized Box allocation just returned by
+    // `boxed_huge_segment`; this test owns it exclusively and nothing else
+    // aliases it, which satisfies `try_push`'s exclusive-segment contract.
     unsafe {
         assert!(
             pool.try_push(large_segment, 0),
@@ -197,6 +203,9 @@ fn test_huge_pool_admission_uses_actual_bucket_bytes() {
         small_count * SMALL_BLOCK_SIZE + LARGE_BLOCK_SIZE
     );
 
+    // SAFETY: `pop` transfers exclusive ownership of the returned segment to
+    // this test; the pointer is a segment pushed above, so it is a live Box
+    // allocation that stays valid until the final `Box::from_raw` below.
     let popped_large = unsafe { pool.pop(LARGE_BLOCK_SIZE, 0) }
         .expect("the larger same-bucket mapping must remain retrievable");
     assert_eq!(popped_large, large_segment);
@@ -204,13 +213,22 @@ fn test_huge_pool_admission_uses_actual_bucket_bytes() {
     assert_eq!(pool.retained_bytes(), small_count * SMALL_BLOCK_SIZE);
 
     for expected in small_segments.into_iter().rev() {
+        // SAFETY: `pop` transfers exclusive ownership of the returned segment to
+        // this test; the pointer is a segment pushed above, so it is a live Box
+        // allocation that stays valid until the `Box::from_raw` in this iteration.
         let popped = unsafe { pool.pop(SMALL_BLOCK_SIZE, 0) }
             .expect("every small mapping must remain retrievable");
         assert_eq!(popped, expected);
+        // SAFETY: `popped` came from `Box::into_raw` in `boxed_huge_segment`, the
+        // pool no longer holds it after the `pop` above, and it is not used again, so
+        // this is the single reclaiming `Box::from_raw`.
         unsafe {
             let _ = Box::from_raw(popped);
         }
     }
+    // SAFETY: `popped_large` came from `Box::into_raw` in `boxed_huge_segment`, the
+    // pool no longer holds it after its `pop` above, and it is not used again, so
+    // this is the single reclaiming `Box::from_raw`.
     unsafe {
         let _ = Box::from_raw(popped_large);
     }
@@ -236,9 +254,15 @@ fn test_huge_pool_pop_skips_over_provisioned_buckets() {
     // exceeds HUGE_POP_FIT_CAP (4) x 20 KiB, so the scan stops long before it
     // and the pop misses instead of over-provisioning ~800x.
     let oversized = boxed_huge_segment(0x60000, 16 * 1024 * 1024);
+    // SAFETY: `oversized` is the live, initialized Box allocation just returned by
+    // `boxed_huge_segment`; this test owns it exclusively and nothing else
+    // aliases it, which satisfies `try_push`'s exclusive-segment contract.
     unsafe {
         assert!(pool.try_push(oversized, 0), "16 MiB block must be cached");
     }
+    // SAFETY: `pop` hands over only the segment it returns, and this call
+    // returns `None` (asserted below), so no ownership transfers and
+    // `oversized` stays cached in the pool.
     assert!(
         unsafe { pool.pop(20 * 1024, 0) }.is_none(),
         "a block beyond the fit cap must miss, not over-provision"
@@ -251,9 +275,15 @@ fn test_huge_pool_pop_skips_over_provisioned_buckets() {
     // serves a 20 KiB request because bucket 2's lower bound (32 KiB) is
     // below 4 x 20 KiB = 80 KiB.
     let medium = boxed_huge_segment(0x70000, 64 * 1024);
+    // SAFETY: `medium` is the live, initialized Box allocation just returned by
+    // `boxed_huge_segment`; this test owns it exclusively and nothing else
+    // aliases it, which satisfies `try_push`'s exclusive-segment contract.
     unsafe {
         assert!(pool.try_push(medium, 0), "64 KiB block must be cached");
     }
+    // SAFETY: `pop` transfers exclusive ownership of the returned segment to
+    // this test; the pointer is a segment pushed above, so it is a live Box
+    // allocation that stays valid until the final `Box::from_raw` below.
     let popped = unsafe { pool.pop(20 * 1024, 0) }
         .expect("a higher bucket within the fit cap must still serve the request");
     assert_eq!(popped, medium);
@@ -262,6 +292,9 @@ fn test_huge_pool_pop_skips_over_provisioned_buckets() {
 
     // The oversized block itself is retrievable by a request it fits within
     // the cap (16 MiB request, exact bucket).
+    // SAFETY: `pop` transfers exclusive ownership of the returned segment to
+    // this test; the pointer is a segment pushed above, so it is a live Box
+    // allocation that stays valid until the final `Box::from_raw` below.
     let reclaimed = unsafe { pool.pop(16 * 1024 * 1024, 0) }
         .expect("exact-bucket request must retrieve the 16 MiB block");
     assert_eq!(reclaimed, oversized);
@@ -269,6 +302,10 @@ fn test_huge_pool_pop_skips_over_provisioned_buckets() {
     assert_eq!(pool.retained_bytes(), 0);
 
     for segment in [oversized, medium] {
+        // SAFETY: `oversized` and `medium` came from `Box::into_raw` in
+        // `boxed_huge_segment`, both were popped out of the pool above, and
+        // each appears once in the array, so each gets a single reclaiming
+        // `Box::from_raw`.
         unsafe {
             let _ = Box::from_raw(segment);
         }
@@ -308,6 +345,9 @@ fn test_arena_stats_track_huge_pool_blocks_and_bytes() {
     let before = arena_memory_stats::<FailingReleaseBackend>();
 
     let block = boxed_huge_segment(0x90000, 24 * 1024);
+    // SAFETY: `block` is the live, initialized Box allocation just returned by
+    // `boxed_huge_segment`; this test owns it exclusively and nothing else
+    // aliases it, which satisfies `try_push`'s exclusive-segment contract.
     unsafe {
         assert!(
             FailingReleaseBackend::global_huge_pool().try_push(block, 0),
@@ -321,6 +361,9 @@ fn test_arena_stats_track_huge_pool_blocks_and_bytes() {
         before.retained_huge_bytes + 24 * 1024
     );
 
+    // SAFETY: `pop` transfers exclusive ownership of the returned segment to
+    // this test; the assertion below checks it is `block`, a live Box
+    // allocation that stays valid until the final `Box::from_raw`.
     let popped = unsafe { FailingReleaseBackend::global_huge_pool().pop(24 * 1024, 0) }
         .expect("cached huge block must be retrievable");
     assert_eq!(popped, block);
@@ -328,6 +371,9 @@ fn test_arena_stats_track_huge_pool_blocks_and_bytes() {
     assert_eq!(after.retained_huge_blocks, before.retained_huge_blocks);
     assert_eq!(after.retained_huge_bytes, before.retained_huge_bytes);
 
+    // SAFETY: `block` came from `Box::into_raw` in `boxed_huge_segment`, the
+    // pool no longer holds it after the `pop` above, and it is not used again, so
+    // this is the single reclaiming `Box::from_raw`.
     unsafe {
         let _ = Box::from_raw(block);
     }
