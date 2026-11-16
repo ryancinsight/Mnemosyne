@@ -82,19 +82,19 @@
   basis: origin/main 7f2d1b55130119790953a773b59a854b4f18c936.
 
 <a id="MN-LOOM-STACK-MODEL"></a>
-- [ ] [verification] **MN-LOOM-STACK-MODEL — make the loom model of `TaggedSegmentStack` match the locked pop.**
+- [ ] [verification] **MN-LOOM-STACK-MODEL — state in the loom model's doc that it over-approximates the locked stack.**
   priority: verification; milestone: M-core-allocation; status: todo; needs: none; scope:
-  `crates/mnemosyne-arena/tests/loom_tagged_stack.rs`, `crates/mnemosyne-arena/src/segment/pool/tagged_stack.rs`,
-  `crates/mnemosyne-arena/src/segment/pool/tagged_stack/tests.rs`.
-  **Outcome:** the model explores only interleavings the shipped stack can reach. Shipped `pop` takes `mutation_lock`
-  (`tagged_stack.rs:178`), as `push_chain`, `try_push_chain` and `take_all` do, so no two mutators overlap. The model's doc calls pop "the lock-free part"
-  (`loom_tagged_stack.rs:10`), its `pop` takes no lock, and both tests (`a_popped_node_carries_the_link_its_pusher_published`,
-  `concurrent_pops_never_hand_out_the_same_node`) run unlocked popper against pusher or popper.
-  **Acceptance:** the module doc states which operations the shipped stack runs under `mutation_lock`; the model takes a loom lock around each
-  of them and keeps any shipped access outside the lock as its own interleaving, or the tests that need the unlocked pop are deleted with their reason;
-  `RUSTFLAGS="--cfg loom" cargo test -p mnemosyne-arena --test loom_tagged_stack --release` passes; `tagged_stack/tests.rs:178-179`, which defers exhaustive interleavings to the model, stays true.
-  **Next step:** read every `head` and `count` access in `tagged_stack.rs` to list what runs outside the lock (`len`, line 53, reads `count` without it) before rewriting the model.
-  basis: origin/main 7f2d1b55130119790953a773b59a854b4f18c936.
+  `crates/mnemosyne-arena/tests/loom_tagged_stack.rs`, `crates/mnemosyne-arena/src/segment/pool/tagged_stack/tests.rs`.
+  **Outcome:** the module doc says what the model is. Every shipped mutator holds `mutation_lock`
+  (`tagged_stack.rs:144,162,178,233`), so no two overlap; the model's `pop` and both tests
+  (`a_popped_node_carries_the_link_its_pusher_published`, `concurrent_pops_never_hand_out_the_same_node`) run unlocked
+  threads, a sound over-approximation of the locked stack (a lock-faithful model would serialize the mutators and have nothing to explore).
+  The doc calls pop "the lock-free part" (`loom_tagged_stack.rs:10`), which reads as a claim about the shipped stack.
+  **Acceptance:** the module doc states that every shipped mutator holds `mutation_lock`, that the model drops the lock on purpose,
+  and that a pass therefore covers the locked stack; `len` (`tagged_stack.rs:53`) is named as the one unlocked reader;
+  `RUSTFLAGS="--cfg loom" cargo test -p mnemosyne-arena --test loom_tagged_stack --release` passes; `tagged_stack/tests.rs:178-179` stays true.
+  **Next step:** reword the module doc; no model change.
+  basis: origin/main 315eab70b0c863abb1c6e1d36bafa1768bdd6783.
 
 <a id="MN-MIRI-STRESS-BOUND"></a>
 - [ ] [verification] **MN-MIRI-STRESS-BOUND — state the miss rate the Miri stress size supports.**
