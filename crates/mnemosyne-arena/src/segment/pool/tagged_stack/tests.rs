@@ -157,6 +157,26 @@ fn take_all_detaches_chain_and_count() {
     }
 }
 
+/// Pop/push pairs each worker of
+/// [`concurrent_push_pop_conserves_every_segment`] performs.
+///
+/// Native runs use the full 20,000-pair stress. Miri interprets every
+/// operation, and its cost is linear in total pairs with no contention
+/// multiplier: 5.5 ms per pair per worker at 4 workers (110 s for 5,000 pairs
+/// each), and 5.8, 5.4 and 6.2 ms at 1, 2 and 4 workers, so a lone uncontended
+/// worker costs what a contended one does and nothing spins pathologically.
+/// The native size therefore costs about 440 s there, past the 300 s slow mark
+/// and within 1.4x of the 600 s termination bound.
+///
+/// What the test must prove is conservation under contention, and under Miri
+/// that needs enough preemptions inside critical sections, not volume. At 250
+/// pairs and 4 workers the run takes 2,012 lock acquisitions, of which about
+/// 45% found the lock held (850 to 947 over seeds 0 to 3), so every handoff
+/// path runs hundreds of times. Four workers stay: two already contend, and
+/// four keep the barrier-released start of the native run. Exhaustive
+/// interleavings are `tests/loom_tagged_stack.rs`'s job, not this test's.
+const STRESS_PAIRS_PER_WORKER: usize = if cfg!(miri) { 250 } else { 20_000 };
+
 #[test]
 fn concurrent_push_pop_conserves_every_segment() {
     use std::collections::HashSet;
@@ -165,7 +185,6 @@ fn concurrent_push_pop_conserves_every_segment() {
 
     const THREADS: usize = 4;
     const NODES: usize = 12;
-    const ITERS: usize = 20_000;
 
     let stack = Arc::new(TaggedSegmentStack::new());
     let originals: Vec<*mut Segment> = (0..NODES).map(|i| boxed(0x1_0000 + i * 0x100)).collect();
@@ -180,7 +199,7 @@ fn concurrent_push_pop_conserves_every_segment() {
         let barrier = Arc::clone(&barrier);
         handles.push(thread::spawn(move || {
             barrier.wait();
-            for _ in 0..ITERS {
+            for _ in 0..STRESS_PAIRS_PER_WORKER {
                 let p = stack.pop();
                 if !p.is_null() {
                     unsafe { stack.push(p) };
