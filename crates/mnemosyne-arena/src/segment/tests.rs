@@ -7,11 +7,10 @@ use super::alloc::SEGMENT_TAIL_GUARD_SIZE;
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 use super::alloc::{SEGMENT_MAPPING_SIZE, release_segment_mapping};
 use super::alloc::{allocate_segment, deallocate_segment, purge_segment_pool};
-use super::pool::{BackendPools, GlobalHugePool, GlobalSegmentPool, HasSegmentPool};
+use super::pool::{BackendPools, GlobalSegmentPool, HasSegmentPool};
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 use super::stats::SegmentRelease;
 use super::stats::arena_memory_stats;
-use super::tests_huge_pool::boxed_huge_segment;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use mnemosyne_core::MemoryBackend;
 #[cfg(feature = "segment-header-guards")]
@@ -25,7 +24,7 @@ use std::boxed::Box;
 #[cfg(any(feature = "segment-tail-guards", feature = "segment-header-guards"))]
 use std::alloc::{Layout, alloc, dealloc};
 
-struct FailingReleaseBackend;
+pub(super) struct FailingReleaseBackend;
 
 static FAILING_POOLS: BackendPools = BackendPools::new();
 static FAILING_DEALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -368,183 +367,6 @@ fn test_concurrent_aba_safeness() {
         unsafe {
             let _ = Box::from_raw(seg);
         }
-    }
-}
-
-#[test]
-fn test_huge_pool_admission_uses_actual_bucket_bytes() {
-    use super::pool::huge_pool::huge_bucket_index;
-
-    const BUCKET: usize = 9;
-    const SMALL_BLOCK_SIZE: usize = 4 * 1024 * 1024 + 64 * 1024;
-    const LARGE_BLOCK_SIZE: usize = 6 * 1024 * 1024 + 64 * 1024;
-
-    assert_eq!(huge_bucket_index(SMALL_BLOCK_SIZE), BUCKET);
-    assert_eq!(huge_bucket_index(LARGE_BLOCK_SIZE), BUCKET);
-
-    let pool = GlobalHugePool::new();
-    let small_count = GlobalHugePool::MAX_CACHED_HUGE_BYTES_PER_BAND / SMALL_BLOCK_SIZE;
-    let mut small_segments = Vec::with_capacity(small_count);
-    for index in 0..small_count {
-        let segment = boxed_huge_segment(0x80000 + index * 0x1000, SMALL_BLOCK_SIZE);
-        unsafe {
-            assert!(
-                pool.try_push(segment, 0),
-                "small same-bucket segment {index} must be cached"
-            );
-        }
-        small_segments.push(segment);
-    }
-
-    // This saturates the lower-band byte budget, but the upper-band budget
-    // still admits the larger mapping. Partitioning the budget prevents a
-    // common smaller mapping class from starving a neighboring reuse class.
-    let large_segment = boxed_huge_segment(0x100000, LARGE_BLOCK_SIZE);
-    unsafe {
-        assert!(
-            pool.try_push(large_segment, 0),
-            "a larger mapping must fit while the byte budget has room"
-        );
-    }
-    assert_eq!(pool.retained_blocks(), small_count + 1);
-    assert_eq!(
-        pool.retained_bytes(),
-        small_count * SMALL_BLOCK_SIZE + LARGE_BLOCK_SIZE
-    );
-
-    let popped_large = unsafe { pool.pop(LARGE_BLOCK_SIZE, 0) }
-        .expect("the larger same-bucket mapping must remain retrievable");
-    assert_eq!(popped_large, large_segment);
-    assert_eq!(pool.retained_blocks(), small_count);
-    assert_eq!(pool.retained_bytes(), small_count * SMALL_BLOCK_SIZE);
-
-    for expected in small_segments.into_iter().rev() {
-        let popped = unsafe { pool.pop(SMALL_BLOCK_SIZE, 0) }
-            .expect("every small mapping must remain retrievable");
-        assert_eq!(popped, expected);
-        unsafe {
-            let _ = Box::from_raw(popped);
-        }
-    }
-    unsafe {
-        let _ = Box::from_raw(popped_large);
-    }
-    assert_eq!(pool.retained_blocks(), 0);
-    assert_eq!(pool.retained_bytes(), 0);
-}
-
-#[test]
-fn test_huge_pool_pop_skips_over_provisioned_buckets() {
-    use super::pool::huge_pool::HUGE_POP_FIT_CAP;
-
-    let pool = GlobalHugePool::new();
-    // Ground the test's size choices in the cap: bucket 10's exclusive lower
-    // bound (8 MiB) is beyond HUGE_POP_FIT_CAP x 20 KiB (inadmissible), while
-    // bucket 2's (32 KiB) is within it (admissible).
-    const {
-        assert!(8 * 1024 * 1024 >= HUGE_POP_FIT_CAP * 20 * 1024);
-        assert!(32 * 1024 < HUGE_POP_FIT_CAP * 20 * 1024);
-    }
-
-    // A cached 16 MiB block (bucket 10) must NOT satisfy a ~20 KiB-class
-    // request (bucket 1): bucket 10's smallest possible block (8 MiB + 1)
-    // exceeds HUGE_POP_FIT_CAP (4) x 20 KiB, so the scan stops long before it
-    // and the pop misses instead of over-provisioning ~800x.
-    let oversized = boxed_huge_segment(0x60000, 16 * 1024 * 1024);
-    unsafe {
-        assert!(pool.try_push(oversized, 0), "16 MiB block must be cached");
-    }
-    assert!(
-        unsafe { pool.pop(20 * 1024, 0) }.is_none(),
-        "a block beyond the fit cap must miss, not over-provision"
-    );
-    // The miss leaves the oversized block cached.
-    assert_eq!(pool.retained_blocks(), 1);
-    assert_eq!(pool.retained_bytes(), 16 * 1024 * 1024);
-
-    // A higher bucket within the cap still hits: a 64 KiB block (bucket 2)
-    // serves a 20 KiB request because bucket 2's lower bound (32 KiB) is
-    // below 4 x 20 KiB = 80 KiB.
-    let medium = boxed_huge_segment(0x70000, 64 * 1024);
-    unsafe {
-        assert!(pool.try_push(medium, 0), "64 KiB block must be cached");
-    }
-    let popped = unsafe { pool.pop(20 * 1024, 0) }
-        .expect("a higher bucket within the fit cap must still serve the request");
-    assert_eq!(popped, medium);
-    assert_eq!(pool.retained_blocks(), 1);
-    assert_eq!(pool.retained_bytes(), 16 * 1024 * 1024);
-
-    // The oversized block itself is retrievable by a request it fits within
-    // the cap (16 MiB request, exact bucket).
-    let reclaimed = unsafe { pool.pop(16 * 1024 * 1024, 0) }
-        .expect("exact-bucket request must retrieve the 16 MiB block");
-    assert_eq!(reclaimed, oversized);
-    assert_eq!(pool.retained_blocks(), 0);
-    assert_eq!(pool.retained_bytes(), 0);
-
-    for segment in [oversized, medium] {
-        unsafe {
-            let _ = Box::from_raw(segment);
-        }
-    }
-}
-
-#[test]
-fn test_arena_stats_report_runtime_retained_cap() {
-    use mnemosyne_core::options::{MnemosyneOptions, set_options};
-
-    // Lower the runtime cap below the compile-time limit: the stat must track
-    // the enforced runtime value (what `try_push_retained` reads), not the
-    // compile-time `MAX_RETAINED_SEGMENTS_LIMIT`.
-    set_options(MnemosyneOptions {
-        max_retained_segments: 7,
-        ..Default::default()
-    });
-    let stats = arena_memory_stats::<FailingReleaseBackend>();
-    assert_eq!(stats.max_retained_free_segments, 7);
-
-    // Restore the default; the stat must follow it. Compare against the
-    // default option itself rather than the compile-time limit: the two are
-    // equal in ordinary builds, but under Miri the default is deliberately 0
-    // (options.rs suppresses retention so Miri's leak evidence stays focused
-    // on live allocations). Asserting the constant encoded that build-specific
-    // coincidence and made this test fail under Miri for no defect.
-    set_options(MnemosyneOptions::default());
-    let stats = arena_memory_stats::<FailingReleaseBackend>();
-    assert_eq!(
-        stats.max_retained_free_segments,
-        MnemosyneOptions::default().max_retained_segments
-    );
-}
-
-#[test]
-fn test_arena_stats_track_huge_pool_blocks_and_bytes() {
-    let before = arena_memory_stats::<FailingReleaseBackend>();
-
-    let block = boxed_huge_segment(0x90000, 24 * 1024);
-    unsafe {
-        assert!(
-            FailingReleaseBackend::global_huge_pool().try_push(block, 0),
-            "huge block must be cached"
-        );
-    }
-    let during = arena_memory_stats::<FailingReleaseBackend>();
-    assert_eq!(during.retained_huge_blocks, before.retained_huge_blocks + 1);
-    assert_eq!(
-        during.retained_huge_bytes,
-        before.retained_huge_bytes + 24 * 1024
-    );
-
-    let popped = unsafe { FailingReleaseBackend::global_huge_pool().pop(24 * 1024, 0) }
-        .expect("cached huge block must be retrievable");
-    assert_eq!(popped, block);
-    let after = arena_memory_stats::<FailingReleaseBackend>();
-    assert_eq!(after.retained_huge_blocks, before.retained_huge_blocks);
-    assert_eq!(after.retained_huge_bytes, before.retained_huge_bytes);
-
-    unsafe {
-        let _ = Box::from_raw(block);
     }
 }
 
