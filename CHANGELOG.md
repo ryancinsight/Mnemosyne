@@ -1,5 +1,15 @@
 # Changelog
 
+## Arena 0.7.2 and Memory 0.10.2
+
+### Changed
+
+- [patch] Extend the existing Eunomia requirement through 0.12. The Atlas
+  workspace lock selects Eunomia 0.12.1 from crates.io.
+- [patch] Memory requires Arena 0.7.2 for its shared scratch-buffer contract.
+  The `eunomia` feature accepts complex values from the client's selected
+  Eunomia version.
+
 ## Eunomia 0.11 compatibility — Unreleased
 
 ### Changed

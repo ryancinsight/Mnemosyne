@@ -75,6 +75,21 @@ minor boundaries (253 rules skipped by the tool for each major-compatible
 release class) and compares 196 rules for each dependency-only patch. This
 does not establish backward compatibility across the minor boundaries.
 
+## Extend registry compatibility through Eunomia 0.12
+
+Apollo 0.30 and Leto 0.51 pass Eunomia 0.12 complex values into the allocator's
+typed scratch pools. Arena 0.7.1 caps Eunomia below 0.12, so Cargo assigns its
+scratch trait implementation to a different Rust type in those consumers.
+
+Arena 0.7.2 and Memory 0.10.2 extend the existing registry requirement to
+`>=0.10.0, <0.13.0`. Memory requires Arena 0.7.2 so its feature and Arena's
+implementation admit the same scalar. The unchanged implementation initializes
+each complex lane to zero through the selected Eunomia type. ABI, allocation
+policies, and the existing 0.10 and 0.11 requirement remain compatible.
+
+Verify the existing scratch tests with each supported minor and run
+SemVer and archive verification before publishing the two packages together.
+
 ## Final acceptance and immutable receipts
 
 [Reviewed head](https://github.com/ryancinsight/Mnemosyne/commit/f36febc82edfc1a1fbc7df92b6847fc894f5b859)
