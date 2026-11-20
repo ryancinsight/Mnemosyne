@@ -1,5 +1,10 @@
 # Checklist
 
+Active target: Arena 0.7.2 and Memory 0.10.2 [patch].
+
+- [ ] [patch] Verify Eunomia 0.10, 0.11, and 0.12 scratch compatibility.
+- [ ] [patch] Verify the package archives, SemVer, native CI, and fresh registry resolution.
+
 ## MN-EUNOMIA-010-COHORT [major] — current slice
 
 - [x] Inspect current main, open owner PRs and reserved ADR numbers; isolate work.
