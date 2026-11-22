@@ -1,5 +1,11 @@
 # Backlog
 
+<a id="mnemosyne-stable-qualification"></a>
+## MNEMOSYNE-STABLE-QUALIFICATION — mnemosyne stable-release qualification [patch] — todo
+- priority: verification; milestone: M-core-allocation; basis: `b81d685a55bc`.
+- Outcome: Resolve the allocator rescue queue against the current released source. Follow the [release scope](docs/adr/0014-release-scope-1-0.md) and [milestone exits](backlog/milestones.md).
+- Acceptance and sequence: [stable-release checklist](checklist.md#stable-release-checklist).
+
 ## Ready
 
 <a id="MN-RESCUE-QUEUE"></a>

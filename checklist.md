@@ -1,5 +1,14 @@
 # Checklist
 
+## Stable release checklist
+
+Basis `b81d685a55bc`, representative manifest `mnemosyne-memory 0.10.2`. Target 1.0.0. [Backlog item](backlog.md#mnemosyne-stable-qualification).
+
+- [ ] [patch] Triage MN-RESCUE-QUEUE one hunk at a time against the 0.10.2 memory and 0.7.2 arena source. Retain a reproducing input for each live defect and a source reference for each obsolete change.
+- [ ] [patch] Verify allocation layout, alignment and reclamation across the local allocator, arena and facade. Run the owned safety and performance gates on real allocations and a downstream Moirai workload.
+- [ ] [major] Close M-policies-backends and the facade API review, including the support status of independently versioned packages and the registry-only memory consumer.
+- [ ] [patch] Run the [release scope](docs/adr/0014-release-scope-1-0.md) exits and attach reviewed, exact-revision evidence for this member’s [Atlas qualification criteria](https://github.com/ryancinsight/atlas/blob/17b0124a7548ad81e817284afc5cb115c1d1bc78/docs/parity/repositories.json).
+
 Active target: Arena 0.7.2 and Memory 0.10.2 [patch].
 
 - [ ] [patch] Verify Eunomia 0.10, 0.11, and 0.12 scratch compatibility.
