@@ -2,12 +2,14 @@
 
 ## Stable release checklist
 
-Basis `b81d685a55bc`, representative manifest `mnemosyne-memory 0.10.2`. Target 1.0.0. [Backlog item](backlog.md#mnemosyne-stable-qualification).
+Basis `2326baa3ff15`, representative manifest `mnemosyne-memory 0.10.2`. Target 1.0.0. [Backlog item](backlog.md#mnemosyne-stable-qualification).
 
 - [ ] [patch] Triage MN-RESCUE-QUEUE one hunk at a time against the 0.10.2 memory and 0.7.2 arena source. Retain a reproducing input for each live defect and a source reference for each obsolete change.
 - [ ] [patch] Verify allocation layout, alignment and reclamation across the local allocator, arena and facade. Run the owned safety and performance gates on real allocations and a downstream Moirai workload.
 - [ ] [major] Close M-policies-backends and the facade API review, including the support status of independently versioned packages and the registry-only memory consumer.
-- [ ] [patch] Run the [release scope](docs/adr/0014-release-scope-1-0.md) exits and attach reviewed, exact-revision evidence for this member’s [Atlas qualification criteria](https://github.com/ryancinsight/atlas/blob/17b0124a7548ad81e817284afc5cb115c1d1bc78/docs/parity/repositories.json).
+- [ ] [minor] **0.11.0.** Classify each rescue-queue change against a reproducible allocation or release defect. Check live allocation counts, alignment and reclamation through the real allocator under contention. [Source and baseline](gap_audit.md#incremental-release-baseline).
+- [ ] [minor] **0.12.0.** Exercise policy and backend selection under the same allocation pattern. Compare peak live bytes and reclamation, and record unsupported host features as explicit capability outcomes.
+- [ ] [major] **1.0.0-beta.1 → 1.0.0-rc.1 → 1.0.0.** Freeze the supported surface at beta. A fresh allocation consumer respects alignment, lifetime and reclamation guarantees on the supported platforms. Repeat the applicable exits on the exact RC before stable promotion. Run the [release scope](docs/adr/0014-release-scope-1-0.md) exits and attach reviewed, exact-revision evidence for this member’s [Atlas qualification criteria](https://github.com/ryancinsight/atlas/blob/17b0124a7548ad81e817284afc5cb115c1d1bc78/docs/parity/repositories.json).
 
 Active target: Arena 0.7.2 and Memory 0.10.2 [patch].
 
