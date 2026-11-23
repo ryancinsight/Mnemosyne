@@ -2,8 +2,8 @@
 
 <a id="mnemosyne-stable-qualification"></a>
 ## MNEMOSYNE-STABLE-QUALIFICATION — mnemosyne stable-release qualification [patch] — todo
-- priority: verification; milestone: M-core-allocation; basis: `b81d685a55bc`.
-- Outcome: Resolve the allocator rescue queue against the current released source. Follow the [release scope](docs/adr/0014-release-scope-1-0.md) and [milestone exits](backlog/milestones.md).
+- priority: verification; milestone: M-core-allocation; basis: `2326baa3ff15`.
+- Outcome: Resolve the allocator rescue queue against the current released source. Follow the [release scope](docs/adr/0014-release-scope-1-0.md) and [milestone exits](backlog/milestones.md). Planning targets for `mnemosyne-memory` are 0.11.0, then 0.12.0, then 1.0.0. Verification alone can advance the current version.
 - Acceptance and sequence: [stable-release checklist](checklist.md#stable-release-checklist).
 
 ## Ready
