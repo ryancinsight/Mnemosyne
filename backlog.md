@@ -20,7 +20,7 @@
   `lib.rs` split (`control`, `hooks`); build-util tests split
   with `emit_nightly_tls_cfg()` -> `nightly_tls_directives() -> Vec<&'static str>` and its three `build.rs` callers (public
   break of published `mnemosyne-build-util` 0.2.1: [major] ADR first); `warm_current_thread` into `allocator.rs` with
-  reshaped `pub use`; `#![deny(missing_docs)]` on `mnemosyne-benchmarks`; `mod.rs` to flat-module renames (10 of 11; prof `tls.rs` is flat, 7a1723db); `DefaultBackend` leaf renames and README text (classify by cargo-semver-checks; the leaf modules are private, so no public path changes); delete `checklist.md` after folding its open entries (MN-SCRATCH-RELEASE-2026-09-03 :48-52, MN-436 :64, packed tagged pool :71) into item blocks, and the two done `MN-SCRATCH-*` blocks of `backlog.md`.
+  reshaped `pub use`; `#![deny(missing_docs)]` on `mnemosyne-benchmarks`; `mod.rs` to flat-module renames (10 of 11; prof `tls.rs` is flat, 7a1723db); `DefaultBackend` leaf renames and README text (classify by cargo-semver-checks; the leaf modules are private, so no public path changes); delete `checklist.md` after folding its open entries (MN-SCRATCH-RELEASE-2026-09-03 :48-52, MN-436 :64, packed tagged pool :71) into item blocks.
   Obsolete, reject with this reason: #190's rustfmt-only hunks, already on main or in files main removed or rewrote (`tls/os_helpers.rs`, `tls/native.rs`).
   basis: origin/main d9ddf96d.
 
@@ -113,6 +113,32 @@
   **Next step:** choose `k` and `α`, then run the mutant over that many `-Zmiri-seed` values.
   basis: origin/main 7f2d1b55130119790953a773b59a854b4f18c936.
 
+<a id="MN-CI-DRAFT-READY"></a>
+- [ ] [verification] **MN-CI-DRAFT-READY — give `ci.yml` the draft gate and the ready trigger.**
+  priority: verification; milestone: M-core-allocation; status: todo; needs: none; scope:
+  `.github/workflows/ci.yml`.
+  **Outcome:** a draft PR runs only the short aggregate, which fails it, and converting a PR to ready starts the full run.
+  Today `on.pull_request` has no `types` (`ci.yml:4`, so `ready_for_review` starts no run) and no job tests `github.event.pull_request.draft`,
+  so every draft push runs the whole pipeline, Miri (`ci.yml:292`) included; `CI aggregate` (`ci.yml:647-657`) has no draft rule.
+  `adr-index.yml:32` already gates on `draft == false`; `ci.yml` is the one workflow of this repository that does not.
+  **Acceptance:** `grep -c ready_for_review .github/workflows/ci.yml` and `grep -c pull_request.draft .github/workflows/ci.yml` print nonzero (both print 0 at the basis);
+  a draft head skips `verify`, `miri`, `loom` and the other heavy jobs and fails `CI aggregate`; the `ready_for_review` event starts a run whose `CI aggregate` passes, run links in the closing PR.
+  **Next step:** set `types: [opened, synchronize, reopened, ready_for_review]`, add the draft term to each heavy job's `if:` and a failing draft step to `aggregate`.
+  Not confirmed: that an aggregate stays red after leaving draft; no draft rule exists in this file to produce it.
+  basis: origin/main 9dc65dd0263f00bc8fb7ee7dcfde2d06e51feb78.
+
+<a id="MN-HUGE-POOL-TEST-SEGMENT"></a>
+- [ ] [verification] **MN-HUGE-POOL-TEST-SEGMENT — keep one `boxed_huge_segment` and drop the integer-to-pointer cast.**
+  priority: verification; milestone: M-core-allocation; status: todo; needs: none; scope:
+  `crates/mnemosyne-arena/tests/huge_pool_concurrency.rs`, `crates/mnemosyne-arena/src/segment/tests_huge_pool.rs`, `gap_audit.md`.
+  **Outcome:** one definition builds the dummy huge `Segment`. Two exist: `tests_huge_pool.rs:53-67` (uses `core::ptr::without_provenance_mut(raw)`, `:58`)
+  and `tests/huge_pool_concurrency.rs:24-37`, whose copy casts `raw as *mut u8` (`:30`) and widens `block_size as usize` (`:84`).
+  Its module doc says "The repo has no `loom` harness" (`:10`), false since `tests/loom_tagged_stack.rs` and the CI `loom` job (`ci.yml:227`).
+  **Acceptance:** `git grep -c "fn boxed_huge_segment" -- crates` lists one file with count 1; `git grep -nE "raw as \*mut u8|block_size as usize" -- crates/mnemosyne-arena/tests`
+  prints nothing (two lines print at the basis); `cargo nextest run -p mnemosyne-arena` passes with the concurrency test still listed; no test-only public export is added.
+  **Next step:** fold the stress test into the in-crate `tests_huge_pool.rs` leaf (it uses only `GlobalHugePool`) and update the `gap_audit.md:7` link, or share the helper; delete the false loom sentence.
+  basis: origin/main 9dc65dd0263f00bc8fb7ee7dcfde2d06e51feb78.
+
 <a id="MN-WASM-ENV-2026-09-11"></a>
 - [x] [patch] **MN-WASM-ENV-2026-09-11 — make allocator option discovery link-safe on WASM.**
   status=done; integrator=root; branch=`fix/mnemosyne-wasm-env-options-001`;
@@ -135,32 +161,6 @@
 - [x] **MNEM-BOOK-DEPTH-1** [docs][minor] status=done owner=codex
   branch=`perf/mnemosyne-scratch-release`; latest=`af7a23a`.
   Outcome: corrected the full book's implementation contracts, examples, and stack ownership; `mdbook test` and `mdbook build` pass.
-
-### MN-SCRATCH-RELEASE-2026-09-04 — Pooled scratch had no reclamation path [minor] [perf] — done <a id="mn-scratch-release-2026-09-04"></a>
-
-- **Closed 2026-09-22.** `ScratchPool::release`, `ScratchPool::reset`, and the
-  `ScratchBank` pass-throughs are all shipped to main and documented in the
-  CHANGELOG. Provisions are recorded by `with_scratch_bounded`
-  (`borrow_slot<PROVISION=true>`) and honoured by `release`. Zero-allocation
-  warm pass confirmed in the CHANGELOG acceptance note.
-
-### MN-SCRATCH-GROWTH-COST-2026-09-04 [patch] [perf] — done <a id="mn-scratch-growth-cost-2026-09-04"></a>
-
-- **Outcome:** Preserve geometric scratch growth while `release` reclaims
-  capacity above each recorded provision, avoiding a reallocation regression
-  in the retention fix.
-- **Scope:** `mnemosyne-arena` aligned scratch storage, focused scratch tests,
-  and synchronized changelog/backlog text on PR #127.
-- **Acceptance:** growth retains its overflow-safe doubling policy and remains
-  amortized; release retains the requested provision exactly; a regression test
-  bounds growth events;
-  format, strict Clippy, Nextest, and Miri pass.
-- **Rejected 2026-09-23:** an exact-growth variant for the bounded path
-  (`ensure_len_exact`, from a stranded local series) contradicts this
-  acceptance -- it drops amortized doubling -- and main already trims to the
-  provision in `release`. Remaining: the growth-events regression test.
-- **Risk / delivery:** `[patch]` private growth policy and regression coverage;
-  integrator current Atlas session; branch `perf/scratch-release`.
 
 <a id="mn-459"></a>
 - [x] [patch] **MN-459 — bring `mnemosyne-heap` under the Miri gate.**

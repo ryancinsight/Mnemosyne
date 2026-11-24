@@ -6,8 +6,6 @@ Reviewed [mnemosyne-memory 0.10.2](crates/mnemosyne/Cargo.toml) at [2326baa3ff15
 
 The next [minor] checkpoint uses [huge pool concurrency](crates/mnemosyne-arena/tests/huge_pool_concurrency.rs). [Target version and acceptance criteria](checklist.md#stable-release-checklist).
 
-The Atlas board check reports 2 existing schema findings, including `MN-SCRATCH-RELEASE-2026-09-04`. Verify each item against its delivery evidence, archive completed work and rerun the board check before the freeze.
-
 ## MN-EUNOMIA-010-COHORT [major] — published, receipts verified
 
 Eunomia/derive 0.10.0 are published and registry-verified at a231e54d. The
