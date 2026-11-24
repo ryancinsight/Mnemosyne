@@ -20,7 +20,7 @@
   `lib.rs` split (`control`, `hooks`); build-util tests split
   with `emit_nightly_tls_cfg()` -> `nightly_tls_directives() -> Vec<&'static str>` and its three `build.rs` callers (public
   break of published `mnemosyne-build-util` 0.2.1: [major] ADR first); `warm_current_thread` into `allocator.rs` with
-  reshaped `pub use`; `#![deny(missing_docs)]` on `mnemosyne-benchmarks`; `mod.rs` to flat-module renames (10 of 11; prof `tls.rs` is flat, 7a1723db); `DefaultBackend` leaf renames and README text (classify by cargo-semver-checks; the leaf modules are private, so no public path changes); delete `checklist.md` after folding its open entries (MN-SCRATCH-RELEASE-2026-09-03 :48-52, MN-436 :64, packed tagged pool :71) into item blocks.
+  reshaped `pub use`; `#![deny(missing_docs)]` on `mnemosyne-benchmarks`; `mod.rs` to flat-module renames (10 of 11; prof `tls.rs` is flat, 7a1723db); `DefaultBackend` leaf renames and README text (classify by cargo-semver-checks; the leaf modules are private, so no public path changes); delete `checklist.md` after folding its open entries (MN-SCRATCH-RELEASE-2026-09-03 :62-68, the Apollo retention and warm-pass boxes; MN-436 :70-80; packed tagged pool :83-87) into item blocks.
   Obsolete, reject with this reason: #190's rustfmt-only hunks, already on main or in files main removed or rewrote (`tls/os_helpers.rs`, `tls/native.rs`).
   basis: origin/main d9ddf96d.
 
@@ -45,21 +45,30 @@
   **Next step:** compare `rescue/mnemosyne-219-whole-block-frees` with #218 and #219 (it holds a commit titled like #219 whose head is not its ancestor), then the rest.
   basis: origin/main 75ee517b.
 
-<a id="MN-LOCAL-MIRI-UB"></a>
-- [ ] [correctness] **MN-LOCAL-MIRI-UB — remove the undefined behavior Miri reports in `mnemosyne-local`.**
-  priority: correctness; milestone: M-core-allocation; status: todo; needs: none; scope:
-  `crates/mnemosyne-local/src/free/classified.rs`,
-  `crates/mnemosyne-local/src/local_alloc/page/allocation.rs`,
-  `crates/mnemosyne/tests/global_alloc_tests/`, `.github/workflows/ci.yml`.
-  **Outcome:** any program that allocates through `Mnemosyne` is Miri-clean. Stacked Borrows rejects the page-metadata read at `free/classified.rs:58`; Tree Borrows rejects it at `free/classified.rs:101` and the `alloc_count` update at `local_alloc/page/allocation.rs:57`. Both reproduce on the Windows host and on `x86_64-unknown-linux-gnu`, and the `-p mnemosyne-local` unit-test job does not reach them.
-  **Reproduce:** `MIRIFLAGS="-Zmiri-disable-isolation [-Zmiri-tree-borrows]" cargo +nightly miri test -p mnemosyne-memory --test global_alloc_tests -- basic::test_basic_allocation`.
-  **Acceptance:** Miri clean on `global_alloc_tests` under Stacked Borrows and Tree Borrows, both added to the CI `miri` job; then `counting_allocator` drops its `cfg(miri)` `System` inner and wraps `Mnemosyne` under Miri too.
-  **Next step:** read the borrow-stack report at each of the three sites for the retag that invalidated the tag, then derive the access from the segment, as the reclamation seam does (MN-437).
-  basis: origin/main 66a5a86899cb73fd8296b4a6858351bc3baf0398.
+<a id="MN-MIRI-ADR-0012"></a>
+### MN-MIRI-ADR-0012 — accept ADR 0012 so the Miri work has a decided design — todo
+  priority: architecture; milestone: M-core-allocation; needs: none; scope: `docs/adr/0012-free-path-provenance.md`, `docs/adr/README.md`.
+  **Outcome:** ADR 0012 (registry plus quarantine, its option 2) is on main with `Status: Accepted`. It exists only at `refs/pull/213/head` (`Status: Proposed`, 155 lines); main's `docs/adr/` skips from 0011 to 0013 and its index has no 0012 row.
+  The PR carrying it claims the number. Prior work lives at `refs/pull/213/head` (the ADR), `refs/pull/220`, `/218`, `/219`, `/222` (registry), `/216` (CI step) and `/217` (option-1 prototype, rejected by the ADR).
+  **Acceptance:** `git grep -n "^Status: Accepted" -- docs/adr/0012-free-path-provenance.md` prints one line and `git grep -n "0012" -- docs/adr/README.md` prints a row reading Accepted (both print nothing at the basis);
+  `python scripts/adr-index.py check --directory docs/adr` from an atlas checkout exits 0; a dated revision note names the status change.
+  **Next step:** `git fetch origin pull/213/head`, restore the file, flip the status, trim toward the ADR budget (about 150 lines), regenerate the index.
+  basis: origin/main 9dc65dd0263f00bc8fb7ee7dcfde2d06e51feb78.
+
+<a id="MN-LOCAL-MIRI-TREE"></a>
+### MN-LOCAL-MIRI-TREE — make `global_alloc_tests` Tree-Borrows-clean and run it in the CI Miri job — todo
+  priority: correctness; milestone: M-core-allocation; needs: MN-MIRI-ADR-0012; scope: `crates/mnemosyne-local/src/free/classified.rs`,
+  `crates/mnemosyne-local/src/local_alloc/page/allocation.rs`, `crates/mnemosyne/tests/global_alloc_tests/`, `.github/workflows/ci.yml`.
+  **Outcome:** any program that allocates through `Mnemosyne` is Miri-clean under Tree Borrows. At the basis Tree Borrows rejects the page-metadata read at `free/classified.rs:101` and the `alloc_count` update at `local_alloc/page/allocation.rs:57`,
+  and `ci.yml:498-522` runs only `counting_allocator` from the facade. ADR 0012 accepts the registry through which `locate_segment` reaches page metadata; its code is at `refs/pull/220`, `/218`, `/219`, `/222` and the CI step at `/216`, the same refs MN-RESCUE-PRS classifies.
+  **Reproduce:** `MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-tree-borrows" cargo +nightly miri test -p mnemosyne-memory --test global_alloc_tests -- basic::test_basic_allocation`.
+  **Acceptance:** the same command over the whole binary, excluding `leak::` (MN-PROF-MIRI-FRAMES), passes at the default seed and `-Zmiri-seed=1` to `4` (ADR 0012, Miri fact 2), and a step of the CI `miri` job runs it.
+  **Next step:** port the registry slices in the ADR's order, one PR each of at most 400 changed lines, then the CI step.
+  basis: origin/main 9dc65dd0263f00bc8fb7ee7dcfde2d06e51feb78.
 
 <a id="MN-PROF-MIRI-FRAMES"></a>
 - [ ] [correctness] **MN-PROF-MIRI-FRAMES — keep captured frame provenance in `mnemosyne-prof`.**
-  priority: correctness; milestone: M-core-allocation; status: todo; needs: MN-LOCAL-MIRI-UB; scope:
+  priority: correctness; milestone: M-core-allocation; status: todo; needs: MN-LOCAL-MIRI-TREE, MN-LOCAL-MIRI-UB; scope:
   `crates/mnemosyne-prof/src/sampler/`, `.github/workflows/ci.yml`.
   **Outcome:** the sampler stores captured frames as pointers rather than `usize`,
   so `backtrace::resolve` receives the provenance `frame.ip()` carried. With the
@@ -84,7 +93,7 @@
   **Acceptance:** `scripts/safety_ratchet.py check` prints `undocumented unsafe blocks: 0 (baseline 0)` and exits 0 at the basis,
   and exits 1 on a tree with one uncommented `unsafe {` in a library source (run recorded in the closing PR);
   `ci.yml` runs that path; `git grep -n safety_comment_scan` prints nothing.
-  **Next step:** `git mv` the script and keep its CLI (`check`, exit 1 above `BASELINE`); update the `ci.yml` step, the usage lines in its docstring and the `MNEM-UNSAFE-DOC-1` closure line in this file.
+  **Next step:** `git mv` the script and keep its CLI (`check`, exit 1 above `BASELINE`); update the `ci.yml` step and the usage lines in its docstring.
   basis: origin/main 7f2d1b55130119790953a773b59a854b4f18c936.
 
 <a id="MN-LOOM-STACK-MODEL"></a>
@@ -114,29 +123,52 @@
   basis: origin/main 7f2d1b55130119790953a773b59a854b4f18c936.
 
 <a id="MN-CI-DRAFT-READY"></a>
-- [ ] [verification] **MN-CI-DRAFT-READY — give `ci.yml` the draft gate and the ready trigger.**
-  priority: verification; milestone: M-core-allocation; status: todo; needs: none; scope:
-  `.github/workflows/ci.yml`.
-  **Outcome:** a draft PR runs only the short aggregate, which fails it, and converting a PR to ready starts the full run.
-  Today `on.pull_request` has no `types` (`ci.yml:4`, so `ready_for_review` starts no run) and no job tests `github.event.pull_request.draft`,
-  so every draft push runs the whole pipeline, Miri (`ci.yml:292`) included; `CI aggregate` (`ci.yml:647-657`) has no draft rule.
-  `adr-index.yml:32` already gates on `draft == false`; `ci.yml` is the one workflow of this repository that does not.
-  **Acceptance:** `grep -c ready_for_review .github/workflows/ci.yml` and `grep -c pull_request.draft .github/workflows/ci.yml` print nonzero (both print 0 at the basis);
-  a draft head skips `verify`, `miri`, `loom` and the other heavy jobs and fails `CI aggregate`; the `ready_for_review` event starts a run whose `CI aggregate` passes, run links in the closing PR.
-  **Next step:** set `types: [opened, synchronize, reopened, ready_for_review]`, add the draft term to each heavy job's `if:` and a failing draft step to `aggregate`.
-  Not confirmed: that an aggregate stays red after leaving draft; no draft rule exists in this file to produce it.
+### MN-CI-DRAFT-READY — skip heavy CI jobs on draft PRs and run CI when a PR becomes ready — todo
+  priority: verification; milestone: M-core-allocation; needs: none; scope: `.github/workflows/ci.yml`, `.github/workflows/msrv.yml`.
+  **Outcome:** a draft PR whose head has `code=true` in `ci.yml`'s classifier (a change under `crates/**`, `scripts/**` or `.github/workflows/**`, `ci.yml:68-82`) runs no heavy job and fails `CI aggregate`; marking it ready starts the full run.
+  At the basis `ci.yml:4` and `msrv.yml:12` list no `types`, so `ready_for_review` starts no run, and no job of either file tests `pull_request.draft`: such a head runs the nine jobs behind `changes`
+  (`lockfile`, `semver`, `verify`, `supply-chain`, `loom`, `miri`, `test-aarch64`, `benchmark-hygiene`, `test-tsan`) and `msrv.yml`'s `check`; a docs-only head already skips them through the classifier. `adr-index.yml:32` carries the gate; `msrv.yml` is in scope.
+  **Acceptance:** `python -c "import yaml;[print(f,(yaml.safe_load(open(f))[True]['pull_request'] or {}).get('types'),[j for j,v in yaml.safe_load(open(f))['jobs'].items() if j not in ('changes','aggregate') and 'draft == false' not in str(v.get('if'))]) for f in ('.github/workflows/ci.yml','.github/workflows/msrv.yml')]"`
+  prints the four types `opened`, `synchronize`, `reopened`, `ready_for_review` and `[]` for both files (`None` and nine names, then `None` and `['check']`, at the basis); and `python -c "import yaml;print(any('pull_request.draft' in str(s.get('if')) and 'exit 1' in str(s.get('run')) for s in yaml.safe_load(open('.github/workflows/ci.yml'))['jobs']['aggregate']['steps']))"` prints `True` (`False` at the basis);
+  on a draft PR touching `crates/**`, `verify`, `miri`, `loom` and `test-tsan` conclude `skipped` and `CI aggregate` fails, and marking it ready starts a run (event `pull_request`, action `ready_for_review`) in which they run; both run links in the closing PR.
+  **Next step:** add the `types` list to both workflows, `github.event.pull_request.draft == false` (the form of `adr-index.yml:32`) to each job's `if:`, and a failing draft step to `aggregate`.
   basis: origin/main 9dc65dd0263f00bc8fb7ee7dcfde2d06e51feb78.
 
 <a id="MN-HUGE-POOL-TEST-SEGMENT"></a>
-- [ ] [verification] **MN-HUGE-POOL-TEST-SEGMENT — keep one `boxed_huge_segment` and drop the integer-to-pointer cast.**
-  priority: verification; milestone: M-core-allocation; status: todo; needs: none; scope:
-  `crates/mnemosyne-arena/tests/huge_pool_concurrency.rs`, `crates/mnemosyne-arena/src/segment/tests_huge_pool.rs`, `gap_audit.md`.
-  **Outcome:** one definition builds the dummy huge `Segment`. Two exist: `tests_huge_pool.rs:53-67` (uses `core::ptr::without_provenance_mut(raw)`, `:58`)
-  and `tests/huge_pool_concurrency.rs:24-37`, whose copy casts `raw as *mut u8` (`:30`) and widens `block_size as usize` (`:84`).
-  Its module doc says "The repo has no `loom` harness" (`:10`), false since `tests/loom_tagged_stack.rs` and the CI `loom` job (`ci.yml:227`).
-  **Acceptance:** `git grep -c "fn boxed_huge_segment" -- crates` lists one file with count 1; `git grep -nE "raw as \*mut u8|block_size as usize" -- crates/mnemosyne-arena/tests`
-  prints nothing (two lines print at the basis); `cargo nextest run -p mnemosyne-arena` passes with the concurrency test still listed; no test-only public export is added.
-  **Next step:** fold the stress test into the in-crate `tests_huge_pool.rs` leaf (it uses only `GlobalHugePool`) and update the `gap_audit.md:7` link, or share the helper; delete the false loom sentence.
+### MN-HUGE-POOL-TEST-SEGMENT — build the test `Segment` once, with no integer-to-pointer cast — todo
+  priority: verification; milestone: M-core-allocation; needs: none; scope: `crates/mnemosyne-arena/tests/huge_pool_concurrency.rs`,
+  `crates/mnemosyne-arena/tests/segment_pool_concurrency.rs`, `crates/mnemosyne-arena/src/segment/tests_huge_pool.rs`, `gap_audit.md`.
+  **Outcome:** one function boxes a zeroed `Segment` and calls `Segment::initialize` for these tests; three do at the basis: `tests_huge_pool.rs:53-66`
+  (`core::ptr::without_provenance_mut(raw)`, `:58`), `huge_pool_concurrency.rs:24-37` and `segment_pool_concurrency.rs:19-29`, both with `raw as *mut u8` (`:30`, `:27`);
+  the first also widens `block_size as usize` (`:84`). Its module doc says "The repo has no `loom` harness" (`huge_pool_concurrency.rs:10`), false since `tests/loom_tagged_stack.rs` and the CI `loom` job (`ci.yml:227`).
+  **Acceptance** (P = `crates/mnemosyne-arena/tests crates/mnemosyne-arena/src/segment/tests_huge_pool.rs`): `git grep -cE "Segment::initialize[[:space:]]*\(" -- $P` prints one line, count 1 (three files at the basis);
+  `git grep -nE " as (\*mut|usize)" -- $P` prints nothing (3 lines); `git grep -nE "no .loom. harness" -- crates` prints nothing (1 line);
+  `git diff -U0 origin/main...HEAD -- crates | grep -E "^\+[[:space:]]*pub"` prints nothing; `cargo nextest list -p mnemosyne-arena` names both `*_concurrent_push_pop_conserves_every_segment` tests before and after.
+  `git grep -lE "Segment::initialize[[:space:]]*\(" -- crates/mnemosyne-arena/src/segment` lists only `alloc/allocate.rs`, `pool/tagged_stack/tests.rs`, `tests.rs` and `tests_huge_pool.rs` (no new builder file).
+  **Next step:** fold both stress tests into in-crate leaves (they use only `GlobalHugePool` and `GlobalSegmentPool`) so the builder in `tests_huge_pool.rs` serves them; a `tests/common` module would keep two builders. `loom_tagged_stack.rs` stays; update the `gap_audit.md:7` link.
+  basis: origin/main 9dc65dd0263f00bc8fb7ee7dcfde2d06e51feb78.
+
+<a id="MN-SCRATCH-TEST-STRENGTH"></a>
+### MN-SCRATCH-TEST-STRENGTH — make the scratch release and growth tests fail under the defects they name — todo
+  priority: verification; milestone: M-core-allocation; needs: none; scope: `crates/mnemosyne-arena/src/scratch/tests.rs`.
+  **Outcome:** each mutant below fails the named test. At the basis `ScratchBank::release` and `reset` (`bank.rs:80,91`) have no test caller (the `.release()`/`.reset()` callers in `tests.rs` are `ScratchPool`s, `:712-814`, `:1156`);
+  `tests.rs:1148-1152` asserts `>= 12288`; `tests.rs:713` expects 16_384, which growth from 128 to 16_384 already yields (`grow_geometric`, `storage.rs:216`, doubles only when the request is smaller).
+  **Acceptance:** each mutant, applied alone under `crates/mnemosyne-arena/src`, makes `cargo nextest run -p mnemosyne-arena` fail the named test, and the unmutated crate passes:
+  M1 `ScratchBank::release` returns zeros without calling `pool.release()` -> new `bank_release_reclaims_every_pool_above_provision`;
+  M2 `ScratchBank::reset` has an empty body -> new `bank_reset_makes_release_reclaim_every_pool`;
+  M3 the bounded path (`pool/borrow.rs:98`) grows to exactly `n` -> `scratch_pool_bounded_path_release_trims_to_provision`, once `:1148` asserts `slot_capacity(0) == 16384` (from 8192, `max(12288, 2*8192)`);
+  M4 `ScratchPool::release` (`pool/manage.rs:29`) is a no-op -> `pool_release_reclaims_above_provision`, once its sizes are `[128, 10_000, 16_384]` (capacity 20_000 against provision 16_384). Each kill is recorded in the closing PR.
+  **Next step:** add the two bank tests and change the two assertions.
+  basis: origin/main 9dc65dd0263f00bc8fb7ee7dcfde2d06e51feb78.
+
+<a id="MN-PROCESS-TAG-CITES"></a>
+### MN-PROCESS-TAG-CITES — drop comments that cite board items whose blocks are gone — todo
+  priority: verification; milestone: M-core-allocation; needs: none; scope: the seven lines named below.
+  **Outcome:** no comment names a deleted board ID, and each keeps its rationale. Sites at the basis: `crates/mnemosyne-arena/src/scratch/aligned_vec/length.rs:33`, `.../scratch/pool/borrow.rs:98` and `.../scratch/tests.rs:1126,1130` (MN-SCRATCH-GROWTH-COST),
+  `.github/workflows/ci.yml:143` and `scripts/safety_comment_scan.py:10` (MNEM-UNSAFE-DOC-1; the script is renamed by MN-SAFETY-RATCHET-HOOK), `ci.yml:467` (MN-459).
+  **Acceptance:** `git grep -nE "MN-459|MNEM-UNSAFE-DOC-1|MN-SCRATCH-GROWTH-COST" -- . ":!backlog.md"` prints nothing (7 lines at the basis); `git grep -c amortized -- crates/mnemosyne-arena/src/scratch/aligned_vec/length.rs crates/mnemosyne-arena/src/scratch/pool/borrow.rs crates/mnemosyne-arena/src/scratch/tests.rs`
+  still prints counts of at least 3, 2 and 2; `git diff -U0 origin/main...HEAD -- crates .github | grep -E "^[+-]" | grep -vE "^(\+\+\+|---)" | grep -vE "^[+-][[:space:]]*(//|#)"` prints nothing, so only comment lines change.
+  **Next step:** reword each comment to state its reason without the ID.
   basis: origin/main 9dc65dd0263f00bc8fb7ee7dcfde2d06e51feb78.
 
 <a id="MN-WASM-ENV-2026-09-11"></a>
@@ -156,26 +188,6 @@
 - [x] [arch] [minor] **MN-WASM-2026-09-06 — provide a portable WebAssembly memory backend.**
   status=done; integrator=root; branch=`codex/mnemosyne-wasm-pointer-width`;
   outcome delivered by PR #141; closure retained by PR #179.
-
-<a id="mn-em-book-depth-1"></a>
-- [x] **MNEM-BOOK-DEPTH-1** [docs][minor] status=done owner=codex
-  branch=`perf/mnemosyne-scratch-release`; latest=`af7a23a`.
-  Outcome: corrected the full book's implementation contracts, examples, and stack ownership; `mdbook test` and `mdbook build` pass.
-
-<a id="mn-459"></a>
-- [x] [patch] **MN-459 — bring `mnemosyne-heap` under the Miri gate.**
-  status=done; integrator=codex; last-update=2026-09-22.
-  Both Stacked Borrows and Tree Borrows Miri jobs for `mnemosyne-heap` are
-  active in `.github/workflows/ci.yml` (confirmed in the CI `miri` job).
-  Close confirmed by CI comment: "Heap joins under MN-459 after its own test
-  helpers pass both borrow models."
-
-<a id="mnem-unsafe-doc-1"></a>
-- [x] **MNEM-UNSAFE-DOC-1** [verification][patch] status=done owner=Claude
-  **Closed 2026-09-22.** Safety ratchet (`scripts/safety_comment_scan.py check`)
-  reports baseline **0** (from an original 84). All 742 production `unsafe {}`
-  blocks carry a `// SAFETY:` comment. The CI `SAFETY comment ratchet` step
-  enforces this invariant going forward.
 
 ## Blocked
 
@@ -201,3 +213,13 @@
   status=blocked; milestone: M-core-allocation; owner=codex; last-update=2026-09-04. Re-open on a quiet
   machine for the paired sampling change and threshold baseline refresh.
 
+<a id="MN-LOCAL-MIRI-UB"></a>
+### MN-LOCAL-MIRI-UB — run the facade under Stacked Borrows and let `counting_allocator` wrap `Mnemosyne` under Miri — blocked
+  priority: correctness; milestone: M-core-allocation; needs: MN-LOCAL-MIRI-TREE; scope: `crates/mnemosyne/tests/global_alloc_tests/`, `crates/mnemosyne/tests/counting_allocator.rs`, `.github/workflows/ci.yml`.
+  **Blocker:** rust-lang/miri#2686, "Refresh provenance of global allocator" (`gh issue view 2686 -R rust-lang/miri --json title,state` prints state OPEN at the basis). Under Stacked Borrows the facade's `dealloc` and in-place `realloc`
+  receive std's narrowed pointers and write past them (ADR 0012, Miri fact 3), so facade Stacked Borrows coverage stays zero. **Re-open trigger:** the same command prints state CLOSED.
+  **Outcome:** `global_alloc_tests` passes Miri under Stacked Borrows excluding only `leak::` (MN-PROF-MIRI-FRAMES), and `counting_allocator` wraps `Mnemosyne` under Miri, dropping its `cfg(miri)` `System` inner (`counting_allocator.rs:24,28,35`).
+  **Acceptance:** `MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri nextest run -p mnemosyne-memory --profile miri -E 'binary(global_alloc_tests)'` passes; the CI `miri` job has that step; `git grep -nE "cfg\((not\()?miri" -- crates/mnemosyne/tests/counting_allocator.rs` prints nothing (3 lines at the basis);
+  the comments citing this ID (`ci.yml:498-507`, `counting_allocator.rs:7-12`) are rewritten.
+  **Next step:** none until the blocker clears; then add the step and run the acceptance command.
+  basis: origin/main 9dc65dd0263f00bc8fb7ee7dcfde2d06e51feb78.
