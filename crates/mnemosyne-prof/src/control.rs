@@ -5,7 +5,7 @@
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
-use crate::sampler;
+use crate::{cast, sampler};
 
 pub(crate) static ALLOC_HOOK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 pub(crate) static FREE_HOOK: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
@@ -47,7 +47,7 @@ fn store_flags_then_update_active(store: impl FnOnce()) {
 /// Registers a custom user allocation tracing hook.
 pub fn register_alloc_hook(hook: Option<unsafe extern "C" fn(*mut core::ffi::c_void, usize)>) {
     let ptr = match hook {
-        Some(f) => f as *mut c_void,
+        Some(f) => cast::hook_slot_pointer(f),
         None => core::ptr::null_mut(),
     };
     store_flags_then_update_active(|| ALLOC_HOOK.store(ptr, Ordering::Release));
@@ -56,7 +56,7 @@ pub fn register_alloc_hook(hook: Option<unsafe extern "C" fn(*mut core::ffi::c_v
 /// Registers a custom user deallocation tracing hook.
 pub fn register_free_hook(hook: Option<unsafe extern "C" fn(*mut core::ffi::c_void, usize)>) {
     let ptr = match hook {
-        Some(f) => f as *mut c_void,
+        Some(f) => cast::hook_slot_pointer(f),
         None => core::ptr::null_mut(),
     };
     store_flags_then_update_active(|| FREE_HOOK.store(ptr, Ordering::Release));

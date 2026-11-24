@@ -50,7 +50,7 @@ fn on_alloc_cold(ptr: *mut u8, size: usize) {
 
     if !hook_ptr.is_null() {
         // SAFETY: `hook_ptr` is non-null (just checked) and was published by
-        // `register_alloc_hook` as `f as *mut c_void` from a real
+        // `register_alloc_hook` via `cast::hook_slot_pointer` from a real
         // `unsafe extern "C" fn(*mut c_void, usize)` under `Release`/`Acquire`
         // ordering, so transmuting it back to that exact signature reconstructs
         // a valid function pointer.
@@ -58,7 +58,7 @@ fn on_alloc_cold(ptr: *mut u8, size: usize) {
             unsafe { core::mem::transmute(hook_ptr) };
         // SAFETY: `ptr`/`size` are the just-completed allocation's address and
         // size; the registered hook upholds its own `extern "C"` contract.
-        unsafe { hook(ptr as *mut core::ffi::c_void, size) };
+        unsafe { hook(ptr.cast::<core::ffi::c_void>(), size) };
     }
 
     if active || leak_active {
@@ -80,8 +80,7 @@ pub fn on_free(ptr: *mut u8, size: usize) {
     // The cold path has work exactly when a free hook is registered or a
     // resident sample may need eviction; the profiling/leak flags are
     // irrelevant to frees (see `on_free_cold`).
-    if FREE_HOOK.load(Ordering::Relaxed).is_null() && !sampler::has_active_sample_for(ptr as usize)
-    {
+    if FREE_HOOK.load(Ordering::Relaxed).is_null() && !sampler::has_active_sample_for(ptr.addr()) {
         return;
     }
 
@@ -102,7 +101,7 @@ fn on_free_cold(ptr: *mut u8, size: usize) {
     // block and (b) leave the pointer's occupancy flag set forever, taxing
     // every subsequent free in that shard with this cold call. Gate on
     // resident samples instead.
-    let samples_resident = sampler::has_active_sample_for(ptr as usize);
+    let samples_resident = sampler::has_active_sample_for(ptr.addr());
     if hook_ptr.is_null() && !samples_resident {
         return;
     }
@@ -114,14 +113,14 @@ fn on_free_cold(ptr: *mut u8, size: usize) {
 
     if !hook_ptr.is_null() {
         // SAFETY: `hook_ptr` is non-null and was published by
-        // `register_free_hook` as `f as *mut c_void` from a real
+        // `register_free_hook` via `cast::hook_slot_pointer` from a real
         // `unsafe extern "C" fn(*mut c_void, usize)`, so transmuting it back to
         // that exact signature reconstructs a valid function pointer.
         let hook: unsafe extern "C" fn(*mut core::ffi::c_void, usize) =
             unsafe { core::mem::transmute(hook_ptr) };
         // SAFETY: `ptr`/`size` describe the allocation being freed; the
         // registered hook upholds its own `extern "C"` contract.
-        unsafe { hook(ptr as *mut core::ffi::c_void, size) };
+        unsafe { hook(ptr.cast::<core::ffi::c_void>(), size) };
     }
 
     if samples_resident {

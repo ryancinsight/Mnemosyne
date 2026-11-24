@@ -6,6 +6,7 @@
 #![cfg_attr(nightly_tls_active, feature(thread_local))]
 #![deny(missing_docs)]
 
+mod cast;
 mod control;
 mod hooks;
 mod sampler;
