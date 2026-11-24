@@ -74,7 +74,7 @@ fn on_alloc_cold(ptr: *mut u8, size: usize) {
 /// if one is resident. Sample removal runs whenever resident samples exist —
 /// even after profiling/leak detection has been disabled — so stale samples
 /// drain on free instead of being reported as leaks by a later
-/// [`crate::dump_leaks`].
+/// [`dump_leaks`](crate::dump_leaks).
 #[inline(always)]
 pub fn on_free(ptr: *mut u8, size: usize) {
     // The cold path has work exactly when a free hook is registered or a
