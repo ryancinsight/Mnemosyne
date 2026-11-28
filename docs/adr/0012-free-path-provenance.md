@@ -73,8 +73,8 @@ bytes (Windows `PrivateUsage`, psutil's `memory_info().private`) after 10^8
 alloc/free cycles over the criterion `latency` layouts; four runs per build.
 
 **Builds.** main `58e1aee2`; Q = main plus the registry for regions 1 and 3,
-everything else through the caller's pointer, at PR #222's head `7015312c`
-(stack #220, #218, #219, #222); option 1 = PR #217's head `743c3309`.
+everything else through the caller's pointer, at PR #222's head
+(stack #220, #218, #219, #222); option 1 = PR #217's head.
 
 **Bounds, fixed before measuring.** Against main: +12 on the free paths, +10
 on `realloc` and `usable_size`, +0 on alloc, private bytes +1%. Option 1 is
