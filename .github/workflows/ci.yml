@@ -38,6 +38,7 @@ jobs:
     outputs:
       code: ${{ steps.scope.outputs.code }}
       manifest: ${{ steps.scope.outputs.manifest }}
+      fuzz: ${{ steps.scope.outputs.fuzz }}
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -56,6 +57,7 @@ jobs:
           if [[ "$EVENT_NAME" == schedule ]]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "manifest=true" >> "$GITHUB_OUTPUT"
+            echo "fuzz=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [[ "$EVENT_NAME" == pull_request ]]; then
@@ -67,6 +69,7 @@ jobs:
           changed="$(git diff --name-only "$base" HEAD)"
           code=false
           manifest=false
+          fuzz=false
           while IFS= read -r path; do
             [[ -z "$path" ]] && continue
             case "$path" in
@@ -79,10 +82,16 @@ jobs:
                 manifest=true
                 ;;
             esac
+            case "$path" in
+              crates/*|fuzz/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|.github/workflows/ci.yml)
+                fuzz=true
+                ;;
+            esac
           done <<< "$changed"
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
-          echo "Verification scope: code=$code manifest=$manifest"
+          echo "fuzz=$fuzz" >> "$GITHUB_OUTPUT"
+          echo "Verification scope: code=$code manifest=$manifest fuzz=$fuzz"
 
   # Guards the one artifact whose correctness cannot be checked from inside the
   # overlay environment that produces it. Calls the shared Atlas workflow.
@@ -199,6 +208,14 @@ jobs:
 
       - name: Run documentation tests
         run: cargo test --locked --workspace --doc
+
+  fuzz:
+    name: libFuzzer targets
+    needs: changes
+    if: github.event_name != 'schedule' && needs.changes.outputs.fuzz == 'true'
+    uses: ryancinsight/atlas/.github/workflows/fuzz-smoke.yml@f16efc0b24838e5be4c1c581e7fe76248c783947
+    permissions:
+      contents: read
 
   supply-chain:
     needs: changes
@@ -647,7 +664,7 @@ jobs:
   aggregate:
     name: CI aggregate
     if: always()
-    needs: [changes, lockfile, semver, verify, supply-chain, loom, miri, test-aarch64, benchmark-hygiene, test-tsan]
+    needs: [changes, lockfile, semver, verify, fuzz, supply-chain, loom, miri, test-aarch64, benchmark-hygiene, test-tsan]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

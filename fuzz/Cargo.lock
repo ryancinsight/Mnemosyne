@@ -165,8 +165,8 @@ dependencies = [
 
 [[package]]
 name = "melinoe"
-version = "0.10.0"
-source = "git+https://github.com/ryancinsight/melinoe.git#7109f29192847ac1100290cbfa984a2fabf3d696"
+version = "0.10.2"
+source = "git+https://github.com/ryancinsight/melinoe.git#002c7b841440120e21c447cc3435b200aa21a0ac"
 
 [[package]]
 name = "memchr"
