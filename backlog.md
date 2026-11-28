@@ -44,21 +44,9 @@
   **Next step:** compare `rescue/mnemosyne-219-whole-block-frees` with #218 and #219 (it holds a commit titled like #219 whose head is not its ancestor), then the rest.
   basis: origin/main 75ee517b.
 
-<a id="MN-MIRI-ADR-0012"></a>
-### MN-MIRI-ADR-0012 — accept ADR 0012 so the Miri work has a decided design — todo
-  priority: architecture; milestone: M-core-allocation; needs: none; scope: `docs/adr/0012-free-path-provenance.md`, `docs/adr/README.md`.
-  **Outcome:** ADR 0012 (registry plus quarantine, its option 2) is on main with `Status: Accepted`. It exists only at `refs/pull/213/head` (`Status: Proposed`, 155 lines); main's `docs/adr/` skips from 0011 to 0013 and its index has no 0012 row.
-  The PR carrying it claims the number. Prior work lives at `refs/pull/213/head` (the ADR), `refs/pull/220`, `/218`, `/219`, `/222` (registry), `/216` (CI step) and `/217` (option-1 prototype, rejected by the ADR).
-  **Acceptance:** `git grep -n "^Status: Accepted" -- docs/adr/0012-free-path-provenance.md` prints one line and `git grep -n "0012" -- docs/adr/README.md` prints a row reading Accepted (both print nothing at the basis);
-  `python <atlas>/scripts/adr-index.py check --directory docs/adr`, run from this repository's root, exits 0; a dated revision note names the status change.
-  After `git fetch origin pull/213/head`, `git diff -U0 FETCH_HEAD:docs/adr/0012-free-path-provenance.md HEAD:docs/adr/0012-free-path-provenance.md | grep -cE "^\+[^+]"` and the same with `grep -cE "^\+(Status: Accepted$|Revised [0-9-]+: )"` both print 2,
-  and with `grep -cE "^-## "` prints 0: the only added lines are the status and the revision note, and no section is deleted (the commands print 0, 0 and 0 at the basis, where the file is absent).
-  **Next step:** `git fetch origin pull/213/head`, restore the file, flip the status, trim toward the ADR budget (about 150 lines), regenerate the index.
-  basis: origin/main 9dc65dd0263f00bc8fb7ee7dcfde2d06e51feb78.
-
 <a id="MN-LOCAL-MIRI-TREE"></a>
 ### MN-LOCAL-MIRI-TREE — make `global_alloc_tests` Tree-Borrows-clean and run it in the CI Miri job — todo
-  priority: correctness; milestone: M-core-allocation; needs: MN-MIRI-ADR-0012; scope: `crates/mnemosyne-local/src/free/classified.rs`,
+  priority: correctness; milestone: M-core-allocation; needs: none; scope: `crates/mnemosyne-local/src/free/classified.rs`,
   `crates/mnemosyne-local/src/local_alloc/page/allocation.rs`, `crates/mnemosyne/tests/global_alloc_tests/`, `.github/workflows/ci.yml`.
   **Outcome:** any program that allocates through `Mnemosyne` is Miri-clean under Tree Borrows. At the basis Tree Borrows rejects the page-metadata read at `free/classified.rs:101` and the `alloc_count` update at `local_alloc/page/allocation.rs:57`,
   and `ci.yml:498-522` runs only `counting_allocator` from the facade. ADR 0012 accepts the registry through which `locate_segment` reaches page metadata; its code is at `refs/pull/220`, `/218`, `/219`, `/222` and the CI step at `/216`, the same refs MN-RESCUE-PRS classifies.
