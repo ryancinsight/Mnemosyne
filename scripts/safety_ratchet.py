@@ -9,8 +9,8 @@ one sanctioned spelling; `// Safety:` was normalized away). The count only
 decreases: `check` fails when it exceeds `BASELINE`, and a pass that lowers it
 lowers `BASELINE` in the same change (MNEM-UNSAFE-DOC-1).
 
-    python scripts/safety_comment_scan.py          # list the sites
-    python scripts/safety_comment_scan.py check    # exit 1 above the baseline
+    python scripts/safety_ratchet.py          # list the sites
+    python scripts/safety_ratchet.py check    # exit 1 above the baseline
 """
 from __future__ import annotations
 

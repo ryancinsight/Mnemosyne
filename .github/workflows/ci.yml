@@ -143,7 +143,7 @@ jobs:
       # preceding `// SAFETY:` comment (MNEM-UNSAFE-DOC-1); the baseline lives
       # in the script and only moves down.
       - name: SAFETY comment ratchet
-        run: python scripts/safety_comment_scan.py check
+        run: python scripts/safety_ratchet.py check
 
       # No lint allows remain. The three former command-line allows were
       # retired 2026-08-05 (ATLAS-MNEMOSYNE-CI-1): the workspace passes bare
