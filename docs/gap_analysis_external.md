@@ -37,7 +37,7 @@ implication, and (5) a recommended priority tag (`[arch]`, `[major]`,
 
 | Feature | Mnemosyne current state | Reference | Implication | Priority |
 | --- | --- | --- | --- | --- |
-| Per-page sharded free lists (`free`, `thread_free`) | Implemented as a two-list variant: the page-local `free` list plus the cross-thread `thread_free` atomic list (`crates/mnemosyne-core/src/types/page/mod.rs:15,17`); mimalloc's intermediate `local_free` list is absent | mimalloc | Parity achieved. | done |
+| Per-page sharded free lists (`free`, `thread_free`) | Implemented as a two-list variant: the page-local `free` list plus the cross-thread `thread_free` atomic list (`crates/mnemosyne-core/src/types/page.rs:15,17`); mimalloc's intermediate `local_free` list is absent | mimalloc | Parity achieved. | done |
 | Cross-thread free queue per page | Implemented (page-local `AtomicFreeList`) | snmalloc | Parity achieved. | done |
 | Single-cache-line page metadata (≤ 64 B) | 64 B exactly, pinned by `page_struct_size_stays_within_one_cache_line` | mimalloc page (64 B), snmalloc slab (64 B+) | Parity. | done |
 | Bitmap free lists for very small classes | Not implemented (linked-list free lists for every class) | snmalloc 0.6 backend chunkmap | Bitmaps reduce per-block metadata for 16-byte class; cache-conflict risk. Investigate after profiling shows the 16/32 B classes are bandwidth-bound. | `[arch]` |

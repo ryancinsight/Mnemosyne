@@ -19,7 +19,7 @@
   Unported: build-util tests split
   with `emit_nightly_tls_cfg()` -> `nightly_tls_directives() -> Vec<&'static str>` and its three `build.rs` callers (public
   break of published `mnemosyne-build-util` 0.2.1: [major] ADR first); `warm_current_thread` into `allocator.rs` with
-  reshaped `pub use`; `#![deny(missing_docs)]` on `mnemosyne-benchmarks`; `mod.rs` to flat-module renames (10 of 11; prof `tls.rs` is flat, 7a1723db); `DefaultBackend` leaf renames and README text (classify by cargo-semver-checks; the leaf modules are private, so no public path changes); delete `checklist.md` after folding its open entries (MN-SCRATCH-RELEASE-2026-09-03 :62-68, the Apollo retention and warm-pass boxes; MN-436 :70-81; packed tagged pool :83-88) into item blocks.
+  reshaped `pub use`; `#![deny(missing_docs)]` on `mnemosyne-benchmarks`; `DefaultBackend` leaf renames and README text (classify by cargo-semver-checks; the leaf modules are private, so no public path changes); delete `checklist.md` after folding its open entries (MN-SCRATCH-RELEASE-2026-09-03 :62-68, the Apollo retention and warm-pass boxes; MN-436 :70-81; packed tagged pool :83-88) into item blocks.
   Obsolete, reject with this reason: #190's rustfmt-only hunks, already on main or in files main removed or rewrote (`tls/os_helpers.rs`, `tls/native.rs`).
   basis: origin/main d9ddf96d.
 
