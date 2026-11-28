@@ -73,20 +73,6 @@
   MN-LOCAL-MIRI-TREE's `cfg`/`ignore` grep still prints nothing. That run also guards the sampler's TLS copy-out fix, which only `leak::` reaches under Miri.
   **Next step:** replace the interner's `[usize]` frame type with a pointer newtype, keeping its hash and the shard selection unchanged.
 
-<a id="MN-SAFETY-RATCHET-HOOK"></a>
-- [ ] [verification] **MN-SAFETY-RATCHET-HOOK — give the SAFETY scan the name the local gate runs.**
-  priority: verification; milestone: M-core-allocation; status: todo; needs: none; scope:
-  `scripts/safety_comment_scan.py`, `.github/workflows/ci.yml`, `backlog.md`.
-  **Outcome:** a push that adds an `unsafe {` block without a `// SAFETY:` comment fails the local pre-push gate, as it fails CI.
-  The stack-owned gate (`.githooks/pre-push:2157-2164`, a copy of atlas `scripts/git-hooks/pre-push`) runs `scripts/safety_ratchet.py check`
-  when that file exists; this repository's scan is `scripts/safety_comment_scan.py`, run only by `.github/workflows/ci.yml:146`,
-  so the gate finds no ratchet and skips it.
-  **Acceptance:** `scripts/safety_ratchet.py check` prints `undocumented unsafe blocks: 0 (baseline 0)` and exits 0 at the basis,
-  and exits 1 on a tree with one uncommented `unsafe {` in a library source (run recorded in the closing PR);
-  `ci.yml` runs that path; `git grep -n safety_comment_scan` prints nothing.
-  **Next step:** `git mv` the script and keep its CLI (`check`, exit 1 above `BASELINE`); update the `ci.yml` step and the usage lines in its docstring.
-  basis: origin/main 7f2d1b55130119790953a773b59a854b4f18c936.
-
 <a id="MN-LOOM-STACK-MODEL"></a>
 - [ ] [verification] **MN-LOOM-STACK-MODEL — state in the loom model's doc that it over-approximates the locked stack.**
   priority: verification; milestone: M-core-allocation; status: todo; needs: none; scope:
@@ -158,9 +144,9 @@
 ### MN-PROCESS-TAG-CITES — drop comments that cite board items whose blocks are gone — todo
   priority: verification; milestone: M-core-allocation; needs: none; scope: the seven lines named below.
   **Outcome:** no comment names a deleted board ID, and each keeps its rationale. Sites at the basis: `crates/mnemosyne-arena/src/scratch/aligned_vec/length.rs:33`, `.../scratch/pool/borrow.rs:98` and `.../scratch/tests.rs:1126,1130` (MN-SCRATCH-GROWTH-COST),
-  `.github/workflows/ci.yml:143` and `scripts/safety_comment_scan.py:10` (MNEM-UNSAFE-DOC-1; the script is renamed by MN-SAFETY-RATCHET-HOOK), `ci.yml:467` (MN-459).
+  `.github/workflows/ci.yml:143` and `scripts/safety_ratchet.py:10` (MNEM-UNSAFE-DOC-1), `ci.yml:467` (MN-459).
   **Acceptance:** `git grep -nE "MN-459|MNEM-UNSAFE-DOC-1|MN-SCRATCH-GROWTH-COST" -- . ":!backlog.md"` prints nothing (7 lines at the basis); `git grep -c amortized -- crates/mnemosyne-arena/src/scratch/aligned_vec/length.rs crates/mnemosyne-arena/src/scratch/pool/borrow.rs crates/mnemosyne-arena/src/scratch/tests.rs`
-  still prints counts of at least 3, 2 and 2; `git diff -U0 origin/main...HEAD -- crates .github | grep -E "^[+-]" | grep -vE "^(\+\+\+|---)" | grep -vE "^[+-][[:space:]]*(//|#)"` prints nothing, so only comment lines change; `git grep -cE "baseline lives|lowers .BASELINE. in the same change|own test helpers pass both borrow" -- .github/workflows/ci.yml scripts` still prints `ci.yml:2` and one `scripts/` file with count 1 (the rationale of `ci.yml:143`, `:467` and `safety_comment_scan.py:10` stays).
+  still prints counts of at least 3, 2 and 2; `git diff -U0 origin/main...HEAD -- crates .github | grep -E "^[+-]" | grep -vE "^(\+\+\+|---)" | grep -vE "^[+-][[:space:]]*(//|#)"` prints nothing, so only comment lines change; `git grep -cE "baseline lives|lowers .BASELINE. in the same change|own test helpers pass both borrow" -- .github/workflows/ci.yml scripts` still prints `ci.yml:2` and one `scripts/` file with count 1 (the rationale of `ci.yml:143`, `:467` and `safety_ratchet.py:10` stays).
   **Next step:** reword each comment to state its reason without the ID.
   basis: origin/main 9dc65dd0263f00bc8fb7ee7dcfde2d06e51feb78.
 
